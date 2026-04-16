@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+artifacts
+/scripts/lint-rule-guard/target
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local

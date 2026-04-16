@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "max-lines": [
+      "error",
+      {
+        "max": 1000
+      }
+    ],
+    "max-lines-per-function": [
+      "error",
+      {
+        "max": 100
+      }
+    ]
+  },
+  "env": {
+    "builtin": true
+  }
+}
