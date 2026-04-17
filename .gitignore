@@ -8,3 +8,7 @@ artifacts
 .env
 .env.local
 .env.*.local
+DerivedData
+*.xcuserstate
+*.xcworkspace/xcuserdata
+*.xcodeproj/xcuserdata

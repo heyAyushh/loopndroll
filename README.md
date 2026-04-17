@@ -129,9 +129,37 @@ If you were looking for a Slack token: this app does not need one for Slack noti
 
 - `pnpm install` - install dependencies
 - `pnpm run dev` - start the app in development mode
+- `pnpm run dev:ios-api` - start the Bun mobile dev API for the iPhone companion simulator app
 - `pnpm run check` - run lint, format check, and typecheck
 - `pnpm run build` - build the app
 - `pnpm run build:stable` - build the release version
+
+## iPhone Companion App
+
+The native iPhone companion app lives in [`ios/`](./ios).
+
+### Generate the Xcode project
+
+```bash
+cd ios
+xcodegen generate
+```
+
+### Run the simulator against the Bun dev API
+
+In one terminal:
+
+```bash
+pnpm run dev:ios-api
+```
+
+In another terminal:
+
+```bash
+xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+```
+
+The Debug app points at `http://127.0.0.1:8787` by default. If there is no local Loopndroll session data yet, the dev API serves an interactive fallback dataset so the iPhone UI is still testable in the simulator.
 
 ## Useful Links
 

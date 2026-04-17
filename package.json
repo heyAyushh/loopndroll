@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "concurrently -k -n vite,app \"pnpm run hmr\" \"pnpm run dev:app\"",
     "dev:app": "electrobun dev --watch",
+    "dev:ios-api": "bun run src/bun/mobile-dev-server.ts",
     "dev:hmr": "pnpm run dev",
     "hmr": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "build:renderer": "vite build",
