@@ -18,8 +18,9 @@ private enum RealtimeOrbScannerMetrics {
     static let candidateMaximumAspectRatio: CGFloat = 1.15
     static let candidateMinimumAreaFractionOfROI: CGFloat = 0.06
     static let candidateMaximumAreaFractionOfROI: CGFloat = 0.80
-    static let candidatePaddingFraction: CGFloat = 0.10
-    static let fallbackCenterCropFraction: CGFloat = 0.70
+    static let candidateDecodeAttemptLimit = 2
+    static let candidatePaddingFractions: [CGFloat] = [0.10, 0.24]
+    static let fallbackCenterCropFractions: [CGFloat] = [0.74, 0.86]
     static let downscaleMaximumLongestEdge: Int = 640
 }
 
@@ -476,6 +477,11 @@ private struct LumaFrameRegion {
     let targetHeight: Int
 }
 
+private struct LumaDecodeAttempt {
+    let label: String
+    let cropRect: CGRect
+}
+
 extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(
         _ output: AVCaptureOutput,
@@ -564,48 +570,98 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         }
 
         let lumaBase = basePointer.assumingMemoryBound(to: UInt8.self)
-        let cropRect = detectedCropRect(
+        let decodeAttempts = makeDecodeAttempts(
             pixelBuffer: pixelBuffer,
             lumaWidth: lumaWidth,
             lumaHeight: lumaHeight
-        ) ?? fallbackCenterCropRect(lumaWidth: lumaWidth, lumaHeight: lumaHeight)
-
-        let region = makeFrameRegion(
-            cropRect: cropRect,
-            lumaWidth: lumaWidth,
-            lumaHeight: lumaHeight
         )
+        var lastDecodeFailure = "The live scanner did not find a decodable orb."
 
-        guard region.targetWidth > 0, region.targetHeight > 0 else {
-            lastFailureMessage = "The camera frame crop was empty."
-            publishDiagnostics()
-            return
-        }
-
-        let lumaData = extractLumaCrop(
-            lumaBase: lumaBase,
-            lumaBytesPerRow: lumaBytesPerRow,
-            region: region
-        )
-
-        do {
-            let detectedValue = try lumaTransformer(
-                lumaData,
-                UInt32(region.targetWidth),
-                UInt32(region.targetHeight)
+        for attempt in decodeAttempts {
+            let region = makeFrameRegion(
+                cropRect: attempt.cropRect,
+                lumaWidth: lumaWidth,
+                lumaHeight: lumaHeight
             )
-            acceptDetectedValue(detectedValue)
-        } catch {
-            lastFailureMessage = error.localizedDescription
-            publishDiagnostics(force: false)
+
+            guard region.targetWidth > 0, region.targetHeight > 0 else {
+                lastDecodeFailure = "\(attempt.label): crop was empty."
+                continue
+            }
+
+            let rawLumaData = extractLumaCrop(
+                lumaBase: lumaBase,
+                lumaBytesPerRow: lumaBytesPerRow,
+                region: region
+            )
+            let decodeVariants = makeDecodeVariants(from: rawLumaData)
+
+            for variant in decodeVariants {
+                do {
+                    let detectedValue = try lumaTransformer(
+                        variant.data,
+                        UInt32(region.targetWidth),
+                        UInt32(region.targetHeight)
+                    )
+                    acceptDetectedValue(detectedValue)
+                    return
+                } catch {
+                    lastDecodeFailure =
+                        "\(attempt.label), \(variant.label): \(error.localizedDescription)"
+                }
+            }
         }
+
+        lastFailureMessage = lastDecodeFailure
+        publishDiagnostics(force: false)
     }
 
-    private nonisolated func detectedCropRect(
+    private nonisolated func makeDecodeAttempts(
         pixelBuffer: CVPixelBuffer,
         lumaWidth: Int,
         lumaHeight: Int
-    ) -> CGRect? {
+    ) -> [LumaDecodeAttempt] {
+        let contourAttempts = detectedCropRects(
+            pixelBuffer: pixelBuffer,
+            lumaWidth: lumaWidth,
+            lumaHeight: lumaHeight
+        )
+            .prefix(RealtimeOrbScannerMetrics.candidateDecodeAttemptLimit)
+            .enumerated()
+            .flatMap { index, candidateRect in
+                RealtimeOrbScannerMetrics.candidatePaddingFractions.map { paddingFraction in
+                    LumaDecodeAttempt(
+                        label:
+                            "Contour crop \(index + 1) (\(Int((paddingFraction * 100).rounded()))% padding)",
+                        cropRect: paddedSquareCropRect(
+                            around: candidateRect,
+                            lumaWidth: CGFloat(lumaWidth),
+                            lumaHeight: CGFloat(lumaHeight),
+                            paddingFraction: paddingFraction
+                        )
+                    )
+                }
+            }
+
+        let fallbackAttempts = RealtimeOrbScannerMetrics.fallbackCenterCropFractions.map { fraction in
+            LumaDecodeAttempt(
+                label: "Center crop \(Int((fraction * 100).rounded()))%",
+                cropRect: fallbackCenterCropRect(
+                    lumaWidth: lumaWidth,
+                    lumaHeight: lumaHeight,
+                    fraction: fraction
+                )
+            )
+        }
+
+        return contourAttempts + fallbackAttempts
+    }
+
+    private nonisolated func detectedCropRects(
+        pixelBuffer: CVPixelBuffer,
+        lumaWidth: Int,
+        lumaHeight: Int
+    ) -> [CGRect] {
         let request = VNDetectContoursRequest()
         request.contrastAdjustment = RealtimeOrbScannerMetrics.visionContrastAdjustment
         request.detectsDarkOnLight = true
@@ -618,21 +674,21 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
             height: RealtimeOrbScannerMetrics.visionRegionOfInterestFraction
         )
 
-        // .right because the capture connection has no rotation at the sample level in
-        // this pixel format; the UI is portrait, so the raw frame is landscape-right.
+        // The capture connection is already rotated into portrait for the live preview,
+        // so Vision should inspect the frame in its upright orientation here.
         let handler = VNImageRequestHandler(
             cvPixelBuffer: pixelBuffer,
-            orientation: .right,
+            orientation: .up,
             options: [:]
         )
         do {
             try handler.perform([request])
         } catch {
-            return nil
+            return []
         }
 
         guard let observation = request.results?.first else {
-            return nil
+            return []
         }
 
         let width = CGFloat(lumaWidth)
@@ -642,8 +698,7 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         let minimumPixelArea = roiPixelArea * RealtimeOrbScannerMetrics.candidateMinimumAreaFractionOfROI
         let maximumPixelArea = roiPixelArea * RealtimeOrbScannerMetrics.candidateMaximumAreaFractionOfROI
 
-        var bestCandidateRect: CGRect?
-        var bestCandidateArea: CGFloat = 0
+        var candidateRects: [(rect: CGRect, area: CGFloat)] = []
 
         for contour in observation.topLevelContours {
             let normalizedRect = contour.normalizedPath.boundingBox
@@ -670,21 +725,16 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
                 continue
             }
 
-            if pixelArea > bestCandidateArea {
-                bestCandidateArea = pixelArea
-                bestCandidateRect = pixelRect
+            candidateRects.append((pixelRect, pixelArea))
+        }
+
+        return candidateRects
+            .sorted { left, right in
+                left.area > right.area
             }
-        }
-
-        guard let bestCandidateRect else {
-            return nil
-        }
-
-        return paddedSquareCropRect(
-            around: bestCandidateRect,
-            lumaWidth: width,
-            lumaHeight: height
-        )
+            .map { candidate in
+                candidate.rect
+            }
     }
 
     private nonisolated static func pixelRect(
@@ -704,10 +754,11 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
     private nonisolated func paddedSquareCropRect(
         around candidateRect: CGRect,
         lumaWidth: CGFloat,
-        lumaHeight: CGFloat
+        lumaHeight: CGFloat,
+        paddingFraction: CGFloat
     ) -> CGRect {
         let longerEdge = max(candidateRect.width, candidateRect.height)
-        let paddedEdge = longerEdge * (1 + RealtimeOrbScannerMetrics.candidatePaddingFraction * 2)
+        let paddedEdge = longerEdge * (1 + paddingFraction * 2)
         let centerX = candidateRect.midX
         let centerY = candidateRect.midY
 
@@ -722,10 +773,14 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         return CGRect(x: originX, y: originY, width: edge, height: edge)
     }
 
-    private nonisolated func fallbackCenterCropRect(lumaWidth: Int, lumaHeight: Int) -> CGRect {
+    private nonisolated func fallbackCenterCropRect(
+        lumaWidth: Int,
+        lumaHeight: Int,
+        fraction: CGFloat
+    ) -> CGRect {
         let width = CGFloat(lumaWidth)
         let height = CGFloat(lumaHeight)
-        let edge = min(width, height) * RealtimeOrbScannerMetrics.fallbackCenterCropFraction
+        let edge = min(width, height) * fraction
         let originX = (width - edge) * 0.5
         let originY = (height - edge) * 0.5
         return CGRect(x: originX, y: originY, width: edge, height: edge)
@@ -796,6 +851,34 @@ extension LiveOrbCameraViewController: AVCaptureVideoDataOutputSampleBufferDeleg
         }
 
         return output
+    }
+
+    private nonisolated func makeDecodeVariants(from lumaData: Data) -> [(label: String, data: Data)] {
+        var variants = [(label: String, data: Data)]()
+        variants.append((label: "raw", data: lumaData))
+
+        if let stretched = contrastStretchedLumaData(from: lumaData) {
+            variants.append((label: "contrast", data: stretched))
+        }
+
+        return variants
+    }
+
+    private nonisolated func contrastStretchedLumaData(from lumaData: Data) -> Data? {
+        guard
+            let minimumValue = lumaData.min(),
+            let maximumValue = lumaData.max(),
+            maximumValue > minimumValue
+        else {
+            return nil
+        }
+
+        let inputRange = Float(maximumValue - minimumValue)
+        return Data(lumaData.map { sample in
+            let normalized = (Float(sample) - Float(minimumValue)) / inputRange
+            let stretched = min(max(normalized, 0), 1) * 255
+            return UInt8(stretched.rounded())
+        })
     }
 }
 

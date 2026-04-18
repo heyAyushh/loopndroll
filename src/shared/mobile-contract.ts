@@ -32,6 +32,29 @@ export type MobileCompletionCheck = {
   commandCount: number;
 };
 
+export type MobilePushEnvironment = "development" | "production";
+export type MobilePushRegistrationState = "enabled" | "stored-awaiting-provider";
+
+export type MobilePushRegistrationRequest = {
+  installationId: string;
+  deviceToken: string;
+  bundleId: string;
+  environment: MobilePushEnvironment;
+  deviceName?: string | null;
+};
+
+export type MobilePushRegistrationResponse = {
+  state: MobilePushRegistrationState;
+  environment: MobilePushEnvironment;
+  registeredAt: string;
+  message: string;
+};
+
+export type MobilePushTestResponse = {
+  delivered: boolean;
+  message: string;
+};
+
 export type MobileSessionSummary = {
   id: string;
   ref: string;

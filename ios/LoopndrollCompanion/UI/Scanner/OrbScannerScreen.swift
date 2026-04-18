@@ -5,8 +5,6 @@ import UIKit
 import UniformTypeIdentifiers
 
 private enum OrbScannerMetrics {
-    static let chromeButtonSize: CGFloat = 44
-    static let overlayPadding: CGFloat = 16
     static let sheetOpenFraction = 0.42
 }
 
@@ -101,7 +99,7 @@ private enum OrbScannerFeedbackState {
         case .detected:
             return .green
         case .failed:
-            return .orange
+            return .red
         }
     }
 }
@@ -171,24 +169,42 @@ struct OrbScannerScreen: View {
     }()
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            cameraPreview
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                cameraPreview
 
-            if case let .unavailable(message) = cameraAvailability {
-                ContentUnavailableView(
-                    "Camera Unavailable",
-                    systemImage: "camera.fill.badge.xmark",
-                    description: Text(message)
-                )
-                .foregroundStyle(.white)
-                .padding(24)
+                if case let .unavailable(message) = cameraAvailability {
+                    ContentUnavailableView(
+                        "Camera Unavailable",
+                        systemImage: "camera.fill.badge.xmark",
+                        description: Text(message)
+                    )
+                    .foregroundStyle(.white)
+                    .padding(24)
+                }
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            topBar
-                .padding(.horizontal, OrbScannerMetrics.overlayPadding)
-                .padding(.top, 8)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .accessibilityLabel("Close scanner")
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        openControlsSheet()
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .accessibilityLabel("Scanner controls")
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .sheet(isPresented: $isControlsSheetPresented) {
             scannerControlsSheet
@@ -218,21 +234,6 @@ struct OrbScannerScreen: View {
         }
     }
 
-    private var topBar: some View {
-        HStack {
-            scannerChromeButton(systemImage: "xmark") {
-                dismiss()
-            }
-
-            Spacer()
-
-            scannerChromeButton(systemImage: "slider.horizontal.3") {
-                openControlsSheet()
-            }
-            .accessibilityLabel("Scanner controls")
-        }
-    }
-
     private var cameraPreview: some View {
         ZStack {
             LiveOrbCameraScannerView(
@@ -253,10 +254,10 @@ struct OrbScannerScreen: View {
 
             if isProcessing {
                 ProgressView("Checking Orb")
-                    .tint(.white)
+                    .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(.black.opacity(0.6), in: Capsule())
+                    .background(.regularMaterial, in: Capsule())
             }
         }
         .ignoresSafeArea()
@@ -264,30 +265,30 @@ struct OrbScannerScreen: View {
 
     private var scannerStatusMessage: String {
         if isProcessing {
-            return "The camera found an orb and is saving the first valid hit."
+            return "Checking the first match."
         }
 
         if isLiveScanningEnabled {
-            return "Point the camera at the orb on your Mac. Looper stops on the first valid orb_id."
+            return "Aim at the orb on your Mac."
         }
 
         if let scanReport {
-            return "Decoded \(scanReport.orbID). Resume when you want to scan again."
+            return "Decoded \(scanReport.orbID)."
         }
 
-        return "Point the camera at the orb on another screen."
+        return "Aim at the orb."
     }
 
     private var scannerGuidanceMessage: String? {
         if isProcessing {
-            return "Hold steady. Looper stops as soon as the first real orb is accepted."
+            return "Hold steady until it confirms."
         }
 
         guard isLiveScanningEnabled else {
             return nil
         }
 
-        return "Keep the orb near the center and let it fill most of the frame. You can also add the code directly below."
+        return "Center the orb in the frame, or paste the code below."
     }
 
     private var feedbackState: OrbScannerFeedbackState {
@@ -329,7 +330,7 @@ struct OrbScannerScreen: View {
         case .ready:
             return .green
         case .unavailable:
-            return .orange
+            return .red
         }
     }
 
@@ -374,7 +375,7 @@ struct OrbScannerScreen: View {
                 title: "Scan Failed",
                 message: errorMessage,
                 systemImage: "exclamationmark.triangle.fill",
-                tint: .orange
+                tint: .red
             )
         } else if let scanReport {
             scannerBanner(
@@ -383,7 +384,7 @@ struct OrbScannerScreen: View {
                 systemImage: scanReportNeedsAttention(scanReport)
                     ? "exclamationmark.triangle.fill"
                     : "checkmark.circle.fill",
-                tint: scanReportNeedsAttention(scanReport) ? .orange : .green
+                tint: scanReportNeedsAttention(scanReport) ? .red : .green
             )
         }
     }
@@ -659,19 +660,6 @@ struct OrbScannerScreen: View {
         }
     }
 
-    private func scannerChromeButton(systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(
-                    width: OrbScannerMetrics.chromeButtonSize,
-                    height: OrbScannerMetrics.chromeButtonSize
-                )
-                .background(.regularMaterial, in: Circle())
-        }
-        .buttonStyle(.plain)
-    }
-
     private func handleCameraAvailabilityChange(_ availability: LiveOrbCameraAvailability) {
         cameraAvailability = availability
     }
@@ -694,9 +682,7 @@ struct OrbScannerScreen: View {
         isProcessing = false
         isControlsSheetPresented = true
 
-        if report.expectationMatches == false {
-            Haptics.warning()
-        } else {
+        if report.expectationMatches != false {
             Haptics.success()
         }
     }
@@ -726,14 +712,12 @@ struct OrbScannerScreen: View {
                         errorMessage = error.localizedDescription
                         isProcessing = false
                         isControlsSheetPresented = true
-                        Haptics.error()
                     }
                 }
             }
         case let .failure(error):
             errorMessage = error.localizedDescription
             isControlsSheetPresented = true
-            Haptics.error()
         }
     }
 
@@ -743,7 +727,6 @@ struct OrbScannerScreen: View {
                 await MainActor.run {
                     errorMessage = "The selected image could not be loaded."
                     isControlsSheetPresented = true
-                    Haptics.error()
                     selectedPhotoItem = nil
                 }
                 return
@@ -761,7 +744,6 @@ struct OrbScannerScreen: View {
             await MainActor.run {
                 errorMessage = error.localizedDescription
                 isControlsSheetPresented = true
-                Haptics.error()
                 selectedPhotoItem = nil
             }
         }
@@ -776,7 +758,6 @@ struct OrbScannerScreen: View {
             errorMessage = missingDataMessage
             isProcessing = false
             isControlsSheetPresented = true
-            Haptics.error()
             return
         }
 
@@ -796,9 +777,7 @@ struct OrbScannerScreen: View {
                     isProcessing = false
                     isControlsSheetPresented = true
 
-                    if Self.scanReportNeedsAttention(report) {
-                        Haptics.warning()
-                    } else {
+                    if !Self.scanReportNeedsAttention(report) {
                         Haptics.success()
                     }
                 }
@@ -807,7 +786,6 @@ struct OrbScannerScreen: View {
                     errorMessage = error.localizedDescription
                     isProcessing = false
                     isControlsSheetPresented = true
-                    Haptics.error()
                 }
             }
         }
@@ -955,7 +933,7 @@ struct OrbScannerScreen: View {
         case .imageVerified, .imageRecovered, .livePayloadAccepted:
             return .green
         case .failed:
-            return .orange
+            return .red
         }
     }
 
@@ -964,7 +942,7 @@ struct OrbScannerScreen: View {
         case .some(true):
             return .green
         case .some(false):
-            return .orange
+            return .red
         case .none:
             return .secondary
         }

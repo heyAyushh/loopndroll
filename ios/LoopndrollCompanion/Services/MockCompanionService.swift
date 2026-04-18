@@ -3,6 +3,12 @@ import Foundation
 actor MockCompanionStore {
     var snapshot = PreviewFixtures.snapshot
     var details = PreviewFixtures.sessionDetails
+    var remotePushRegistration = RemotePushRegistrationResponse(
+        state: .enabled,
+        environment: .development,
+        registeredAt: Date().ISO8601Format(),
+        message: "Remote push is ready on this Mac."
+    )
 
     func sessionDetail(id: String) -> SessionDetail {
         details[id] ?? details.values.first ?? SessionDetail(
@@ -82,6 +88,22 @@ actor MockCompanionStore {
         snapshot.globalSettings.defaultPrompt = prompt
         return snapshot
     }
+
+    func registerPushDevice(
+        _ request: RemotePushRegistrationRequest
+    ) -> RemotePushRegistrationResponse {
+        remotePushRegistration = RemotePushRegistrationResponse(
+            state: .enabled,
+            environment: request.environment,
+            registeredAt: Date().ISO8601Format(),
+            message: "Remote push is ready on this Mac."
+        )
+        return remotePushRegistration
+    }
+
+    func sendTestPush() -> RemotePushTestResponse {
+        RemotePushTestResponse(delivered: true, message: "Test push sent.")
+    }
 }
 
 struct MockCompanionService: CompanionService {
@@ -109,5 +131,15 @@ struct MockCompanionService: CompanionService {
 
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot {
         await store.savePrompt(prompt)
+    }
+
+    func registerPushDevice(
+        _ request: RemotePushRegistrationRequest
+    ) async throws -> RemotePushRegistrationResponse {
+        await store.registerPushDevice(request)
+    }
+
+    func sendTestPush(installationID _: String) async throws -> RemotePushTestResponse {
+        await store.sendTestPush()
     }
 }

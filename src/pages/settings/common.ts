@@ -23,7 +23,11 @@ export const notificationSchema = z
   .superRefine((values, context) => {
     if (values.channel === "slack") {
       if (values.webhookUrl.trim().length === 0) {
-        context.addIssue({ code: "custom", message: "Webhook URL is required.", path: ["webhookUrl"] });
+        context.addIssue({
+          code: "custom",
+          message: "Webhook URL is required.",
+          path: ["webhookUrl"],
+        });
         return;
       }
 
@@ -159,10 +163,7 @@ export function parseCommandsText(commandsText: string) {
     .filter((line) => line.length > 0);
 }
 
-export async function handleExternalLinkClick(
-  event: MouseEvent<HTMLAnchorElement>,
-  url: string,
-) {
+export async function handleExternalLinkClick(event: MouseEvent<HTMLAnchorElement>, url: string) {
   event.preventDefault();
 
   const opened = await openExternalUrl(url);

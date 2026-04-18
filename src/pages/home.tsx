@@ -17,7 +17,9 @@ export function HomeRoute() {
           Get notified and reply in Telegram.
         </h1>
 
-        {model.errorMessage ? <p className="text-sm text-destructive">{model.errorMessage}</p> : null}
+        {model.errorMessage ? (
+          <p className="text-sm text-destructive">{model.errorMessage}</p>
+        ) : null}
 
         <div className="-mx-16 min-h-0 min-w-0 flex-1 pb-10">
           <div className="flex min-h-full min-w-0 flex-col gap-6 px-16 pt-6">

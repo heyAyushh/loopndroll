@@ -4,23 +4,48 @@ struct SessionDetailScreen: View {
     let model: CompanionAppModel
     let session: SessionSummary
 
+    @Environment(\.dismiss) private var dismiss
     @State private var showingDeleteConfirmation = false
 
     private var detail: SessionDetail? {
         model.detail(for: session.id)
     }
 
+    private var currentStatus: SessionStatus {
+        detail?.status ?? session.status
+    }
+
+    private var currentMode: SessionMode? {
+        detail?.effectiveMode ?? session.effectiveMode
+    }
+
+    private var currentMessage: String? {
+        detail?.latestAssistantMessage ?? session.assistantPreview
+    }
+
+    private var availableNotifications: [NotificationDestination] {
+        detail?.availableNotifications ?? model.snapshot?.notifications ?? []
+    }
+
+    private var selectedCompletionCheck: CompletionCheckSummary? {
+        detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })
+    }
+
     var body: some View {
-        List {
-            headerSection
+        Form {
+            summarySection
             modeSection
-            attachmentsSection
-            destructiveSection
+            notificationsSection
+            completionCheckSection
+            manageSection
         }
         .navigationTitle(session.ref)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await model.loadSessionDetail(id: session.id)
+            await model.refreshSessionDetail(id: session.id)
+        }
+        .refreshable {
+            await model.refreshSessionDetail(id: session.id)
         }
         .confirmationDialog(
             "Delete Session",
@@ -28,125 +53,164 @@ struct SessionDetailScreen: View {
             titleVisibility: .visible
         ) {
             Button("Delete Session", role: .destructive) {
-                Haptics.warning()
                 Task {
                     await model.deleteSession(session.id)
+                    dismiss()
                 }
             }
         } message: {
-            Text("This removes the session from the Loopndroll list on Mac and iPhone.")
+            Text("This removes the session from the looper list on Mac and iPhone.")
         }
     }
 
-    private var headerSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(session.title)
-                    .font(.title3.weight(.semibold))
-                HStack {
-                    StatusPill(text: detail?.status.label ?? session.status.label, tint: tint(for: detail?.status ?? session.status))
-                    StatusPill(text: ModelFormatting.friendlyMode(detail?.effectiveMode ?? session.effectiveMode), tint: .blue)
-                }
-                if let message = detail?.latestAssistantMessage ?? session.assistantPreview {
-                    Text(message)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Updated \(ModelFormatting.relativeTimestamp(detail?.lastUpdatedAt ?? session.lastUpdatedAt))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+    private var summarySection: some View {
+        Section("Summary") {
+            LabeledContent("Title", value: session.title)
+            LabeledContent("Status", value: currentStatus.label)
+            LabeledContent("Updated") {
+                Text(ModelFormatting.relativeTimestamp(detail?.lastUpdatedAt ?? session.lastUpdatedAt))
             }
-            .padding(.vertical, 8)
+            LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
+
+            if let currentMessage, !currentMessage.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Latest Assistant Reply")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Text(currentMessage)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                .padding(.vertical, 4)
+            }
         }
     }
 
     private var modeSection: some View {
-        Section("Mode") {
+        Section {
             ForEach(SessionMode.allCases, id: \.rawValue) { mode in
                 Button {
                     Task {
                         await model.applyMode(mode, to: session.id)
                     }
                 } label: {
-                    HStack {
-                        Text(mode.label)
+                    HStack(spacing: 12) {
+                        Label(mode.label, systemImage: mode.symbolName)
+                            .foregroundStyle(.primary)
+
                         Spacer()
-                        if (detail?.effectiveMode ?? session.effectiveMode) == mode {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.blue)
+
+                        if currentMode == mode {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
                         }
                     }
                 }
             }
 
-            Button("Turn Off Mode") {
+            Button {
                 Task {
                     await model.applyMode(nil, to: session.id)
                 }
+            } label: {
+                HStack {
+                    Label("Use Global Default", systemImage: "dial.low")
+                    Spacer()
+                    if currentMode == nil {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
             }
+        } header: {
+            Text("Mode")
+        } footer: {
+            Text(currentMode?.summary ?? "This session follows the global Looper default.")
         }
     }
 
-    private var attachmentsSection: some View {
-        Section("Attachments") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Notifications")
-                    .font(.subheadline.weight(.semibold))
-                ForEach(detail?.availableNotifications ?? model.snapshot?.notifications ?? [], id: \.id) { notification in
-                    HStack {
-                        Text(notification.label)
+    private var notificationsSection: some View {
+        Section("Notification Routes") {
+            if availableNotifications.isEmpty {
+                Text("No notification routes configured on the Mac.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(availableNotifications) { notification in
+                    HStack(spacing: 12) {
+                        Label(notification.label, systemImage: channelSymbolName(notification.channel))
+                            .foregroundStyle(.primary)
+
                         Spacer()
+
                         if detail?.notificationIds.contains(notification.id) == true {
                             Image(systemName: "checkmark")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.tint)
+                        } else {
+                            Text(notification.channel.capitalized)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Completion Check")
-                    .font(.subheadline.weight(.semibold))
-                Text(
-                    detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })?.label
-                        ?? "No completion check attached"
+    private var completionCheckSection: some View {
+        Section("Completion Check") {
+            if let selectedCompletionCheck {
+                LabeledContent("Rule", value: selectedCompletionCheck.label)
+                LabeledContent(
+                    "Reply Requirement",
+                    value: detail?.completionCheckWaitForReply == true
+                        ? "Waits for reply"
+                        : "Ready immediately"
                 )
-                .foregroundStyle(.secondary)
-                if detail?.completionCheckWaitForReply == true {
-                    Label("Waits for reply after checks", systemImage: "bubble.left.and.bubble.right")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+            } else {
+                Text("No completion check attached to this session.")
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var destructiveSection: some View {
-        Section("Manage Session") {
-            Button((detail?.isArchived ?? session.isArchived) ? "Unarchive Session" : "Archive Session") {
-                Haptics.warning()
+    private var manageSection: some View {
+        Section {
+            Button {
                 Task {
-                    await model.setSessionArchived(!(detail?.isArchived ?? session.isArchived), sessionID: session.id)
+                    await model.setSessionArchived(
+                        !(detail?.isArchived ?? session.isArchived),
+                        sessionID: session.id
+                    )
                 }
+            } label: {
+                Label(
+                    (detail?.isArchived ?? session.isArchived)
+                        ? "Unarchive Session"
+                        : "Archive Session",
+                    systemImage: (detail?.isArchived ?? session.isArchived)
+                        ? "tray.and.arrow.up"
+                        : "archivebox"
+                )
             }
-            .foregroundStyle(.orange)
 
             Button("Delete Session", role: .destructive) {
                 showingDeleteConfirmation = true
             }
+        } header: {
+            Text("Manage")
+        } footer: {
+            Text("Archive keeps the history. Delete removes the session from the Mac and this iPhone.")
         }
     }
 
-    private func tint(for status: SessionStatus) -> Color {
-        switch status {
-        case .active:
-            return .green
-        case .waiting:
-            return .orange
-        case .stopped:
-            return .blue
-        case .archived:
-            return .gray
+    private func channelSymbolName(_ channel: String) -> String {
+        switch channel.lowercased() {
+        case "telegram":
+            return "paperplane"
+        case "slack":
+            return "bubble.left.and.bubble.right"
+        default:
+            return "bell"
         }
     }
 }

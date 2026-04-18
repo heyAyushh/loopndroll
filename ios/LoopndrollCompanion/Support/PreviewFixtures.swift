@@ -31,7 +31,7 @@ enum PreviewFixtures {
             SessionSummary(
                 id: "session-1",
                 ref: "C22",
-                title: "Make an iOS app for Loopndroll",
+                title: "Make an iOS app for looper",
                 status: .active,
                 effectiveMode: .infinite,
                 lastUpdatedAt: Date().addingTimeInterval(-180).ISO8601Format(),
@@ -77,12 +77,12 @@ enum PreviewFixtures {
         "session-1": SessionDetail(
             id: "session-1",
             ref: "C22",
-            title: "Make an iOS app for Loopndroll",
+                title: "Make an iOS app for looper",
             status: .active,
             effectiveMode: .infinite,
             lastUpdatedAt: Date().addingTimeInterval(-180).ISO8601Format(),
             assistantPreview: "I’ve scaffolded the iPhone companion app and I’m wiring the simulator data source now.",
-            latestAssistantMessage: "I’ve scaffolded the iPhone companion app and I’m wiring the simulator data source now. Next I’m finishing the session detail view and the Bun dev API so the simulator can show real Loopndroll-shaped state.",
+            latestAssistantMessage: "I’ve scaffolded the iPhone app and I’m wiring the simulator data source now. Next I’m finishing the session detail view and the Bun dev API so the simulator can show real looper-shaped state.",
             isArchived: false,
             notificationIds: ["telegram-main"],
             completionCheckID: "check-1",

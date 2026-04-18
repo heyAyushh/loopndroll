@@ -13,3 +13,27 @@ DerivedData
 *.xcuserstate
 *.xcworkspace/xcuserdata
 *.xcodeproj/xcuserdata
+**/xcuserdata/
+
+# Rust (workspace + nested crates)
+/target
+crates/**/target/
+rust/**/target/
+src-tauri/target/
+
+# SwiftPM / local Xcode output
+**/.swiftpm/
+ios/OrbCodeKit/.build/
+ios/build-device/
+
+# Generated companion assets / local agent trees
+docs/generated-orbs/
+.superpowers/
+.claude/
+
+# Ad-hoc backup copies of crates (timestamped)
+**/*qr-backup*/
+
+# Stray hashed bundles at repo root (build / tooling drops)
+/main-*.js
+/main-*.js.map

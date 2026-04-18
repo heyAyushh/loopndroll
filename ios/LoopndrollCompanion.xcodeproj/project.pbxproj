@@ -22,7 +22,6 @@
 		79708679632C752640DC4259 /* CompanionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C7C79B50DA46B1A1B66035 /* CompanionTheme.swift */; };
 		99062AC34AB87033EBE8373A /* LiveOrbCameraScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */; };
 		B451D64B93148606F636F6A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ACB30BF382DD4232DEDF9A2A /* Assets.xcassets */; };
-		B5E67E3261F4C05BE4B0383C /* CompanionChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842E2665BF1ABD8E38727C29 /* CompanionChrome.swift */; };
 		B91E954053D8C339A13C5705 /* LoopndrollCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D194C78858D5127D347F0235 /* LoopndrollCompanionApp.swift */; };
 		BDE73A1AECD84A105E08E5C5 /* RemotePushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC05ED83E08BF42EE898EE0B /* RemotePushRegistrar.swift */; };
 		C5AE2AFB2DB3CEC5E9B73E7B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BBE93C4ADA07F40857EC3295 /* Preview Assets.xcassets */; };
@@ -52,7 +51,6 @@
 		6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOrbCameraScannerView.swift; sourceTree = "<group>"; };
 		7BA8E570172CAE5483761091 /* OrbCodeKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OrbCodeKit; path = OrbCodeKit; sourceTree = SOURCE_ROOT; };
 		7F07D1890E91E59E9D8408F9 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
-		842E2665BF1ABD8E38727C29 /* CompanionChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionChrome.swift; sourceTree = "<group>"; };
 		8AB1BBCAB9F8A9E7C166AD2C /* PreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewFixtures.swift; sourceTree = "<group>"; };
 		8BB0641B93E66C2FA6B436C1 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		90A61C3B0891C16E58EB405A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
@@ -189,7 +187,6 @@
 		ACA5D55864494AEFE4AA0F56 /* Common */ = {
 			isa = PBXGroup;
 			children = (
-				842E2665BF1ABD8E38727C29 /* CompanionChrome.swift */,
 				27090D8EB380FAE7ABB762D1 /* StatusPill.swift */,
 			);
 			path = Common;
@@ -252,6 +249,7 @@
 				13FC7D4995BFDC86468C3F2E /* Sources */,
 				160761AC7030DFE5BC5E363D /* Resources */,
 				D431067383E7DF3F6A73B4E7 /* Frameworks */,
+				5A6B7C8D9E0F102132435465 /* Stamp Build Metadata */,
 			);
 			buildRules = (
 			);
@@ -315,6 +313,25 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		5A6B7C8D9E0F102132435465 /* Stamp Build Metadata */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp Build Metadata";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/looper-build-metadata.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nINFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nREPO_ROOT=\"$(cd \"${PROJECT_DIR}/..\" && pwd)\"\nBRANCH_NAME=\"\"\nif command -v git >/dev/null 2>&1; then\n  BRANCH_NAME=\"$(git -C \"${REPO_ROOT}\" branch --show-current 2>/dev/null || true)\"\n  if [ -z \"${BRANCH_NAME}\" ]; then\n    BRANCH_NAME=\"$(git -C \"${REPO_ROOT}\" rev-parse --short HEAD 2>/dev/null || true)\"\n  fi\nfi\nRELEASE_CHANNEL=\"${LOOPER_RELEASE_CHANNEL:-}\"\n/usr/bin/plutil -remove LOOPER_RELEASE_CHANNEL \"${INFO_PLIST}\" 2>/dev/null || true\n/usr/bin/plutil -remove LOOPER_BUILD_BRANCH \"${INFO_PLIST}\" 2>/dev/null || true\nif [ -n \"${RELEASE_CHANNEL}\" ]; then\n  /usr/bin/plutil -replace LOOPER_RELEASE_CHANNEL -string \"${RELEASE_CHANNEL}\" \"${INFO_PLIST}\"\nfi\nif [ -n \"${BRANCH_NAME}\" ]; then\n  /usr/bin/plutil -replace LOOPER_BUILD_BRANCH -string \"${BRANCH_NAME}\" \"${INFO_PLIST}\"\nfi\ntouch \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		13FC7D4995BFDC86468C3F2E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -322,7 +339,6 @@
 			files = (
 				3A862790609B7E6774673564 /* AppIconManager.swift in Sources */,
 				F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */,
-				B5E67E3261F4C05BE4B0383C /* CompanionChrome.swift in Sources */,
 				4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */,
 				7319ECE52ED3F7FB1F628DB7 /* CompanionEnvironment.swift in Sources */,
 				FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */,
@@ -483,6 +499,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LOOPER_RELEASE_CHANNEL = "";
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = Looper;
@@ -508,6 +525,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LOOPER_RELEASE_CHANNEL = "";
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = Looper;

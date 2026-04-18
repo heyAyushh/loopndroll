@@ -7,4 +7,6 @@ protocol CompanionService: Sendable {
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot
     func deleteSession(id: String) async throws -> MobileSnapshot
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot
+    func registerPushDevice(_ request: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse
+    func sendTestPush(installationID: String) async throws -> RemotePushTestResponse
 }

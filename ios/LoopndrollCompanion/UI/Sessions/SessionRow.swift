@@ -4,29 +4,21 @@ struct SessionRow: View {
     let session: SessionSummary
 
     private var tint: Color {
-        switch session.status {
-        case .active:
-            return .green
-        case .waiting:
-            return .orange
-        case .stopped:
-            return .blue
-        case .archived:
-            return .gray
-        }
+        CompanionTint.tint(for: session.status)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(session.ref)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+
                     Text(session.title)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
                 }
 
                 Spacer(minLength: 12)
@@ -41,15 +33,21 @@ struct SessionRow: View {
                     .lineLimit(2)
             }
 
-            HStack {
-                Label(ModelFormatting.friendlyMode(session.effectiveMode), systemImage: "waveform.path.ecg")
-                Spacer()
-                Text(ModelFormatting.relativeTimestamp(session.lastUpdatedAt))
+            HStack(spacing: 12) {
+                Label(
+                    ModelFormatting.friendlyMode(session.effectiveMode),
+                    systemImage: session.effectiveMode?.symbolName ?? "dial.low"
+                )
+
+                Label(
+                    ModelFormatting.relativeTimestamp(session.lastUpdatedAt),
+                    systemImage: "clock"
+                )
             }
-            .font(.caption)
+            .font(.footnote)
             .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
-        .padding(16)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.vertical, 4)
     }
 }

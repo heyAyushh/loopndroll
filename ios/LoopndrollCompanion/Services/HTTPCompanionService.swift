@@ -39,6 +39,30 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
+    func registerPushDevice(
+        _ requestPayload: RemotePushRegistrationRequest
+    ) async throws -> RemotePushRegistrationResponse {
+        try await request(
+            path: "/api/mobile/push/register",
+            method: "POST",
+            body: [
+                "installationId": requestPayload.installationId,
+                "deviceToken": requestPayload.deviceToken,
+                "bundleId": requestPayload.bundleId,
+                "environment": requestPayload.environment.rawValue,
+                "deviceName": requestPayload.deviceName ?? NSNull()
+            ]
+        )
+    }
+
+    func sendTestPush(installationID: String) async throws -> RemotePushTestResponse {
+        try await request(
+            path: "/api/mobile/push/test",
+            method: "POST",
+            body: ["installationId": installationID]
+        )
+    }
+
     private func request<Response: Decodable>(
         path: String,
         method: String,
@@ -74,7 +98,7 @@ enum HTTPCompanionServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "The Loopndroll API returned an invalid response."
+            return "The looper API returned an invalid response."
         case let .serverError(message):
             return message
         }

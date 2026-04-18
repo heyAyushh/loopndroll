@@ -156,16 +156,11 @@ export function ChatCard({
             footerClassName,
           )}
         >
-          <div className={cn("min-h-8 min-w-0", themedClasses?.footerText)}>
-            {footerStart}
-          </div>
+          <div className={cn("min-h-8 min-w-0", themedClasses?.footerText)}>{footerStart}</div>
           <Button
             aria-pressed={isRunning}
             onClick={onAction}
-            className={cn(
-              "w-20 gap-1.5",
-              themedClasses?.button,
-            )}
+            className={cn("w-20 gap-1.5", themedClasses?.button)}
             size="sm"
             type="button"
             variant="outline"
