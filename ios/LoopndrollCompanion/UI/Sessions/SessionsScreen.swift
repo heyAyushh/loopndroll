@@ -421,8 +421,9 @@ struct SessionSearchScreen: View {
                 text: $searchText,
                 isPresented: $isSearchPresentationPresented,
                 placement: .automatic,
-                prompt: "Search sessions, settings, and commands"
+                prompt: String(localized: "Sessions, settings, or actions")
             )
+            .searchPresentationToolbarBehavior(.automatic)
             .searchScopes($selectedScope) {
                 ForEach(SessionSearchScope.allCases) { scope in
                     Text(scope.title).tag(scope)

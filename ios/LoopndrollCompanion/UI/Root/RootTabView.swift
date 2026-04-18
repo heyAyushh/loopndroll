@@ -7,8 +7,9 @@ private enum RootLaunchArgument {
 
 private enum RootTab: Hashable {
     case sessions
-    case search
     case settings
+    /// Trailing tab; use `TabRole.search` so the tab bar follows system search-tab layout (HIG tab bars).
+    case search
 }
 
 struct RootTabView: View {
@@ -22,29 +23,24 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            SessionsScreen(
-                model: model,
-                openSettings: {
-                    select(.settings)
-                }
-            )
-            .tabItem {
-                Label("Sessions", systemImage: "message.badge.waveform")
+            Tab("Sessions", systemImage: "message.badge.waveform", value: RootTab.sessions) {
+                SessionsScreen(
+                    model: model,
+                    openSettings: {
+                        select(.settings)
+                    }
+                )
             }
-            .tag(RootTab.sessions)
 
-            SessionSearchScreen(model: model)
-                .tabItem {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                .tag(RootTab.search)
+            Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
+                SettingsScreen(model: model)
+            }
 
-            SettingsScreen(model: model)
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .tag(RootTab.settings)
+            Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
+                SessionSearchScreen(model: model)
+            }
         }
+        .modifier(TabViewSearchActivationWhenAvailable())
         .task(id: scenePhase) {
             await refreshForActiveSceneIfNeeded()
         }
@@ -95,6 +91,17 @@ struct RootTabView: View {
             }
 
             await model.refresh()
+        }
+    }
+}
+
+/// Links search-tab selection to search activation per Human Interface Guidelines / TabView search behavior.
+private struct TabViewSearchActivationWhenAvailable: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.tabViewSearchActivation(.searchTabSelection)
+        } else {
+            content
         }
     }
 }
