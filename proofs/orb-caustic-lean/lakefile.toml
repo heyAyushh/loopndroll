@@ -1,0 +1,6 @@
+name = "orb_caustic_proof"
+version = "0.1.0"
+defaultTargets = ["OrbCausticProof"]
+
+[[lean_lib]]
+name = "OrbCausticProof"

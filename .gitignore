@@ -3,6 +3,13 @@ dist
 build
 artifacts
 /scripts/lint-rule-guard/target
+/crates/orb-code/target
+/.build
+/ios/OrbCodeKit/.build
+/ios/OrbCodeKit/.swiftpm
+/.tools
+/.superpowers
+/docs/superpowers/plans
 .DS_Store
 *.log
 .env
