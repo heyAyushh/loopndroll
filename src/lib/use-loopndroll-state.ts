@@ -84,7 +84,7 @@ function useLoopndrollSnapshotState() {
         }
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "Failed to load Loopndroll.");
+          setErrorMessage(error instanceof Error ? error.message : "Failed to load looper.");
         }
       } finally {
         if (!cancelled) {
@@ -136,7 +136,7 @@ async function runLoopndrollMutation(
       setSnapshot(nextSnapshot);
     }
   } catch (error) {
-    setErrorMessage(error instanceof Error ? error.message : "Loopndroll update failed.");
+    setErrorMessage(error instanceof Error ? error.message : "looper update failed.");
     throw error;
   }
 }

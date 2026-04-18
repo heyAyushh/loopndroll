@@ -99,6 +99,26 @@ public enum OrbCodeKit {
         try scanOrbID(fromImageData: pngData)
     }
 
+    // Zero-copy fast path for live camera frames: the caller passes a tightly packed
+    // 8-bit luma buffer directly (e.g. plane 0 of a 420YpCbCr8BiPlanarFullRange pixel
+    // buffer), avoiding a PNG round-trip.
+    public static func scanOrbID(fromLuma8 data: Data, width: UInt32, height: UInt32) throws -> String {
+        try data.withUnsafeBytes { rawBuffer -> String in
+            guard let baseAddress = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                throw lastError()
+            }
+            let result = orb_code_scan_luma8(baseAddress, data.count, width, height)
+            guard let result else {
+                throw lastError()
+            }
+            defer { orb_code_string_free(result) }
+            guard let string = String(validatingCString: result) else {
+                throw OrbCodeError.invalidUtf8
+            }
+            return string
+        }
+    }
+
     public static func verifyOrb(fromImageData imageData: Data) throws -> Bool {
         try imageData.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
@@ -142,9 +162,21 @@ public extension OrbCodeKit {
         try verifyOrb(fromImageData: normalizedPNGData(from: image))
     }
 
-    private static func normalizedPNGData(from image: UIImage) throws -> Data {
+    static func normalizedPNGData(from image: UIImage) throws -> Data {
+        let normalizedImage = try normalizedImage(from: image)
+
+        guard let pngData = normalizedImage.pngData() else {
+            throw OrbCodeError.imageNormalizationFailed
+        }
+        return pngData
+    }
+
+    static func normalizedImage(from image: UIImage) throws -> UIImage {
         if image.imageOrientation == .up, let pngData = image.pngData() {
-            return pngData
+            guard let normalizedImage = UIImage(data: pngData) else {
+                throw OrbCodeError.imageNormalizationFailed
+            }
+            return normalizedImage
         }
 
         let pixelSize = CGSize(
@@ -159,10 +191,7 @@ public extension OrbCodeKit {
             image.draw(in: CGRect(origin: .zero, size: pixelSize))
         }
 
-        guard let pngData = normalizedImage.pngData() else {
-            throw OrbCodeError.imageNormalizationFailed
-        }
-        return pngData
+        return normalizedImage
     }
 }
 #endif

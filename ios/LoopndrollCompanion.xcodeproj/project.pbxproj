@@ -1,0 +1,576 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		04402A5F4CBCAB24EC1CF85D /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */; };
+		2060B9212C8393147583F274 /* SessionDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B28C3620F5179C2CD74F42 /* SessionDetailScreen.swift */; };
+		27C5B5314B8AF0DA5B351909 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AB1BBCAB9F8A9E7C166AD2C /* PreviewFixtures.swift */; };
+		3135120D2FEF1B3A5A4D4778 /* StatusPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27090D8EB380FAE7ABB762D1 /* StatusPill.swift */; };
+		3A37946B8D049E7B46C2C08B /* notification-orb.png in Resources */ = {isa = PBXBuildFile; fileRef = 90A61C3B0891C16E58EB405A /* notification-orb.png */; };
+		3A862790609B7E6774673564 /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2738F36D01E51884310D44F /* AppIconManager.swift */; };
+		3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B9F7B90CAECDB099E8C275 /* SettingsScreen.swift */; };
+		4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */; };
+		60ADCF28CAD17F0D01C772A1 /* SessionsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */; };
+		723AF7E60664C0BE7A817A4C /* OrbScannerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D59AD3E54E1967FA8D6A0C /* OrbScannerScreen.swift */; };
+		7319ECE52ED3F7FB1F628DB7 /* CompanionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46E9FFDFE6ED0B29141D4C5 /* CompanionEnvironment.swift */; };
+		786F0FFB6A1FD2BDECB646E7 /* OrbCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F55E748011ABC9C0B6002458 /* OrbCodeKit */; };
+		79708679632C752640DC4259 /* CompanionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C7C79B50DA46B1A1B66035 /* CompanionTheme.swift */; };
+		99062AC34AB87033EBE8373A /* LiveOrbCameraScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */; };
+		B451D64B93148606F636F6A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ACB30BF382DD4232DEDF9A2A /* Assets.xcassets */; };
+		B91E954053D8C339A13C5705 /* LoopndrollCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D194C78858D5127D347F0235 /* LoopndrollCompanionApp.swift */; };
+		BDE73A1AECD84A105E08E5C5 /* RemotePushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC05ED83E08BF42EE898EE0B /* RemotePushRegistrar.swift */; };
+		C5AE2AFB2DB3CEC5E9B73E7B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BBE93C4ADA07F40857EC3295 /* Preview Assets.xcassets */; };
+		CF1900E0D3E2428219D8B3B9 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB0641B93E66C2FA6B436C1 /* RootTabView.swift */; };
+		D4E448C07E9807FC401EB2EE /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A0DB6A4D7ED8241D84D181 /* SessionRow.swift */; };
+		DB83DD9E7055A2E07DA711B5 /* MockCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 427A64B51420A939220B6D2A /* MockCompanionService.swift */; };
+		E5C39DC104CF5AA6E2B39BD9 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43EDCDEDDF184185EA165151 /* LocalNotificationManager.swift */; };
+		EC6BC732FF42D670EF9217D7 /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6A173CAD2BAC9F2DD952752 /* SessionsDeviceHubSheet.swift */; };
+		ED2E52F74EAE73E52E44F8FB /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F07D1890E91E59E9D8408F9 /* Haptics.swift */; };
+		F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */; };
+		FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B6F97450DF16B9BDC1BB296 /* CompanionModels.swift */; };
+		FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3383A59BE6F2A3621442C5 /* CompanionService.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0E3383A59BE6F2A3621442C5 /* CompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionService.swift; sourceTree = "<group>"; };
+		0E8D19518C83B485A135322B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsScreen.swift; sourceTree = "<group>"; };
+		20D59AD3E54E1967FA8D6A0C /* OrbScannerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbScannerScreen.swift; sourceTree = "<group>"; };
+		26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppModel.swift; sourceTree = "<group>"; };
+		27090D8EB380FAE7ABB762D1 /* StatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPill.swift; sourceTree = "<group>"; };
+		2B6F97450DF16B9BDC1BB296 /* CompanionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionModels.swift; sourceTree = "<group>"; };
+		427A64B51420A939220B6D2A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
+		43EDCDEDDF184185EA165151 /* LocalNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNotificationManager.swift; sourceTree = "<group>"; };
+		48A0DB6A4D7ED8241D84D181 /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		5B10DC5F17DFDB44BE2510EE /* LoopndrollCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoopndrollCompanion.Release.entitlements; sourceTree = "<group>"; };
+		6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOrbCameraScannerView.swift; sourceTree = "<group>"; };
+		7BA8E570172CAE5483761091 /* OrbCodeKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OrbCodeKit; path = OrbCodeKit; sourceTree = SOURCE_ROOT; };
+		7F07D1890E91E59E9D8408F9 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
+		8AB1BBCAB9F8A9E7C166AD2C /* PreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewFixtures.swift; sourceTree = "<group>"; };
+		8BB0641B93E66C2FA6B436C1 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		90A61C3B0891C16E58EB405A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
+		A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPCompanionService.swift; sourceTree = "<group>"; };
+		A6A173CAD2BAC9F2DD952752 /* SessionsDeviceHubSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDeviceHubSheet.swift; sourceTree = "<group>"; };
+		AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConfiguration.swift; sourceTree = "<group>"; };
+		AC05ED83E08BF42EE898EE0B /* RemotePushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePushRegistrar.swift; sourceTree = "<group>"; };
+		ACB30BF382DD4232DEDF9A2A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BBE93C4ADA07F40857EC3295 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		C46E9FFDFE6ED0B29141D4C5 /* CompanionEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionEnvironment.swift; sourceTree = "<group>"; };
+		C9C7C79B50DA46B1A1B66035 /* CompanionTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionTheme.swift; sourceTree = "<group>"; };
+		D194C78858D5127D347F0235 /* LoopndrollCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopndrollCompanionApp.swift; sourceTree = "<group>"; };
+		D1B9F7B90CAECDB099E8C275 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
+		E7B28C3620F5179C2CD74F42 /* SessionDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailScreen.swift; sourceTree = "<group>"; };
+		ECC65EE65F1DB8E7293CEC6D /* LoopndrollCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoopndrollCompanion.Debug.entitlements; sourceTree = "<group>"; };
+		F2738F36D01E51884310D44F /* AppIconManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconManager.swift; sourceTree = "<group>"; };
+		FDFB9E8A63AB5ECFF97FA869 /* LoopndrollCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LoopndrollCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D431067383E7DF3F6A73B4E7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				786F0FFB6A1FD2BDECB646E7 /* OrbCodeKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		03BCB9D463DBFF97D93AF4B6 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				F2738F36D01E51884310D44F /* AppIconManager.swift */,
+				C9C7C79B50DA46B1A1B66035 /* CompanionTheme.swift */,
+				7F07D1890E91E59E9D8408F9 /* Haptics.swift */,
+				43EDCDEDDF184185EA165151 /* LocalNotificationManager.swift */,
+				8AB1BBCAB9F8A9E7C166AD2C /* PreviewFixtures.swift */,
+				AC05ED83E08BF42EE898EE0B /* RemotePushRegistrar.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		1C33EFA885CA6F67EB9669D9 /* Root */ = {
+			isa = PBXGroup;
+			children = (
+				8BB0641B93E66C2FA6B436C1 /* RootTabView.swift */,
+			);
+			path = Root;
+			sourceTree = "<group>";
+		};
+		3F2127EF9BBB215E73E16728 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */,
+				AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */,
+				C46E9FFDFE6ED0B29141D4C5 /* CompanionEnvironment.swift */,
+				D194C78858D5127D347F0235 /* LoopndrollCompanionApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		567C29F8DE00AE0A3F7E3EA1 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				D1B9F7B90CAECDB099E8C275 /* SettingsScreen.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		64504606EAD8A1B8F872141C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				90A61C3B0891C16E58EB405A /* notification-orb.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		67F131A75436F34475F44A16 /* Scanner */ = {
+			isa = PBXGroup;
+			children = (
+				6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */,
+				20D59AD3E54E1967FA8D6A0C /* OrbScannerScreen.swift */,
+			);
+			path = Scanner;
+			sourceTree = "<group>";
+		};
+		695AE61F4D9DE1AC71C73F6E /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				BBE93C4ADA07F40857EC3295 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		85897E9750C47E301504B18D /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				E7B28C3620F5179C2CD74F42 /* SessionDetailScreen.swift */,
+				48A0DB6A4D7ED8241D84D181 /* SessionRow.swift */,
+				A6A173CAD2BAC9F2DD952752 /* SessionsDeviceHubSheet.swift */,
+				1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
+		9A92904CC949FDBCD67B0B16 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				2B6F97450DF16B9BDC1BB296 /* CompanionModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A715AB3B388313989DF33B53 /* LoopndrollCompanion */ = {
+			isa = PBXGroup;
+			children = (
+				ACB30BF382DD4232DEDF9A2A /* Assets.xcassets */,
+				0E8D19518C83B485A135322B /* Info.plist */,
+				ECC65EE65F1DB8E7293CEC6D /* LoopndrollCompanion.Debug.entitlements */,
+				5B10DC5F17DFDB44BE2510EE /* LoopndrollCompanion.Release.entitlements */,
+				3F2127EF9BBB215E73E16728 /* App */,
+				9A92904CC949FDBCD67B0B16 /* Models */,
+				695AE61F4D9DE1AC71C73F6E /* Preview Content */,
+				64504606EAD8A1B8F872141C /* Resources */,
+				EBF59C5D7E5CEEC343294553 /* Services */,
+				03BCB9D463DBFF97D93AF4B6 /* Support */,
+				F4F1628917F3BD1BF32CE40D /* UI */,
+			);
+			path = LoopndrollCompanion;
+			sourceTree = "<group>";
+		};
+		ACA5D55864494AEFE4AA0F56 /* Common */ = {
+			isa = PBXGroup;
+			children = (
+				27090D8EB380FAE7ABB762D1 /* StatusPill.swift */,
+			);
+			path = Common;
+			sourceTree = "<group>";
+		};
+		B8250A95292EF2FFF09E7241 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FDFB9E8A63AB5ECFF97FA869 /* LoopndrollCompanion.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D6C64C63A6EEC5074B277FB7 = {
+			isa = PBXGroup;
+			children = (
+				A715AB3B388313989DF33B53 /* LoopndrollCompanion */,
+				E37089FD3A084B6C42B092E7 /* Packages */,
+				B8250A95292EF2FFF09E7241 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E37089FD3A084B6C42B092E7 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				7BA8E570172CAE5483761091 /* OrbCodeKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		EBF59C5D7E5CEEC343294553 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				0E3383A59BE6F2A3621442C5 /* CompanionService.swift */,
+				A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */,
+				427A64B51420A939220B6D2A /* MockCompanionService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		F4F1628917F3BD1BF32CE40D /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				ACA5D55864494AEFE4AA0F56 /* Common */,
+				1C33EFA885CA6F67EB9669D9 /* Root */,
+				67F131A75436F34475F44A16 /* Scanner */,
+				85897E9750C47E301504B18D /* Sessions */,
+				567C29F8DE00AE0A3F7E3EA1 /* Settings */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		DA11CD4FCE877902CF9D7B1F /* LoopndrollCompanion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0D8B0CBA5BBBE10DB8077A21 /* Build configuration list for PBXNativeTarget "LoopndrollCompanion" */;
+			buildPhases = (
+				13FC7D4995BFDC86468C3F2E /* Sources */,
+				160761AC7030DFE5BC5E363D /* Resources */,
+				D431067383E7DF3F6A73B4E7 /* Frameworks */,
+				5A6B7C8D9E0F102132435465 /* Stamp Build Metadata */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LoopndrollCompanion;
+			packageProductDependencies = (
+				F55E748011ABC9C0B6002458 /* OrbCodeKit */,
+			);
+			productName = LoopndrollCompanion;
+			productReference = FDFB9E8A63AB5ECFF97FA869 /* LoopndrollCompanion.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		21382BD44651469CE3EF573F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					DA11CD4FCE877902CF9D7B1F = {
+						DevelopmentTeam = Z5454ZPPUX;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 3B67F178B7CF13723E4490CA /* Build configuration list for PBXProject "LoopndrollCompanion" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D6C64C63A6EEC5074B277FB7;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				69555F33743A5372AD7BF008 /* XCLocalSwiftPackageReference "OrbCodeKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DA11CD4FCE877902CF9D7B1F /* LoopndrollCompanion */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		160761AC7030DFE5BC5E363D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B451D64B93148606F636F6A8 /* Assets.xcassets in Resources */,
+				C5AE2AFB2DB3CEC5E9B73E7B /* Preview Assets.xcassets in Resources */,
+				3A37946B8D049E7B46C2C08B /* notification-orb.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5A6B7C8D9E0F102132435465 /* Stamp Build Metadata */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp Build Metadata";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/looper-build-metadata.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nINFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nREPO_ROOT=\"$(cd \"${PROJECT_DIR}/..\" && pwd)\"\nBRANCH_NAME=\"\"\nif command -v git >/dev/null 2>&1; then\n  BRANCH_NAME=\"$(git -C \"${REPO_ROOT}\" branch --show-current 2>/dev/null || true)\"\n  if [ -z \"${BRANCH_NAME}\" ]; then\n    BRANCH_NAME=\"$(git -C \"${REPO_ROOT}\" rev-parse --short HEAD 2>/dev/null || true)\"\n  fi\nfi\nRELEASE_CHANNEL=\"${LOOPER_RELEASE_CHANNEL:-}\"\n/usr/bin/plutil -remove LOOPER_RELEASE_CHANNEL \"${INFO_PLIST}\" 2>/dev/null || true\n/usr/bin/plutil -remove LOOPER_BUILD_BRANCH \"${INFO_PLIST}\" 2>/dev/null || true\nif [ -n \"${RELEASE_CHANNEL}\" ]; then\n  /usr/bin/plutil -replace LOOPER_RELEASE_CHANNEL -string \"${RELEASE_CHANNEL}\" \"${INFO_PLIST}\"\nfi\nif [ -n \"${BRANCH_NAME}\" ]; then\n  /usr/bin/plutil -replace LOOPER_BUILD_BRANCH -string \"${BRANCH_NAME}\" \"${INFO_PLIST}\"\nfi\ntouch \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		13FC7D4995BFDC86468C3F2E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A862790609B7E6774673564 /* AppIconManager.swift in Sources */,
+				F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */,
+				4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */,
+				7319ECE52ED3F7FB1F628DB7 /* CompanionEnvironment.swift in Sources */,
+				FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */,
+				FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */,
+				79708679632C752640DC4259 /* CompanionTheme.swift in Sources */,
+				04402A5F4CBCAB24EC1CF85D /* HTTPCompanionService.swift in Sources */,
+				ED2E52F74EAE73E52E44F8FB /* Haptics.swift in Sources */,
+				99062AC34AB87033EBE8373A /* LiveOrbCameraScannerView.swift in Sources */,
+				E5C39DC104CF5AA6E2B39BD9 /* LocalNotificationManager.swift in Sources */,
+				B91E954053D8C339A13C5705 /* LoopndrollCompanionApp.swift in Sources */,
+				DB83DD9E7055A2E07DA711B5 /* MockCompanionService.swift in Sources */,
+				723AF7E60664C0BE7A817A4C /* OrbScannerScreen.swift in Sources */,
+				27C5B5314B8AF0DA5B351909 /* PreviewFixtures.swift in Sources */,
+				BDE73A1AECD84A105E08E5C5 /* RemotePushRegistrar.swift in Sources */,
+				CF1900E0D3E2428219D8B3B9 /* RootTabView.swift in Sources */,
+				2060B9212C8393147583F274 /* SessionDetailScreen.swift in Sources */,
+				D4E448C07E9807FC401EB2EE /* SessionRow.swift in Sources */,
+				EC6BC732FF42D670EF9217D7 /* SessionsDeviceHubSheet.swift in Sources */,
+				60ADCF28CAD17F0D01C772A1 /* SessionsScreen.swift in Sources */,
+				3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */,
+				3135120D2FEF1B3A5A4D4778 /* StatusPill.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7F4EEE1A60F0C5ADD2E267CC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		8162298D47DBE9AD34883D41 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		9766608E59C2A2490F2DBC21 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_ASSET_PATHS = "\"LoopndrollCompanion/Preview Content\"";
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LoopndrollCompanion/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOOPER_RELEASE_CHANNEL = "";
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
+				PRODUCT_NAME = Looper;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AC681526A8B4DC2D4947FD30 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_ASSET_PATHS = "\"LoopndrollCompanion/Preview Content\"";
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LoopndrollCompanion/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOOPER_RELEASE_CHANNEL = "";
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
+				PRODUCT_NAME = Looper;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0D8B0CBA5BBBE10DB8077A21 /* Build configuration list for PBXNativeTarget "LoopndrollCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9766608E59C2A2490F2DBC21 /* Debug */,
+				AC681526A8B4DC2D4947FD30 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3B67F178B7CF13723E4490CA /* Build configuration list for PBXProject "LoopndrollCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7F4EEE1A60F0C5ADD2E267CC /* Debug */,
+				8162298D47DBE9AD34883D41 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		69555F33743A5372AD7BF008 /* XCLocalSwiftPackageReference "OrbCodeKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = OrbCodeKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F55E748011ABC9C0B6002458 /* OrbCodeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OrbCodeKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 21382BD44651469CE3EF573F /* Project object */;
+}

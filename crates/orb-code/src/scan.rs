@@ -46,6 +46,28 @@ pub(crate) fn scan_orb_image_with_geometry(image_bytes: &[u8]) -> Result<Decoded
     try_decode_near_geometry(&grayscale_image, geometry)
 }
 
+pub fn scan_orb_image_from_luma8(data: &[u8], width: u32, height: u32) -> Result<ScanResult> {
+    Ok(scan_orb_image_from_luma8_with_geometry(data, width, height)?.scan_result)
+}
+
+pub(crate) fn scan_orb_image_from_luma8_with_geometry(
+    data: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<DecodedOrb> {
+    // Tightly-packed luma buffer: width*height bytes, one byte per pixel, no padding.
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or(OrbError::MalformedPayload)?;
+    if width == 0 || height == 0 || data.len() != expected_len {
+        return Err(OrbError::MalformedPayload);
+    }
+    let grayscale_image = GrayImage::from_raw(width, height, data.to_vec())
+        .ok_or(OrbError::MalformedPayload)?;
+    let geometry = detect_orb_geometry(&grayscale_image)?;
+    try_decode_near_geometry(&grayscale_image, geometry)
+}
+
 fn detect_orb_geometry(image: &GrayImage) -> Result<OrbGeometry> {
     let max_dimension = image.width().max(image.height());
     let scale = (f64::from(DETECTION_TARGET_MAX_DIMENSION) / f64::from(max_dimension)).min(1.0);

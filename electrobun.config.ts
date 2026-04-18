@@ -4,12 +4,14 @@ import { readFileSync } from "node:fs";
 const releaseBaseUrl = process.env["RELEASE_BASE_URL"] || "";
 const enableCodesign = process.env["ELECTROBUN_ENABLE_CODESIGN"] === "true";
 const enableNotarize = process.env["ELECTROBUN_ENABLE_NOTARIZE"] === "true";
-const packageVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
+const packageVersion = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+).version;
 
 export default {
   app: {
-    name: "Loopndroll",
-    identifier: "dev.loopndroll.app",
+    name: "looper",
+    identifier: "dev.looper.app",
     version: packageVersion,
   },
   release: {

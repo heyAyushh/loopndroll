@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::{
-    GenerateOrbRequest, OrbId, derive_orb_id, generate_orb_image, scan_orb_image, verify_orb_image,
+    GenerateOrbRequest, OrbId, derive_orb_id, generate_orb_image, scan_orb_image,
+    scan_orb_image_from_luma8, verify_orb_image,
 };
 
 static LAST_ERROR_MESSAGE: Mutex<Option<CString>> = Mutex::new(None);
@@ -55,6 +56,20 @@ pub extern "C" fn orb_code_scan_png(data: *const u8, len: usize) -> *mut c_char 
     wrap_string_result(|| {
         let bytes = bytes_from_raw_parts(data, len)?;
         let scan_result = scan_orb_image(bytes)?;
+        Ok(scan_result.orb_id.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn orb_code_scan_luma8(
+    data: *const u8,
+    len: usize,
+    width: u32,
+    height: u32,
+) -> *mut c_char {
+    wrap_string_result(|| {
+        let bytes = bytes_from_raw_parts(data, len)?;
+        let scan_result = scan_orb_image_from_luma8(bytes, width, height)?;
         Ok(scan_result.orb_id.to_string())
     })
 }

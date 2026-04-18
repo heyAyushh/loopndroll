@@ -77,9 +77,13 @@ function SettingsContent({
       </div>
       <div className="mx-auto flex w-full max-w-[816px] flex-col gap-6">
         <div className="space-y-0.5">
-          <h1 className="text-4xl leading-tight font-semibold tracking-[-0.03em] text-[#fafafa]">Settings</h1>
+          <h1 className="text-4xl leading-tight font-semibold tracking-[-0.03em] text-[#fafafa]">
+            Settings
+          </h1>
         </div>
-        {model.errorMessage ? <p className="text-sm text-destructive">{model.errorMessage}</p> : null}
+        {model.errorMessage ? (
+          <p className="text-sm text-destructive">{model.errorMessage}</p>
+        ) : null}
         <div className="space-y-5">
           <DefaultPromptSection
             defaultPromptError={model.settingsForm.formState.errors.defaultPrompt?.message}

@@ -10,7 +10,7 @@ mod verify;
 
 pub use error::{OrbError, Result};
 pub use id::{OrbId, derive_orb_id};
-pub use scan::scan_orb_image;
+pub use scan::{scan_orb_image, scan_orb_image_from_luma8};
 pub use types::{
     DEFAULT_IMAGE_SIZE, DEFAULT_VERIFY_THRESHOLD, GenerateOrbRequest, OrbImage, ScanResult,
     VerificationResult,
@@ -32,7 +32,7 @@ mod tests {
 
     use crate::{
         DEFAULT_IMAGE_SIZE, DEFAULT_VERIFY_THRESHOLD, GenerateOrbRequest, derive_orb_id,
-        generate_orb_image, scan_orb_image, verify_orb_image,
+        generate_orb_image, scan_orb_image, scan_orb_image_from_luma8, verify_orb_image,
     };
 
     #[test]
@@ -129,6 +129,26 @@ mod tests {
 
         let scan_result = scan_orb_image(&image_bytes).expect("scan blurred jpeg");
         assert_eq!(scan_result.orb_id, request.orb_id);
+    }
+
+    #[test]
+    fn scan_from_luma8_round_trips_generated_orb() {
+        let request = GenerateOrbRequest::new(derive_orb_id("orb-luma8"));
+        let orb_image = generate_orb_image(&request).expect("generate orb image");
+        let luma = image::DynamicImage::ImageRgba8(orb_image.image.clone()).to_luma8();
+        let width = luma.width();
+        let height = luma.height();
+
+        let scan_result = scan_orb_image_from_luma8(luma.as_raw(), width, height)
+            .expect("scan orb image from luma8 buffer");
+        assert_eq!(scan_result.orb_id, request.orb_id);
+    }
+
+    #[test]
+    fn scan_from_luma8_rejects_mismatched_dimensions() {
+        let too_small = vec![0_u8; 10];
+        let error = scan_orb_image_from_luma8(&too_small, 32, 32).expect_err("length mismatch");
+        assert!(matches!(error, crate::OrbError::MalformedPayload));
     }
 
     #[test]

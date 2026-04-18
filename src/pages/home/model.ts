@@ -27,7 +27,8 @@ function syncPendingSessionPresets(
 
   const currentKeys = Object.keys(current);
   const nextKeys = Object.keys(next);
-  return currentKeys.length === nextKeys.length && nextKeys.every((key) => current[key] === next[key])
+  return currentKeys.length === nextKeys.length &&
+    nextKeys.every((key) => current[key] === next[key])
     ? current
     : next;
 }
@@ -63,10 +64,7 @@ function useSessionClock() {
   return now;
 }
 
-function hasAttachedTelegramNotification(
-  session: LoopSession,
-  notifications: LoopNotification[],
-) {
+function hasAttachedTelegramNotification(session: LoopSession, notifications: LoopNotification[]) {
   return session.notificationIds.some((notificationId) =>
     notifications.some(
       (notification) => notification.id === notificationId && notification.channel === "telegram",
@@ -104,7 +102,9 @@ function createHomeRouteActions(args: {
   updateSessionPreset: ReturnType<typeof useLoopndrollState>["updateSessionPreset"];
 }) {
   const hasConfiguredGlobalCompletionCheck = () =>
-    args.completionChecks.some((completionCheck) => completionCheck.id === args.snapshot?.globalCompletionCheckId);
+    args.completionChecks.some(
+      (completionCheck) => completionCheck.id === args.snapshot?.globalCompletionCheckId,
+    );
 
   return {
     hasConfiguredGlobalCompletionCheck,
@@ -194,7 +194,8 @@ export function useHomeRouteModel() {
     [sessions, showArchivedSessions],
   );
   const sortedSessions = useMemo(
-    () => [...displaySessions].sort((left, right) => right.firstSeenAt.localeCompare(left.firstSeenAt)),
+    () =>
+      [...displaySessions].sort((left, right) => right.firstSeenAt.localeCompare(left.firstSeenAt)),
     [displaySessions],
   );
   const { pendingSessionPresets, setPendingSessionPresets } =
