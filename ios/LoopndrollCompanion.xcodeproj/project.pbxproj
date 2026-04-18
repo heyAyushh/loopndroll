@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B8C9D0E1F203A4B5C6D7E8F9A /* AssistantClientGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C9D0E1F203A4B5C6D7E8F99 /* AssistantClientGlyph.swift */; };
 		04402A5F4CBCAB24EC1CF85D /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */; };
 		2060B9212C8393147583F274 /* SessionDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B28C3620F5179C2CD74F42 /* SessionDetailScreen.swift */; };
 		27C5B5314B8AF0DA5B351909 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AB1BBCAB9F8A9E7C166AD2C /* PreviewFixtures.swift */; };
@@ -37,6 +38,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B8C9D0E1F203A4B5C6D7E8F99 /* AssistantClientGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantClientGlyph.swift; sourceTree = "<group>"; };
 		0E3383A59BE6F2A3621442C5 /* CompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionService.swift; sourceTree = "<group>"; };
 		0E8D19518C83B485A135322B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsScreen.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 		ACA5D55864494AEFE4AA0F56 /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				B8C9D0E1F203A4B5C6D7E8F99 /* AssistantClientGlyph.swift */,
 				27090D8EB380FAE7ABB762D1 /* StatusPill.swift */,
 			);
 			path = Common;
@@ -337,6 +340,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B8C9D0E1F203A4B5C6D7E8F9A /* AssistantClientGlyph.swift in Sources */,
 				3A862790609B7E6774673564 /* AppIconManager.swift in Sources */,
 				F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */,
 				4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */,

@@ -5,13 +5,7 @@ private enum DeviceHubSheetPresentation {
     static let openFraction: CGFloat = 0.75
 }
 
-private enum SessionSearchLaunchArgument {
-    static let queryPrefix = "--search-query="
-    /// Matches `RootTabView` launch flag so Xcode / CLI can open the system search field on Sessions.
-    static let openSearchTabFlag = "--open-search-tab"
-}
-
-private enum SessionSearchScope: String, CaseIterable, Identifiable {
+enum SessionSearchScope: String, CaseIterable, Identifiable {
     case all
     case sessions
     case actions
@@ -32,6 +26,22 @@ private enum SessionSearchScope: String, CaseIterable, Identifiable {
             return "Settings"
         case .device:
             return "Device"
+        }
+    }
+
+    /// Native symbols for search scope controls (see Apple Human Interface Guidelines: Search Fields).
+    var systemImage: String {
+        switch self {
+        case .all:
+            return "square.grid.2x2"
+        case .sessions:
+            return "bubble.left.and.bubble.right"
+        case .actions:
+            return "bolt.circle"
+        case .settings:
+            return "gearshape"
+        case .device:
+            return "iphone.gen3"
         }
     }
 }
@@ -184,8 +194,9 @@ private func filterSessions(
                 session.assistantPreview ?? "",
                 session.status.label,
                 session.status.rawValue,
-                session.status == .waiting || session.status == .stopped ? "needs attention" : ""
-            ]
+                session.status == .waiting || session.status == .stopped ? "needs attention" : "",
+                session.assistantClient.displayTitle
+            ] + session.assistantClient.searchKeywords
         )
 
         guard let score else {
@@ -204,6 +215,179 @@ private func filterSessions(
             return lhs.session.lastUpdatedAt > rhs.session.lastUpdatedAt
         }
         .map(\.session)
+}
+
+private enum CompanionSearchStorage {
+    static let recentQueriesKey = "dev.looper.search.recentQueries"
+}
+
+private func companionPersistRecentSearchQuery(_ query: String) {
+    let trimmedQuery = normalizedSessionSearchQuery(query)
+    guard !trimmedQuery.isEmpty else {
+        return
+    }
+
+    let existing = UserDefaults.standard.string(forKey: CompanionSearchStorage.recentQueriesKey) ?? ""
+    let recent = existing.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    let updatedQueries = [trimmedQuery] + recent.filter { $0 != trimmedQuery }
+    UserDefaults.standard.set(
+        Array(updatedQueries.prefix(6)).joined(separator: "\n"),
+        forKey: CompanionSearchStorage.recentQueriesKey
+    )
+}
+
+private func companionTabSearchUniquedSearchResults(_ results: [GlobalSearchResult]) -> [GlobalSearchResult] {
+    var seenIDs = Set<String>()
+    var uniqueResults: [GlobalSearchResult] = []
+
+    for result in results {
+        guard seenIDs.insert(result.id).inserted else {
+            continue
+        }
+
+        uniqueResults.append(result)
+    }
+
+    return uniqueResults
+}
+
+private func companionTabSearchSuggestedTopResults(model: CompanionAppModel) -> [GlobalSearchResult] {
+    let suggestedSessions = Array(model.needsAttentionSessions.prefix(2)).map(GlobalSearchResult.session)
+    let suggestedActions: [GlobalSearchResult] = [
+        .action(.openDeviceHub),
+        .action(.sendTestAlert),
+        .settings(.connection),
+        .settings(.continuePrompt)
+    ]
+
+    return companionTabSearchUniquedSearchResults(suggestedSessions + suggestedActions)
+}
+
+private func companionTabSearchSuggestionItem(for result: GlobalSearchResult) -> SearchSuggestionItem? {
+    switch result {
+    case let .session(session):
+        return SearchSuggestionItem(
+            id: "session:\(session.id)",
+            title: session.title,
+            subtitle: "\(session.ref) · \(session.assistantClient.displayTitle)",
+            systemImage: session.assistantClient.systemImageName,
+            completion: session.ref
+        )
+    case let .settings(target):
+        return SearchSuggestionItem(
+            id: "settings:\(target.rawValue)",
+            title: target.title,
+            subtitle: target.subtitle,
+            systemImage: target.systemImage,
+            completion: target.title
+        )
+    case let .action(action):
+        return SearchSuggestionItem(
+            id: "action:\(action.rawValue)",
+            title: action.title,
+            subtitle: action.subtitle,
+            systemImage: action.systemImage,
+            completion: action.title
+        )
+    }
+}
+
+private func companionTabSearchUniquedSuggestionItems(_ items: [SearchSuggestionItem]) -> [SearchSuggestionItem] {
+    var seenIDs = Set<String>()
+    var seenCompletions = Set<String>()
+    var uniqueItems: [SearchSuggestionItem] = []
+
+    for item in items {
+        let normalizedCompletion = item.completion.localizedLowercase
+
+        guard
+            seenIDs.insert(item.id).inserted,
+            seenCompletions.insert(normalizedCompletion).inserted
+        else {
+            continue
+        }
+
+        uniqueItems.append(item)
+    }
+
+    return uniqueItems
+}
+
+/// Suggestions attached to `TabView.searchable` so they participate in the system search field (Liquid Glass search tab).
+private struct CompanionTabSearchSuggestionsPanel: View {
+    let model: CompanionAppModel
+    @Binding var searchText: String
+    @Environment(\.isSearching) private var isSearching
+
+    @ViewBuilder
+    var body: some View {
+        if isSearching && normalizedSessionSearchQuery(searchText).isEmpty {
+            suggestionRows
+        }
+    }
+
+    @ViewBuilder
+    private var suggestionRows: some View {
+        let items = buildEmptyQuerySuggestionItems()
+        if !items.isEmpty {
+            ForEach(Array(items.prefix(8))) { suggestion in
+                Button {
+                    searchText = suggestion.completion
+                } label: {
+                    SearchSuggestionRow(suggestion: suggestion)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func buildEmptyQuerySuggestionItems() -> [SearchSuggestionItem] {
+        let raw = UserDefaults.standard.string(forKey: CompanionSearchStorage.recentQueriesKey) ?? ""
+        let recentSearches = raw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        let recentItems = recentSearches.prefix(4).map { query in
+            SearchSuggestionItem(
+                id: "recent:\(query)",
+                title: query,
+                subtitle: "Recent Search",
+                systemImage: "clock.arrow.circlepath",
+                completion: query
+            )
+        }
+
+        let suggestedItems = companionTabSearchSuggestedTopResults(model: model).compactMap { companionTabSearchSuggestionItem(for: $0) }
+        return companionTabSearchUniquedSuggestionItems(Array(recentItems + suggestedItems))
+    }
+}
+
+extension View {
+    /// Mirrors Apple’s `TabView` + `.searchable` + `tabViewSearchActivation` pattern so search uses the system Liquid Glass search tab chrome.
+    func companionTabViewSearchChrome(
+        model: CompanionAppModel,
+        searchText: Binding<String>,
+        selectedScope: Binding<SessionSearchScope>
+    ) -> some View {
+        self
+            .searchable(
+                text: searchText,
+                placement: .automatic,
+                prompt: String(localized: "Sessions, settings, or actions")
+            )
+            .searchPresentationToolbarBehavior(.automatic)
+            .searchScopes(selectedScope) {
+                ForEach(SessionSearchScope.allCases) { scope in
+                    Label(scope.title, systemImage: scope.systemImage).tag(scope)
+                }
+            }
+            .searchSuggestions {
+                CompanionTabSearchSuggestionsPanel(
+                    model: model,
+                    searchText: searchText
+                )
+            }
+            .onSubmit(of: .search) {
+                companionPersistRecentSearchQuery(searchText.wrappedValue)
+            }
+    }
 }
 
 struct SessionsScreen: View {
@@ -353,14 +537,13 @@ struct SessionsScreen: View {
 
 struct SessionSearchScreen: View {
     let model: CompanionAppModel
+    @Binding var searchText: String
+    @Binding var selectedScope: SessionSearchScope
 
     @Environment(\.openURL) private var openURL
     @Environment(\.isSearching) private var isSearching
-    @AppStorage("dev.looper.search.recentQueries") private var recentSearchesStorage = ""
+    @AppStorage(CompanionSearchStorage.recentQueriesKey) private var recentSearchesStorage = ""
     @State private var isDeviceHubPresented = false
-    @State private var searchText = ""
-    @State private var isSearchPresentationPresented = false
-    @State private var selectedScope: SessionSearchScope = .all
 
     var body: some View {
         NavigationStack {
@@ -417,45 +600,6 @@ struct SessionSearchScreen: View {
             .navigationDestination(for: SettingsSearchTarget.self) { target in
                 globalSearchSettingsDestinationView(for: target)
             }
-            .searchable(
-                text: $searchText,
-                isPresented: $isSearchPresentationPresented,
-                placement: .automatic,
-                prompt: String(localized: "Sessions, settings, or actions")
-            )
-            .searchPresentationToolbarBehavior(.automatic)
-            .searchScopes($selectedScope) {
-                ForEach(SessionSearchScope.allCases) { scope in
-                    Text(scope.title).tag(scope)
-                }
-            }
-            .searchSuggestions {
-                if isSearching && trimmedSearchText.isEmpty && !searchSuggestionItems.isEmpty {
-                    ForEach(searchSuggestionItems.prefix(8)) { suggestion in
-                        Button {
-                            searchText = suggestion.completion
-                        } label: {
-                            SearchSuggestionRow(suggestion: suggestion)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .onSubmit(of: .search) {
-                storeRecentSearch(trimmedSearchText)
-            }
-            .onAppear {
-                applyLaunchSearchQueryIfNeeded()
-                if ProcessInfo.processInfo.arguments.contains(SessionSearchLaunchArgument.openSearchTabFlag) {
-                    isSearchPresentationPresented = true
-                }
-                if !trimmedSearchText.isEmpty {
-                    isSearchPresentationPresented = true
-                }
-            }
-            .onDisappear {
-                isSearchPresentationPresented = false
-            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -465,15 +609,6 @@ struct SessionSearchScreen: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
-                }
-
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        resignSearchKeyboard()
-                        isSearchPresentationPresented = false
-                    }
-                    .font(.body.weight(.semibold))
                 }
             }
             .refreshable {
@@ -487,10 +622,6 @@ struct SessionSearchScreen: View {
             SessionsDeviceHubSheet(model: model)
                 .deviceHubSheetPresentation()
         }
-    }
-
-    private func resignSearchKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     @ViewBuilder
@@ -867,30 +998,11 @@ struct SessionSearchScreen: View {
     }
 
     private func suggestedTopResults() -> [GlobalSearchResult] {
-        let suggestedSessions = Array(model.needsAttentionSessions.prefix(2)).map(GlobalSearchResult.session)
-        let suggestedActions: [GlobalSearchResult] = [
-            .action(.openDeviceHub),
-            .action(.sendTestAlert),
-            .settings(.connection),
-            .settings(.continuePrompt)
-        ]
-
-        return uniquedSearchResults(suggestedSessions + suggestedActions)
+        companionTabSearchSuggestedTopResults(model: model)
     }
 
     private func uniquedSearchResults(_ results: [GlobalSearchResult]) -> [GlobalSearchResult] {
-        var seenIDs = Set<String>()
-        var uniqueResults: [GlobalSearchResult] = []
-
-        for result in results {
-            guard seenIDs.insert(result.id).inserted else {
-                continue
-            }
-
-            uniqueResults.append(result)
-        }
-
-        return uniqueResults
+        companionTabSearchUniquedSearchResults(results)
     }
 
     private var searchCompletions: [String] {
@@ -922,80 +1034,16 @@ struct SessionSearchScreen: View {
         }
     }
 
-    private func applyLaunchSearchQueryIfNeeded() {
-        guard searchText.isEmpty else {
-            return
-        }
-
-        guard
-            let argument = ProcessInfo.processInfo.arguments.first(where: { argument in
-                argument.hasPrefix(SessionSearchLaunchArgument.queryPrefix)
-            })
-        else {
-            return
-        }
-
-        searchText = String(argument.dropFirst(SessionSearchLaunchArgument.queryPrefix.count))
-    }
-
     private func storeRecentSearch(_ query: String) {
-        let trimmedQuery = normalizedSessionSearchQuery(query)
-        guard !trimmedQuery.isEmpty else {
-            return
-        }
-
-        let updatedQueries = [trimmedQuery] + recentSearches.filter { $0 != trimmedQuery }
-        recentSearchesStorage = Array(updatedQueries.prefix(6)).joined(separator: "\n")
+        companionPersistRecentSearchQuery(query)
     }
 
     private func searchSuggestionItem(for result: GlobalSearchResult) -> SearchSuggestionItem? {
-        switch result {
-        case let .session(session):
-            return SearchSuggestionItem(
-                id: "session:\(session.id)",
-                title: session.title,
-                subtitle: session.ref,
-                systemImage: session.status.symbolName,
-                completion: session.ref
-            )
-        case let .settings(target):
-            return SearchSuggestionItem(
-                id: "settings:\(target.rawValue)",
-                title: target.title,
-                subtitle: target.subtitle,
-                systemImage: target.systemImage,
-                completion: target.title
-            )
-        case let .action(action):
-            return SearchSuggestionItem(
-                id: "action:\(action.rawValue)",
-                title: action.title,
-                subtitle: action.subtitle,
-                systemImage: action.systemImage,
-                completion: action.title
-            )
-        }
+        companionTabSearchSuggestionItem(for: result)
     }
 
     private func uniquedSuggestionItems(_ items: [SearchSuggestionItem]) -> [SearchSuggestionItem] {
-        var seenIDs = Set<String>()
-        var seenCompletions = Set<String>()
-        var uniqueItems: [SearchSuggestionItem] = []
-
-        for item in items {
-            let normalizedCompletion = item.completion.localizedLowercase
-
-            guard
-                seenIDs.insert(item.id).inserted,
-                seenCompletions.insert(normalizedCompletion).inserted
-            else {
-                continue
-            }
-
-            uniqueItems.append(item)
-        }
-
-        return uniqueItems
+        companionTabSearchUniquedSuggestionItems(items)
     }
 
     private var searchUnavailableStateTitle: String {
@@ -1099,10 +1147,14 @@ private struct SearchSessionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: session.status.symbolName)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
+            VStack(spacing: 6) {
+                AssistantClientGlyph(client: session.assistantClient)
+                Image(systemName: session.status.symbolName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .accessibilityHidden(true)
+            }
+            .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title)

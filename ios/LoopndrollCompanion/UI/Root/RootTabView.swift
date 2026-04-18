@@ -3,6 +3,8 @@ import SwiftUI
 private enum RootLaunchArgument {
     static let openOrbScannerOnLaunch = "--open-orb-scanner-on-launch"
     static let openSearchTabOnLaunch = "--open-search-tab"
+    /// Xcode / CLI launch argument to pre-fill the TabView-attached search field.
+    static let searchQueryPrefix = "--search-query="
 }
 
 private enum RootTab: Hashable {
@@ -20,6 +22,8 @@ struct RootTabView: View {
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false
     @State private var selectedTab: RootTab = .sessions
+    @State private var globalSearchText = ""
+    @State private var globalSearchScope: SessionSearchScope = .all
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -37,9 +41,18 @@ struct RootTabView: View {
             }
 
             Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
-                SessionSearchScreen(model: model)
+                SessionSearchScreen(
+                    model: model,
+                    searchText: $globalSearchText,
+                    selectedScope: $globalSearchScope
+                )
             }
         }
+        .companionTabViewSearchChrome(
+            model: model,
+            searchText: $globalSearchText,
+            selectedScope: $globalSearchScope
+        )
         .modifier(TabViewSearchActivationWhenAvailable())
         .task(id: scenePhase) {
             await refreshForActiveSceneIfNeeded()
@@ -61,6 +74,8 @@ struct RootTabView: View {
             if ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.openSearchTabOnLaunch) {
                 selectedTab = .search
             }
+
+            applyLaunchSearchQueryIfNeeded()
         }
         .fullScreenCover(isPresented: $isLaunchOrbScannerPresented) {
             OrbScannerScreen()
@@ -73,6 +88,22 @@ struct RootTabView: View {
         }
 
         selectedTab = tab
+    }
+
+    private func applyLaunchSearchQueryIfNeeded() {
+        guard globalSearchText.isEmpty else {
+            return
+        }
+
+        guard
+            let argument = ProcessInfo.processInfo.arguments.first(where: { argument in
+                argument.hasPrefix(RootLaunchArgument.searchQueryPrefix)
+            })
+        else {
+            return
+        }
+
+        globalSearchText = String(argument.dropFirst(RootLaunchArgument.searchQueryPrefix.count))
     }
 
     private func refreshForActiveSceneIfNeeded() async {

@@ -36,7 +36,8 @@ enum PreviewFixtures {
                 effectiveMode: .infinite,
                 lastUpdatedAt: Date().addingTimeInterval(-180).ISO8601Format(),
                 assistantPreview: "I’ve scaffolded the iPhone companion app and I’m wiring the simulator data source now.",
-                isArchived: false
+                isArchived: false,
+                assistantClient: .codex
             ),
             SessionSummary(
                 id: "session-2",
@@ -46,7 +47,8 @@ enum PreviewFixtures {
                 effectiveMode: .awaitReply,
                 lastUpdatedAt: Date().addingTimeInterval(-1_400).ISO8601Format(),
                 assistantPreview: "I’m waiting for a reply before continuing with the haptics pass.",
-                isArchived: false
+                isArchived: false,
+                assistantClient: .cursor
             ),
             SessionSummary(
                 id: "session-3",
@@ -56,7 +58,8 @@ enum PreviewFixtures {
                 effectiveMode: .completionChecks,
                 lastUpdatedAt: Date().addingTimeInterval(-7_200).ISO8601Format(),
                 assistantPreview: "Typecheck passed, but the simulator smoke test still needs work.",
-                isArchived: false
+                isArchived: false,
+                assistantClient: .claudeCode
             ),
             SessionSummary(
                 id: "session-4",
@@ -66,7 +69,19 @@ enum PreviewFixtures {
                 effectiveMode: nil,
                 lastUpdatedAt: Date().addingTimeInterval(-86_400).ISO8601Format(),
                 assistantPreview: "The work is done and the session has been archived.",
-                isArchived: true
+                isArchived: true,
+                assistantClient: .openclaw
+            ),
+            SessionSummary(
+                id: "session-5",
+                ref: "C09",
+                title: "Ship Super.Engineering integration",
+                status: .active,
+                effectiveMode: .infinite,
+                lastUpdatedAt: Date().addingTimeInterval(-2_700).ISO8601Format(),
+                assistantPreview: "Wiring the Super.Engineering bridge and validating session sync.",
+                isArchived: false,
+                assistantClient: .superEngineering
             )
         ],
         notifications: notifications,
@@ -84,6 +99,7 @@ enum PreviewFixtures {
             assistantPreview: "I’ve scaffolded the iPhone companion app and I’m wiring the simulator data source now.",
             latestAssistantMessage: "I’ve scaffolded the iPhone app and I’m wiring the simulator data source now. Next I’m finishing the session detail view and the Bun dev API so the simulator can show real looper-shaped state.",
             isArchived: false,
+            assistantClient: .codex,
             notificationIds: ["telegram-main"],
             completionCheckID: "check-1",
             completionCheckWaitForReply: true,
@@ -100,6 +116,7 @@ enum PreviewFixtures {
             assistantPreview: "I’m waiting for a reply before continuing with the haptics pass.",
             latestAssistantMessage: "I’m waiting for a reply before continuing with the haptics pass.",
             isArchived: false,
+            assistantClient: .cursor,
             notificationIds: ["telegram-main"],
             completionCheckID: nil,
             completionCheckWaitForReply: false,
@@ -116,6 +133,7 @@ enum PreviewFixtures {
             assistantPreview: "Typecheck passed, but the simulator smoke test still needs work.",
             latestAssistantMessage: "Typecheck passed, but the simulator smoke test still needs work.",
             isArchived: false,
+            assistantClient: .claudeCode,
             notificationIds: ["slack-builds"],
             completionCheckID: "check-1",
             completionCheckWaitForReply: true,
@@ -132,7 +150,25 @@ enum PreviewFixtures {
             assistantPreview: "The work is done and the session has been archived.",
             latestAssistantMessage: "The work is done and the session has been archived.",
             isArchived: true,
+            assistantClient: .openclaw,
             notificationIds: [],
+            completionCheckID: nil,
+            completionCheckWaitForReply: false,
+            availableNotifications: notifications,
+            availableCompletionChecks: completionChecks
+        ),
+        "session-5": SessionDetail(
+            id: "session-5",
+            ref: "C09",
+            title: "Ship Super.Engineering integration",
+            status: .active,
+            effectiveMode: .infinite,
+            lastUpdatedAt: Date().addingTimeInterval(-2_700).ISO8601Format(),
+            assistantPreview: "Wiring the Super.Engineering bridge and validating session sync.",
+            latestAssistantMessage: "Wiring the Super.Engineering bridge and validating session sync.",
+            isArchived: false,
+            assistantClient: .superEngineering,
+            notificationIds: ["telegram-main"],
             completionCheckID: nil,
             completionCheckWaitForReply: false,
             availableNotifications: notifications,

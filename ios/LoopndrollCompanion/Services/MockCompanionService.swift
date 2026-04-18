@@ -21,6 +21,7 @@ actor MockCompanionStore {
             assistantPreview: nil,
             latestAssistantMessage: nil,
             isArchived: false,
+            assistantClient: .unknown,
             notificationIds: [],
             completionCheckID: nil,
             completionCheckWaitForReply: false,
@@ -40,7 +41,8 @@ actor MockCompanionStore {
                 effectiveMode: preset,
                 lastUpdatedAt: Date().ISO8601Format(),
                 assistantPreview: $0.assistantPreview,
-                isArchived: $0.isArchived
+                isArchived: $0.isArchived,
+                assistantClient: $0.assistantClient
             )
         }
 
@@ -64,7 +66,8 @@ actor MockCompanionStore {
                 effectiveMode: $0.effectiveMode,
                 lastUpdatedAt: Date().ISO8601Format(),
                 assistantPreview: $0.assistantPreview,
-                isArchived: archived
+                isArchived: archived,
+                assistantClient: $0.assistantClient
             )
         }
 

@@ -65,6 +65,14 @@ struct SessionDetailScreen: View {
 
     private var summarySection: some View {
         Section("Summary") {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    AssistantClientGlyph(client: detail?.assistantClient ?? session.assistantClient)
+                    Text((detail?.assistantClient ?? session.assistantClient).displayTitle)
+                }
+            } label: {
+                Text("Assistant")
+            }
             LabeledContent("Title", value: session.title)
             LabeledContent("Status", value: currentStatus.label)
             LabeledContent("Updated") {

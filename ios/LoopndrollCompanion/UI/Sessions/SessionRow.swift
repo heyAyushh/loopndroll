@@ -10,6 +10,8 @@ struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
+                AssistantClientGlyph(client: session.assistantClient)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text(session.ref)
                         .font(.caption.weight(.semibold))

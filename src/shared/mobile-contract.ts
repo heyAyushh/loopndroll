@@ -3,6 +3,15 @@ import type { LoopPreset, LoopScope } from "./app-rpc";
 export type MobileSessionStatus = "active" | "waiting" | "stopped" | "archived";
 export type MobileQuickAction = "open-session" | "continue" | "reply" | "archive" | "mute-session";
 
+/** Inferred from session cwd / transcript paths for companion UI badges. */
+export type MobileAssistantClient =
+  | "unknown"
+  | "codex"
+  | "cursor"
+  | "claude-code"
+  | "super-engineering"
+  | "openclaw";
+
 export type HostSummary = {
   id: string;
   name: string;
@@ -64,6 +73,7 @@ export type MobileSessionSummary = {
   lastUpdatedAt: string;
   assistantPreview: string | null;
   isArchived: boolean;
+  assistantClient: MobileAssistantClient;
 };
 
 export type MobileSessionDetail = MobileSessionSummary & {

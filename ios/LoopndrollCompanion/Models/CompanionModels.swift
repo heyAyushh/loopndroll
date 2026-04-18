@@ -330,6 +330,68 @@ struct CompletionCheckSummary: Codable, Identifiable, Hashable, Sendable {
     var commandCount: Int
 }
 
+/// Coding agent surface inferred on the Mac from cwd / transcript paths; icons are SF Symbols (native iOS assets).
+enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
+    case unknown
+    case codex
+    case cursor
+    case claudeCode = "claude-code"
+    case superEngineering = "super-engineering"
+    case openclaw
+
+    var displayTitle: String {
+        switch self {
+        case .unknown:
+            return "Unknown"
+        case .codex:
+            return "Codex"
+        case .cursor:
+            return "Cursor"
+        case .claudeCode:
+            return "Claude Code"
+        case .superEngineering:
+            return "Super.Engineering"
+        case .openclaw:
+            return "OpenClaw"
+        }
+    }
+
+    /// Search keywords so typing e.g. "claude" still finds matching sessions.
+    var searchKeywords: [String] {
+        switch self {
+        case .unknown:
+            return ["assistant", "agent", "cli"]
+        case .codex:
+            return ["codex", "openai codex"]
+        case .cursor:
+            return ["cursor", "cursor ide"]
+        case .claudeCode:
+            return ["claude", "claude code", "anthropic"]
+        case .superEngineering:
+            return ["super", "super.engineering", "super engineering", "superengineering"]
+        case .openclaw:
+            return ["openclaw", "open claw", "claw"]
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .unknown:
+            return "questionmark.app.dashed"
+        case .codex:
+            return "terminal"
+        case .cursor:
+            return "cursorarrow.click.2"
+        case .claudeCode:
+            return "sparkles"
+        case .superEngineering:
+            return "gearshape.2"
+        case .openclaw:
+            return "pawprint.fill"
+        }
+    }
+}
+
 struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var ref: String
@@ -339,6 +401,54 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var lastUpdatedAt: String
     var assistantPreview: String?
     var isArchived: Bool
+    var assistantClient: AssistantClient
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case ref
+        case title
+        case status
+        case effectiveMode
+        case lastUpdatedAt
+        case assistantPreview
+        case isArchived
+        case assistantClient
+    }
+
+    init(
+        id: String,
+        ref: String,
+        title: String,
+        status: SessionStatus,
+        effectiveMode: SessionMode?,
+        lastUpdatedAt: String,
+        assistantPreview: String?,
+        isArchived: Bool,
+        assistantClient: AssistantClient = .unknown
+    ) {
+        self.id = id
+        self.ref = ref
+        self.title = title
+        self.status = status
+        self.effectiveMode = effectiveMode
+        self.lastUpdatedAt = lastUpdatedAt
+        self.assistantPreview = assistantPreview
+        self.isArchived = isArchived
+        self.assistantClient = assistantClient
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        ref = try container.decode(String.self, forKey: .ref)
+        title = try container.decode(String.self, forKey: .title)
+        status = try container.decode(SessionStatus.self, forKey: .status)
+        effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
+        lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
+        assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
+        isArchived = try container.decode(Bool.self, forKey: .isArchived)
+        assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+    }
 }
 
 struct SessionDetail: Codable, Identifiable, Sendable {
@@ -351,11 +461,86 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var assistantPreview: String?
     var latestAssistantMessage: String?
     var isArchived: Bool
+    var assistantClient: AssistantClient
     var notificationIds: [String]
     var completionCheckID: String?
     var completionCheckWaitForReply: Bool
     var availableNotifications: [NotificationDestination]
     var availableCompletionChecks: [CompletionCheckSummary]
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case ref
+        case title
+        case status
+        case effectiveMode
+        case lastUpdatedAt
+        case assistantPreview
+        case latestAssistantMessage
+        case isArchived
+        case assistantClient
+        case notificationIds
+        case completionCheckID
+        case completionCheckWaitForReply
+        case availableNotifications
+        case availableCompletionChecks
+    }
+
+    init(
+        id: String,
+        ref: String,
+        title: String,
+        status: SessionStatus,
+        effectiveMode: SessionMode?,
+        lastUpdatedAt: String,
+        assistantPreview: String?,
+        latestAssistantMessage: String?,
+        isArchived: Bool,
+        assistantClient: AssistantClient = .unknown,
+        notificationIds: [String],
+        completionCheckID: String?,
+        completionCheckWaitForReply: Bool,
+        availableNotifications: [NotificationDestination],
+        availableCompletionChecks: [CompletionCheckSummary]
+    ) {
+        self.id = id
+        self.ref = ref
+        self.title = title
+        self.status = status
+        self.effectiveMode = effectiveMode
+        self.lastUpdatedAt = lastUpdatedAt
+        self.assistantPreview = assistantPreview
+        self.latestAssistantMessage = latestAssistantMessage
+        self.isArchived = isArchived
+        self.assistantClient = assistantClient
+        self.notificationIds = notificationIds
+        self.completionCheckID = completionCheckID
+        self.completionCheckWaitForReply = completionCheckWaitForReply
+        self.availableNotifications = availableNotifications
+        self.availableCompletionChecks = availableCompletionChecks
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        ref = try container.decode(String.self, forKey: .ref)
+        title = try container.decode(String.self, forKey: .title)
+        status = try container.decode(SessionStatus.self, forKey: .status)
+        effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
+        lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
+        assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
+        latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
+        isArchived = try container.decode(Bool.self, forKey: .isArchived)
+        assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+        notificationIds = try container.decode([String].self, forKey: .notificationIds)
+        completionCheckID = try container.decodeIfPresent(String.self, forKey: .completionCheckID)
+        completionCheckWaitForReply = try container.decode(Bool.self, forKey: .completionCheckWaitForReply)
+        availableNotifications = try container.decode([NotificationDestination].self, forKey: .availableNotifications)
+        availableCompletionChecks = try container.decode(
+            [CompletionCheckSummary].self,
+            forKey: .availableCompletionChecks
+        )
+    }
 }
 
 struct MobileSnapshot: Codable, Sendable {
