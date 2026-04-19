@@ -529,6 +529,25 @@ struct SessionSearchScreen: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
                 }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Menu {
+                        Picker("Scope", selection: $selectedScope) {
+                            ForEach(SessionSearchScope.allCases) { scope in
+                                Label(scope.title, systemImage: scope.systemImage).tag(scope)
+                            }
+                        }
+                    } label: {
+                        Label(selectedScope.title, systemImage: selectedScope.systemImage)
+                    }
+                    .accessibilityLabel("Filter search scope")
+
+                    Spacer()
+
+                    Button("Done") {
+                        dismissSearch()
+                    }
+                }
             }
             .refreshable {
                 await model.refresh()
@@ -549,38 +568,18 @@ struct SessionSearchScreen: View {
             .onDisappear {
                 searchService.cancelSearch()
             }
-        }
-        .searchable(
-            text: $searchText,
-            placement: .automatic,
-            prompt: Text("Search sessions, settings, actions")
-        )
-        .searchScopes($selectedScope, activation: .onTextEntry) {
-            ForEach(SessionSearchScope.allCases) { scope in
-                Label(scope.title, systemImage: scope.systemImage).tag(scope)
+            .searchable(
+                text: $searchText,
+                placement: .automatic,
+                prompt: Text("Search sessions, settings, actions")
+            )
+            .searchScopes($selectedScope, activation: .onTextEntry) {
+                ForEach(SessionSearchScope.allCases) { scope in
+                    Label(scope.title, systemImage: scope.systemImage).tag(scope)
+                }
             }
-        }
-        .onSubmit(of: .search) {
-            companionPersistRecentSearchQuery(searchText)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Menu {
-                    Picker("Scope", selection: $selectedScope) {
-                        ForEach(SessionSearchScope.allCases) { scope in
-                            Label(scope.title, systemImage: scope.systemImage).tag(scope)
-                        }
-                    }
-                } label: {
-                    Label(selectedScope.title, systemImage: selectedScope.systemImage)
-                }
-                .accessibilityLabel("Filter search scope")
-
-                Spacer()
-
-                Button("Done") {
-                    dismissSearch()
-                }
+            .onSubmit(of: .search) {
+                companionPersistRecentSearchQuery(searchText)
             }
         }
         .sheet(isPresented: $isDeviceHubPresented) {
@@ -1177,126 +1176,24 @@ private struct SearchCommandRow: View {
     let systemImage: String
     let categoryLabel: String?
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 36, height: 36)
-                Image(systemName: systemImage)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 20, height: 20)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    if let categoryLabel {
-                        Text(categoryLabel)
-                            .font(.caption2.weight(.medium))
-                    .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
-                }
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
-        .padding(.vertical, 6)
+    private var breadcrumb: String {
+        categoryLabel ?? subtitle
     }
-}
-
-private struct SearchSessionRow: View {
-    let session: SessionSummary
-
-    private var tint: Color {
-        CompanionTint.tint(for: session.status)
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(tint.opacity(0.12))
-                    .frame(width: 44, height: 44)
-                VStack(spacing: 4) {
-                    AssistantClientGlyph(client: session.assistantClient)
-                        .frame(width: 24, height: 24)
-                    HStack(spacing: 2) {
-                        Circle()
-                            .fill(tint)
-                            .frame(width: 6, height: 6)
-                        Text(session.status.label)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(tint)
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(session.title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                Text(session.ref)
-                    .font(.subheadline.monospaced())
-                    .foregroundStyle(.secondary)
-                if let assistantPreview = session.assistantPreview, !assistantPreview.isEmpty {
-                    Text(assistantPreview)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .padding(.top, 2)
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "clock")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text(ModelFormatting.relativeTimestamp(session.lastUpdatedAt))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.top, 2)
-            }
-
-            Spacer(minLength: 8)
-        }
-        .contentShape(Rectangle())
-        .padding(.vertical, 8)
-    }
-}
-
-private struct RecentSearchRow: View {
-    let query: String
-    let breadcrumb: String
-    let systemImage: String
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 32, height: 32)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.accentColor.opacity(0.15))
+                    .frame(width: 28, height: 28)
                 Image(systemName: systemImage)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(query)
-                    .font(.body.weight(.semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(breadcrumb)
@@ -1308,7 +1205,77 @@ private struct RecentSearchRow: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
-        .padding(.vertical, 2)
+    }
+}
+
+private struct SearchSessionRow: View {
+    let session: SessionSummary
+
+    private var tint: Color {
+        CompanionTint.tint(for: session.status)
+    }
+
+    private var breadcrumb: String {
+        "Sessions → \(session.status.label)"
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(tint.opacity(0.15))
+                    .frame(width: 28, height: 28)
+                AssistantClientGlyph(client: session.assistantClient)
+                    .frame(width: 18, height: 18)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(breadcrumb)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct RecentSearchRow: View {
+    let query: String
+    let breadcrumb: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.secondary.opacity(0.15))
+                    .frame(width: 28, height: 28)
+                Image(systemName: systemImage)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(query)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(breadcrumb)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
     }
 }
 
