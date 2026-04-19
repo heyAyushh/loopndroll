@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import UIKit
 import UserNotifications
+import CoreSpotlight
 
 private enum LaunchArgument {
     static let sendTestAlertOnLaunch = "--send-test-alert-on-launch"
@@ -25,6 +26,7 @@ final class CompanionAppModel {
     @ObservationIgnored private var service: any CompanionService
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
+    @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
@@ -32,11 +34,13 @@ final class CompanionAppModel {
     init(
         environment: CompanionEnvironment,
         notificationManager: LocalNotificationManager = LocalNotificationManager(),
-        remotePushRegistrar: RemotePushRegistrar = .shared
+        remotePushRegistrar: RemotePushRegistrar = .shared,
+        spotlightIndexer: SessionSpotlightIndexer = .shared
     ) {
         service = environment.service
         self.notificationManager = notificationManager
         self.remotePushRegistrar = remotePushRegistrar
+        self.spotlightIndexer = spotlightIndexer
         registerNotificationObservers()
     }
 
@@ -367,6 +371,9 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         syncDetailCache(with: nextSnapshot)
 
+        // Index sessions to Core Spotlight for semantic search
+        await indexSessionsToSpotlight(nextSnapshot.sessions)
+
         guard shouldUseLocalFallbackNotifications else {
             return
         }
@@ -375,6 +382,14 @@ final class CompanionAppModel {
             previousSnapshot: previousSnapshot,
             currentSnapshot: nextSnapshot
         )
+    }
+
+    private func indexSessionsToSpotlight(_ sessions: [SessionSummary]) async {
+        do {
+            try await spotlightIndexer.indexSessions(sessions)
+        } catch {
+            print("Failed to index sessions to Spotlight: \(error)")
+        }
     }
 
     private func syncDetailCache(with nextSnapshot: MobileSnapshot) {

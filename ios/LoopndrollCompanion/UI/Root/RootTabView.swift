@@ -3,14 +3,14 @@ import SwiftUI
 private enum RootLaunchArgument {
     static let openOrbScannerOnLaunch = "--open-orb-scanner-on-launch"
     static let openSearchTabOnLaunch = "--open-search-tab"
-    /// Xcode / CLI launch argument to pre-fill the TabView-attached search field.
+    static let openSearchOnLaunch = "--open-search"
     static let searchQueryPrefix = "--search-query="
 }
 
 private enum RootTab: Hashable {
     case sessions
     case settings
-    /// Trailing tab; use `TabRole.search` so the tab bar follows system search-tab layout (HIG tab bars).
+    /// Trailing tab; `TabRole.search` lets the system render search as the bottom-right search affordance.
     case search
 }
 
@@ -22,8 +22,10 @@ struct RootTabView: View {
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false
     @State private var selectedTab: RootTab = .sessions
-    @State private var globalSearchText = ""
-    @State private var globalSearchScope: SessionSearchScope = .all
+    @State private var searchText = ""
+    @State private var isSearchPresented = false
+    @State private var searchScope: SessionSearchScope = .all
+    @StateObject private var spotlightSearchService = SpotlightSearchService()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -36,26 +38,43 @@ struct RootTabView: View {
                 )
             }
 
-            Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
-                SettingsScreen(model: model)
+            if selectedTab != .search {
+                Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
+                    SettingsScreen(model: model)
+                }
             }
 
             Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
                 SessionSearchScreen(
                     model: model,
-                    searchText: $globalSearchText,
-                    selectedScope: $globalSearchScope
+                    searchText: $searchText,
+                    selectedScope: $searchScope,
+                    searchService: spotlightSearchService,
+                    dismissSearch: dismissSearchPresentation
                 )
             }
         }
-        .companionTabViewSearchChrome(
-            model: model,
-            searchText: $globalSearchText,
-            selectedScope: $globalSearchScope
+        .companionNativeSearchTab(
+            searchText: $searchText,
+            isPresented: $isSearchPresented,
+            selectedScope: $searchScope
         )
+        .modifier(TabBarMinimizeWhenAvailable())
         .modifier(TabViewSearchActivationWhenAvailable())
+        .modifier(SearchToolbarBehaviorWhenAvailable())
         .task(id: scenePhase) {
             await refreshForActiveSceneIfNeeded()
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            guard newTab == .search else {
+                return
+            }
+
+            Task {
+                await spotlightSearchService.prepareForSearch()
+            }
+
+            isSearchPresented = true
         }
         .onAppear {
             guard !hasCheckedLaunchOrbScanner else {
@@ -71,7 +90,7 @@ struct RootTabView: View {
             isLaunchOrbScannerPresented = false
             #endif
 
-            if ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.openSearchTabOnLaunch) {
+            if shouldOpenSearchOnLaunch {
                 selectedTab = .search
             }
 
@@ -86,12 +105,24 @@ struct RootTabView: View {
         guard selectedTab != tab else {
             return
         }
-
         selectedTab = tab
     }
 
+    private var shouldOpenSearchOnLaunch: Bool {
+        ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.openSearchOnLaunch) ||
+            ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.openSearchTabOnLaunch)
+    }
+
+    private func dismissSearchPresentation() {
+        guard isSearchPresented else {
+            return
+        }
+
+        isSearchPresented = false
+    }
+
     private func applyLaunchSearchQueryIfNeeded() {
-        guard globalSearchText.isEmpty else {
+        guard searchText.isEmpty else {
             return
         }
 
@@ -103,7 +134,7 @@ struct RootTabView: View {
             return
         }
 
-        globalSearchText = String(argument.dropFirst(RootLaunchArgument.searchQueryPrefix.count))
+        searchText = String(argument.dropFirst(RootLaunchArgument.searchQueryPrefix.count))
     }
 
     private func refreshForActiveSceneIfNeeded() async {
@@ -126,11 +157,53 @@ struct RootTabView: View {
     }
 }
 
-/// Links search-tab selection to search activation per Human Interface Guidelines / TabView search behavior.
+private extension View {
+    func companionNativeSearchTab(
+        searchText: Binding<String>,
+        isPresented: Binding<Bool>,
+        selectedScope: Binding<SessionSearchScope>
+    ) -> some View {
+        searchable(
+            text: searchText,
+            isPresented: isPresented,
+            placement: .automatic,
+            prompt: Text("Search sessions, settings, actions")
+        )
+        .searchScopes(selectedScope, activation: .onSearchPresentation) {
+            ForEach(SessionSearchScope.allCases) { scope in
+                Label(scope.title, systemImage: scope.systemImage).tag(scope)
+            }
+        }
+        .onSubmit(of: .search) {
+            companionPersistRecentSearchQuery(searchText.wrappedValue)
+        }
+    }
+}
+
+private struct TabBarMinimizeWhenAvailable: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.tabBarMinimizeBehavior(.onScrollDown)
+        } else {
+            content
+        }
+    }
+}
+
 private struct TabViewSearchActivationWhenAvailable: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.tabViewSearchActivation(.searchTabSelection)
+        } else {
+            content
+        }
+    }
+}
+
+private struct SearchToolbarBehaviorWhenAvailable: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.searchToolbarBehavior(.automatic)
         } else {
             content
         }

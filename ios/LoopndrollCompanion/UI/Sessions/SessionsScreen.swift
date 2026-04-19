@@ -1,5 +1,53 @@
 import SwiftUI
 import UIKit
+import CoreSpotlight
+
+// MARK: - Animation & Haptics
+
+private enum SearchAnimation {
+    static let fast = Animation.spring(response: 0.25, dampingFraction: 0.8)
+    static let standard = Animation.spring(response: 0.35, dampingFraction: 0.8)
+    static let slow = Animation.spring(response: 0.5, dampingFraction: 0.7)
+}
+
+private enum SearchBehavior {
+    static let semanticSearchDebounce: Duration = .milliseconds(120)
+}
+
+private enum SearchHaptic {
+    @MainActor
+    static func selection() {
+        let generator = UISelectionFeedbackGenerator()
+        generator.selectionChanged()
+    }
+
+    @MainActor
+    static func impact(style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.impactOccurred()
+    }
+
+    @MainActor
+    static func success() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+    }
+}
+
+private struct SearchResultTransition: ViewModifier {
+    func body(content: Content) -> some View {
+        content.transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .move(edge: .bottom)).combined(with: .scale(scale: 0.95)),
+                removal: .opacity.combined(with: .move(edge: .top)).combined(with: .scale(scale: 0.95))
+            )
+        )
+    }
+}
+
+private extension View {
+    func searchResultTransition() -> some View { modifier(SearchResultTransition()) }
+}
 
 private enum DeviceHubSheetPresentation {
     static let openFraction: CGFloat = 0.75
@@ -221,7 +269,7 @@ private enum CompanionSearchStorage {
     static let recentQueriesKey = "dev.looper.search.recentQueries"
 }
 
-private func companionPersistRecentSearchQuery(_ query: String) {
+func companionPersistRecentSearchQuery(_ query: String) {
     let trimmedQuery = normalizedSessionSearchQuery(query)
     guard !trimmedQuery.isEmpty else {
         return
@@ -251,6 +299,7 @@ private func companionTabSearchUniquedSearchResults(_ results: [GlobalSearchResu
     return uniqueResults
 }
 
+@MainActor
 private func companionTabSearchSuggestedTopResults(model: CompanionAppModel) -> [GlobalSearchResult] {
     let suggestedSessions = Array(model.needsAttentionSessions.prefix(2)).map(GlobalSearchResult.session)
     let suggestedActions: [GlobalSearchResult] = [
@@ -261,133 +310,6 @@ private func companionTabSearchSuggestedTopResults(model: CompanionAppModel) -> 
     ]
 
     return companionTabSearchUniquedSearchResults(suggestedSessions + suggestedActions)
-}
-
-private func companionTabSearchSuggestionItem(for result: GlobalSearchResult) -> SearchSuggestionItem? {
-    switch result {
-    case let .session(session):
-        return SearchSuggestionItem(
-            id: "session:\(session.id)",
-            title: session.title,
-            subtitle: "\(session.ref) · \(session.assistantClient.displayTitle)",
-            systemImage: session.assistantClient.systemImageName,
-            completion: session.ref
-        )
-    case let .settings(target):
-        return SearchSuggestionItem(
-            id: "settings:\(target.rawValue)",
-            title: target.title,
-            subtitle: target.subtitle,
-            systemImage: target.systemImage,
-            completion: target.title
-        )
-    case let .action(action):
-        return SearchSuggestionItem(
-            id: "action:\(action.rawValue)",
-            title: action.title,
-            subtitle: action.subtitle,
-            systemImage: action.systemImage,
-            completion: action.title
-        )
-    }
-}
-
-private func companionTabSearchUniquedSuggestionItems(_ items: [SearchSuggestionItem]) -> [SearchSuggestionItem] {
-    var seenIDs = Set<String>()
-    var seenCompletions = Set<String>()
-    var uniqueItems: [SearchSuggestionItem] = []
-
-    for item in items {
-        let normalizedCompletion = item.completion.localizedLowercase
-
-        guard
-            seenIDs.insert(item.id).inserted,
-            seenCompletions.insert(normalizedCompletion).inserted
-        else {
-            continue
-        }
-
-        uniqueItems.append(item)
-    }
-
-    return uniqueItems
-}
-
-/// Suggestions attached to `TabView.searchable` so they participate in the system search field (Liquid Glass search tab).
-private struct CompanionTabSearchSuggestionsPanel: View {
-    let model: CompanionAppModel
-    @Binding var searchText: String
-    @Environment(\.isSearching) private var isSearching
-
-    @ViewBuilder
-    var body: some View {
-        if isSearching && normalizedSessionSearchQuery(searchText).isEmpty {
-            suggestionRows
-        }
-    }
-
-    @ViewBuilder
-    private var suggestionRows: some View {
-        let items = buildEmptyQuerySuggestionItems()
-        if !items.isEmpty {
-            ForEach(Array(items.prefix(8))) { suggestion in
-                Button {
-                    searchText = suggestion.completion
-                } label: {
-                    SearchSuggestionRow(suggestion: suggestion)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func buildEmptyQuerySuggestionItems() -> [SearchSuggestionItem] {
-        let raw = UserDefaults.standard.string(forKey: CompanionSearchStorage.recentQueriesKey) ?? ""
-        let recentSearches = raw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
-        let recentItems = recentSearches.prefix(4).map { query in
-            SearchSuggestionItem(
-                id: "recent:\(query)",
-                title: query,
-                subtitle: "Recent Search",
-                systemImage: "clock.arrow.circlepath",
-                completion: query
-            )
-        }
-
-        let suggestedItems = companionTabSearchSuggestedTopResults(model: model).compactMap { companionTabSearchSuggestionItem(for: $0) }
-        return companionTabSearchUniquedSuggestionItems(Array(recentItems + suggestedItems))
-    }
-}
-
-extension View {
-    /// Mirrors Apple’s `TabView` + `.searchable` + `tabViewSearchActivation` pattern so search uses the system Liquid Glass search tab chrome.
-    func companionTabViewSearchChrome(
-        model: CompanionAppModel,
-        searchText: Binding<String>,
-        selectedScope: Binding<SessionSearchScope>
-    ) -> some View {
-        self
-            .searchable(
-                text: searchText,
-                placement: .automatic,
-                prompt: String(localized: "Sessions, settings, or actions")
-            )
-            .searchPresentationToolbarBehavior(.automatic)
-            .searchScopes(selectedScope) {
-                ForEach(SessionSearchScope.allCases) { scope in
-                    Label(scope.title, systemImage: scope.systemImage).tag(scope)
-                }
-            }
-            .searchSuggestions {
-                CompanionTabSearchSuggestionsPanel(
-                    model: model,
-                    searchText: searchText
-                )
-            }
-            .onSubmit(of: .search) {
-                companionPersistRecentSearchQuery(searchText.wrappedValue)
-            }
-    }
 }
 
 struct SessionsScreen: View {
@@ -539,9 +461,10 @@ struct SessionSearchScreen: View {
     let model: CompanionAppModel
     @Binding var searchText: String
     @Binding var selectedScope: SessionSearchScope
+    @ObservedObject var searchService: SpotlightSearchService
+    let dismissSearch: () -> Void
 
     @Environment(\.openURL) private var openURL
-    @Environment(\.isSearching) private var isSearching
     @AppStorage(CompanionSearchStorage.recentQueriesKey) private var recentSearchesStorage = ""
     @State private var isDeviceHubPresented = false
 
@@ -549,42 +472,49 @@ struct SessionSearchScreen: View {
         NavigationStack {
             List {
                 if trimmedSearchText.isEmpty {
-                    if !isSearching {
-                        if !recentSearches.isEmpty {
-                            recentSearchesSection
-                        }
+                    if !recentSearches.isEmpty {
+                        recentSearchesSection
+                            .searchResultTransition()
+                    }
 
-                        if !topResults.isEmpty {
-                            globalSearchTopResultsSection(title: "Suggested")
-                        }
+                    if !topResults.isEmpty {
+                        globalSearchTopResultsSection(title: "Suggested")
+                            .searchResultTransition()
                     }
                 } else {
                     if !topResults.isEmpty {
                         globalSearchTopResultsSection(title: "Top Hits")
+                            .searchResultTransition()
                     }
 
                     if shouldShowSessionResults, !visibleNeedsAttentionSessions.isEmpty {
                         globalSearchSessionSection(title: "Needs Attention", sessions: visibleNeedsAttentionSessions)
+                            .searchResultTransition()
                     }
 
                     if shouldShowSessionResults, !visibleRunningSessions.isEmpty {
                         globalSearchSessionSection(title: "Active", sessions: visibleRunningSessions)
+                            .searchResultTransition()
                     }
 
                     if shouldShowSessionResults, !visibleArchivedSessions.isEmpty {
                         globalSearchSessionSection(title: "Archived", sessions: visibleArchivedSessions)
+                            .searchResultTransition()
                     }
 
                     if shouldShowQuickActionResults, !visibleQuickActions.isEmpty {
                         globalSearchActionSection(title: "Quick Actions", actions: visibleQuickActions)
+                            .searchResultTransition()
                     }
 
                     if shouldShowSettingsResults, !visibleSettingsTargets.isEmpty {
                         globalSearchSettingsSection(title: "Settings", targets: visibleSettingsTargets)
+                            .searchResultTransition()
                     }
 
                     if shouldShowDeviceResults, !visibleDeviceActions.isEmpty {
                         globalSearchActionSection(title: "Device", actions: visibleDeviceActions)
+                            .searchResultTransition()
                     }
                 }
             }
@@ -592,8 +522,14 @@ struct SessionSearchScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .contentMargins(.top, 0, for: .scrollContent)
             .companionListSurface()
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
+            .simultaneousGesture(
+                TapGesture()
+                    .onEnded { _ in
+                        dismissSearch()
+                    }
+            )
+            .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: SessionSummary.self) { session in
                 SessionDetailScreen(model: model, session: session)
             }
@@ -610,12 +546,26 @@ struct SessionSearchScreen: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
                 }
+
             }
             .refreshable {
                 await model.refresh()
             }
             .overlay {
                 overlayState
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .onTapGesture {
+                        dismissSearch()
+                    }
+            }
+            .task(id: searchTaskID) {
+                await performSemanticSearch()
+            }
+            .task {
+                await searchService.prepareForSearch()
+            }
+            .onDisappear {
+                searchService.cancelSearch()
             }
         }
         .sheet(isPresented: $isDeviceHubPresented) {
@@ -624,12 +574,31 @@ struct SessionSearchScreen: View {
         }
     }
 
+    @MainActor
+    private func performSemanticSearch() async {
+        guard selectedScope == .all || selectedScope == .sessions else {
+            searchService.cancelSearch()
+            return
+        }
+
+        let query = normalizedSessionSearchQuery(searchText)
+        guard !query.isEmpty else {
+            searchService.cancelSearch()
+            return
+        }
+
+        try? await Task.sleep(for: SearchBehavior.semanticSearchDebounce)
+        guard !Task.isCancelled else {
+            return
+        }
+
+        await searchService.performSearch(query: query)
+    }
+
     @ViewBuilder
     private var overlayState: some View {
         if model.isLoading && model.snapshot == nil {
             ProgressView("Loading Search")
-        } else if trimmedSearchText.isEmpty && isSearching {
-            EmptyView()
         } else if !hasVisibleSearchResults {
             ContentUnavailableView(
                 searchUnavailableStateTitle,
@@ -643,8 +612,33 @@ struct SessionSearchScreen: View {
         model.snapshot?.sessions ?? []
     }
 
-    private var filteredAllSessions: [SessionSummary] {
+    /// Sessions matching local text filtering (always available)
+    private var locallyFilteredSessions: [SessionSummary] {
         filterSessions(allSessions, matching: searchText)
+    }
+
+    /// Sessions from Core Spotlight semantic search results
+    private var spotlightMatchedSessions: [SessionSummary] {
+        guard !searchText.isEmpty else { return [] }
+
+        let spotlightIDs = Set(searchService.searchResults.map(\.uniqueIdentifier))
+        return allSessions.filter { spotlightIDs.contains($0.id) }
+    }
+
+    /// Combined filtered sessions using both local matching and Core Spotlight semantic search
+    private var filteredAllSessions: [SessionSummary] {
+        let localResults = locallyFilteredSessions
+        let spotlightResults = spotlightMatchedSessions
+
+        // Combine: prioritize spotlight results then add any local-only matches
+        var combined = spotlightResults
+        let spotlightIDs = Set(spotlightResults.map(\.id))
+
+        for session in localResults where !spotlightIDs.contains(session.id) {
+            combined.append(session)
+        }
+
+        return combined
     }
 
     private var filteredNeedsAttentionSessions: [SessionSummary] {
@@ -661,6 +655,10 @@ struct SessionSearchScreen: View {
 
     private var trimmedSearchText: String {
         normalizedSessionSearchQuery(searchText)
+    }
+
+    private var searchTaskID: String {
+        "\(selectedScope.rawValue):\(trimmedSearchText)"
     }
 
     private var filteredSettingsTargets: [SettingsSearchTarget] {
@@ -759,10 +757,6 @@ struct SessionSearchScreen: View {
 
     private var hasVisibleSearchResults: Bool {
         if trimmedSearchText.isEmpty {
-            if isSearching {
-                return !searchSuggestionItems.isEmpty
-            }
-
             return !topResults.isEmpty || !recentSearches.isEmpty
         }
 
@@ -777,44 +771,14 @@ struct SessionSearchScreen: View {
             !topResults.isEmpty
     }
 
-    private var searchSuggestionItems: [SearchSuggestionItem] {
-        if trimmedSearchText.isEmpty {
-            let recentItems = recentSearches.prefix(4).map { query in
-                SearchSuggestionItem(
-                    id: "recent:\(query)",
-                    title: query,
-                    subtitle: "Recent Search",
-                    systemImage: "clock.arrow.circlepath",
-                    completion: query
-                )
-            }
-            let suggestedItems = suggestedTopResults().compactMap(searchSuggestionItem(for:))
-            return uniquedSuggestionItems(Array(recentItems + suggestedItems))
-        }
-
-        let resultSuggestions = topResults.compactMap(searchSuggestionItem(for:))
-        let completionSuggestions = searchCompletions
-            .filter { completion in
-                completion.localizedCaseInsensitiveContains(trimmedSearchText)
-            }
-            .map { completion in
-                SearchSuggestionItem(
-                    id: "completion:\(completion)",
-                    title: completion,
-                    subtitle: "Suggested Query",
-                    systemImage: "magnifyingglass",
-                    completion: completion
-                )
-            }
-
-        return uniquedSuggestionItems(Array(resultSuggestions + completionSuggestions))
-    }
-
     private var recentSearchesSection: some View {
         Section("Recent Searches") {
             ForEach(recentSearches, id: \.self) { query in
                 Button {
-                    searchText = query
+                    withAnimation(SearchAnimation.fast) {
+                        searchText = query
+                        SearchHaptic.selection()
+                    }
                 } label: {
                     SearchSuggestionRow(
                         suggestion: SearchSuggestionItem(
@@ -841,6 +805,12 @@ struct SessionSearchScreen: View {
                     SearchSessionRow(session: session)
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(
+                    TapGesture()
+                        .onEnded { _ in
+                            SearchHaptic.selection()
+                        }
+                )
             }
         }
     }
@@ -868,6 +838,12 @@ struct SessionSearchScreen: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(
+                    TapGesture()
+                        .onEnded { _ in
+                            SearchHaptic.selection()
+                        }
+                )
             }
         }
     }
@@ -879,7 +855,9 @@ struct SessionSearchScreen: View {
         Section(title) {
             ForEach(actions) { action in
                 Button {
-                    runSearchAction(action)
+                    withAnimation(SearchAnimation.fast) {
+                        runSearchAction(action)
+                    }
                 } label: {
                     SearchCommandRow(
                         title: action.title,
@@ -1005,18 +983,6 @@ struct SessionSearchScreen: View {
         companionTabSearchUniquedSearchResults(results)
     }
 
-    private var searchCompletions: [String] {
-        [
-            "Needs Attention",
-            "Archived",
-            "Connect to Mac",
-            "Continue Prompt",
-            "Open Device Hub",
-            "Notification Routes",
-            "Send Test Alert"
-        ]
-    }
-
     private func runSearchAction(_ action: GlobalSearchAction) {
         switch action {
         case .openDeviceHub:
@@ -1036,14 +1002,6 @@ struct SessionSearchScreen: View {
 
     private func storeRecentSearch(_ query: String) {
         companionPersistRecentSearchQuery(query)
-    }
-
-    private func searchSuggestionItem(for result: GlobalSearchResult) -> SearchSuggestionItem? {
-        companionTabSearchSuggestionItem(for: result)
-    }
-
-    private func uniquedSuggestionItems(_ items: [SearchSuggestionItem]) -> [SearchSuggestionItem] {
-        companionTabSearchUniquedSuggestionItems(items)
     }
 
     private var searchUnavailableStateTitle: String {
@@ -1108,33 +1066,46 @@ private struct SearchCommandRow: View {
     let categoryLabel: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 36, height: 36)
+                Image(systemName: systemImage)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 20, height: 20)
+            }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-
-                if let categoryLabel {
-                    Text(categoryLabel)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if let categoryLabel {
+                        Text(categoryLabel)
+                            .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
                 }
-
                 Text(subtitle)
-                    .font(.footnote)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
+                    .lineLimit(2)
             }
 
             Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 
@@ -1146,49 +1117,58 @@ private struct SearchSessionRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 6) {
-                AssistantClientGlyph(client: session.assistantClient)
-                Image(systemName: session.status.symbolName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(tint)
-                    .accessibilityHidden(true)
-            }
-            .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-
-                Text(session.ref)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-
-                if let assistantPreview = session.assistantPreview, !assistantPreview.isEmpty {
-                    Text(assistantPreview)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(tint.opacity(0.12))
+                    .frame(width: 44, height: 44)
+                VStack(spacing: 4) {
+                    AssistantClientGlyph(client: session.assistantClient)
+                        .frame(width: 24, height: 24)
+                    HStack(spacing: 2) {
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 6, height: 6)
+                        Text(session.status.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(tint)
+                    }
                 }
             }
 
-            Spacer(minLength: 12)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(ModelFormatting.relativeTimestamp(session.lastUpdatedAt))
-                    .font(.caption)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(session.title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Text(session.ref)
+                    .font(.subheadline.monospaced())
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Text(session.status.label)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(tint)
+                if let assistantPreview = session.assistantPreview, !assistantPreview.isEmpty {
+                    Text(assistantPreview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(ModelFormatting.relativeTimestamp(session.lastUpdatedAt))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.top, 2)
             }
+
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 }
 
@@ -1196,25 +1176,35 @@ private struct SearchSuggestionRow: View {
     let suggestion: SearchSuggestionItem
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: suggestion.systemImage)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(suggestion.title)
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1))
+                    .frame(width: 36, height: 36)
+                Image(systemName: suggestion.systemImage)
                     .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-
-                Text(suggestion.subtitle)
-                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .frame(width: 20, height: 20)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(suggestion.title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(suggestion.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)
+            Image(systemName: "arrow.up.left")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .opacity(0.7)
         }
+        .contentShape(Rectangle())
+        .padding(.vertical, 6)
     }
 }
 

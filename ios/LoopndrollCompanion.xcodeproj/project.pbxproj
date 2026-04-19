@@ -35,6 +35,8 @@
 		F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */; };
 		FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B6F97450DF16B9BDC1BB296 /* CompanionModels.swift */; };
 		FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3383A59BE6F2A3621442C5 /* CompanionService.swift */; };
+		CC3D4E5F6A7B8C9D0E1F2B3C /* SessionSpotlightIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F6A7B8C9D0E1F /* SessionSpotlightIndexer.swift */; };
+		DD4E5F6A7B8C9D0E1F2B3C4D /* SpotlightSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* SpotlightSearchService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +72,8 @@
 		ECC65EE65F1DB8E7293CEC6D /* LoopndrollCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoopndrollCompanion.Debug.entitlements; sourceTree = "<group>"; };
 		F2738F36D01E51884310D44F /* AppIconManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconManager.swift; sourceTree = "<group>"; };
 		FDFB9E8A63AB5ECFF97FA869 /* LoopndrollCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LoopndrollCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA1B2C3D4E5F6A7B8C9D0E1F /* SessionSpotlightIndexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSpotlightIndexer.swift; sourceTree = "<group>"; };
+		BB2C3D4E5F6A7B8C9D0E1F2A /* SpotlightSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightSearchService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -226,6 +230,8 @@
 				0E3383A59BE6F2A3621442C5 /* CompanionService.swift */,
 				A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */,
 				427A64B51420A939220B6D2A /* MockCompanionService.swift */,
+				AA1B2C3D4E5F6A7B8C9D0E1F /* SessionSpotlightIndexer.swift */,
+				BB2C3D4E5F6A7B8C9D0E1F2A /* SpotlightSearchService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -364,6 +370,8 @@
 				60ADCF28CAD17F0D01C772A1 /* SessionsScreen.swift in Sources */,
 				3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */,
 				3135120D2FEF1B3A5A4D4778 /* StatusPill.swift in Sources */,
+				CC3D4E5F6A7B8C9D0E1F2B3C /* SessionSpotlightIndexer.swift in Sources */,
+				DD4E5F6A7B8C9D0E1F2B3C4D /* SpotlightSearchService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
