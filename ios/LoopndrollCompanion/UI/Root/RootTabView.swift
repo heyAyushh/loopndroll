@@ -23,7 +23,6 @@ struct RootTabView: View {
     @State private var isLaunchOrbScannerPresented = false
     @State private var selectedTab: RootTab = .sessions
     @State private var searchText = ""
-    @State private var isSearchPresented = false
     @State private var searchScope: SessionSearchScope = .all
     @StateObject private var spotlightSearchService = SpotlightSearchService()
 
@@ -49,32 +48,23 @@ struct RootTabView: View {
                     model: model,
                     searchText: $searchText,
                     selectedScope: $searchScope,
-                    searchService: spotlightSearchService,
-                    dismissSearch: dismissSearchPresentation
+                    searchService: spotlightSearchService
                 )
             }
         }
-        .companionNativeSearchTab(
-            searchText: $searchText,
-            isPresented: $isSearchPresented,
-            selectedScope: $searchScope
-        )
         .modifier(TabBarMinimizeWhenAvailable())
         .modifier(TabViewSearchActivationWhenAvailable())
-        .modifier(SearchToolbarBehaviorWhenAvailable())
         .task(id: scenePhase) {
             await refreshForActiveSceneIfNeeded()
         }
         .onChange(of: selectedTab) { _, newTab in
-            guard newTab == .search else {
-                return
+            if newTab == .search {
+                Task {
+                    await spotlightSearchService.prepareForSearch()
+                }
+            } else {
+                searchText = ""
             }
-
-            Task {
-                await spotlightSearchService.prepareForSearch()
-            }
-
-            isSearchPresented = true
         }
         .onAppear {
             guard !hasCheckedLaunchOrbScanner else {
@@ -113,14 +103,6 @@ struct RootTabView: View {
             ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.openSearchTabOnLaunch)
     }
 
-    private func dismissSearchPresentation() {
-        guard isSearchPresented else {
-            return
-        }
-
-        isSearchPresented = false
-    }
-
     private func applyLaunchSearchQueryIfNeeded() {
         guard searchText.isEmpty else {
             return
@@ -157,29 +139,6 @@ struct RootTabView: View {
     }
 }
 
-private extension View {
-    func companionNativeSearchTab(
-        searchText: Binding<String>,
-        isPresented: Binding<Bool>,
-        selectedScope: Binding<SessionSearchScope>
-    ) -> some View {
-        searchable(
-            text: searchText,
-            isPresented: isPresented,
-            placement: .automatic,
-            prompt: Text("Search sessions, settings, actions")
-        )
-        .searchScopes(selectedScope, activation: .onSearchPresentation) {
-            ForEach(SessionSearchScope.allCases) { scope in
-                Label(scope.title, systemImage: scope.systemImage).tag(scope)
-            }
-        }
-        .onSubmit(of: .search) {
-            companionPersistRecentSearchQuery(searchText.wrappedValue)
-        }
-    }
-}
-
 private struct TabBarMinimizeWhenAvailable: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
@@ -194,16 +153,6 @@ private struct TabViewSearchActivationWhenAvailable: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.tabViewSearchActivation(.searchTabSelection)
-        } else {
-            content
-        }
-    }
-}
-
-private struct SearchToolbarBehaviorWhenAvailable: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.searchToolbarBehavior(.automatic)
         } else {
             content
         }

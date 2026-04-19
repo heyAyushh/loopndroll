@@ -14,25 +14,12 @@ private enum SearchBehavior {
     static let semanticSearchDebounce: Duration = .milliseconds(120)
 }
 
-private enum SearchHaptic {
-    @MainActor
-    static func selection() {
-        let generator = UISelectionFeedbackGenerator()
-        generator.selectionChanged()
-    }
-
-    @MainActor
-    static func impact(style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
-        let generator = UIImpactFeedbackGenerator(style: style)
-        generator.impactOccurred()
-    }
-
-    @MainActor
-    static func success() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
-    }
+private enum SearchMatchScore {
+    static let exact = 0
+    static let prefix = 1
+    static let contains = 2
 }
+
 
 private struct SearchResultTransition: ViewModifier {
     func body(content: Content) -> some View {
@@ -177,13 +164,6 @@ enum GlobalSearchResult: Identifiable, Hashable {
     }
 }
 
-private struct SearchSuggestionItem: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let completion: String
-}
 
 private func normalizedSessionSearchQuery(_ searchText: String) -> String {
     searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,11 +186,11 @@ private func bestSearchMatchScore(
 
         let score: Int?
         if normalizedCandidate == normalizedQuery {
-            score = 0
+            score = SearchMatchScore.exact
         } else if normalizedCandidate.hasPrefix(normalizedQuery) {
-            score = 1
+            score = SearchMatchScore.prefix
         } else if normalizedCandidate.contains(normalizedQuery) {
-            score = 2
+            score = SearchMatchScore.contains
         } else {
             score = nil
         }
@@ -227,10 +207,19 @@ private func filterSessions(
     _ sessions: [SessionSummary],
     matching searchText: String
 ) -> [SessionSummary] {
+    scoredSessions(sessions, matching: searchText).map(\.session)
+}
+
+private func scoredSessions(
+    _ sessions: [SessionSummary],
+    matching searchText: String
+) -> [(session: SessionSummary, score: Int)] {
     let trimmedSearchText = normalizedSessionSearchQuery(searchText)
 
     guard !trimmedSearchText.isEmpty else {
-        return sessions
+        return sessions.map { session in
+            (session: session, score: SearchMatchScore.exact)
+        }
     }
 
     let scoredSessions: [(session: SessionSummary, score: Int)] = sessions.compactMap { session in
@@ -262,7 +251,6 @@ private func filterSessions(
 
             return lhs.session.lastUpdatedAt > rhs.session.lastUpdatedAt
         }
-        .map(\.session)
 }
 
 private enum CompanionSearchStorage {
@@ -462,14 +450,15 @@ struct SessionSearchScreen: View {
     @Binding var searchText: String
     @Binding var selectedScope: SessionSearchScope
     @ObservedObject var searchService: SpotlightSearchService
-    let dismissSearch: () -> Void
 
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismissSearch) private var dismissSearch
     @AppStorage(CompanionSearchStorage.recentQueriesKey) private var recentSearchesStorage = ""
+    @State private var searchPath = NavigationPath()
     @State private var isDeviceHubPresented = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $searchPath) {
             List {
                 if trimmedSearchText.isEmpty {
                     if !recentSearches.isEmpty {
@@ -522,12 +511,6 @@ struct SessionSearchScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .contentMargins(.top, 0, for: .scrollContent)
             .companionListSurface()
-            .simultaneousGesture(
-                TapGesture()
-                    .onEnded { _ in
-                        dismissSearch()
-                    }
-            )
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: SessionSummary.self) { session in
@@ -546,7 +529,6 @@ struct SessionSearchScreen: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
                 }
-
             }
             .refreshable {
                 await model.refresh()
@@ -566,6 +548,39 @@ struct SessionSearchScreen: View {
             }
             .onDisappear {
                 searchService.cancelSearch()
+            }
+        }
+        .searchable(
+            text: $searchText,
+            placement: .automatic,
+            prompt: Text("Search sessions, settings, actions")
+        )
+        .searchScopes($selectedScope, activation: .onTextEntry) {
+            ForEach(SessionSearchScope.allCases) { scope in
+                Label(scope.title, systemImage: scope.systemImage).tag(scope)
+            }
+        }
+        .onSubmit(of: .search) {
+            companionPersistRecentSearchQuery(searchText)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Menu {
+                    Picker("Scope", selection: $selectedScope) {
+                        ForEach(SessionSearchScope.allCases) { scope in
+                            Label(scope.title, systemImage: scope.systemImage).tag(scope)
+                        }
+                    }
+                } label: {
+                    Label(selectedScope.title, systemImage: selectedScope.systemImage)
+                }
+                .accessibilityLabel("Filter search scope")
+
+                Spacer()
+
+                Button("Done") {
+                    dismissSearch()
+                }
             }
         }
         .sheet(isPresented: $isDeviceHubPresented) {
@@ -774,24 +789,49 @@ struct SessionSearchScreen: View {
     private var recentSearchesSection: some View {
         Section("Recent Searches") {
             ForEach(recentSearches, id: \.self) { query in
+                let match = bestRecentSearchResult(for: query)
                 Button {
-                    withAnimation(SearchAnimation.fast) {
-                        searchText = query
-                        SearchHaptic.selection()
-                    }
+                    activateRecentSearch(query)
                 } label: {
-                    SearchSuggestionRow(
-                        suggestion: SearchSuggestionItem(
-                            id: "recent:\(query)",
-                            title: query,
-                            subtitle: "Recent Search",
-                            systemImage: "clock.arrow.circlepath",
-                            completion: query
-                        )
+                    RecentSearchRow(
+                        query: query,
+                        breadcrumb: recentSearchBreadcrumb(for: match),
+                        systemImage: recentSearchSystemImage(for: match)
                     )
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    private func recentSearchBreadcrumb(for result: GlobalSearchResult?) -> String {
+        guard let result else {
+            return "Recent search"
+        }
+
+        switch result {
+        case let .session(session):
+            return "Sessions → \(session.ref)"
+        case let .settings(target):
+            return "Settings → \(target.title)"
+        case let .action(action):
+            let category = action.category == .device ? "Device" : "Actions"
+            return "\(category) → \(action.title)"
+        }
+    }
+
+    private func recentSearchSystemImage(for result: GlobalSearchResult?) -> String {
+        guard let result else {
+            return "clock.arrow.circlepath"
+        }
+
+        switch result {
+        case .session:
+            return "bubble.left.and.bubble.right"
+        case let .settings(target):
+            return target.systemImage
+        case let .action(action):
+            return action.systemImage
         }
     }
 
@@ -804,13 +844,6 @@ struct SessionSearchScreen: View {
                 NavigationLink(value: session) {
                     SearchSessionRow(session: session)
                 }
-                .buttonStyle(.plain)
-                .simultaneousGesture(
-                    TapGesture()
-                        .onEnded { _ in
-                            SearchHaptic.selection()
-                        }
-                )
             }
         }
     }
@@ -837,13 +870,6 @@ struct SessionSearchScreen: View {
                         categoryLabel: "Settings"
                     )
                 }
-                .buttonStyle(.plain)
-                .simultaneousGesture(
-                    TapGesture()
-                        .onEnded { _ in
-                            SearchHaptic.selection()
-                        }
-                )
             }
         }
     }
@@ -878,7 +904,6 @@ struct SessionSearchScreen: View {
             NavigationLink(value: session) {
                 SearchSessionRow(session: session)
             }
-            .buttonStyle(.plain)
         case let .settings(target):
             NavigationLink(value: target) {
                 SearchCommandRow(
@@ -888,7 +913,6 @@ struct SessionSearchScreen: View {
                     categoryLabel: "Settings"
                 )
             }
-            .buttonStyle(.plain)
         case let .action(action):
             Button {
                 runSearchAction(action)
@@ -921,6 +945,10 @@ struct SessionSearchScreen: View {
     }
 
     private func matchingSettingsTargets(for query: String) -> [SettingsSearchTarget] {
+        scoredSettingsTargets(for: query).map(\.target)
+    }
+
+    private func scoredSettingsTargets(for query: String) -> [(target: SettingsSearchTarget, score: Int)] {
         let scoredTargets: [(target: SettingsSearchTarget, score: Int)] = SettingsSearchTarget.allCases.compactMap { target in
             let score = bestSearchMatchScore(
                 query: query,
@@ -942,15 +970,23 @@ struct SessionSearchScreen: View {
 
                 return lhs.target.title < rhs.target.title
             }
-            .map(\.target)
     }
 
     private func matchingActions(
         in category: GlobalSearchActionCategory,
         for query: String
     ) -> [GlobalSearchAction] {
+        scoredActions(in: category, for: query).map(\.action)
+    }
+
+    private func scoredActions(
+        in category: GlobalSearchActionCategory? = nil,
+        for query: String
+    ) -> [(action: GlobalSearchAction, score: Int)] {
         let scoredActions: [(action: GlobalSearchAction, score: Int)] = GlobalSearchAction.allCases
-            .filter { $0.category == category }
+            .filter { action in
+                category == nil || action.category == category
+            }
             .compactMap { action in
                 let score = bestSearchMatchScore(
                     query: query,
@@ -972,7 +1008,6 @@ struct SessionSearchScreen: View {
 
                 return lhs.action.title < rhs.action.title
             }
-            .map(\.action)
     }
 
     private func suggestedTopResults() -> [GlobalSearchResult] {
@@ -984,6 +1019,9 @@ struct SessionSearchScreen: View {
     }
 
     private func runSearchAction(_ action: GlobalSearchAction) {
+        dismissSearch()
+        Haptics.selectionChanged()
+
         switch action {
         case .openDeviceHub:
             isDeviceHubPresented = true
@@ -1002,6 +1040,80 @@ struct SessionSearchScreen: View {
 
     private func storeRecentSearch(_ query: String) {
         companionPersistRecentSearchQuery(query)
+    }
+
+    private func activateRecentSearch(_ query: String) {
+        let trimmedQuery = normalizedSessionSearchQuery(query)
+
+        guard !trimmedQuery.isEmpty else {
+            return
+        }
+
+        storeRecentSearch(trimmedQuery)
+
+        if let result = bestRecentSearchResult(for: trimmedQuery) {
+            withAnimation(SearchAnimation.fast) {
+                searchText = trimmedQuery
+            }
+
+            activateSearchResult(result)
+            return
+        }
+
+        withAnimation(SearchAnimation.fast) {
+            searchText = trimmedQuery
+            Haptics.selectionChanged()
+        }
+    }
+
+    private func bestRecentSearchResult(for query: String) -> GlobalSearchResult? {
+        let commandResults = scoredCommandResults(for: query)
+
+        if let exactCommandResult = commandResults.first(where: { result in
+            result.score == SearchMatchScore.exact
+        }) {
+            return exactCommandResult.result
+        }
+
+        if let session = scoredSessions(allSessions, matching: query).first,
+           session.score <= SearchMatchScore.prefix {
+            return .session(session.session)
+        }
+
+        return commandResults.first?.result
+    }
+
+    private func scoredCommandResults(for query: String) -> [(result: GlobalSearchResult, score: Int)] {
+        let settingsResults = scoredSettingsTargets(for: query).map { scoredTarget in
+            (result: GlobalSearchResult.settings(scoredTarget.target), score: scoredTarget.score)
+        }
+        let actionResults = scoredActions(for: query).map { scoredAction in
+            (result: GlobalSearchResult.action(scoredAction.action), score: scoredAction.score)
+        }
+
+        return (settingsResults + actionResults)
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score {
+                    return lhs.score < rhs.score
+                }
+
+                return lhs.result.id < rhs.result.id
+            }
+    }
+
+    private func activateSearchResult(_ result: GlobalSearchResult) {
+        switch result {
+        case let .session(session):
+            dismissSearch()
+            Haptics.selectionChanged()
+            searchPath.append(session)
+        case let .settings(target):
+            dismissSearch()
+            Haptics.selectionChanged()
+            searchPath.append(target)
+        case let .action(action):
+            runSearchAction(action)
+        }
     }
 
     private var searchUnavailableStateTitle: String {
@@ -1100,9 +1212,6 @@ private struct SearchCommandRow: View {
             }
 
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 6)
@@ -1163,48 +1272,43 @@ private struct SearchSessionRow: View {
             }
 
             Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 8)
     }
 }
 
-private struct SearchSuggestionRow: View {
-    let suggestion: SearchSuggestionItem
+private struct RecentSearchRow: View {
+    let query: String
+    let breadcrumb: String
+    let systemImage: String
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.1))
-                    .frame(width: 36, height: 36)
-                Image(systemName: suggestion.systemImage)
-                    .font(.body.weight(.medium))
+                    .fill(Color.secondary.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                Image(systemName: systemImage)
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 20)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(suggestion.title)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(query)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text(suggestion.subtitle)
+                    .lineLimit(1)
+                Text(breadcrumb)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 0)
-            Image(systemName: "arrow.up.left")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .opacity(0.7)
         }
         .contentShape(Rectangle())
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 }
 
