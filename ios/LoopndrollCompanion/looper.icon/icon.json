@@ -1,5 +1,43 @@
 {
-  "fill" : "automatic",
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "gray:0.00000,1.00000",
+          "gray:0.00000,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.7
+          }
+        }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.00000,0.00000,0.00000,1.00000",
+          "display-p3:0.00000,0.00000,0.00000,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.7
+          }
+        }
+      }
+    }
+  ],
   "groups" : [
     {
       "blur-material" : null,
@@ -13,14 +51,21 @@
           ],
           "fill-specializations" : [
             {
+              "value" : "none"
+            },
+            {
               "appearance" : "tinted",
+              "value" : "none"
+            },
+            {
+              "idiom" : "square",
               "value" : "none"
             }
           ],
-          "glass" : true,
+          "glass" : false,
           "hidden" : false,
-          "image-name" : "A66D421E-CFB9-4169-878C-CDFA88DB5E72.PNG",
-          "name" : "A66D421E-CFB9-4169-878C-CDFA88DB5E72"
+          "image-name" : "notification-orb.png",
+          "name" : "notification-orb"
         }
       ],
       "lighting" : "individual",

@@ -1,18 +1,45 @@
 import SwiftUI
 import UIKit
 
+private enum ToolbarOrbAsset {
+    static let resourceName = "notification-orb"
+    static let fileExtension = "png"
+
+    static var image: UIImage? {
+        if let resourceURL = Bundle.main.url(
+            forResource: resourceName,
+            withExtension: fileExtension
+        ) {
+            return UIImage(contentsOfFile: resourceURL.path)
+        }
+
+        return UIImage(named: resourceName)
+    }
+}
+
 struct SessionsToolbarOrbButton: View {
     private let orbButtonSize: CGFloat = 32
     private let hitTargetSize: CGFloat = 44
 
     var body: some View {
-        Image("LogoOrb")
-            .resizable()
+        toolbarImage
             .scaledToFill()
             .frame(width: orbButtonSize, height: orbButtonSize)
             .clipShape(Circle())
             .frame(width: hitTargetSize, height: hitTargetSize)
             .contentShape(Circle())
+    }
+
+    @ViewBuilder
+    private var toolbarImage: some View {
+        if let image = ToolbarOrbAsset.image {
+            Image(uiImage: image)
+                .resizable()
+        } else {
+            Image(systemName: "circle")
+                .resizable()
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

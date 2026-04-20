@@ -1,15 +1,8 @@
 import Foundation
-import UIKit
 import UserNotifications
 
 @MainActor
 final class LocalNotificationManager {
-    private enum Asset {
-        static let notificationLogoName = "LogoOrb"
-        static let notificationLogoExtension = "png"
-        static let notificationLogoFilenamePrefix = "looper-notification-logo"
-    }
-
     private let notificationCenter: UNUserNotificationCenter
 
     init(notificationCenter: UNUserNotificationCenter = .current()) {
@@ -44,7 +37,6 @@ final class LocalNotificationManager {
         content.body = "You will get an alert when a session newly stops while looper is connected."
         content.sound = .default
         content.interruptionLevel = .active
-        content.attachments = notificationAttachments()
 
         return await scheduleNotification(
             id: "looper-local-alert-test",
@@ -80,7 +72,6 @@ final class LocalNotificationManager {
             content.sound = .default
             content.interruptionLevel = .active
             content.threadIdentifier = session.id
-            content.attachments = notificationAttachments()
 
             _ = await scheduleNotification(
                 id: stopNotificationIdentifier(for: session),
@@ -137,58 +128,6 @@ final class LocalNotificationManager {
         } catch {
             return false
         }
-    }
-
-    private func notificationAttachments() -> [UNNotificationAttachment] {
-        guard let assetURL = notificationAttachmentFileURL() else {
-            return []
-        }
-
-        guard let attachment = try? UNNotificationAttachment(
-            identifier: Asset.notificationLogoName,
-            url: assetURL
-        ) else {
-            return []
-        }
-
-        return [attachment]
-    }
-
-    private func notificationAttachmentFileURL() -> URL? {
-        let traitCollection = notificationArtworkTraitCollection()
-
-        guard let image = UIImage(
-            named: Asset.notificationLogoName,
-            in: .main,
-            compatibleWith: traitCollection
-        ), let pngData = image.pngData() else {
-            return nil
-        }
-
-        let userInterfaceStyle = traitCollection.userInterfaceStyle == .light ? "light" : "dark"
-        let fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(Asset.notificationLogoFilenamePrefix)-\(userInterfaceStyle)")
-            .appendingPathExtension(Asset.notificationLogoExtension)
-
-        do {
-            try pngData.write(to: fileURL, options: [.atomic])
-            return fileURL
-        } catch {
-            return nil
-        }
-    }
-
-    private func notificationArtworkTraitCollection() -> UITraitCollection {
-        let currentStyle = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first(where: {
-                $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive
-            })?
-            .traitCollection
-            .userInterfaceStyle ?? UIScreen.main.traitCollection.userInterfaceStyle
-
-        let resolvedStyle: UIUserInterfaceStyle = currentStyle == .light ? .light : .dark
-        return UITraitCollection(userInterfaceStyle: resolvedStyle)
     }
 
     private func isAuthorized(_ status: UNAuthorizationStatus) -> Bool {
