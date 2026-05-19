@@ -2,7 +2,6 @@ import Foundation
 import Observation
 import UIKit
 import UserNotifications
-import CoreSpotlight
 
 private enum LaunchArgument {
     static let sendTestAlertOnLaunch = "--send-test-alert-on-launch"
@@ -28,6 +27,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
 
@@ -371,8 +371,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         syncDetailCache(with: nextSnapshot)
 
-        // Index sessions to Core Spotlight for semantic search
-        await indexSessionsToSpotlight(nextSnapshot.sessions)
+        await syncSpotlightIndex(with: nextSnapshot.sessions)
 
         guard shouldUseLocalFallbackNotifications else {
             return
@@ -384,9 +383,29 @@ final class CompanionAppModel {
         )
     }
 
-    private func indexSessionsToSpotlight(_ sessions: [SessionSummary]) async {
+    private func syncSpotlightIndex(with sessions: [SessionSummary]) async {
+        let nextRecords = Dictionary(uniqueKeysWithValues: sessions.map { session in
+            (session.id, SessionSpotlightRecord(session: session))
+        })
+        let removedIDs = Set(spotlightRecordsBySessionID.keys).subtracting(nextRecords.keys)
+        let changedSessions = sessions.filter { session in
+            nextRecords[session.id] != spotlightRecordsBySessionID[session.id]
+        }
+
+        guard !removedIDs.isEmpty || !changedSessions.isEmpty else {
+            return
+        }
+
         do {
-            try await spotlightIndexer.indexSessions(sessions)
+            if !removedIDs.isEmpty {
+                try await spotlightIndexer.deleteSessions(withIDs: Array(removedIDs))
+            }
+
+            if !changedSessions.isEmpty {
+                try await spotlightIndexer.indexSessions(changedSessions)
+            }
+
+            spotlightRecordsBySessionID = nextRecords
         } catch {
             print("Failed to index sessions to Spotlight: \(error)")
         }

@@ -1,3 +1,4 @@
+import Combine
 import CoreSpotlight
 
 @MainActor
@@ -10,6 +11,8 @@ final class SpotlightSearchService: ObservableObject {
     // MARK: - Semantic Search
 
     func performSearch(query: String, maxRankedResults: Int = 5) async {
+        cancelSearch()
+
         if #available(iOS 26, *) {
             await performModernSearch(query: query, maxRankedResults: maxRankedResults)
         } else {
@@ -24,43 +27,48 @@ final class SpotlightSearchService: ObservableObject {
             return
         }
 
-        isSearching = true
-        defer { isSearching = false }
-
-        // Configure query context for semantic search
         let queryContext = CSUserQueryContext()
         queryContext.fetchAttributes = [
             "title",
             "contentDescription"
         ]
-
-        // Enable ranked results for better relevance
         queryContext.enableRankedResults = true
         queryContext.maxRankedResultCount = maxRankedResults
-
-        // Filter to only our domain
         queryContext.filterQueries = ["domainIdentifier == '\(SpotlightIdentifiers.domainIdentifier)'"]
 
-        // Create and start query
         let userQuery = CSUserQuery(
             userQueryString: query,
             userQueryContext: queryContext
         )
 
         currentQuery = userQuery
+        isSearching = true
+        defer {
+            if currentQuery === userQuery {
+                isSearching = false
+            }
+        }
 
         do {
             var results: [CSSearchableItem] = []
 
             for try await result in userQuery.results {
+                guard !Task.isCancelled, currentQuery === userQuery else {
+                    return
+                }
+
                 results.append(result.item)
             }
 
-            searchResults = results
+            if currentQuery === userQuery {
+                searchResults = results
+            }
 
         } catch {
-            print("Search error: \(error)")
-            searchResults = []
+            if currentQuery === userQuery {
+                print("Search error: \(error)")
+                searchResults = []
+            }
         }
     }
 
@@ -74,12 +82,12 @@ final class SpotlightSearchService: ObservableObject {
         isSearching = true
         defer { isSearching = false }
 
-        // Use CSSearchQuery for older iOS versions
         let context = CSSearchQueryContext()
         context.fetchAttributes = ["title", "contentDescription", "keywords"]
+        let escapedQuery = query.replacingOccurrences(of: "'", with: "\\'")
 
         let searchQuery = CSSearchQuery(
-            queryString: "contentDescription ==[c] '*\(query)*' || title ==[c] '*\(query)*'c",
+            queryString: "contentDescription ==[c] '*\(escapedQuery)*' || title ==[c] '*\(escapedQuery)*'",
             queryContext: context
         )
 
@@ -97,9 +105,8 @@ final class SpotlightSearchService: ObservableObject {
 
     func prepareForSearch() async {
         if #available(iOS 26, *) {
-            await CSUserQuery.prepare()
+            CSUserQuery.prepare()
         }
-        // No-op for older iOS versions
     }
 
     func cancelSearch() {

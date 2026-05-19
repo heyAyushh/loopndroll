@@ -8,6 +8,8 @@ struct SettingsScreen: View {
     @State private var connectionCodeErrorMessage: String?
     @State private var draftConnectionCode = ""
     @AppStorage("stopQuickActions") private var storedQuickActions = "open-session,continue"
+    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = true
+    @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var draftPrompt = ""
     @State private var scrollTarget: SettingsSearchTarget?
 
@@ -43,6 +45,7 @@ struct SettingsScreen: View {
                 .id(SettingsSearchTarget.continuePrompt)
             quickActionsSection
                 .id(SettingsSearchTarget.stopQuickActions)
+            pinballSection
             advancedConfigurationSection
             versionSection
         }
@@ -130,6 +133,18 @@ struct SettingsScreen: View {
             Text("Stop Quick Actions")
         } footer: {
             Text("These actions appear when a stop alert expands.")
+        }
+    }
+
+    private var pinballSection: some View {
+        Section {
+            Toggle("Pinball", isOn: $isPinballGameEnabled)
+            Toggle("Physics Debug Overlay", isOn: $isPinballDebugOverlayEnabled)
+                .disabled(!isPinballGameEnabled)
+        } header: {
+            Text("Pinball")
+        } footer: {
+            Text("The overlay uses SpriteKit physics, Core Motion tilt, and Core Haptics collision feedback.")
         }
     }
 

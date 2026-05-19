@@ -28,6 +28,7 @@ struct SessionsToolbarOrbButton: View {
             .clipShape(Circle())
             .frame(width: hitTargetSize, height: hitTargetSize)
             .contentShape(Circle())
+            .pinballSurface(cornerRadius: hitTargetSize / 2, material: .metal)
     }
 
     @ViewBuilder

@@ -1,29 +1,49 @@
 import CoreSpotlight
-import MobileCoreServices
+import UniformTypeIdentifiers
 
 enum SpotlightIdentifiers {
     static let domainIdentifier = "dev.looper.session"
     static let indexName = "LooperSessions"
 }
 
+struct SessionSpotlightRecord: Equatable, Sendable {
+    let id: String
+    let ref: String
+    let title: String
+    let status: SessionStatus
+    let assistantPreview: String?
+    let assistantClient: AssistantClient
+
+    init(session: SessionSummary) {
+        id = session.id
+        ref = session.ref
+        title = session.title
+        status = session.status
+        assistantPreview = session.assistantPreview
+        assistantClient = session.assistantClient
+    }
+}
+
 struct SessionSearchableItem {
     let session: SessionSummary
 
     var searchableItem: CSSearchableItem {
-        let attributeSet = CSSearchableItemAttributeSet(itemContentType: kUTTypeText as String)
+        let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
         attributeSet.title = session.title
         attributeSet.contentDescription = session.assistantPreview ?? "Session \(session.ref)"
-        attributeSet.textContent = "\(session.title) \(session.assistantPreview ?? "") \(session.status.label)"
-
-        // Keywords for better search matching
+        attributeSet.textContent = [
+            session.ref,
+            session.title,
+            session.assistantPreview ?? "",
+            session.status.label,
+            session.assistantClient.displayTitle
+        ].joined(separator: " ")
         attributeSet.keywords = [
             session.ref,
             session.status.rawValue,
             session.assistantClient.rawValue,
             session.status.label
-        ]
-
-        // Display name and alternate names
+        ] + session.assistantClient.searchKeywords
         attributeSet.displayName = session.title
 
         let item = CSSearchableItem(
@@ -31,8 +51,6 @@ struct SessionSearchableItem {
             domainIdentifier: SpotlightIdentifiers.domainIdentifier,
             attributeSet: attributeSet
         )
-
-        // Mark as update to avoid overwriting existing attributes
         item.expirationDate = Date.distantFuture
 
         return item
@@ -51,6 +69,10 @@ final class SessionSpotlightIndexer: @unchecked Sendable {
     // MARK: - Indexing
 
     func indexSessions(_ sessions: [SessionSummary]) async throws {
+        guard !sessions.isEmpty else {
+            return
+        }
+
         let items = sessions.map { SessionSearchableItem(session: $0).searchableItem }
 
         try await index.indexSearchableItems(items)
@@ -63,6 +85,14 @@ final class SessionSpotlightIndexer: @unchecked Sendable {
 
     func deleteSession(withId id: String) async throws {
         try await index.deleteSearchableItems(withIdentifiers: [id])
+    }
+
+    func deleteSessions(withIDs ids: [String]) async throws {
+        guard !ids.isEmpty else {
+            return
+        }
+
+        try await index.deleteSearchableItems(withIdentifiers: ids)
     }
 
     func deleteAllSessions() async throws {

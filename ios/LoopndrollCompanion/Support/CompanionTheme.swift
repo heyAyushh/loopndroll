@@ -18,7 +18,10 @@ extension View {
     }
 
     func companionCardRowSurface() -> some View {
-        self
+        pinballSurface(
+            cornerRadius: CompanionMetrics.cardCornerRadius,
+            material: .glass
+        )
     }
 }
 

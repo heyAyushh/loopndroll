@@ -16,7 +16,18 @@
 		3A862790609B7E6774673564 /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2738F36D01E51884310D44F /* AppIconManager.swift */; };
 		3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B9F7B90CAECDB099E8C275 /* SettingsScreen.swift */; };
 		4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */; };
+		4C0A1B2C3D4E5F6071829300 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829310 /* PhysicsCategories.swift */; };
+		4C0A1B2C3D4E5F6071829301 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829311 /* HapticManager.swift */; };
+		4C0A1B2C3D4E5F6071829302 /* MotionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829312 /* MotionController.swift */; };
+		4C0A1B2C3D4E5F6071829303 /* UIBodySynchronizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829313 /* UIBodySynchronizer.swift */; };
+		4C0A1B2C3D4E5F6071829304 /* PinballDebugOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829314 /* PinballDebugOverlay.swift */; };
+		4C0A1B2C3D4E5F6071829305 /* GameScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829315 /* GameScene.swift */; };
+		4C0A1B2C3D4E5F6071829306 /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829316 /* PinballGameView.swift */; };
+		4C0A1B2C3D4E5F6071829307 /* SKNode+Debug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829317 /* SKNode+Debug.swift */; };
 		60ADCF28CAD17F0D01C772A1 /* SessionsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */; };
+		6A1B2C3D4E5F60718293A4B0 /* SessionSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A1B2C3D4E5F60718293A4B1 /* SessionSearchModel.swift */; };
+		6A1B2C3D4E5F60718293A4B2 /* SessionSearchRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A1B2C3D4E5F60718293A4B3 /* SessionSearchRows.swift */; };
+		6A1B2C3D4E5F60718293A4B4 /* SessionSearchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A1B2C3D4E5F60718293A4B5 /* SessionSearchScreen.swift */; };
 		723AF7E60664C0BE7A817A4C /* OrbScannerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D59AD3E54E1967FA8D6A0C /* OrbScannerScreen.swift */; };
 		7319ECE52ED3F7FB1F628DB7 /* CompanionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46E9FFDFE6ED0B29141D4C5 /* CompanionEnvironment.swift */; };
 		786F0FFB6A1FD2BDECB646E7 /* OrbCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F55E748011ABC9C0B6002458 /* OrbCodeKit */; };
@@ -52,6 +63,17 @@
 		427A64B51420A939220B6D2A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
 		43EDCDEDDF184185EA165151 /* LocalNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNotificationManager.swift; sourceTree = "<group>"; };
 		48A0DB6A4D7ED8241D84D181 /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829310 /* PhysicsCategories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsCategories.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829311 /* HapticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManager.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829312 /* MotionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionController.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829313 /* UIBodySynchronizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIBodySynchronizer.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829314 /* PinballDebugOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballDebugOverlay.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829315 /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829316 /* PinballGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballGameView.swift; sourceTree = "<group>"; };
+		4C0A1B2C3D4E5F6071829317 /* SKNode+Debug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SKNode+Debug.swift"; sourceTree = "<group>"; };
+		6A1B2C3D4E5F60718293A4B1 /* SessionSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchModel.swift; sourceTree = "<group>"; };
+		6A1B2C3D4E5F60718293A4B3 /* SessionSearchRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchRows.swift; sourceTree = "<group>"; };
+		6A1B2C3D4E5F60718293A4B5 /* SessionSearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchScreen.swift; sourceTree = "<group>"; };
 		5B10DC5F17DFDB44BE2510EE /* LoopndrollCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoopndrollCompanion.Release.entitlements; sourceTree = "<group>"; };
 		6E588B2CF84CE748DDF30ACB /* LiveOrbCameraScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOrbCameraScannerView.swift; sourceTree = "<group>"; };
 		7BA8E570172CAE5483761091 /* OrbCodeKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OrbCodeKit; path = OrbCodeKit; sourceTree = SOURCE_ROOT; };
@@ -122,6 +144,28 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		4C0A1B2C3D4E5F6071829320 /* Pinball */ = {
+			isa = PBXGroup;
+			children = (
+				4C0A1B2C3D4E5F6071829310 /* PhysicsCategories.swift */,
+				4C0A1B2C3D4E5F6071829311 /* HapticManager.swift */,
+				4C0A1B2C3D4E5F6071829312 /* MotionController.swift */,
+				4C0A1B2C3D4E5F6071829313 /* UIBodySynchronizer.swift */,
+				4C0A1B2C3D4E5F6071829314 /* PinballDebugOverlay.swift */,
+				4C0A1B2C3D4E5F6071829315 /* GameScene.swift */,
+				4C0A1B2C3D4E5F6071829316 /* PinballGameView.swift */,
+			);
+			path = Pinball;
+			sourceTree = "<group>";
+		};
+		4C0A1B2C3D4E5F6071829321 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				4C0A1B2C3D4E5F6071829317 /* SKNode+Debug.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
 		567C29F8DE00AE0A3F7E3EA1 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
@@ -160,6 +204,9 @@
 			children = (
 				E7B28C3620F5179C2CD74F42 /* SessionDetailScreen.swift */,
 				48A0DB6A4D7ED8241D84D181 /* SessionRow.swift */,
+				6A1B2C3D4E5F60718293A4B1 /* SessionSearchModel.swift */,
+				6A1B2C3D4E5F60718293A4B3 /* SessionSearchRows.swift */,
+				6A1B2C3D4E5F60718293A4B5 /* SessionSearchScreen.swift */,
 				A6A173CAD2BAC9F2DD952752 /* SessionsDeviceHubSheet.swift */,
 				1D8F5AB7FA6950E5EEF43796 /* SessionsScreen.swift */,
 			);
@@ -189,6 +236,7 @@
 				EBF59C5D7E5CEEC343294553 /* Services */,
 				03BCB9D463DBFF97D93AF4B6 /* Support */,
 				F4F1628917F3BD1BF32CE40D /* UI */,
+				4C0A1B2C3D4E5F6071829321 /* Extensions */,
 			);
 			path = LoopndrollCompanion;
 			sourceTree = "<group>";
@@ -243,6 +291,7 @@
 			isa = PBXGroup;
 			children = (
 				ACA5D55864494AEFE4AA0F56 /* Common */,
+				4C0A1B2C3D4E5F6071829320 /* Pinball */,
 				1C33EFA885CA6F67EB9669D9 /* Root */,
 				67F131A75436F34475F44A16 /* Scanner */,
 				85897E9750C47E301504B18D /* Sessions */,
@@ -358,24 +407,35 @@
 				FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */,
 				FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */,
 				79708679632C752640DC4259 /* CompanionTheme.swift in Sources */,
+				4C0A1B2C3D4E5F6071829305 /* GameScene.swift in Sources */,
+				4C0A1B2C3D4E5F6071829301 /* HapticManager.swift in Sources */,
 				04402A5F4CBCAB24EC1CF85D /* HTTPCompanionService.swift in Sources */,
 				ED2E52F74EAE73E52E44F8FB /* Haptics.swift in Sources */,
 				99062AC34AB87033EBE8373A /* LiveOrbCameraScannerView.swift in Sources */,
 				E5C39DC104CF5AA6E2B39BD9 /* LocalNotificationManager.swift in Sources */,
 				B91E954053D8C339A13C5705 /* LoopndrollCompanionApp.swift in Sources */,
 				DB83DD9E7055A2E07DA711B5 /* MockCompanionService.swift in Sources */,
+				4C0A1B2C3D4E5F6071829302 /* MotionController.swift in Sources */,
 				723AF7E60664C0BE7A817A4C /* OrbScannerScreen.swift in Sources */,
+				4C0A1B2C3D4E5F6071829304 /* PinballDebugOverlay.swift in Sources */,
+				4C0A1B2C3D4E5F6071829306 /* PinballGameView.swift in Sources */,
+				4C0A1B2C3D4E5F6071829300 /* PhysicsCategories.swift in Sources */,
 				27C5B5314B8AF0DA5B351909 /* PreviewFixtures.swift in Sources */,
 				BDE73A1AECD84A105E08E5C5 /* RemotePushRegistrar.swift in Sources */,
 				CF1900E0D3E2428219D8B3B9 /* RootTabView.swift in Sources */,
 				2060B9212C8393147583F274 /* SessionDetailScreen.swift in Sources */,
 				D4E448C07E9807FC401EB2EE /* SessionRow.swift in Sources */,
+				6A1B2C3D4E5F60718293A4B0 /* SessionSearchModel.swift in Sources */,
+				6A1B2C3D4E5F60718293A4B2 /* SessionSearchRows.swift in Sources */,
+				6A1B2C3D4E5F60718293A4B4 /* SessionSearchScreen.swift in Sources */,
 				EC6BC732FF42D670EF9217D7 /* SessionsDeviceHubSheet.swift in Sources */,
 				60ADCF28CAD17F0D01C772A1 /* SessionsScreen.swift in Sources */,
 				3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */,
+				4C0A1B2C3D4E5F6071829307 /* SKNode+Debug.swift in Sources */,
 				3135120D2FEF1B3A5A4D4778 /* StatusPill.swift in Sources */,
 				CC3D4E5F6A7B8C9D0E1F2B3C /* SessionSpotlightIndexer.swift in Sources */,
 				DD4E5F6A7B8C9D0E1F2B3C4D /* SpotlightSearchService.swift in Sources */,
+				4C0A1B2C3D4E5F6071829303 /* UIBodySynchronizer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

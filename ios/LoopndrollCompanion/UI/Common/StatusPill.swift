@@ -13,5 +13,6 @@ struct StatusPill: View {
             .padding(.vertical, 6)
             .background(Capsule().fill(tint.opacity(0.14)))
             .fixedSize(horizontal: true, vertical: false)
+            .pinballSurface(cornerRadius: 14, material: .soft)
     }
 }

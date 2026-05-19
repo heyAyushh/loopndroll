@@ -19,41 +19,57 @@ struct RootTabView: View {
 
     let model: CompanionAppModel
 
+    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = true
+    @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false
     @State private var selectedTab: RootTab = .sessions
+    @State private var pinballSurfaces: [PinballSurface] = []
     @State private var searchText = ""
     @State private var searchScope: SessionSearchScope = .all
     @StateObject private var spotlightSearchService = SpotlightSearchService()
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            Tab("Sessions", systemImage: "message.badge.waveform", value: RootTab.sessions) {
-                SessionsScreen(
-                    model: model,
-                    openSettings: {
-                        select(.settings)
-                    }
-                )
-            }
+        ZStack {
+            TabView(selection: $selectedTab) {
+                Tab("Sessions", systemImage: "message.badge.waveform", value: RootTab.sessions) {
+                    SessionsScreen(
+                        model: model,
+                        openSettings: {
+                            select(.settings)
+                        }
+                    )
+                    .pinballSurfaceCollectionEnabled(selectedTab == .sessions)
+                }
 
-            if selectedTab != .search {
-                Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
-                    SettingsScreen(model: model)
+                if selectedTab != .search {
+                    Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
+                        SettingsScreen(model: model)
+                            .pinballSurfaceCollectionEnabled(selectedTab == .settings)
+                    }
+                }
+
+                Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
+                    SessionSearchScreen(
+                        model: model,
+                        searchText: $searchText,
+                        selectedScope: $searchScope,
+                        searchService: spotlightSearchService
+                    )
+                    .pinballSurfaceCollectionEnabled(selectedTab == .search)
                 }
             }
+            .modifier(TabBarMinimizeWhenAvailable())
+            .modifier(TabViewSearchActivationWhenAvailable())
+            .collectPinballSurfaces($pinballSurfaces)
 
-            Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
-                SessionSearchScreen(
-                    model: model,
-                    searchText: $searchText,
-                    selectedScope: $searchScope,
-                    searchService: spotlightSearchService
-                )
-            }
+            PinballGameView(
+                isEnabled: isPinballGameEnabled,
+                showsDebugOverlay: isPinballDebugOverlayEnabled,
+                surfaces: pinballSurfaces
+            )
+            .ignoresSafeArea()
         }
-        .modifier(TabBarMinimizeWhenAvailable())
-        .modifier(TabViewSearchActivationWhenAvailable())
         .task(id: scenePhase) {
             await refreshForActiveSceneIfNeeded()
         }
@@ -65,6 +81,8 @@ struct RootTabView: View {
             } else {
                 searchText = ""
             }
+
+            pinballSurfaces = []
         }
         .onAppear {
             guard !hasCheckedLaunchOrbScanner else {
