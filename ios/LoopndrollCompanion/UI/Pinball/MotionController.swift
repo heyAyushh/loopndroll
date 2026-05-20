@@ -6,6 +6,7 @@ final class PinballMotionController {
     private let motionManager = CMMotionManager()
     private weak var scene: GameScene?
     private var lastNudgeTime: TimeInterval = 0
+    private var isRunning = false
 
     init(scene: GameScene) {
         self.scene = scene
@@ -13,13 +14,22 @@ final class PinballMotionController {
     }
 
     func start() {
+        guard !isRunning else {
+            return
+        }
+
         guard motionManager.isDeviceMotionAvailable else {
             scene?.physicsWorld.gravity = CGVector(dx: 0, dy: -9.8)
             return
         }
 
+        isRunning = true
+        lastNudgeTime = 0
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
             guard let self, let motion, let scene = self.scene else {
+                return
+            }
+            guard self.isRunning else {
                 return
             }
 
@@ -46,7 +56,9 @@ final class PinballMotionController {
     }
 
     func stop() {
+        isRunning = false
         motionManager.stopDeviceMotionUpdates()
+        scene?.physicsWorld.gravity = .zero
     }
 
 }

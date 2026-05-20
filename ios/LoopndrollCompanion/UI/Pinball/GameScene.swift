@@ -4,8 +4,13 @@ import UIKit
 @MainActor
 final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     private enum Layout {
-        static let ballRadius: CGFloat = 15
+        static let ballRadius: CGFloat = 18
         static let launchImpulse = CGVector(dx: 0, dy: 7)
+    }
+
+    private enum Drag {
+        static let touchSlop: CGFloat = 16
+        static let maximumReleaseSpeed: CGFloat = 900
     }
 
     private var motionController: PinballMotionController?
@@ -15,6 +20,13 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     private let edgeNode = SKNode()
     private var surfaceNodes: [String: SKNode] = [:]
     private var ball: SKNode?
+    private var draggedTouch: UITouch?
+    private var lastDragPoint: CGPoint?
+    private var lastDragTimestamp: TimeInterval = 0
+    private var releaseVelocity: CGVector = .zero
+    private var wasBallDynamicBeforeDrag = true
+    private var isSceneActive = false
+    private var isShuttingDown = false
     private var lastSceneSize: CGSize = .zero
     private var latestSurfaces: [PinballSurface] = []
     private var latestSurfaceIDs = Set<String>()
@@ -49,9 +61,13 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         addChild(edgeNode)
 
         motionController = PinballMotionController(scene: self)
-        motionController?.start()
         debugOverlay.attach(to: self)
         rebuildWorldIfNeeded(force: true)
+        setSceneActive(true)
+    }
+
+    override func willMove(from view: SKView) {
+        shutdown()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
@@ -60,6 +76,10 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     override func update(_ currentTime: TimeInterval) {
+        guard isSceneActive, !isShuttingDown else {
+            return
+        }
+
         rebuildWorldIfNeeded()
         syncRenderedSurfaces()
         keepBallInPlay()
@@ -67,6 +87,10 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     func setRenderedSurfaces(_ surfaces: [PinballSurface]) {
+        guard !isShuttingDown else {
+            return
+        }
+
         let nextSurfaceIDs = Set(surfaces.map(\.id))
         if nextSurfaceIDs != latestSurfaceIDs {
             debugOverlay.clearInteractionOutlines()
@@ -78,19 +102,87 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     func applyNudge(_ impulse: CGVector) {
+        guard isSceneActive, !isShuttingDown else {
+            return
+        }
+
         ball?.physicsBody?.applyImpulse(impulse)
         hapticManager.playCollision(impulse: 10, sharpness: 0.82)
     }
 
-    func prepareFeedback() {
-        hapticManager.prepare()
+    func canBeginBallDrag(atViewPoint point: CGPoint) -> Bool {
+        guard isSceneActive, !isShuttingDown else {
+            return false
+        }
+
+        let scenePoint = convertPoint(fromView: point)
+        return isPointInsideBall(scenePoint, hitSlop: Drag.touchSlop)
     }
 
-    func suspendFeedback() {
+    func setSceneActive(_ isActive: Bool) {
+        guard !isShuttingDown else {
+            return
+        }
+
+        let wasSceneActive = isSceneActive
+        isSceneActive = isActive
+        isPaused = !isActive
+
+        if isActive {
+            physicsWorld.contactDelegate = self
+            if !wasSceneActive {
+                motionController?.start()
+                hapticManager.prepare()
+                rebuildWorldIfNeeded(force: true)
+            }
+        } else {
+            guard wasSceneActive else {
+                return
+            }
+
+            cancelActiveDrag()
+            motionController?.stop()
+            hapticManager.suspend()
+            debugOverlay.clearInteractionOutlines()
+        }
+    }
+
+    func shutdown() {
+        guard !isShuttingDown else {
+            return
+        }
+
+        isShuttingDown = true
+        isSceneActive = false
+        isPaused = true
+        cancelActiveDrag()
+        motionController?.stop()
+        motionController = nil
         hapticManager.suspend()
+        physicsWorld.contactDelegate = nil
+        physicsWorld.gravity = .zero
+        latestSurfaces = []
+        latestSurfaceIDs = []
+        surfaceNodes.removeAll()
+        surfaceRoot.removeAllActions()
+        surfaceRoot.removeAllChildren()
+        edgeNode.removeAllActions()
+        edgeNode.removeFromParent()
+        ball?.removeAllActions()
+        ball?.physicsBody = nil
+        ball?.removeFromParent()
+        ball = nil
+        debugOverlay.clearInteractionOutlines()
+        removeAllActions()
+        removeAllChildren()
+        lastSceneSize = .zero
     }
 
     func didBegin(_ contact: SKPhysicsContact) {
+        guard isSceneActive, !isShuttingDown else {
+            return
+        }
+
         guard contact.bodyA.categoryBitMask != PinballPhysicsCategory.wall ||
             contact.bodyB.categoryBitMask != PinballPhysicsCategory.wall else {
             return
@@ -115,7 +207,152 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         return nil
     }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard isSceneActive,
+              !isShuttingDown,
+              draggedTouch == nil,
+              let view,
+              let touch = touches.first else {
+            return
+        }
+
+        let point = convertPoint(fromView: touch.location(in: view))
+        guard isPointInsideBall(point, hitSlop: Drag.touchSlop) else {
+            return
+        }
+
+        draggedTouch = touch
+        lastDragPoint = point
+        lastDragTimestamp = touch.timestamp
+        releaseVelocity = .zero
+
+        if let body = ball?.physicsBody {
+            wasBallDynamicBeforeDrag = body.isDynamic
+            body.isDynamic = false
+            body.velocity = .zero
+            body.angularVelocity = 0
+        }
+
+        ball?.position = constrainedBallPosition(point)
+        hapticManager.playCollision(impulse: 8, sharpness: 0.74)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard isSceneActive,
+              !isShuttingDown,
+              let touch = trackedTouch(in: touches),
+              let view else {
+            return
+        }
+
+        let nextPoint = constrainedBallPosition(convertPoint(fromView: touch.location(in: view)))
+        if let lastDragPoint {
+            let timeDelta = max(touch.timestamp - lastDragTimestamp, 0.001)
+            releaseVelocity = clampedVelocity(
+                CGVector(
+                    dx: (nextPoint.x - lastDragPoint.x) / timeDelta,
+                    dy: (nextPoint.y - lastDragPoint.y) / timeDelta
+                )
+            )
+        }
+
+        ball?.position = nextPoint
+        lastDragPoint = nextPoint
+        lastDragTimestamp = touch.timestamp
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        finishDragIfNeeded(for: touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        finishDragIfNeeded(for: touches)
+    }
+
+    private func trackedTouch(in touches: Set<UITouch>) -> UITouch? {
+        guard let draggedTouch else {
+            return nil
+        }
+
+        return touches.first { $0 === draggedTouch }
+    }
+
+    private func finishDragIfNeeded(for touches: Set<UITouch>) {
+        guard trackedTouch(in: touches) != nil else {
+            return
+        }
+
+        if let body = ball?.physicsBody {
+            body.isDynamic = wasBallDynamicBeforeDrag
+            if body.isDynamic {
+                body.velocity = releaseVelocity
+                body.angularVelocity = -releaseVelocity.dx / max(Layout.ballRadius, 1)
+            }
+        }
+
+        draggedTouch = nil
+        lastDragPoint = nil
+        lastDragTimestamp = 0
+        releaseVelocity = .zero
+        wasBallDynamicBeforeDrag = true
+    }
+
+    private func cancelActiveDrag() {
+        guard draggedTouch != nil else {
+            return
+        }
+
+        if let body = ball?.physicsBody {
+            body.isDynamic = wasBallDynamicBeforeDrag
+            body.velocity = .zero
+            body.angularVelocity = 0
+        }
+
+        draggedTouch = nil
+        lastDragPoint = nil
+        lastDragTimestamp = 0
+        releaseVelocity = .zero
+        wasBallDynamicBeforeDrag = true
+    }
+
+    private func isPointInsideBall(_ point: CGPoint, hitSlop: CGFloat = 0) -> Bool {
+        guard let ball else {
+            return false
+        }
+
+        let radius = Layout.ballRadius + hitSlop
+        let offsetX = point.x - ball.position.x
+        let offsetY = point.y - ball.position.y
+        return offsetX * offsetX + offsetY * offsetY <= radius * radius
+    }
+
+    private func constrainedBallPosition(_ point: CGPoint) -> CGPoint {
+        let inset = Layout.ballRadius + 5
+        guard size.width > inset * 2, size.height > inset * 2 else {
+            return point
+        }
+
+        return CGPoint(
+            x: min(max(point.x, inset), size.width - inset),
+            y: min(max(point.y, inset), size.height - inset)
+        )
+    }
+
+    private func clampedVelocity(_ velocity: CGVector) -> CGVector {
+        let speed = hypot(velocity.dx, velocity.dy)
+        guard speed > Drag.maximumReleaseSpeed else {
+            return velocity
+        }
+
+        let scale = Drag.maximumReleaseSpeed / speed
+        return CGVector(dx: velocity.dx * scale, dy: velocity.dy * scale)
+    }
+
     private func rebuildWorldIfNeeded(force: Bool = false) {
+        guard !isShuttingDown else {
+            return
+        }
+
         guard size.width > 10, size.height > 10 else {
             return
         }
@@ -142,7 +379,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             texture: makeBallTexture(),
             size: CGSize(width: diameter, height: diameter)
         )
-        node.name = "ball"
+        node.name = "pinball-ball"
         node.position = CGPoint(x: size.width * 0.72, y: size.height * 0.42)
         node.zPosition = 30
         node.setPinballDebugCircle(radius: Layout.ballRadius)
@@ -164,14 +401,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     private func makeBallTexture() -> SKTexture {
-        let texture: SKTexture
-        if let resourceURL = Bundle.main.url(forResource: "notification-orb", withExtension: "png"),
-            let image = UIImage(contentsOfFile: resourceURL.path) {
-            texture = SKTexture(image: image)
-        } else {
-            texture = SKTexture(imageNamed: "notification-orb")
-        }
-
+        let texture = SKTexture(imageNamed: "PinballBall")
         texture.filteringMode = .linear
         return texture
     }

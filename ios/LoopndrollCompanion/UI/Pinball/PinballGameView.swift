@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 
 struct PinballGameView: UIViewRepresentable {
+    @Environment(\.scenePhase) private var scenePhase
+
     var isEnabled: Bool
     var showsDebugOverlay: Bool
     var surfaces: [PinballSurface]
@@ -25,25 +27,26 @@ struct PinballGameView: UIViewRepresentable {
 
     func updateUIView(_ view: SKView, context: Context) {
         if let scene = context.coordinator.scene {
+            let isSceneActive = isEnabled && scenePhase == .active
             scene.size = view.bounds.size
-            scene.isPaused = !isEnabled
             scene.isDebugOverlayEnabled = showsDebugOverlay
+            scene.setSceneActive(isSceneActive)
             context.coordinator.setBaseSurfaces(surfaces)
-            if isEnabled {
-                scene.prepareFeedback()
-            } else {
-                scene.suspendFeedback()
+            if !isSceneActive {
                 scene.clearInteractionDebug()
             }
         }
 
         view.isHidden = !isEnabled
-        view.isUserInteractionEnabled = false
+        view.isUserInteractionEnabled = isEnabled
         view.showsPhysics = showsDebugOverlay
     }
 
     static func dismantleUIView(_ view: SKView, coordinator: Coordinator) {
         coordinator.stopKeyboardObserving()
+        coordinator.shutdown()
+        view.isPaused = true
+        view.presentScene(nil)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -106,6 +109,13 @@ struct PinballGameView: UIViewRepresentable {
                 center.removeObserver(observer)
             }
             keyboardObservers = []
+            keyboardSurface = nil
+            applySurfaces()
+        }
+
+        func shutdown() {
+            scene?.shutdown()
+            scene = nil
         }
 
         private func updateKeyboardSurface(frame keyboardFrame: CGRect?) {
@@ -144,7 +154,11 @@ struct PinballGameView: UIViewRepresentable {
 
 private final class PinballSKView: SKView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        false
+        guard let scene = scene as? GameScene else {
+            return false
+        }
+
+        return scene.canBeginBallDrag(atViewPoint: point)
     }
 }
 

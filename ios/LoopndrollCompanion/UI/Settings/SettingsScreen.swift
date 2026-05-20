@@ -141,6 +141,9 @@ struct SettingsScreen: View {
             Toggle("Pinball", isOn: $isPinballGameEnabled)
             Toggle("Physics Debug Overlay", isOn: $isPinballDebugOverlayEnabled)
                 .disabled(!isPinballGameEnabled)
+            NavigationLink("Maze") {
+                SettingsMazeScreen()
+            }
         } header: {
             Text("Pinball")
         } footer: {
