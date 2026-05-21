@@ -37,6 +37,7 @@ ios/build-device/
 docs/generated-orbs/
 .superpowers/
 .claude/
+/src/bun/
 
 # Ad-hoc backup copies of crates (timestamped)
 **/*qr-backup*/
