@@ -30,11 +30,11 @@ struct SettingsMazeScreen: View {
                 Button {
                     resetID = UUID()
                 } label: {
-                    Image(systemName: "arrow.counterclockwise")
+                    Image(systemName: "shuffle")
                         .font(.headline.weight(.semibold))
                         .frame(width: 44, height: 44)
                 }
-                .accessibilityLabel("Reset Maze")
+                .accessibilityLabel("Random Maze")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -77,6 +77,7 @@ struct MazeGameView: UIViewRepresentable {
     func updateUIView(_ view: SKView, context: Context) {
         context.coordinator.scene?.size = view.bounds.size
         context.coordinator.scene?.setSceneActive(scenePhase == .active)
+        context.coordinator.scene?.setInterfaceStyle(view.traitCollection.userInterfaceStyle)
         context.coordinator.resetIfNeeded(resetID)
     }
 
@@ -127,6 +128,11 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         static let targetLanePitch: CGFloat = 30
         static let minimumRingCount = 7
         static let maximumRingCount = 8
+        static let rectangularCellPitch: CGFloat = 35
+        static let minimumColumns = 9
+        static let maximumColumns = 16
+        static let minimumRows = 14
+        static let maximumRows = 30
     }
 
     private enum Motion {
@@ -141,7 +147,10 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     private var boardRect = CGRect.zero
     private var mazeCenter = CGPoint.zero
     private var outerRadius: CGFloat = 0
+    private var currentInterfaceStyle: UIUserInterfaceStyle = .unspecified
+    private var mazeKind: MazeKind = .rectangular
     private var maze: GeneratedMaze?
+    private var rectangularMaze: RectangularMaze?
     private var mazeSeed: UInt64 = 0
     private var mazeSerial: UInt64 = 0
     private var lastSceneSize = CGSize.zero
@@ -223,6 +232,15 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         hapticManager.prepare()
     }
 
+    func setInterfaceStyle(_ style: UIUserInterfaceStyle) {
+        guard currentInterfaceStyle != style else {
+            return
+        }
+
+        currentInterfaceStyle = style
+        rebuildMaze(force: true)
+    }
+
     func setSceneActive(_ isActive: Bool) {
         guard !isShuttingDown else {
             return
@@ -282,6 +300,7 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         removeAllActions()
         removeAllChildren()
         maze = nil
+        rectangularMaze = nil
         lastSceneSize = .zero
         hasSolvedMaze = false
     }
@@ -299,26 +318,45 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             return
         }
 
+        if regenerate || mazeSeed == 0 {
+            mazeSeed = nextMazeSeed()
+            var random = SeededRandomNumberGenerator(seed: mazeSeed)
+            mazeKind = MazeKind.random(using: &random)
+            maze = nil
+            rectangularMaze = nil
+        }
+
         lastSceneSize = size
         boardRoot.removeAllChildren()
-        boardRect = makeBoardRect()
-        mazeCenter = CGPoint(x: boardRect.midX, y: boardRect.midY)
-        outerRadius = min(boardRect.width, boardRect.height) / 2
-        let ringCount = ringCount(for: outerRadius)
-        let shouldRegenerate = regenerate || maze == nil || maze?.ringCount != ringCount
 
-        if shouldRegenerate {
-            if regenerate || mazeSeed == 0 {
-                mazeSeed = nextMazeSeed()
+        switch mazeKind {
+        case .circular:
+            boardRect = makeCircularBoardRect()
+            mazeCenter = CGPoint(x: boardRect.midX, y: boardRect.midY)
+            outerRadius = min(boardRect.width, boardRect.height) / 2
+            let ringCount = ringCount(for: outerRadius)
+            let shouldRegenerate = regenerate || maze == nil || maze?.ringCount != ringCount || rectangularMaze != nil
+            rectangularMaze = nil
+
+            if shouldRegenerate {
+                generateCircularMaze(ringCount: ringCount)
             }
-            var generatedMaze = MazeGenerator.generate(ringCount: ringCount, seed: mazeSeed)
-            var attempts = 0
-            while !generatedMaze.hasCenterSolution && attempts < 3 {
-                mazeSeed = nextMazeSeed()
-                generatedMaze = MazeGenerator.generate(ringCount: ringCount, seed: mazeSeed)
-                attempts += 1
+
+        case .rectangular:
+            boardRect = makeFullScreenBoardRect()
+            mazeCenter = CGPoint(x: boardRect.midX, y: boardRect.midY)
+            outerRadius = min(boardRect.width, boardRect.height) / 2
+            let dimensions = rectangularDimensions(for: boardRect)
+            let shouldRegenerate = regenerate
+                || rectangularMaze == nil
+                || rectangularMaze?.columns != dimensions.columns
+                || rectangularMaze?.rows != dimensions.rows
+                || maze != nil
+            maze = nil
+
+            if shouldRegenerate {
+                generateRectangularMaze(columns: dimensions.columns, rows: dimensions.rows)
             }
-            maze = generatedMaze
         }
 
         addBoard()
@@ -332,7 +370,29 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         }
     }
 
-    private func makeBoardRect() -> CGRect {
+    private func generateCircularMaze(ringCount: Int) {
+        var generatedMaze = MazeGenerator.generate(ringCount: ringCount, seed: mazeSeed)
+        var attempts = 0
+        while !generatedMaze.hasCenterSolution && attempts < 4 {
+            mazeSeed = nextMazeSeed()
+            generatedMaze = MazeGenerator.generate(ringCount: ringCount, seed: mazeSeed)
+            attempts += 1
+        }
+        maze = generatedMaze
+    }
+
+    private func generateRectangularMaze(columns: Int, rows: Int) {
+        var generatedMaze = RectangularMazeGenerator.generate(columns: columns, rows: rows, seed: mazeSeed)
+        var attempts = 0
+        while !generatedMaze.hasSolution && attempts < 4 {
+            mazeSeed = nextMazeSeed()
+            generatedMaze = RectangularMazeGenerator.generate(columns: columns, rows: rows, seed: mazeSeed)
+            attempts += 1
+        }
+        rectangularMaze = generatedMaze
+    }
+
+    private func makeCircularBoardRect() -> CGRect {
         let side = max(min(size.width, size.height) - Layout.boardInset * 2, 20)
         return CGRect(
             x: (size.width - side) / 2,
@@ -340,6 +400,23 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             width: side,
             height: side
         )
+    }
+
+    private func makeFullScreenBoardRect() -> CGRect {
+        CGRect(
+            x: Layout.boardInset,
+            y: Layout.boardInset,
+            width: max(size.width - Layout.boardInset * 2, 20),
+            height: max(size.height - Layout.boardInset * 2, 20)
+        )
+    }
+
+    private func rectangularDimensions(for rect: CGRect) -> (columns: Int, rows: Int) {
+        let measuredColumns = Int(floor(rect.width / Layout.rectangularCellPitch))
+        let measuredRows = Int(floor(rect.height / Layout.rectangularCellPitch))
+        let columns = min(max(measuredColumns, Layout.minimumColumns), Layout.maximumColumns)
+        let rows = min(max(measuredRows, Layout.minimumRows), Layout.maximumRows)
+        return (columns, rows)
     }
 
     private func ringCount(for radius: CGFloat) -> Int {
@@ -353,26 +430,56 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     private func addBoard() {
+        switch mazeKind {
+        case .circular:
+            addCircularBoard()
+        case .rectangular:
+            addRectangularBoard()
+        }
+    }
+
+    private func addCircularBoard() {
+        let palette = mazePalette()
         let board = SKShapeNode(circleOfRadius: outerRadius)
         board.position = mazeCenter
-        board.fillColor = UIColor.secondarySystemGroupedBackground
-        board.strokeColor = UIColor.separator.withAlphaComponent(0.7)
+        board.fillColor = palette.boardFill
+        board.strokeColor = palette.boardStroke
+        board.lineWidth = 1
+        board.zPosition = 0
+        boardRoot.addChild(board)
+    }
+
+    private func addRectangularBoard() {
+        let palette = mazePalette()
+        let board = SKShapeNode(rect: boardRect)
+        board.fillColor = palette.boardFill
+        board.strokeColor = palette.boardStroke
         board.lineWidth = 1
         board.zPosition = 0
         boardRoot.addChild(board)
     }
 
     private func addMazeWalls() {
-        guard let maze else {
-            return
-        }
+        switch mazeKind {
+        case .circular:
+            guard let maze else {
+                return
+            }
 
-        addOuterBoundary()
-        for ring in 1..<maze.ringCount {
-            addMergedInnerArcs(forRing: ring, in: maze)
-        }
-        for cell in maze.cells where cell.ring > 0 {
-            addClockwiseRadialWallIfClosed(for: cell, in: maze)
+            addOuterBoundary()
+            for ring in 1..<maze.ringCount {
+                addMergedInnerArcs(forRing: ring, in: maze)
+            }
+            for cell in maze.cells where cell.ring > 0 {
+                addClockwiseRadialWallIfClosed(for: cell, in: maze)
+            }
+
+        case .rectangular:
+            guard let rectangularMaze else {
+                return
+            }
+
+            addRectangularWalls(in: rectangularMaze)
         }
     }
 
@@ -465,9 +572,114 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         addWall(path: path)
     }
 
+    private func addRectangularWalls(in maze: RectangularMaze) {
+        let walls = rectangularWallGrid(for: maze)
+        addMergedVerticalWalls(walls.vertical, in: maze)
+        addMergedHorizontalWalls(walls.horizontal, in: maze)
+    }
+
+    private func rectangularWallGrid(for maze: RectangularMaze) -> (
+        vertical: [[Bool]],
+        horizontal: [[Bool]]
+    ) {
+        var vertical = Array(
+            repeating: Array(repeating: false, count: maze.columns + 1),
+            count: maze.rows
+        )
+        var horizontal = Array(
+            repeating: Array(repeating: false, count: maze.columns),
+            count: maze.rows + 1
+        )
+
+        for row in 0..<maze.rows {
+            vertical[row][0] = true
+            vertical[row][maze.columns] = true
+        }
+
+        for column in 0..<maze.columns {
+            horizontal[0][column] = true
+            horizontal[maze.rows][column] = true
+        }
+
+        for row in 0..<maze.rows {
+            for column in 1..<maze.columns {
+                let left = RectCell(row: row, column: column - 1)
+                let right = RectCell(row: row, column: column)
+                vertical[row][column] = !maze.hasConnection(between: left, and: right)
+            }
+        }
+
+        for row in 1..<maze.rows {
+            for column in 0..<maze.columns {
+                let lower = RectCell(row: row - 1, column: column)
+                let upper = RectCell(row: row, column: column)
+                horizontal[row][column] = !maze.hasConnection(between: lower, and: upper)
+            }
+        }
+
+        return (vertical, horizontal)
+    }
+
+    private func addMergedVerticalWalls(_ walls: [[Bool]], in maze: RectangularMaze) {
+        let cellWidth = boardRect.width / CGFloat(maze.columns)
+        let cellHeight = boardRect.height / CGFloat(maze.rows)
+
+        for column in 0...maze.columns {
+            var row = 0
+            while row < maze.rows {
+                guard walls[row][column] else {
+                    row += 1
+                    continue
+                }
+
+                let startRow = row
+                while row < maze.rows, walls[row][column] {
+                    row += 1
+                }
+
+                let x = boardRect.minX + CGFloat(column) * cellWidth
+                let start = CGPoint(x: x, y: boardRect.minY + CGFloat(startRow) * cellHeight)
+                let end = CGPoint(x: x, y: boardRect.minY + CGFloat(row) * cellHeight)
+                addRectangularWall(from: start, to: end)
+            }
+        }
+    }
+
+    private func addMergedHorizontalWalls(_ walls: [[Bool]], in maze: RectangularMaze) {
+        let cellWidth = boardRect.width / CGFloat(maze.columns)
+        let cellHeight = boardRect.height / CGFloat(maze.rows)
+
+        for row in 0...maze.rows {
+            var column = 0
+            while column < maze.columns {
+                guard walls[row][column] else {
+                    column += 1
+                    continue
+                }
+
+                let startColumn = column
+                while column < maze.columns, walls[row][column] {
+                    column += 1
+                }
+
+                let y = boardRect.minY + CGFloat(row) * cellHeight
+                let start = CGPoint(x: boardRect.minX + CGFloat(startColumn) * cellWidth, y: y)
+                let end = CGPoint(x: boardRect.minX + CGFloat(column) * cellWidth, y: y)
+                addRectangularWall(from: start, to: end)
+            }
+        }
+    }
+
+    private func addRectangularWall(from start: CGPoint, to end: CGPoint) {
+        let path = CGMutablePath()
+        path.move(to: start)
+        path.addLine(to: end)
+        addWall(path: path)
+    }
+
     private func addWall(path: CGPath) {
         let node = SKShapeNode(path: path)
-        node.strokeColor = UIColor.black.withAlphaComponent(0.9)
+        node.strokeColor = mazePalette().wallStroke
         node.lineWidth = Layout.wallLineWidth
         node.lineCap = .round
         node.lineJoin = .round
@@ -480,6 +692,16 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         node.physicsBody?.restitution = 0.42
         node.physicsBody?.friction = 0.28
         boardRoot.addChild(node)
+    }
+
+    private func mazePalette() -> MazePalette {
+        let traits = view?.traitCollection ?? UIScreen.main.traitCollection
+        let isDark = traits.userInterfaceStyle == .dark
+        return MazePalette(
+            boardFill: UIColor.secondarySystemGroupedBackground.resolvedColor(with: traits),
+            boardStroke: UIColor.separator.resolvedColor(with: traits).withAlphaComponent(0.7),
+            wallStroke: UIColor.label.resolvedColor(with: traits).withAlphaComponent(isDark ? 0.82 : 0.9)
+        )
     }
 
     private func addGoal() {
@@ -600,6 +822,15 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     private func constrainedPosition(_ point: CGPoint) -> CGPoint {
+        switch mazeKind {
+        case .circular:
+            return constrainedCircularPosition(point)
+        case .rectangular:
+            return constrainedRectangularPosition(point)
+        }
+    }
+
+    private func constrainedCircularPosition(_ point: CGPoint) -> CGPoint {
         let maximumDistance = max(outerRadius - Layout.ballCollisionRadius - 5, 1)
         let offset = CGVector(dx: point.x - mazeCenter.x, dy: point.y - mazeCenter.y)
         let distance = hypot(offset.dx, offset.dy)
@@ -614,20 +845,57 @@ final class MazeScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         )
     }
 
-    private func startPosition() -> CGPoint {
-        guard let maze else {
-            return mazeCenter
-        }
+    private func constrainedRectangularPosition(_ point: CGPoint) -> CGPoint {
+        let inset = Layout.ballCollisionRadius + Layout.wallLineWidth
+        return CGPoint(
+            x: min(max(point.x, boardRect.minX + inset), boardRect.maxX - inset),
+            y: min(max(point.y, boardRect.minY + inset), boardRect.maxY - inset)
+        )
+    }
 
-        return cellCenter(maze.start, in: maze)
+    private func startPosition() -> CGPoint {
+        switch mazeKind {
+        case .circular:
+            guard let maze else {
+                return mazeCenter
+            }
+
+            return cellCenter(maze.start, in: maze)
+
+        case .rectangular:
+            guard let rectangularMaze else {
+                return mazeCenter
+            }
+
+            return rectCellCenter(rectangularMaze.start, in: rectangularMaze)
+        }
     }
 
     private func goalPosition() -> CGPoint {
-        guard let maze else {
-            return mazeCenter
-        }
+        switch mazeKind {
+        case .circular:
+            guard let maze else {
+                return mazeCenter
+            }
 
-        return cellCenter(maze.goal, in: maze)
+            return cellCenter(maze.goal, in: maze)
+
+        case .rectangular:
+            guard let rectangularMaze else {
+                return mazeCenter
+            }
+
+            return rectCellCenter(rectangularMaze.goal, in: rectangularMaze)
+        }
+    }
+
+    private func rectCellCenter(_ cell: RectCell, in maze: RectangularMaze) -> CGPoint {
+        let cellWidth = boardRect.width / CGFloat(maze.columns)
+        let cellHeight = boardRect.height / CGFloat(maze.rows)
+        return CGPoint(
+            x: boardRect.minX + (CGFloat(cell.column) + 0.5) * cellWidth,
+            y: boardRect.minY + (CGFloat(cell.row) + 0.5) * cellHeight
+        )
     }
 
     private func cellCenter(_ cell: MazeCell, in maze: GeneratedMaze) -> CGPoint {
@@ -671,293 +939,8 @@ private struct PolarCellGeometry {
     let endAngle: CGFloat
 }
 
-private struct MazeCell: Hashable {
-    let ring: Int
-    let index: Int
-}
-
-private struct GeneratedMaze {
-    let ringCellCounts: [Int]
-    let start: MazeCell
-    let goal: MazeCell
-    let connections: Set<MazeConnection>
-    let solutionPath: [MazeCell]
-
-    var ringCount: Int {
-        ringCellCounts.count
-    }
-
-    var hasCenterSolution: Bool {
-        solutionPath.first == start && solutionPath.last == goal
-    }
-
-    var cells: [MazeCell] {
-        ringCellCounts.enumerated().flatMap { ring, count in
-            (0..<count).map { MazeCell(ring: ring, index: $0) }
-        }
-    }
-
-    func cellCount(inRing ring: Int) -> Int {
-        ringCellCounts[ring]
-    }
-
-    func hasConnection(between first: MazeCell, and second: MazeCell) -> Bool {
-        connections.contains(MazeConnection(first, second))
-    }
-
-    func clockwiseNeighbor(for cell: MazeCell) -> MazeCell {
-        let count = cellCount(inRing: cell.ring)
-        return MazeCell(ring: cell.ring, index: (cell.index + 1) % count)
-    }
-
-    func inwardNeighbor(for cell: MazeCell) -> MazeCell {
-        guard cell.ring > 0 else {
-            return cell
-        }
-
-        let innerCount = cellCount(inRing: cell.ring - 1)
-        let currentCount = cellCount(inRing: cell.ring)
-        let innerIndex = min(Int(CGFloat(cell.index) * CGFloat(innerCount) / CGFloat(currentCount)), innerCount - 1)
-        return MazeCell(ring: cell.ring - 1, index: innerIndex)
-    }
-}
-
-private struct MazeConnection: Hashable {
-    let first: MazeCell
-    let second: MazeCell
-
-    init(_ first: MazeCell, _ second: MazeCell) {
-        if first.ring < second.ring || first.ring == second.ring && first.index <= second.index {
-            self.first = first
-            self.second = second
-        } else {
-            self.first = second
-            self.second = first
-        }
-    }
-}
-
-private enum MazeGenerator {
-    static func generate(ringCount: Int, seed: UInt64) -> GeneratedMaze {
-        var random = SeededRandomNumberGenerator(seed: seed)
-        let ringCellCounts = ringCellCounts(for: ringCount)
-        let start = MazeCell(ring: ringCount - 1, index: 0)
-        let goal = MazeCell(ring: 0, index: 0)
-        let topology = GeneratedMaze(
-            ringCellCounts: ringCellCounts,
-            start: start,
-            goal: goal,
-            connections: [],
-            solutionPath: []
-        )
-        let connections = carvePerfectMaze(from: start, in: topology, using: &random)
-        let solutionPath = path(from: start, to: goal, connections: connections, in: topology)
-
-        return GeneratedMaze(
-            ringCellCounts: ringCellCounts,
-            start: start,
-            goal: goal,
-            connections: connections,
-            solutionPath: solutionPath
-        )
-    }
-
-    private static func ringCellCounts(for ringCount: Int) -> [Int] {
-        guard ringCount > 1 else {
-            return [1]
-        }
-
-        var counts = [1]
-        for ring in 1..<ringCount {
-            if ring == 1 {
-                counts.append(6)
-                continue
-            }
-
-            let previousCount = counts[ring - 1]
-            let ringRadius = Double(ring) / Double(ringCount)
-            let rowHeight = 1.0 / Double(ringCount)
-            let previousCellWidth = 2 * Double.pi * ringRadius / Double(previousCount)
-            let splitRatio = min(max(Int((previousCellWidth / rowHeight).rounded()), 1), 2)
-            counts.append(min(previousCount * splitRatio, 48))
-        }
-
-        return counts
-    }
-
-    private static func carvePerfectMaze(
-        from start: MazeCell,
-        in maze: GeneratedMaze,
-        using random: inout SeededRandomNumberGenerator
-    ) -> Set<MazeConnection> {
-        var visited: Set<MazeCell> = [start]
-        var active = [start]
-        var connections: Set<MazeConnection> = []
-        let cellTotal = maze.cells.count
-
-        while visited.count < cellTotal {
-            guard let index = activeCellIndex(from: active, in: maze, visited: visited, using: &random) else {
-                break
-            }
-
-            let current = active[index]
-            let neighbors = unvisitedNeighbors(from: current, in: maze, visited: visited)
-            guard let next = chooseNeighbor(from: neighbors, current: current, using: &random) else {
-                active.remove(at: index)
-                continue
-            }
-
-            connections.insert(MazeConnection(current, next))
-            visited.insert(next)
-            active.append(next)
-        }
-
-        return connections
-    }
-
-    private static func activeCellIndex(
-        from active: [MazeCell],
-        in maze: GeneratedMaze,
-        visited: Set<MazeCell>,
-        using random: inout SeededRandomNumberGenerator
-    ) -> Int? {
-        guard !active.isEmpty else {
-            return nil
-        }
-
-        if random.nextInt(in: 0...99) < 72 {
-            return active.indices.reversed().first {
-                !unvisitedNeighbors(from: active[$0], in: maze, visited: visited).isEmpty
-            }
-        }
-
-        return active.indices.filter {
-            !unvisitedNeighbors(from: active[$0], in: maze, visited: visited).isEmpty
-        }.randomElement(using: &random)
-    }
-
-    private static func chooseNeighbor(
-        from neighbors: [MazeCell],
-        current: MazeCell,
-        using random: inout SeededRandomNumberGenerator
-    ) -> MazeCell? {
-        guard !neighbors.isEmpty else {
-            return nil
-        }
-
-        let weighted = neighbors.flatMap { neighbor -> [MazeCell] in
-            if neighbor.ring == current.ring {
-                return Array(repeating: neighbor, count: 2)
-            }
-
-            if neighbor.ring < current.ring {
-                return Array(repeating: neighbor, count: 3)
-            }
-
-            return [neighbor]
-        }
-
-        return weighted.randomElement(using: &random)
-    }
-
-    private static func path(
-        from start: MazeCell,
-        to goal: MazeCell,
-        connections: Set<MazeConnection>,
-        in maze: GeneratedMaze
-    ) -> [MazeCell] {
-        var frontier = [start]
-        var cameFrom: [MazeCell: MazeCell] = [:]
-        var visited: Set<MazeCell> = [start]
-
-        while let current = frontier.first {
-            frontier.removeFirst()
-            if current == goal {
-                break
-            }
-
-            for neighbor in connectedNeighbors(of: current, connections: connections, in: maze) where !visited.contains(neighbor) {
-                visited.insert(neighbor)
-                cameFrom[neighbor] = current
-                frontier.append(neighbor)
-            }
-        }
-
-        var path = [goal]
-        var current = goal
-        while current != start, let previous = cameFrom[current] {
-            path.append(previous)
-            current = previous
-        }
-        return path.reversed()
-    }
-
-    private static func connectedNeighbors(
-        of cell: MazeCell,
-        connections: Set<MazeConnection>,
-        in maze: GeneratedMaze
-    ) -> [MazeCell] {
-        neighbors(from: cell, in: maze).filter {
-            connections.contains(MazeConnection(cell, $0))
-        }
-    }
-
-    private static func unvisitedNeighbors(
-        from cell: MazeCell,
-        in maze: GeneratedMaze,
-        visited: Set<MazeCell>
-    ) -> [MazeCell] {
-        neighbors(from: cell, in: maze).filter { !visited.contains($0) }
-    }
-
-    private static func neighbors(from cell: MazeCell, in maze: GeneratedMaze) -> [MazeCell] {
-        var neighbors: [MazeCell] = []
-
-        if cell.ring > 0 {
-            neighbors.append(neighbor(onSameRingFrom: cell, direction: 1, in: maze))
-            neighbors.append(neighbor(onSameRingFrom: cell, direction: -1, in: maze))
-            neighbors.append(maze.inwardNeighbor(for: cell))
-        }
-
-        if cell.ring < maze.ringCount - 1 {
-            let outwardRing = cell.ring + 1
-            let outwardCount = maze.cellCount(inRing: outwardRing)
-            for outwardIndex in 0..<outwardCount {
-                let outwardCell = MazeCell(ring: outwardRing, index: outwardIndex)
-                if maze.inwardNeighbor(for: outwardCell) == cell {
-                    neighbors.append(outwardCell)
-                }
-            }
-        }
-
-        return neighbors
-    }
-
-    private static func neighbor(onSameRingFrom cell: MazeCell, direction: Int, in maze: GeneratedMaze) -> MazeCell {
-        let count = maze.cellCount(inRing: cell.ring)
-        let index = (cell.index + direction + count) % count
-        return MazeCell(ring: cell.ring, index: index)
-    }
-
-}
-
-private struct SeededRandomNumberGenerator: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) {
-        state = seed
-    }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
-        var value = state
-        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
-        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
-        return value ^ (value >> 31)
-    }
-
-    mutating func nextInt(in range: ClosedRange<Int>) -> Int {
-        let width = UInt64(range.upperBound - range.lowerBound + 1)
-        return range.lowerBound + Int(next() % width)
-    }
+private struct MazePalette {
+    let boardFill: UIColor
+    let boardStroke: UIColor
+    let wallStroke: UIColor
 }

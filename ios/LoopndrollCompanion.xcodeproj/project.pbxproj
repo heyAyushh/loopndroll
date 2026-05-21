@@ -47,6 +47,7 @@
 		F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */; };
 		FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B6F97450DF16B9BDC1BB296 /* CompanionModels.swift */; };
 		FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3383A59BE6F2A3621442C5 /* CompanionService.swift */; };
+		5D0A1B2C3D4E5F6071829301 /* MazeGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0A1B2C3D4E5F6071829311 /* MazeGeneration.swift */; };
 		CC3D4E5F6A7B8C9D0E1F2B3C /* SessionSpotlightIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F6A7B8C9D0E1F /* SessionSpotlightIndexer.swift */; };
 		DD4E5F6A7B8C9D0E1F2B3C4D /* SpotlightSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* SpotlightSearchService.swift */; };
 		F3A4B5C6D7E8F9A0B1C2D3E4 /* looper.icon in Resources */ = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D6E7F8A9B0C1D2 /* looper.icon */; };
@@ -73,6 +74,7 @@
 		4C0A1B2C3D4E5F6071829316 /* PinballGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballGameView.swift; sourceTree = "<group>"; };
 		4C0A1B2C3D4E5F6071829317 /* SKNode+Debug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SKNode+Debug.swift"; sourceTree = "<group>"; };
 		5D0A1B2C3D4E5F6071829310 /* MazeGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeGameView.swift; sourceTree = "<group>"; };
+		5D0A1B2C3D4E5F6071829311 /* MazeGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeGeneration.swift; sourceTree = "<group>"; };
 		6A1B2C3D4E5F60718293A4B1 /* SessionSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchModel.swift; sourceTree = "<group>"; };
 		6A1B2C3D4E5F60718293A4B3 /* SessionSearchRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchRows.swift; sourceTree = "<group>"; };
 		6A1B2C3D4E5F60718293A4B5 /* SessionSearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchScreen.swift; sourceTree = "<group>"; };
@@ -172,6 +174,7 @@
 			isa = PBXGroup;
 			children = (
 				5D0A1B2C3D4E5F6071829310 /* MazeGameView.swift */,
+				5D0A1B2C3D4E5F6071829311 /* MazeGeneration.swift */,
 			);
 			path = Maze;
 			sourceTree = "<group>";
@@ -425,6 +428,7 @@
 				99062AC34AB87033EBE8373A /* LiveOrbCameraScannerView.swift in Sources */,
 				E5C39DC104CF5AA6E2B39BD9 /* LocalNotificationManager.swift in Sources */,
 				B91E954053D8C339A13C5705 /* LoopndrollCompanionApp.swift in Sources */,
+				5D0A1B2C3D4E5F6071829301 /* MazeGeneration.swift in Sources */,
 				5D0A1B2C3D4E5F6071829300 /* MazeGameView.swift in Sources */,
 				DB83DD9E7055A2E07DA711B5 /* MockCompanionService.swift in Sources */,
 				4C0A1B2C3D4E5F6071829302 /* MotionController.swift in Sources */,

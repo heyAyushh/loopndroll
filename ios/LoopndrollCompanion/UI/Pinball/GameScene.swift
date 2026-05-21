@@ -10,7 +10,16 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
 
     private enum Drag {
         static let touchSlop: CGFloat = 16
-        static let maximumReleaseSpeed: CGFloat = 900
+        static let maximumReleaseSpeed: CGFloat = 1_900
+        static let releaseVelocityMultiplier: CGFloat = 1.05
+        static let sampleWindow: TimeInterval = 0.12
+        static let minimumSampleDuration: TimeInterval = 0.025
+        static let maximumSamples = 10
+    }
+
+    private struct DragSample {
+        let point: CGPoint
+        let timestamp: TimeInterval
     }
 
     private var motionController: PinballMotionController?
@@ -21,9 +30,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     private var surfaceNodes: [String: SKNode] = [:]
     private var ball: SKNode?
     private var draggedTouch: UITouch?
-    private var lastDragPoint: CGPoint?
-    private var lastDragTimestamp: TimeInterval = 0
-    private var releaseVelocity: CGVector = .zero
+    private var dragSamples: [DragSample] = []
     private var wasBallDynamicBeforeDrag = true
     private var isSceneActive = false
     private var isShuttingDown = false
@@ -221,10 +228,9 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             return
         }
 
+        let constrainedPoint = constrainedBallPosition(point)
         draggedTouch = touch
-        lastDragPoint = point
-        lastDragTimestamp = touch.timestamp
-        releaseVelocity = .zero
+        dragSamples = [DragSample(point: constrainedPoint, timestamp: touch.timestamp)]
 
         if let body = ball?.physicsBody {
             wasBallDynamicBeforeDrag = body.isDynamic
@@ -233,7 +239,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             body.angularVelocity = 0
         }
 
-        ball?.position = constrainedBallPosition(point)
+        ball?.position = constrainedPoint
         hapticManager.playCollision(impulse: 8, sharpness: 0.74)
     }
 
@@ -245,28 +251,16 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             return
         }
 
-        let nextPoint = constrainedBallPosition(convertPoint(fromView: touch.location(in: view)))
-        if let lastDragPoint {
-            let timeDelta = max(touch.timestamp - lastDragTimestamp, 0.001)
-            releaseVelocity = clampedVelocity(
-                CGVector(
-                    dx: (nextPoint.x - lastDragPoint.x) / timeDelta,
-                    dy: (nextPoint.y - lastDragPoint.y) / timeDelta
-                )
-            )
-        }
-
-        ball?.position = nextPoint
-        lastDragPoint = nextPoint
-        lastDragTimestamp = touch.timestamp
+        recordDragSamples(from: touch, event: event, in: view)
+        ball?.position = dragSamples.last?.point ?? ball?.position ?? .zero
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        finishDragIfNeeded(for: touches)
+        finishDragIfNeeded(for: touches, event: event, shouldReleaseMomentum: true)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        finishDragIfNeeded(for: touches)
+        finishDragIfNeeded(for: touches, event: event, shouldReleaseMomentum: false)
     }
 
     private func trackedTouch(in touches: Set<UITouch>) -> UITouch? {
@@ -277,23 +271,30 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         return touches.first { $0 === draggedTouch }
     }
 
-    private func finishDragIfNeeded(for touches: Set<UITouch>) {
-        guard trackedTouch(in: touches) != nil else {
+    private func finishDragIfNeeded(
+        for touches: Set<UITouch>,
+        event: UIEvent?,
+        shouldReleaseMomentum: Bool
+    ) {
+        guard let touch = trackedTouch(in: touches) else {
             return
         }
 
+        if shouldReleaseMomentum, let view {
+            recordDragSamples(from: touch, event: event, in: view)
+        }
+
+        let finalVelocity = shouldReleaseMomentum ? releaseVelocityFromDragSamples() : .zero
         if let body = ball?.physicsBody {
             body.isDynamic = wasBallDynamicBeforeDrag
             if body.isDynamic {
-                body.velocity = releaseVelocity
-                body.angularVelocity = -releaseVelocity.dx / max(Layout.ballRadius, 1)
+                body.velocity = finalVelocity
+                body.angularVelocity = -finalVelocity.dx / max(Layout.ballRadius, 1)
             }
         }
 
         draggedTouch = nil
-        lastDragPoint = nil
-        lastDragTimestamp = 0
-        releaseVelocity = .zero
+        dragSamples = []
         wasBallDynamicBeforeDrag = true
     }
 
@@ -309,10 +310,62 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
         }
 
         draggedTouch = nil
-        lastDragPoint = nil
-        lastDragTimestamp = 0
-        releaseVelocity = .zero
+        dragSamples = []
         wasBallDynamicBeforeDrag = true
+    }
+
+    private func recordDragSamples(from touch: UITouch, event: UIEvent?, in view: SKView) {
+        let touches = (event?.coalescedTouches(for: touch) ?? [touch])
+            .sorted { $0.timestamp < $1.timestamp }
+
+        for touch in touches {
+            appendDragSample(
+                DragSample(
+                    point: constrainedBallPosition(convertPoint(fromView: touch.location(in: view))),
+                    timestamp: touch.timestamp
+                )
+            )
+        }
+    }
+
+    private func appendDragSample(_ sample: DragSample) {
+        if let lastSample = dragSamples.last, sample.timestamp <= lastSample.timestamp {
+            if sample.timestamp == lastSample.timestamp {
+                dragSamples[dragSamples.count - 1] = sample
+            }
+            return
+        }
+
+        dragSamples.append(sample)
+        let cutoff = sample.timestamp - Drag.sampleWindow
+        dragSamples.removeAll { $0.timestamp < cutoff }
+
+        if dragSamples.count > Drag.maximumSamples {
+            dragSamples.removeFirst(dragSamples.count - Drag.maximumSamples)
+        }
+    }
+
+    private func releaseVelocityFromDragSamples() -> CGVector {
+        guard let latestSample = dragSamples.last else {
+            return .zero
+        }
+
+        let referenceSample = dragSamples.reversed().first {
+            latestSample.timestamp - $0.timestamp >= Drag.minimumSampleDuration
+        } ?? dragSamples.first
+
+        guard let referenceSample,
+              latestSample.timestamp > referenceSample.timestamp else {
+            return .zero
+        }
+
+        let timeDelta = CGFloat(latestSample.timestamp - referenceSample.timestamp)
+        let velocity = CGVector(
+            dx: (latestSample.point.x - referenceSample.point.x) / timeDelta * Drag.releaseVelocityMultiplier,
+            dy: (latestSample.point.y - referenceSample.point.y) / timeDelta * Drag.releaseVelocityMultiplier
+        )
+
+        return clampedVelocity(velocity)
     }
 
     private func isPointInsideBall(_ point: CGPoint, hitSlop: CGFloat = 0) -> Bool {

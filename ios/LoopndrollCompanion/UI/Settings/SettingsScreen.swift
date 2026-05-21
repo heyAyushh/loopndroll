@@ -8,6 +8,7 @@ struct SettingsScreen: View {
     @State private var connectionCodeErrorMessage: String?
     @State private var draftConnectionCode = ""
     @AppStorage("stopQuickActions") private var storedQuickActions = "open-session,continue"
+    @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
     @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = true
     @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var draftPrompt = ""
@@ -15,6 +16,17 @@ struct SettingsScreen: View {
 
     private var selectedQuickActions: Set<String> {
         Set(storedQuickActions.split(separator: ",").map(String.init))
+    }
+
+    private var appearanceMode: Binding<CompanionAppearanceMode> {
+        Binding(
+            get: {
+                CompanionAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
+            },
+            set: { nextMode in
+                appearanceModeRawValue = nextMode.rawValue
+            }
+        )
     }
 
     private var release: CompanionRelease {
@@ -45,6 +57,7 @@ struct SettingsScreen: View {
                 .id(SettingsSearchTarget.continuePrompt)
             quickActionsSection
                 .id(SettingsSearchTarget.stopQuickActions)
+            appearanceSection
             pinballSection
             advancedConfigurationSection
             versionSection
@@ -133,6 +146,18 @@ struct SettingsScreen: View {
             Text("Stop Quick Actions")
         } footer: {
             Text("These actions appear when a stop alert expands.")
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Picker("Appearance", selection: appearanceMode) {
+                ForEach(CompanionAppearanceMode.allCases) { mode in
+                    Text(mode.label)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
         }
     }
 

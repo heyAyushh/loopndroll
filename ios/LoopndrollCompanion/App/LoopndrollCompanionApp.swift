@@ -4,6 +4,7 @@ import UserNotifications
 @main
 struct LooperApp: App {
     @UIApplicationDelegateAdaptor(LooperAppDelegate.self) private var appDelegate
+    @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
     @State private var model: CompanionAppModel
 
     init() {
@@ -14,6 +15,11 @@ struct LooperApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView(model: model)
+                .preferredColorScheme(appearanceMode.colorScheme)
         }
+    }
+
+    private var appearanceMode: CompanionAppearanceMode {
+        CompanionAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
     }
 }
