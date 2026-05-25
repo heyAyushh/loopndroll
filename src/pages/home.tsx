@@ -46,7 +46,6 @@ export function HomeRoute() {
               completionChecks={model.completionChecks}
               isLoading={model.isLoading}
               notifications={model.notifications}
-              now={model.now}
               onDelete={(sessionId) => {
                 void model.removeSession(sessionId);
               }}

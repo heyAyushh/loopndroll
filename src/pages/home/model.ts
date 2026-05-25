@@ -48,22 +48,6 @@ function usePendingSessionPresets(displaySessions: LoopSession[]) {
   };
 }
 
-function useSessionClock() {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  return now;
-}
-
 function hasAttachedTelegramNotification(session: LoopSession, notifications: LoopNotification[]) {
   return session.notificationIds.some((notificationId) =>
     notifications.some(
@@ -200,7 +184,6 @@ export function useHomeRouteModel() {
   );
   const { pendingSessionPresets, setPendingSessionPresets } =
     usePendingSessionPresets(displaySessions);
-  const now = useSessionClock();
   const sessionRefs = useMemo(() => createSessionRefs(sessions), [sessions]);
   const actions = createHomeRouteActions({
     completionChecks,
@@ -218,7 +201,6 @@ export function useHomeRouteModel() {
     ...loopndrollState,
     completionChecks,
     notifications,
-    now,
     openActionsSessionId,
     pendingSessionPresets,
     sessionRefs,

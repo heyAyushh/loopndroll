@@ -194,18 +194,39 @@ function TelegramChatField({
   );
 }
 
-function TelegramFields(props: {
+type NotificationDialogProps = {
   botTokenError: string | undefined;
+  editingNotificationId: string | null;
   form: UseFormReturn<NotificationFormValues>;
   isLoadingTelegramChats: boolean;
+  isOpen: boolean;
   normalizedNotificationBotToken: string;
   onDocsClick: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (event?: React.BaseSyntheticEvent) => Promise<void>;
   selectedTelegramChat: TelegramChatItem | null;
   shouldShowTelegramChatsError: boolean;
   telegramChatIdError: string | undefined;
   telegramChatItems: TelegramChatItem[];
   telegramChatsError: string | null;
-}) {
+  webhookUrlError: string | undefined;
+};
+
+function TelegramFields(
+  props: Pick<
+    NotificationDialogProps,
+    | "botTokenError"
+    | "form"
+    | "isLoadingTelegramChats"
+    | "normalizedNotificationBotToken"
+    | "onDocsClick"
+    | "selectedTelegramChat"
+    | "shouldShowTelegramChatsError"
+    | "telegramChatIdError"
+    | "telegramChatItems"
+    | "telegramChatsError"
+  >,
+) {
   return (
     <>
       <TelegramBotTokenField
@@ -227,23 +248,71 @@ function TelegramFields(props: {
   );
 }
 
-export function NotificationDialog(props: {
-  botTokenError: string | undefined;
-  editingNotificationId: string | null;
-  form: UseFormReturn<NotificationFormValues>;
-  isLoadingTelegramChats: boolean;
-  isOpen: boolean;
-  normalizedNotificationBotToken: string;
-  onDocsClick: (event: React.MouseEvent<HTMLAnchorElement>) => void;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (event?: React.BaseSyntheticEvent) => Promise<void>;
-  selectedTelegramChat: TelegramChatItem | null;
-  shouldShowTelegramChatsError: boolean;
-  telegramChatIdError: string | undefined;
-  telegramChatItems: TelegramChatItem[];
-  telegramChatsError: string | null;
-  webhookUrlError: string | undefined;
-}) {
+function NotificationFieldGroup(props: NotificationDialogProps & { notificationChannel: string }) {
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldContent>
+          <FieldLabel htmlFor="notification-label">Label</FieldLabel>
+          <Input
+            id="notification-label"
+            placeholder={props.notificationChannel === "slack" ? "Slack" : "Telegram"}
+            {...props.form.register("label")}
+          />
+        </FieldContent>
+      </Field>
+      <Field>
+        <FieldContent>
+          <FieldLabel htmlFor="notification-channel">Channel</FieldLabel>
+          <Controller
+            control={props.form.control}
+            name="channel"
+            render={({ field }) => (
+              <Select
+                items={notificationChannelItems}
+                onValueChange={(value) => {
+                  if (value) {
+                    props.form.clearErrors();
+                    field.onChange(value);
+                  }
+                }}
+                value={field.value}
+              >
+                <SelectTrigger className="w-full" id="notification-channel">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="slack">Slack</SelectItem>
+                    <SelectItem value="telegram">Telegram</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </FieldContent>
+      </Field>
+      {props.notificationChannel === "slack" ? (
+        <SlackFields form={props.form} webhookUrlError={props.webhookUrlError} />
+      ) : (
+        <TelegramFields
+          botTokenError={props.botTokenError}
+          form={props.form}
+          isLoadingTelegramChats={props.isLoadingTelegramChats}
+          normalizedNotificationBotToken={props.normalizedNotificationBotToken}
+          onDocsClick={props.onDocsClick}
+          selectedTelegramChat={props.selectedTelegramChat}
+          shouldShowTelegramChatsError={props.shouldShowTelegramChatsError}
+          telegramChatIdError={props.telegramChatIdError}
+          telegramChatItems={props.telegramChatItems}
+          telegramChatsError={props.telegramChatsError}
+        />
+      )}
+    </FieldGroup>
+  );
+}
+
+export function NotificationDialog(props: NotificationDialogProps) {
   const notificationChannel = props.form.watch("channel");
 
   return (
@@ -255,65 +324,7 @@ export function NotificationDialog(props: {
               {props.editingNotificationId ? "Edit Notification" : "Add Notification"}
             </DialogTitle>
           </DialogHeader>
-          <FieldGroup>
-            <Field>
-              <FieldContent>
-                <FieldLabel htmlFor="notification-label">Label</FieldLabel>
-                <Input
-                  id="notification-label"
-                  placeholder={notificationChannel === "slack" ? "Slack" : "Telegram"}
-                  {...props.form.register("label")}
-                />
-              </FieldContent>
-            </Field>
-            <Field>
-              <FieldContent>
-                <FieldLabel htmlFor="notification-channel">Channel</FieldLabel>
-                <Controller
-                  control={props.form.control}
-                  name="channel"
-                  render={({ field }) => (
-                    <Select
-                      items={notificationChannelItems}
-                      onValueChange={(value) => {
-                        if (value) {
-                          props.form.clearErrors();
-                          field.onChange(value);
-                        }
-                      }}
-                      value={field.value}
-                    >
-                      <SelectTrigger className="w-full" id="notification-channel">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="slack">Slack</SelectItem>
-                          <SelectItem value="telegram">Telegram</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </FieldContent>
-            </Field>
-            {notificationChannel === "slack" ? (
-              <SlackFields form={props.form} webhookUrlError={props.webhookUrlError} />
-            ) : (
-              <TelegramFields
-                botTokenError={props.botTokenError}
-                form={props.form}
-                isLoadingTelegramChats={props.isLoadingTelegramChats}
-                normalizedNotificationBotToken={props.normalizedNotificationBotToken}
-                onDocsClick={props.onDocsClick}
-                selectedTelegramChat={props.selectedTelegramChat}
-                shouldShowTelegramChatsError={props.shouldShowTelegramChatsError}
-                telegramChatIdError={props.telegramChatIdError}
-                telegramChatItems={props.telegramChatItems}
-                telegramChatsError={props.telegramChatsError}
-              />
-            )}
-          </FieldGroup>
+          <NotificationFieldGroup {...props} notificationChannel={notificationChannel} />
           <DialogFooter className="-mx-6 -mb-6 mt-2 border-t bg-muted/50 px-6 py-4 sm:justify-end">
             <DialogClose asChild>
               <Button size="sm" type="button" variant="outline">

@@ -1,34 +1,19 @@
 import { cn } from "@/lib/utils";
-import type { ChatCardTheme } from "@/components/chat-card";
+
+export type ChatStatusIndicatorState = "working" | "waiting" | "stopped";
 
 type ChatStatusIndicatorProps = {
-  active?: boolean;
-  theme?: ChatCardTheme;
+  state?: ChatStatusIndicatorState;
   className?: string;
 };
 
-const ACTIVE_THEME_CLASSES: Record<ChatCardTheme, string> = {
-  orange: "text-orange-500",
-  cyan: "text-cyan-500",
-  emerald: "text-emerald-500",
-  olive: "text-olive-500",
-};
-
-export function ChatStatusIndicator({
-  active = false,
-  theme = "orange",
-  className,
-}: ChatStatusIndicatorProps) {
+export function ChatStatusIndicator({ state = "stopped", className }: ChatStatusIndicatorProps) {
   return (
     <span
       aria-hidden="true"
-      className={cn(
-        "chat-status-indicator",
-        active
-          ? cn("chat-status-indicator--fillsweep", ACTIVE_THEME_CLASSES[theme])
-          : "chat-status-indicator--diagsweep text-foreground/20",
-        className,
-      )}
-    />
+      className={cn("chat-status-indicator", `chat-status-indicator--${state}`, className)}
+    >
+      <span className="chat-status-indicator__ball" />
+    </span>
   );
 }

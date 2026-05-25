@@ -279,42 +279,241 @@
     width: 24px;
     height: 24px;
     overflow: hidden;
-    border-radius: var(--radius-md);
-    border: 1px solid color-mix(in oklch, currentColor 20%, transparent);
-    background-color: color-mix(in oklch, currentColor 8%, transparent);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background:
+      radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.24), transparent 32%),
+      radial-gradient(circle at 50% 110%, rgba(255, 255, 255, 0.08), transparent 58%),
+      rgba(255, 255, 255, 0.04);
     contain: strict;
     isolation: isolate;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.18);
   }
 
   .chat-status-indicator::before {
     content: "";
     position: absolute;
-    inset: 0;
+    inset: 1px;
     border-radius: inherit;
-    will-change: transform, opacity;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    pointer-events: none;
   }
 
-  .chat-status-indicator--fillsweep::before {
-    background: currentColor;
-    transform-origin: center bottom;
-    animation: chat-status-fillsweep 1.1s linear infinite;
+  .chat-status-indicator__ball {
+    position: absolute;
+    inset: 4px;
+    border-radius: inherit;
+    overflow: hidden;
+    isolation: isolate;
   }
 
-  .chat-status-indicator--diagsweep {
-    border-color: color-mix(in oklch, var(--color-muted) 60%, currentColor 28%);
-    background-color: var(--color-muted);
+  .chat-status-indicator__ball::before,
+  .chat-status-indicator__ball::after {
+    content: "";
+    position: absolute;
+    inset: -42%;
   }
 
-  .chat-status-indicator--diagsweep::before {
-    inset: -32%;
+  .chat-status-indicator--working {
+    border-color: rgba(116, 255, 217, 0.32);
+    box-shadow:
+      0 0 0 3px rgba(116, 255, 217, 0.11),
+      0 0 16px rgba(72, 234, 170, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.22);
+  }
+
+  .chat-status-indicator--working .chat-status-indicator__ball {
+    background:
+      radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.95) 0 13%, transparent 18%),
+      radial-gradient(
+        circle at 50% 50%,
+        rgba(232, 255, 248, 0.98),
+        rgba(143, 255, 207, 0.96) 32%,
+        rgba(36, 202, 135, 1) 74%
+      );
+    box-shadow:
+      0 0 12px rgba(72, 234, 170, 0.45),
+      inset 0 0 12px rgba(255, 255, 255, 0.14);
+  }
+
+  .chat-status-indicator--working .chat-status-indicator__ball::before {
+    background:
+      radial-gradient(
+        120% 90% at 18% 50%,
+        transparent 56%,
+        rgba(4, 89, 60, 0.96) 60%,
+        transparent 66%
+      ),
+      radial-gradient(
+        120% 90% at 70% 50%,
+        transparent 56%,
+        rgba(15, 154, 104, 0.82) 60%,
+        transparent 66%
+      );
+    animation: chat-status-forward-roll 0.84s linear infinite alternate;
+    opacity: 0.8;
+  }
+
+  .chat-status-indicator--working .chat-status-indicator__ball::after {
     background: linear-gradient(
-      135deg,
-      transparent 34%,
-      currentColor 46%,
-      currentColor 54%,
-      transparent 66%
+      90deg,
+      transparent 0 32%,
+      rgba(255, 255, 255, 0.42) 42%,
+      rgba(255, 255, 255, 0.12) 50%,
+      transparent 60%
     );
-    animation: chat-status-diagsweep 0.96s linear infinite;
+    animation: chat-status-forward-gloss 0.84s linear infinite alternate;
+  }
+
+  .chat-status-indicator--waiting {
+    border-color: rgba(126, 208, 255, 0.32);
+    box-shadow:
+      0 0 0 3px rgba(126, 208, 255, 0.11),
+      0 0 16px rgba(95, 191, 255, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.22);
+  }
+
+  .chat-status-indicator--waiting .chat-status-indicator__ball {
+    background:
+      radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.95) 0 13%, transparent 18%),
+      radial-gradient(
+        circle at 50% 50%,
+        rgba(240, 249, 255, 0.98),
+        rgba(155, 221, 255, 0.95) 30%,
+        rgba(83, 157, 255, 1) 76%
+      );
+    box-shadow:
+      0 0 12px rgba(95, 191, 255, 0.36),
+      inset 0 0 12px rgba(255, 255, 255, 0.12);
+  }
+
+  .chat-status-indicator--waiting .chat-status-indicator__ball::before {
+    background:
+      radial-gradient(
+        120% 90% at 18% 50%,
+        transparent 56%,
+        rgba(33, 94, 192, 0.9) 60%,
+        transparent 66%
+      ),
+      radial-gradient(
+        120% 90% at 70% 50%,
+        transparent 56%,
+        rgba(115, 201, 255, 0.68) 60%,
+        transparent 66%
+      );
+    animation: chat-status-forward-roll 1.45s linear infinite alternate;
+    opacity: 0.76;
+  }
+
+  .chat-status-indicator--waiting .chat-status-indicator__ball::after {
+    background: linear-gradient(
+      90deg,
+      transparent 0 32%,
+      rgba(255, 255, 255, 0.38) 42%,
+      rgba(255, 255, 255, 0.1) 50%,
+      transparent 60%
+    );
+    animation: chat-status-forward-gloss 1.45s linear infinite alternate;
+  }
+
+  .chat-status-indicator--stopped {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.18);
+  }
+
+  .chat-status-indicator--stopped .chat-status-indicator__ball {
+    background:
+      radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.7) 0 13%, transparent 18%),
+      radial-gradient(circle at 50% 50%, rgba(196, 196, 196, 0.94), rgba(108, 108, 108, 0.98));
+    box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.08);
+  }
+
+  .session-hover-actions {
+    position: absolute;
+    top: 50%;
+    right: calc(100% + 8px);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transform: translateY(-50%) translateX(4px);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
+      opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .group:hover .session-hover-actions,
+  .group:focus-within .session-hover-actions {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .preview-session-hover .group:first-of-type .session-hover-actions {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .session-hover-actions__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+      rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.84);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition:
+      transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+      border-color 160ms ease-out,
+      background-color 160ms ease-out;
+  }
+
+  .session-hover-actions__button:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .session-hover-actions__button:active {
+    transform: scale(0.97);
+  }
+
+  @keyframes chat-status-forward-roll {
+    from {
+      transform: translateX(-42%);
+    }
+
+    to {
+      transform: translateX(42%);
+    }
+  }
+
+  @keyframes chat-status-forward-gloss {
+    from {
+      transform: translateX(-58%);
+      opacity: 0.22;
+    }
+
+    50% {
+      opacity: 0.5;
+    }
+
+    to {
+      transform: translateX(58%);
+      opacity: 0.22;
+    }
   }
 
   .chat-timing-letter {
@@ -334,7 +533,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-status-indicator::before {
+  .chat-status-indicator__ball::before,
+  .chat-status-indicator__ball::after {
     animation: none;
     opacity: 0.6;
     transform: none;

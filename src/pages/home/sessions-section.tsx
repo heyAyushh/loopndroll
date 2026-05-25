@@ -1,9 +1,14 @@
-import { DotsThreeVertical, Play, Stop } from "@phosphor-icons/react";
-import { intlFormatDistance } from "date-fns";
+import {
+  BellSimpleRinging,
+  Checks,
+  DotsThreeVertical,
+  FileText,
+  Play,
+  Stop,
+} from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { ChatStatusIndicator } from "@/components/chat-status-indicator";
-import { getChatCardThemeForPreset } from "@/components/chat-card";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -26,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { openExternalUrl } from "@/lib/loopndroll";
 import { cn } from "@/lib/utils";
 import type {
   CompletionCheck,
@@ -34,6 +40,7 @@ import type {
   LoopSession,
   LoopndrollSnapshot,
 } from "@/lib/loopndroll";
+import { buildSessionRowState, type SessionHoverActionKind } from "./session-row-state";
 import {
   AnimatedEmptyStateMessage,
   contentFadeVariants,
@@ -61,31 +68,8 @@ function getEmptyStateMessage(showArchivedSessions: boolean) {
     : "Start a chat in Codex so it appears here...";
 }
 
-function getSessionTimingLabel(session: LoopSession, showArchivedSessions: boolean, now: number) {
-  if (showArchivedSessions) {
-    return "";
-  }
-
-  const getRelativeLabel = (value: string) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return "";
-    }
-
-    const formatted = intlFormatDistance(date, now, { style: "narrow" });
-    return formatted === "now" ? "1s ago" : formatted;
-  };
-
-  const registeredText = getRelativeLabel(session.firstSeenAt);
-  const activeText = session.activeSince
-    ? getRelativeLabel(session.activeSince).replace(/ ago$/, "")
-    : "";
-
-  if (session.effectivePreset !== null) {
-    return activeText ? `Working for ${activeText}` : "Working";
-  }
-
-  return registeredText ? `Registered ${registeredText}` : "";
+function createTranscriptUrl(transcriptPath: string) {
+  return encodeURI(`file://${transcriptPath}`);
 }
 
 function HeaderLink({ children, onClick }: { children: ReactNode; onClick: () => void }) {
@@ -450,10 +434,164 @@ function SessionActionsMenu(props: {
   );
 }
 
+function SessionHoverActions({
+  hoverActionKinds,
+  onOpenActionsMenu,
+  onOpenTranscript,
+  sessionRef,
+}: {
+  hoverActionKinds: SessionHoverActionKind[];
+  onOpenActionsMenu: () => void;
+  onOpenTranscript: () => void;
+  sessionRef: string;
+}) {
+  if (hoverActionKinds.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="session-hover-actions">
+      {hoverActionKinds.includes("transcript") ? (
+        <button
+          aria-label={`Open transcript for ${sessionRef}`}
+          className="session-hover-actions__button"
+          onClick={onOpenTranscript}
+          title="Open transcript"
+          type="button"
+        >
+          <FileText aria-hidden="true" weight="regular" />
+        </button>
+      ) : null}
+      {hoverActionKinds.includes("notifications") ? (
+        <button
+          aria-label={`Notifications attached for ${sessionRef}`}
+          className="session-hover-actions__button"
+          onClick={onOpenActionsMenu}
+          title="Notifications attached"
+          type="button"
+        >
+          <BellSimpleRinging aria-hidden="true" weight="regular" />
+        </button>
+      ) : null}
+      {hoverActionKinds.includes("completion-check") ? (
+        <button
+          aria-label={`Completion checks attached for ${sessionRef}`}
+          className="session-hover-actions__button"
+          onClick={onOpenActionsMenu}
+          title="Completion checks attached"
+          type="button"
+        >
+          <Checks aria-hidden="true" weight="regular" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionTrailingActions({
+  completionChecks,
+  hoverActionKinds,
+  isSessionActive,
+  notifications,
+  onDelete,
+  onNotificationClear,
+  onNotificationToggle,
+  onOpenTranscript,
+  onPresetAction,
+  onPresetSelection,
+  onSetArchived,
+  onUpdateSessionCompletionCheckConfig,
+  openActionsSessionId,
+  selectedSessionPreset,
+  session,
+  sessionRef,
+  setOpenActionsSessionId,
+  showArchivedSessions,
+}: {
+  completionChecks: CompletionCheck[];
+  hoverActionKinds: SessionHoverActionKind[];
+  isSessionActive: boolean;
+  notifications: LoopNotification[];
+  onDelete: (sessionId: string) => void;
+  onNotificationClear: (sessionId: string) => void;
+  onNotificationToggle: (session: LoopSession, notificationId: string, checked: boolean) => void;
+  onOpenTranscript: () => void;
+  onPresetAction: (session: LoopSession) => void;
+  onPresetSelection: (session: LoopSession, nextPreset: LoopPreset) => void;
+  onSetArchived: (sessionId: string, archived: boolean) => void;
+  onUpdateSessionCompletionCheckConfig: (
+    sessionId: string,
+    completionCheckId: string | null,
+    waitForReplyAfterCompletion: boolean,
+  ) => void;
+  openActionsSessionId: string | null;
+  selectedSessionPreset: LoopPreset;
+  session: LoopSession;
+  sessionRef: string;
+  setOpenActionsSessionId: (sessionId: string | null) => void;
+  showArchivedSessions: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {showArchivedSessions ? null : (
+        <SessionPresetControls
+          isSessionActive={isSessionActive}
+          onPresetAction={onPresetAction}
+          onPresetSelection={onPresetSelection}
+          selectedSessionPreset={selectedSessionPreset}
+          session={session}
+        />
+      )}
+      {showArchivedSessions ? (
+        <Button
+          aria-label={`Unarchive ${sessionRef}`}
+          onClick={() => {
+            onSetArchived(session.sessionId, false);
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Unarchive
+        </Button>
+      ) : null}
+      <div className="relative flex items-center">
+        <SessionHoverActions
+          hoverActionKinds={hoverActionKinds}
+          onOpenActionsMenu={() => {
+            setOpenActionsSessionId(session.sessionId);
+          }}
+          onOpenTranscript={onOpenTranscript}
+          sessionRef={sessionRef}
+        />
+        <SessionActionsMenu
+          completionChecks={completionChecks}
+          notifications={notifications}
+          onClose={() => {
+            setOpenActionsSessionId(null);
+          }}
+          onDelete={onDelete}
+          onNotificationClear={onNotificationClear}
+          onNotificationToggle={onNotificationToggle}
+          onSetArchived={onSetArchived}
+          onUpdateSessionCompletionCheckConfig={onUpdateSessionCompletionCheckConfig}
+          open={openActionsSessionId === session.sessionId}
+          selectedSessionPreset={selectedSessionPreset}
+          session={session}
+          sessionRef={sessionRef}
+          setOpen={(open) => {
+            setOpenActionsSessionId(open ? session.sessionId : null);
+          }}
+          showArchivedSessions={showArchivedSessions}
+        />
+      </div>
+    </div>
+  );
+}
+
 type HomeSessionRowProps = {
   completionChecks: CompletionCheck[];
   notifications: LoopNotification[];
-  now: number;
   onDelete: (sessionId: string) => void;
   onNotificationClear: (sessionId: string) => void;
   onNotificationToggle: (session: LoopSession, notificationId: string, checked: boolean) => void;
@@ -477,7 +615,6 @@ type HomeSessionRowProps = {
 function HomeSessionRow({
   completionChecks,
   notifications,
-  now,
   onDelete,
   onNotificationClear,
   onNotificationToggle,
@@ -494,74 +631,56 @@ function HomeSessionRow({
   tableIndex,
 }: HomeSessionRowProps) {
   const isSessionActive = session.effectivePreset !== null;
-  const sessionStatusTheme = getChatCardThemeForPreset(
-    session.effectivePreset ?? session.preset ?? "infinite",
-  );
-  const sessionTimingLabel = getSessionTimingLabel(session, showArchivedSessions, now);
+  const rowState = buildSessionRowState({
+    notifications,
+    session,
+    showArchivedSessions,
+  });
+  const sessionTimingLabel = rowState.summaryLabel;
 
   return (
     <motion.tr
       key={session.sessionId}
       className={cn(
-        "border-b border-[#292929] hover:bg-transparent has-aria-expanded:bg-transparent",
+        "group border-b border-[#292929] hover:bg-transparent has-aria-expanded:bg-transparent",
         tableIndex === 0 && "border-t border-[#292929]",
       )}
       variants={contentFadeVariants}
     >
       <TableCell className="w-0 pl-0 pr-3 py-3">
-        <ChatStatusIndicator active={isSessionActive} theme={sessionStatusTheme} />
+        <ChatStatusIndicator state={rowState.orbState} />
       </TableCell>
       <TableCell className="w-full min-w-0 px-0 py-3">
         <SessionPromptCell session={session} sessionRef={sessionRef} />
       </TableCell>
-      <TableCell className="w-36 min-w-36 px-0 py-3 pr-6 whitespace-nowrap text-sm tabular-nums text-foreground/80">
+      <TableCell className="w-40 min-w-40 px-0 py-3 pr-6 whitespace-nowrap text-sm tabular-nums text-foreground/80">
         {sessionTimingLabel ? <SessionTimingText text={sessionTimingLabel} /> : null}
       </TableCell>
       <TableCell className="w-[1%] px-0 py-3 whitespace-nowrap">
-        <div className="flex items-center justify-end gap-2">
-          {showArchivedSessions ? null : (
-            <SessionPresetControls
-              isSessionActive={isSessionActive}
-              onPresetAction={onPresetAction}
-              onPresetSelection={onPresetSelection}
-              selectedSessionPreset={selectedSessionPreset}
-              session={session}
-            />
-          )}
-          {showArchivedSessions ? (
-            <Button
-              aria-label={`Unarchive ${sessionRef}`}
-              onClick={() => {
-                onSetArchived(session.sessionId, false);
-              }}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Unarchive
-            </Button>
-          ) : null}
-          <SessionActionsMenu
-            completionChecks={completionChecks}
-            notifications={notifications}
-            onClose={() => {
-              setOpenActionsSessionId(null);
-            }}
-            onDelete={onDelete}
-            onNotificationClear={onNotificationClear}
-            onNotificationToggle={onNotificationToggle}
-            onSetArchived={onSetArchived}
-            onUpdateSessionCompletionCheckConfig={onUpdateSessionCompletionCheckConfig}
-            open={openActionsSessionId === session.sessionId}
-            selectedSessionPreset={selectedSessionPreset}
-            session={session}
-            sessionRef={sessionRef}
-            setOpen={(open) => {
-              setOpenActionsSessionId(open ? session.sessionId : null);
-            }}
-            showArchivedSessions={showArchivedSessions}
-          />
-        </div>
+        <SessionTrailingActions
+          completionChecks={completionChecks}
+          hoverActionKinds={rowState.hoverActionKinds}
+          isSessionActive={isSessionActive}
+          notifications={notifications}
+          onDelete={onDelete}
+          onNotificationClear={onNotificationClear}
+          onNotificationToggle={onNotificationToggle}
+          onOpenTranscript={() => {
+            if (session.transcriptPath) {
+              void openExternalUrl(createTranscriptUrl(session.transcriptPath));
+            }
+          }}
+          onPresetAction={onPresetAction}
+          onPresetSelection={onPresetSelection}
+          onSetArchived={onSetArchived}
+          onUpdateSessionCompletionCheckConfig={onUpdateSessionCompletionCheckConfig}
+          openActionsSessionId={openActionsSessionId}
+          selectedSessionPreset={selectedSessionPreset}
+          session={session}
+          sessionRef={sessionRef}
+          setOpenActionsSessionId={setOpenActionsSessionId}
+          showArchivedSessions={showArchivedSessions}
+        />
       </TableCell>
     </motion.tr>
   );
@@ -570,7 +689,6 @@ function HomeSessionRow({
 function HomeSessionsTable({
   completionChecks,
   notifications,
-  now,
   onDelete,
   onNotificationClear,
   onNotificationToggle,
@@ -587,7 +705,6 @@ function HomeSessionsTable({
 }: {
   completionChecks: CompletionCheck[];
   notifications: LoopNotification[];
-  now: number;
   onDelete: (sessionId: string) => void;
   onNotificationClear: (sessionId: string) => void;
   onNotificationToggle: (session: LoopSession, notificationId: string, checked: boolean) => void;
@@ -623,7 +740,6 @@ function HomeSessionsTable({
               key={session.sessionId}
               completionChecks={completionChecks}
               notifications={notifications}
-              now={now}
               onDelete={onDelete}
               onNotificationClear={onNotificationClear}
               onNotificationToggle={onNotificationToggle}
@@ -654,7 +770,6 @@ function HomeSessionsTable({
 function SessionsListSection({
   completionChecks,
   notifications,
-  now,
   onDelete,
   onNotificationClear,
   onNotificationToggle,
@@ -672,7 +787,6 @@ function SessionsListSection({
 }: {
   completionChecks: CompletionCheck[];
   notifications: LoopNotification[];
-  now: number;
   onDelete: (sessionId: string) => void;
   onNotificationClear: (sessionId: string) => void;
   onNotificationToggle: (session: LoopSession, notificationId: string, checked: boolean) => void;
@@ -710,7 +824,6 @@ function SessionsListSection({
       <HomeSessionsTable
         completionChecks={completionChecks}
         notifications={notifications}
-        now={now}
         onDelete={onDelete}
         onNotificationClear={onNotificationClear}
         onNotificationToggle={onNotificationToggle}
@@ -733,7 +846,6 @@ export function HomeSessionsSection({
   completionChecks,
   isLoading,
   notifications,
-  now,
   onDelete,
   onNotificationClear,
   onNotificationToggle,
@@ -753,7 +865,6 @@ export function HomeSessionsSection({
   completionChecks: CompletionCheck[];
   isLoading: boolean;
   notifications: LoopNotification[];
-  now: number;
   onDelete: (sessionId: string) => void;
   onNotificationClear: (sessionId: string) => void;
   onNotificationToggle: (session: LoopSession, notificationId: string, checked: boolean) => void;
@@ -787,7 +898,6 @@ export function HomeSessionsSection({
         <SessionsListSection
           completionChecks={completionChecks}
           notifications={notifications}
-          now={now}
           onDelete={onDelete}
           onNotificationClear={onNotificationClear}
           onNotificationToggle={onNotificationToggle}
