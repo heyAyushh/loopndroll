@@ -16,6 +16,7 @@
 		3A862790609B7E6774673564 /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2738F36D01E51884310D44F /* AppIconManager.swift */; };
 		3C6E2077D89F3812CD4DC462 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B9F7B90CAECDB099E8C275 /* SettingsScreen.swift */; };
 		4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */; };
+		4B9C19E93327DD1CE74C32F0 /* CompanionSnapshotCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC942F2D4264B67CD2A97D0 /* CompanionSnapshotCache.swift */; };
 		4C0A1B2C3D4E5F6071829300 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829310 /* PhysicsCategories.swift */; };
 		4C0A1B2C3D4E5F6071829301 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829311 /* HapticManager.swift */; };
 		4C0A1B2C3D4E5F6071829302 /* MotionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0A1B2C3D4E5F6071829312 /* MotionController.swift */; };
@@ -88,6 +89,7 @@
 		A471C1E74E50B3B80802019A /* HTTPCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPCompanionService.swift; sourceTree = "<group>"; };
 		A6A173CAD2BAC9F2DD952752 /* SessionsDeviceHubSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDeviceHubSheet.swift; sourceTree = "<group>"; };
 		AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConfiguration.swift; sourceTree = "<group>"; };
+		AAC942F2D4264B67CD2A97D0 /* CompanionSnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotCache.swift; sourceTree = "<group>"; };
 		AC05ED83E08BF42EE898EE0B /* RemotePushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePushRegistrar.swift; sourceTree = "<group>"; };
 		ACB30BF382DD4232DEDF9A2A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BBE93C4ADA07F40857EC3295 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
@@ -143,6 +145,7 @@
 				26AA2D9DCF175B8A074BD849 /* CompanionAppModel.swift */,
 				AAC942F2D4264B67CD2A97CC /* CompanionConfiguration.swift */,
 				C46E9FFDFE6ED0B29141D4C5 /* CompanionEnvironment.swift */,
+				AAC942F2D4264B67CD2A97D0 /* CompanionSnapshotCache.swift */,
 				D194C78858D5127D347F0235 /* LoopndrollCompanionApp.swift */,
 			);
 			path = App;
@@ -418,6 +421,7 @@
 				F4032E01E5623275B3546ECE /* CompanionAppModel.swift in Sources */,
 				4B9C19E93327DD1CE74C32E7 /* CompanionConfiguration.swift in Sources */,
 				7319ECE52ED3F7FB1F628DB7 /* CompanionEnvironment.swift in Sources */,
+				4B9C19E93327DD1CE74C32F0 /* CompanionSnapshotCache.swift in Sources */,
 				FBF70AED8B46BF273A5636A1 /* CompanionModels.swift in Sources */,
 				FCB7717E5BC1B094265FD862 /* CompanionService.swift in Sources */,
 				79708679632C752640DC4259 /* CompanionTheme.swift in Sources */,

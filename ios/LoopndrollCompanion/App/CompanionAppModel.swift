@@ -41,6 +41,11 @@ final class CompanionAppModel {
         self.notificationManager = notificationManager
         self.remotePushRegistrar = remotePushRegistrar
         self.spotlightIndexer = spotlightIndexer
+
+        if !configuredBaseURL.isEmpty {
+            snapshot = CompanionSnapshotCache.load()
+        }
+
         registerNotificationObservers()
     }
 
@@ -186,6 +191,7 @@ final class CompanionAppModel {
         snapshot = nil
         detailBySessionID = [:]
         errorMessage = nil
+        CompanionSnapshotCache.clear()
         await loadSnapshot()
     }
 
@@ -369,6 +375,7 @@ final class CompanionAppModel {
         snapshot = nextSnapshot
         connectionState = .connected
         lastUpdatedAt = Date()
+        CompanionSnapshotCache.save(nextSnapshot)
         syncDetailCache(with: nextSnapshot)
 
         await syncSpotlightIndex(with: nextSnapshot.sessions)
