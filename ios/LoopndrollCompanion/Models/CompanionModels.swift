@@ -392,6 +392,64 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
     }
 }
 
+enum SessionKind: String, Codable, Sendable {
+    case project
+    case instantChat = "instant-chat"
+
+    var label: String {
+        switch self {
+        case .project:
+            return "Project"
+        case .instantChat:
+            return "Instant Chat"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .project:
+            return "folder"
+        case .instantChat:
+            return "bubble.left.and.bubble.right"
+        }
+    }
+}
+
+struct InstalledPluginSummary: Codable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var source: String?
+}
+
+struct SessionMetadata: Codable, Hashable, Sendable {
+    var kind: SessionKind
+    var source: String
+    var projectName: String?
+    var projectPath: String?
+    var transcriptAvailable: Bool
+    var installedPlugins: [InstalledPluginSummary]
+    var tags: [String]
+
+    static let empty = SessionMetadata(
+        kind: .instantChat,
+        source: "unknown",
+        projectName: nil,
+        projectPath: nil,
+        transcriptAvailable: false,
+        installedPlugins: [],
+        tags: []
+    )
+
+    var displayTitle: String {
+        switch kind {
+        case .project:
+            return projectName ?? "Project"
+        case .instantChat:
+            return "Instant Chat"
+        }
+    }
+}
+
 struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var ref: String
@@ -402,6 +460,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var assistantPreview: String?
     var isArchived: Bool
     var assistantClient: AssistantClient
+    var metadata: SessionMetadata
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -413,6 +472,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case assistantPreview
         case isArchived
         case assistantClient
+        case metadata
     }
 
     init(
@@ -424,7 +484,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         lastUpdatedAt: String,
         assistantPreview: String?,
         isArchived: Bool,
-        assistantClient: AssistantClient = .unknown
+        assistantClient: AssistantClient = .unknown,
+        metadata: SessionMetadata = .empty
     ) {
         self.id = id
         self.ref = ref
@@ -435,6 +496,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         self.assistantPreview = assistantPreview
         self.isArchived = isArchived
         self.assistantClient = assistantClient
+        self.metadata = metadata
     }
 
     init(from decoder: Decoder) throws {
@@ -448,6 +510,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+        metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
     }
 }
 
@@ -462,6 +525,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var latestAssistantMessage: String?
     var isArchived: Bool
     var assistantClient: AssistantClient
+    var metadata: SessionMetadata
     var notificationIds: [String]
     var completionCheckID: String?
     var completionCheckWaitForReply: Bool
@@ -479,6 +543,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case latestAssistantMessage
         case isArchived
         case assistantClient
+        case metadata
         case notificationIds
         case completionCheckID
         case completionCheckWaitForReply
@@ -497,6 +562,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         latestAssistantMessage: String?,
         isArchived: Bool,
         assistantClient: AssistantClient = .unknown,
+        metadata: SessionMetadata = .empty,
         notificationIds: [String],
         completionCheckID: String?,
         completionCheckWaitForReply: Bool,
@@ -513,6 +579,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.latestAssistantMessage = latestAssistantMessage
         self.isArchived = isArchived
         self.assistantClient = assistantClient
+        self.metadata = metadata
         self.notificationIds = notificationIds
         self.completionCheckID = completionCheckID
         self.completionCheckWaitForReply = completionCheckWaitForReply
@@ -532,6 +599,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+        metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
         notificationIds = try container.decode([String].self, forKey: .notificationIds)
         completionCheckID = try container.decodeIfPresent(String.self, forKey: .completionCheckID)
         completionCheckWaitForReply = try container.decode(Bool.self, forKey: .completionCheckWaitForReply)

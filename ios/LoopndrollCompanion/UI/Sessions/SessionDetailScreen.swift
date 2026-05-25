@@ -23,6 +23,10 @@ struct SessionDetailScreen: View {
         detail?.latestAssistantMessage ?? session.assistantPreview
     }
 
+    private var currentMetadata: SessionMetadata {
+        detail?.metadata ?? session.metadata
+    }
+
     private var availableNotifications: [NotificationDestination] {
         detail?.availableNotifications ?? model.snapshot?.notifications ?? []
     }
@@ -74,6 +78,32 @@ struct SessionDetailScreen: View {
                 Text("Assistant")
             }
             LabeledContent("Title", value: session.title)
+            LabeledContent("Kind", value: currentMetadata.kind.label)
+
+            if let projectPath = currentMetadata.projectPath {
+                LabeledContent("Project") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(currentMetadata.projectName ?? projectPath)
+                        Text(projectPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            LabeledContent("Started From", value: currentMetadata.source.capitalized)
+            LabeledContent("Transcript") {
+                Text(currentMetadata.transcriptAvailable ? "Available" : "Not Available")
+            }
+
+            if !currentMetadata.installedPlugins.isEmpty {
+                LabeledContent(
+                    "Plugins",
+                    value: currentMetadata.installedPlugins.map(\.name).joined(separator: ", ")
+                )
+            }
+
             LabeledContent("Status", value: currentStatus.label)
             LabeledContent("Updated") {
                 Text(ModelFormatting.relativeTimestamp(detail?.lastUpdatedAt ?? session.lastUpdatedAt))

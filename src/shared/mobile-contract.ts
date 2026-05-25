@@ -12,6 +12,24 @@ export type MobileAssistantClient =
   | "super-engineering"
   | "openclaw";
 
+export type MobileSessionKind = "project" | "instant-chat";
+
+export type MobileInstalledPlugin = {
+  id: string;
+  name: string;
+  source: string | null;
+};
+
+export type MobileSessionMetadata = {
+  kind: MobileSessionKind;
+  source: "startup" | "resume" | "stop";
+  projectName: string | null;
+  projectPath: string | null;
+  transcriptAvailable: boolean;
+  installedPlugins: MobileInstalledPlugin[];
+  tags: string[];
+};
+
 export type HostSummary = {
   id: string;
   name: string;
@@ -74,6 +92,7 @@ export type MobileSessionSummary = {
   assistantPreview: string | null;
   isArchived: boolean;
   assistantClient: MobileAssistantClient;
+  metadata: MobileSessionMetadata;
 };
 
 export type MobileSessionDetail = MobileSessionSummary & {

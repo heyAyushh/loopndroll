@@ -161,8 +161,13 @@ enum SessionSearchEngine {
                     session.status.label,
                     session.status.rawValue,
                     session.status == .waiting || session.status == .stopped ? "needs attention" : "",
-                    session.assistantClient.displayTitle
-                ] + session.assistantClient.searchKeywords
+                    session.assistantClient.displayTitle,
+                    session.metadata.displayTitle,
+                    session.metadata.projectPath ?? "",
+                    session.metadata.kind.label,
+                    session.metadata.kind.rawValue,
+                    session.metadata.installedPlugins.map(\.name).joined(separator: " ")
+                ] + session.assistantClient.searchKeywords + session.metadata.tags
             )
 
             guard let score else {

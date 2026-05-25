@@ -13,6 +13,7 @@ struct SessionSpotlightRecord: Equatable, Sendable {
     let status: SessionStatus
     let assistantPreview: String?
     let assistantClient: AssistantClient
+    let metadata: SessionMetadata
 
     init(session: SessionSummary) {
         id = session.id
@@ -21,6 +22,7 @@ struct SessionSpotlightRecord: Equatable, Sendable {
         status = session.status
         assistantPreview = session.assistantPreview
         assistantClient = session.assistantClient
+        metadata = session.metadata
     }
 }
 
@@ -36,14 +38,19 @@ struct SessionSearchableItem {
             session.title,
             session.assistantPreview ?? "",
             session.status.label,
-            session.assistantClient.displayTitle
+            session.assistantClient.displayTitle,
+            session.metadata.displayTitle,
+            session.metadata.projectPath ?? "",
+            session.metadata.kind.label,
+            session.metadata.installedPlugins.map(\.name).joined(separator: " ")
         ].joined(separator: " ")
         attributeSet.keywords = [
             session.ref,
             session.status.rawValue,
             session.assistantClient.rawValue,
-            session.status.label
-        ] + session.assistantClient.searchKeywords
+            session.status.label,
+            session.metadata.kind.rawValue
+        ] + session.assistantClient.searchKeywords + session.metadata.tags
         attributeSet.displayName = session.title
 
         let item = CSSearchableItem(

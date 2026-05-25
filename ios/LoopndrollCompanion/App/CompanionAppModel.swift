@@ -432,6 +432,7 @@ final class CompanionAppModel {
             detail.lastUpdatedAt = session.lastUpdatedAt
             detail.assistantPreview = session.assistantPreview
             detail.isArchived = session.isArchived
+            detail.metadata = session.metadata
             detailBySessionID[session.id] = detail
         }
     }

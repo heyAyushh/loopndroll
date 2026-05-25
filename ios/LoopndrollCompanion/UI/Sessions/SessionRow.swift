@@ -21,6 +21,14 @@ struct SessionRow: View {
                         .font(.headline)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
+
+                    Label(
+                        session.metadata.displayTitle,
+                        systemImage: session.metadata.kind.symbolName
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
 
                 Spacer(minLength: 12)
@@ -45,6 +53,13 @@ struct SessionRow: View {
                     ModelFormatting.relativeTimestamp(session.lastUpdatedAt),
                     systemImage: "clock"
                 )
+
+                if !session.metadata.installedPlugins.isEmpty {
+                    Label(
+                        "\(session.metadata.installedPlugins.count)",
+                        systemImage: "puzzlepiece.extension"
+                    )
+                }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)

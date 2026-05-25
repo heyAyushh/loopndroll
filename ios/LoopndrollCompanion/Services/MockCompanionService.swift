@@ -42,7 +42,8 @@ actor MockCompanionStore {
                 lastUpdatedAt: Date().ISO8601Format(),
                 assistantPreview: $0.assistantPreview,
                 isArchived: $0.isArchived,
-                assistantClient: $0.assistantClient
+                assistantClient: $0.assistantClient,
+                metadata: $0.metadata
             )
         }
 
@@ -67,7 +68,8 @@ actor MockCompanionStore {
                 lastUpdatedAt: Date().ISO8601Format(),
                 assistantPreview: $0.assistantPreview,
                 isArchived: archived,
-                assistantClient: $0.assistantClient
+                assistantClient: $0.assistantClient,
+                metadata: $0.metadata
             )
         }
 
