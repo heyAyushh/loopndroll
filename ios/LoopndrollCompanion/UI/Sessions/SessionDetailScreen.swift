@@ -38,6 +38,7 @@ struct SessionDetailScreen: View {
     var body: some View {
         Form {
             summarySection
+            assistantReplySection
             modeSection
             notificationsSection
             completionCheckSection
@@ -138,18 +139,17 @@ struct SessionDetailScreen: View {
                 Text(ModelFormatting.relativeTimestamp(detail?.lastUpdatedAt ?? session.lastUpdatedAt))
             }
             LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
+        }
+    }
 
+    private var assistantReplySection: some View {
+        Section("Latest Assistant Reply") {
             if let currentMessage, !currentMessage.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Latest Assistant Reply")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    Text(currentMessage)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                }
-                .padding(.vertical, 4)
+                MarkdownMessageView(markdown: currentMessage)
+                    .padding(.vertical, 4)
+            } else {
+                Text("No assistant reply has been captured yet.")
+                    .foregroundStyle(.secondary)
             }
         }
     }
