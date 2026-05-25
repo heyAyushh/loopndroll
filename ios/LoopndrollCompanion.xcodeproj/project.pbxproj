@@ -592,6 +592,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOOPER_API_BASE_URL = "";
+				LOOPER_API_BASE_URLS = "";
 				LOOPER_RELEASE_CHANNEL = "";
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
@@ -619,6 +620,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOOPER_API_BASE_URL = "";
+				LOOPER_API_BASE_URLS = "";
 				LOOPER_RELEASE_CHANNEL = "";
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;

@@ -153,7 +153,13 @@ In one terminal:
 pnpm run dev:ios-api
 ```
 
-The dev API binds to `0.0.0.0:8787` by default and prints a phone-ready URL plus a device code. On a physical iPhone, open Settings in the companion app and paste that device code. The simulator still falls back to `http://127.0.0.1:8787` when no build-time URL is configured.
+The dev API binds to `0.0.0.0:8787` by default and prints phone-ready URLs plus a device code. It advertises reachable LAN addresses before Tailscale addresses. Add explicit public or portless endpoints with `LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URLS`, for example:
+
+```bash
+LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URLS="https://looper.example.test,http://100.x.y.z:8787" pnpm run dev:ios-api
+```
+
+On a physical iPhone, open Settings in the companion app and paste that device code. The app tries every URL from the code in order, so LAN, Tailscale, and a portless reverse proxy can all be bundled into one code. The simulator still falls back to `http://127.0.0.1:8787` when no build-time URL is configured.
 
 In another terminal:
 

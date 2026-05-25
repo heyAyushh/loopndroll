@@ -24,8 +24,19 @@
 	<true/>
 	<key>LOOPER_API_BASE_URL</key>
 	<string>$(LOOPER_API_BASE_URL)</string>
+	<key>LOOPER_API_BASE_URLS</key>
+	<string>$(LOOPER_API_BASE_URLS)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan a generated orb from another screen.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to the looper desktop app on your local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

@@ -35,6 +35,8 @@ targets:
       Debug:
         CODE_SIGN_ENTITLEMENTS: LoopndrollCompanion/LoopndrollCompanion.Debug.entitlements
         LOOPER_API_BASE_URL: ""
+        LOOPER_API_BASE_URLS: ""
       Release:
         CODE_SIGN_ENTITLEMENTS: LoopndrollCompanion/LoopndrollCompanion.Release.entitlements
         LOOPER_API_BASE_URL: ""
+        LOOPER_API_BASE_URLS: ""

@@ -95,6 +95,7 @@ export type MobileSnapshot = {
 
 export type MobileConnectionCode = {
   baseURL: string;
+  baseURLs: string[];
   code: string;
   generatedAt: string;
 };

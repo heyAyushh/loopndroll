@@ -4,12 +4,13 @@ struct CompanionEnvironment {
     let service: any CompanionService
 
     static func live() -> CompanionEnvironment {
-        let trimmedBaseURL = CompanionConfiguration.resolvedBaseURLString()
+        let baseURLs = CompanionConfiguration.resolvedBaseURLStrings()
 
-        if let baseURL = URL(string: trimmedBaseURL), !trimmedBaseURL.isEmpty {
-            return CompanionEnvironment(service: HTTPCompanionService(baseURL: baseURL))
+        if !baseURLs.isEmpty {
+            return CompanionEnvironment(service: HTTPCompanionService(baseURLs: baseURLs))
         }
 
+        let trimmedBaseURL = CompanionConfiguration.resolvedBaseURLString()
         let error: CompanionConfigurationError =
             trimmedBaseURL.isEmpty ? .apiBaseURLNotConfigured : .invalidAPIBaseURL
         return CompanionEnvironment(service: UnconfiguredCompanionService(error: error))

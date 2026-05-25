@@ -1,7 +1,15 @@
 import Foundation
 
 struct HTTPCompanionService: CompanionService {
-    let baseURL: URL
+    let baseURLs: [URL]
+
+    init(baseURL: URL) {
+        self.baseURLs = [baseURL]
+    }
+
+    init(baseURLs: [URL]) {
+        self.baseURLs = baseURLs
+    }
 
     func loadSnapshot() async throws -> MobileSnapshot {
         try await request(path: "/api/mobile/snapshot", method: "GET")
@@ -68,8 +76,33 @@ struct HTTPCompanionService: CompanionService {
         method: String,
         body: [String: Any]? = nil
     ) async throws -> Response {
+        var lastError: Error?
+
+        for baseURL in baseURLs {
+            do {
+                return try await request(
+                    baseURL: baseURL,
+                    path: path,
+                    method: method,
+                    body: body
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? HTTPCompanionServiceError.invalidResponse
+    }
+
+    private func request<Response: Decodable>(
+        baseURL: URL,
+        path: String,
+        method: String,
+        body: [String: Any]? = nil
+    ) async throws -> Response {
         var request = URLRequest(url: baseURL.appending(path: path))
         request.httpMethod = method
+        request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if let body {

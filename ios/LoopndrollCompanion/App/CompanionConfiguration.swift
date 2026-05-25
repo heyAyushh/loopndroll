@@ -4,33 +4,48 @@ enum CompanionConfiguration {
     static let apiBaseURLOverrideKey = "looper.apiBaseURLOverride"
     private static let supportedConnectionCodeSchemes = ["looper", "loopndroll"]
     private static let supportedConnectionCodeKeys = ["baseURL", "base_url", "url"]
+    private static let supportedConnectionCodeListKeys = ["baseURLs", "base_urls", "urls"]
 
     static func resolvedBaseURLString() -> String {
+        resolvedBaseURLStrings().first?.absoluteString ?? ""
+    }
+
+    static func resolvedBaseURLStrings() -> [URL] {
         let storedValue = UserDefaults.standard.string(forKey: apiBaseURLOverrideKey) ?? ""
-        let trimmedStoredValue = storedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedStoredValue.isEmpty {
-            return trimmedStoredValue
+        let storedURLs = normalizedBaseURLs(from: storedValue)
+        if !storedURLs.isEmpty {
+            return storedURLs
         }
 
         let bundledValue = (
             Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
                 ?? Bundle.main.object(forInfoDictionaryKey: "LOOPNDROLL_API_BASE_URL")
         ) as? String
-        let trimmedBundledValue = bundledValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let bundledListValue = Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URLS") as? String
+        let bundledURLs = normalizedBaseURLs(
+            from: [bundledValue, bundledListValue]
+                .compactMap(\.self)
+                .joined(separator: "\n")
+        )
 
-        if !trimmedBundledValue.isEmpty && !trimmedBundledValue.hasPrefix("$(") {
-            return trimmedBundledValue
+        if !bundledURLs.isEmpty {
+            return bundledURLs
         }
 
         #if targetEnvironment(simulator)
-            return "http://127.0.0.1:8787"
+            return [URL(string: "http://127.0.0.1:8787")].compactMap(\.self)
         #else
-            return ""
+            return []
         #endif
     }
 
     static func resolveBaseURLString(fromConnectionCode connectionCode: String) throws -> String {
-        try resolveBaseURLString(fromConnectionCode: connectionCode, remainingDepth: 2)
+        try resolveBaseURLStrings(fromConnectionCode: connectionCode).map(\.absoluteString)
+            .joined(separator: "\n")
+    }
+
+    static func resolveBaseURLStrings(fromConnectionCode connectionCode: String) throws -> [URL] {
+        try resolveBaseURLStrings(fromConnectionCode: connectionCode, remainingDepth: 2)
     }
 
     static func storeBaseURLString(_ value: String) {
@@ -64,25 +79,25 @@ enum CompanionConfiguration {
         )
     }
 
-    private static func resolveBaseURLString(
+    private static func resolveBaseURLStrings(
         fromConnectionCode connectionCode: String,
         remainingDepth: Int
-    ) throws -> String {
+    ) throws -> [URL] {
         let trimmedConnectionCode = connectionCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedConnectionCode.isEmpty else {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        if let normalizedBaseURL = try? normalizeBaseURLString(trimmedConnectionCode) {
-            return normalizedBaseURL
+        if let normalizedBaseURL = try? normalizeBaseURL(trimmedConnectionCode) {
+            return [normalizedBaseURL]
         }
 
-        if let baseURLFromScheme = resolveBaseURLString(fromSchemeCode: trimmedConnectionCode) {
-            return baseURLFromScheme
+        if let baseURLsFromScheme = resolveBaseURLs(fromSchemeCode: trimmedConnectionCode) {
+            return baseURLsFromScheme
         }
 
-        if let payloadBaseURL = try? resolveBaseURLString(fromJSONPayload: trimmedConnectionCode) {
-            return payloadBaseURL
+        if let payloadBaseURLs = try? resolveBaseURLs(fromJSONPayload: trimmedConnectionCode) {
+            return payloadBaseURLs
         }
 
         guard remainingDepth > 0, let decodedConnectionCode = decodeBase64URLString(trimmedConnectionCode)
@@ -90,13 +105,13 @@ enum CompanionConfiguration {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return try resolveBaseURLString(
+        return try resolveBaseURLStrings(
             fromConnectionCode: decodedConnectionCode,
             remainingDepth: remainingDepth - 1
         )
     }
 
-    private static func resolveBaseURLString(fromSchemeCode schemeCode: String) -> String? {
+    private static func resolveBaseURLs(fromSchemeCode schemeCode: String) -> [URL]? {
         guard
             let url = URL(string: schemeCode),
             let scheme = url.scheme?.lowercased(),
@@ -106,31 +121,42 @@ enum CompanionConfiguration {
             return nil
         }
 
-        let candidateBaseURL = components.queryItems?
-            .first(where: { supportedConnectionCodeKeys.contains($0.name) })?
-            .value
+        let candidateValues = components.queryItems?.compactMap { item -> [String]? in
+            if supportedConnectionCodeKeys.contains(item.name), let value = item.value {
+                return [value]
+            }
 
-        guard let candidateBaseURL else {
+            if supportedConnectionCodeListKeys.contains(item.name), let value = item.value {
+                return splitBaseURLValues(value)
+            }
+
             return nil
-        }
+        }.flatMap(\.self) ?? []
 
-        return try? normalizeBaseURLString(candidateBaseURL)
+        let urls = normalizedBaseURLs(from: candidateValues.joined(separator: "\n"))
+        return urls.isEmpty ? nil : urls
     }
 
-    private static func resolveBaseURLString(fromJSONPayload jsonPayload: String) throws -> String {
+    private static func resolveBaseURLs(fromJSONPayload jsonPayload: String) throws -> [URL] {
         let payloadData = Data(jsonPayload.utf8)
         let payload = try JSONDecoder().decode(ConnectionCodePayload.self, from: payloadData)
-        guard let candidateBaseURL = payload.baseURL else {
+        let urls = payload.baseURLs.compactMap { try? normalizeBaseURL($0) }
+        guard !urls.isEmpty else {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return try normalizeBaseURLString(candidateBaseURL)
+        return uniqueURLs(urls)
     }
 
-    private static func normalizeBaseURLString(_ value: String) throws -> String {
+    private static func normalizeBaseURL(_ value: String) throws -> URL {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty, !trimmedValue.hasPrefix("$(") else {
+            throw CompanionConfigurationError.invalidConnectionCode
+        }
+
+        let candidateValue = trimmedValue.contains("://") ? trimmedValue : "http://\(trimmedValue)"
         guard
-            let url = URL(string: trimmedValue),
+            let url = URL(string: candidateValue),
             let scheme = url.scheme?.lowercased(),
             ["http", "https"].contains(scheme),
             url.host != nil
@@ -138,7 +164,31 @@ enum CompanionConfiguration {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return trimmedValue
+        return url
+    }
+
+    private static func normalizedBaseURLs(from value: String) -> [URL] {
+        uniqueURLs(splitBaseURLValues(value).compactMap { try? normalizeBaseURL($0) })
+    }
+
+    private static func splitBaseURLValues(_ value: String) -> [String] {
+        value
+            .components(separatedBy: CharacterSet(charactersIn: "\n,; "))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { url in
+            let key = url.absoluteString
+            guard !seen.contains(key) else {
+                return false
+            }
+
+            seen.insert(key)
+            return true
+        }
     }
 
     private static func decodeBase64URLString(_ value: String) -> String? {
@@ -164,26 +214,38 @@ enum CompanionConfiguration {
 }
 
 private struct ConnectionCodePayload: Decodable {
-    let baseURL: String?
-
-    private let alternateBaseURL: String?
-    private let url: String?
+    let baseURLs: [String]
 
     enum CodingKeys: String, CodingKey {
         case baseURL
+        case baseURLs
         case alternateBaseURL = "base_url"
+        case alternateBaseURLs = "base_urls"
         case url
+        case urls
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let primaryBaseURL = try container.decodeIfPresent(String.self, forKey: .baseURL)
-        let snakeCaseBaseURL = try container.decodeIfPresent(String.self, forKey: .alternateBaseURL)
-        let genericURL = try container.decodeIfPresent(String.self, forKey: .url)
+        var values: [String] = []
 
-        baseURL = primaryBaseURL ?? snakeCaseBaseURL ?? genericURL
-        alternateBaseURL = snakeCaseBaseURL
-        url = genericURL
+        values.append(contentsOf: try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? [])
+        values.append(contentsOf: try container.decodeIfPresent([String].self, forKey: .alternateBaseURLs) ?? [])
+        values.append(contentsOf: try container.decodeIfPresent([String].self, forKey: .urls) ?? [])
+
+        if let primaryBaseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) {
+            values.append(primaryBaseURL)
+        }
+
+        if let snakeCaseBaseURL = try container.decodeIfPresent(String.self, forKey: .alternateBaseURL) {
+            values.append(snakeCaseBaseURL)
+        }
+
+        if let genericURL = try container.decodeIfPresent(String.self, forKey: .url) {
+            values.append(genericURL)
+        }
+
+        baseURLs = values
     }
 }
 
