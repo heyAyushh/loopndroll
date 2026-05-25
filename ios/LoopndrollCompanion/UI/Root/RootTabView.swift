@@ -19,7 +19,7 @@ struct RootTabView: View {
 
     let model: CompanionAppModel
 
-    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = true
+    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = false
     @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false

@@ -9,7 +9,7 @@ struct SettingsScreen: View {
     @State private var draftConnectionCode = ""
     @AppStorage("stopQuickActions") private var storedQuickActions = "open-session,continue"
     @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
-    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = true
+    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = false
     @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var draftPrompt = ""
     @State private var scrollTarget: SettingsSearchTarget?
