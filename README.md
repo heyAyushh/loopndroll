@@ -145,7 +145,7 @@ cd ios
 xcodegen generate
 ```
 
-### Run the simulator against the Bun dev API
+### Run the iPhone companion against the Bun dev API
 
 In one terminal:
 
@@ -153,13 +153,15 @@ In one terminal:
 pnpm run dev:ios-api
 ```
 
+The dev API binds to `0.0.0.0:8787` by default and prints a phone-ready URL plus a device code. On a physical iPhone, open Settings in the companion app and paste that device code. The simulator still falls back to `http://127.0.0.1:8787` when no build-time URL is configured.
+
 In another terminal:
 
 ```bash
 xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-The Debug app points at `http://127.0.0.1:8787` by default. If there is no local Loopndroll session data yet, the dev API serves an interactive fallback dataset so the iPhone UI is still testable in the simulator.
+If there is no local Loopndroll session data yet, the dev API serves an interactive fallback dataset so the iPhone UI is still testable.
 
 ## Useful Links
 

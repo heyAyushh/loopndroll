@@ -16,7 +16,17 @@ enum CompanionConfiguration {
             Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
                 ?? Bundle.main.object(forInfoDictionaryKey: "LOOPNDROLL_API_BASE_URL")
         ) as? String
-        return bundledValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedBundledValue = bundledValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if !trimmedBundledValue.isEmpty && !trimmedBundledValue.hasPrefix("$(") {
+            return trimmedBundledValue
+        }
+
+        #if targetEnvironment(simulator)
+            return "http://127.0.0.1:8787"
+        #else
+            return ""
+        #endif
     }
 
     static func resolveBaseURLString(fromConnectionCode connectionCode: String) throws -> String {

@@ -93,6 +93,12 @@ export type MobileSnapshot = {
   completionChecks: MobileCompletionCheck[];
 };
 
+export type MobileConnectionCode = {
+  baseURL: string;
+  code: string;
+  generatedAt: string;
+};
+
 export type FallbackMobileState = {
   snapshot: MobileSnapshot;
   sessionDetails: Record<string, MobileSessionDetail>;
