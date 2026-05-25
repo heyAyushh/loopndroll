@@ -13,6 +13,7 @@ struct SettingsScreen: View {
     @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
     @State private var draftPrompt = ""
     @State private var scrollTarget: SettingsSearchTarget?
+    @FocusState private var focusedInput: SettingsInput?
 
     private var selectedQuickActions: Set<String> {
         Set(storedQuickActions.split(separator: ",").map(String.init))
@@ -64,12 +65,21 @@ struct SettingsScreen: View {
         }
         .navigationTitle("Settings")
         .scrollPosition(id: $scrollTarget)
+        .scrollDismissesKeyboard(.interactively)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Save") {
                     savePrompt()
                 }
                 .disabled(!isPromptDirty)
+            }
+
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+
+                Button("Done") {
+                    focusedInput = nil
+                }
             }
         }
         .task(id: model.snapshot?.globalSettings.defaultPrompt) {
@@ -96,8 +106,10 @@ struct SettingsScreen: View {
                 .keyboardType(.asciiCapable)
                 .submitLabel(.done)
                 .font(.body.monospaced())
+                .focused($focusedInput, equals: .connectionCode)
                 .onSubmit {
                     connectUsingDeviceCode()
+                    focusedInput = nil
                 }
 
             Button("Connect with Device Code") {
@@ -122,6 +134,7 @@ struct SettingsScreen: View {
             TextEditor(text: $draftPrompt)
                 .font(.body)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
+                .focused($focusedInput, equals: .continuePrompt)
         } header: {
             Text("Continue Prompt")
         } footer: {
@@ -260,6 +273,11 @@ struct SettingsScreen: View {
             await model.saveDefaultPrompt(draftPrompt)
         }
     }
+}
+
+private enum SettingsInput: Hashable {
+    case connectionCode
+    case continuePrompt
 }
 
 struct SettingsRoutesScreen: View {

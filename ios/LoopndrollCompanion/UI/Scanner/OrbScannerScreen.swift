@@ -161,6 +161,7 @@ struct OrbScannerScreen: View {
     @State private var scanReport: OrbScanReport?
     @State private var errorMessage: String?
     @State private var isProcessing = false
+    @FocusState private var isExpectedOrbIDFocused: Bool
 
     private let dateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -349,12 +350,21 @@ struct OrbScannerScreen: View {
                 .padding(.top, 12)
                 .padding(.bottom, 24)
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Scan Orb")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         isControlsSheetPresented = false
+                    }
+                }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+
+                    Button("Done") {
+                        isExpectedOrbIDFocused = false
                     }
                 }
             }
@@ -478,7 +488,12 @@ struct OrbScannerScreen: View {
             TextField("Paste orb_id directly", text: $expectedOrbID)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.done)
                 .font(.body.monospaced())
+                .focused($isExpectedOrbIDFocused)
+                .onSubmit {
+                    isExpectedOrbIDFocused = false
+                }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .background(
