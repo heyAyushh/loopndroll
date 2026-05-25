@@ -20,13 +20,35 @@ export type MobileInstalledPlugin = {
   source: string | null;
 };
 
+export type MobileSessionTaskKind = "unknown" | "plan" | "todo" | "implementation";
+
+export type MobileGitRepositoryMetadata = {
+  repositoryName: string;
+  repositoryPath: string;
+  remoteURL: string | null;
+  branch: string | null;
+  commit: string | null;
+};
+
+export type MobileSessionSourceReference = {
+  kind: "cwd" | "transcript" | "git" | "pull-request" | "plugin" | "subagent";
+  label: string;
+  value: string;
+  url: string | null;
+};
+
 export type MobileSessionMetadata = {
   kind: MobileSessionKind;
   source: "startup" | "resume" | "stop";
   projectName: string | null;
   projectPath: string | null;
+  taskKind: MobileSessionTaskKind;
   transcriptAvailable: boolean;
+  gitRepository: MobileGitRepositoryMetadata | null;
+  pullRequestURL: string | null;
+  supportsSubagents: boolean;
   installedPlugins: MobileInstalledPlugin[];
+  sources: MobileSessionSourceReference[];
   tags: string[];
 };
 

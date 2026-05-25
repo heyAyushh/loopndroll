@@ -41,15 +41,22 @@ struct SessionSearchableItem {
             session.assistantClient.displayTitle,
             session.metadata.displayTitle,
             session.metadata.projectPath ?? "",
+            session.metadata.taskKind.label,
+            session.metadata.gitRepository?.repositoryName ?? "",
+            session.metadata.gitRepository?.remoteURL ?? "",
+            session.metadata.gitRepository?.branch ?? "",
+            session.metadata.pullRequestURL ?? "",
             session.metadata.kind.label,
-            session.metadata.installedPlugins.map(\.name).joined(separator: " ")
+            session.metadata.installedPlugins.map(\.name).joined(separator: " "),
+            session.metadata.sources.map(\.value).joined(separator: " ")
         ].joined(separator: " ")
         attributeSet.keywords = [
             session.ref,
             session.status.rawValue,
             session.assistantClient.rawValue,
             session.status.label,
-            session.metadata.kind.rawValue
+            session.metadata.kind.rawValue,
+            session.metadata.taskKind.rawValue
         ] + session.assistantClient.searchKeywords + session.metadata.tags
         attributeSet.displayName = session.title
 

@@ -253,6 +253,13 @@ struct HostSummary: Codable, Sendable {
     var lastSyncedAt: String
 }
 
+struct CompanionServerHealth: Codable, Sendable {
+    var ok: Bool
+    var baseURL: String
+    var baseURLs: [String]
+    var serverTime: String
+}
+
 struct GlobalSettings: Codable, Sendable {
     var defaultPrompt: String
     var globalMode: SessionMode?
@@ -421,13 +428,62 @@ struct InstalledPluginSummary: Codable, Hashable, Sendable {
     var source: String?
 }
 
+enum SessionTaskKind: String, Codable, Sendable {
+    case unknown
+    case plan
+    case todo
+    case implementation
+
+    var label: String {
+        switch self {
+        case .unknown:
+            return "Unknown"
+        case .plan:
+            return "Plan"
+        case .todo:
+            return "To Do"
+        case .implementation:
+            return "Implementation"
+        }
+    }
+}
+
+struct GitRepositoryMetadata: Codable, Hashable, Sendable {
+    var repositoryName: String
+    var repositoryPath: String
+    var remoteURL: String?
+    var branch: String?
+    var commit: String?
+}
+
+enum SessionSourceReferenceKind: String, Codable, Sendable {
+    case cwd
+    case transcript
+    case git
+    case pullRequest = "pull-request"
+    case plugin
+    case subagent
+}
+
+struct SessionSourceReference: Codable, Hashable, Sendable {
+    var kind: SessionSourceReferenceKind
+    var label: String
+    var value: String
+    var url: String?
+}
+
 struct SessionMetadata: Codable, Hashable, Sendable {
     var kind: SessionKind
     var source: String
     var projectName: String?
     var projectPath: String?
+    var taskKind: SessionTaskKind
     var transcriptAvailable: Bool
+    var gitRepository: GitRepositoryMetadata?
+    var pullRequestURL: String?
+    var supportsSubagents: Bool
     var installedPlugins: [InstalledPluginSummary]
+    var sources: [SessionSourceReference]
     var tags: [String]
 
     static let empty = SessionMetadata(
@@ -435,10 +491,77 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         source: "unknown",
         projectName: nil,
         projectPath: nil,
+        taskKind: .unknown,
         transcriptAvailable: false,
+        gitRepository: nil,
+        pullRequestURL: nil,
+        supportsSubagents: false,
         installedPlugins: [],
+        sources: [],
         tags: []
     )
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case source
+        case projectName
+        case projectPath
+        case taskKind
+        case transcriptAvailable
+        case gitRepository
+        case pullRequestURL
+        case supportsSubagents
+        case installedPlugins
+        case sources
+        case tags
+    }
+
+    init(
+        kind: SessionKind,
+        source: String,
+        projectName: String?,
+        projectPath: String?,
+        taskKind: SessionTaskKind,
+        transcriptAvailable: Bool,
+        gitRepository: GitRepositoryMetadata?,
+        pullRequestURL: String?,
+        supportsSubagents: Bool,
+        installedPlugins: [InstalledPluginSummary],
+        sources: [SessionSourceReference],
+        tags: [String]
+    ) {
+        self.kind = kind
+        self.source = source
+        self.projectName = projectName
+        self.projectPath = projectPath
+        self.taskKind = taskKind
+        self.transcriptAvailable = transcriptAvailable
+        self.gitRepository = gitRepository
+        self.pullRequestURL = pullRequestURL
+        self.supportsSubagents = supportsSubagents
+        self.installedPlugins = installedPlugins
+        self.sources = sources
+        self.tags = tags
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decodeIfPresent(SessionKind.self, forKey: .kind) ?? .instantChat
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "unknown"
+        projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
+        projectPath = try container.decodeIfPresent(String.self, forKey: .projectPath)
+        taskKind = try container.decodeIfPresent(SessionTaskKind.self, forKey: .taskKind) ?? .unknown
+        transcriptAvailable = try container.decodeIfPresent(Bool.self, forKey: .transcriptAvailable) ?? false
+        gitRepository = try container.decodeIfPresent(GitRepositoryMetadata.self, forKey: .gitRepository)
+        pullRequestURL = try container.decodeIfPresent(String.self, forKey: .pullRequestURL)
+        supportsSubagents = try container.decodeIfPresent(Bool.self, forKey: .supportsSubagents) ?? false
+        installedPlugins = try container.decodeIfPresent(
+            [InstalledPluginSummary].self,
+            forKey: .installedPlugins
+        ) ?? []
+        sources = try container.decodeIfPresent([SessionSourceReference].self, forKey: .sources) ?? []
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+    }
 
     var displayTitle: String {
         switch kind {

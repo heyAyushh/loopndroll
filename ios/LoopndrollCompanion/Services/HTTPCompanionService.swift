@@ -11,6 +11,10 @@ struct HTTPCompanionService: CompanionService {
         self.baseURLs = baseURLs
     }
 
+    func loadServerHealth() async throws -> CompanionServerHealth {
+        try await request(path: "/api/mobile/health", method: "GET")
+    }
+
     func loadSnapshot() async throws -> MobileSnapshot {
         try await request(path: "/api/mobile/snapshot", method: "GET")
     }

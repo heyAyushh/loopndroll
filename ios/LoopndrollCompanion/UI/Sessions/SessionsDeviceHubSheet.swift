@@ -99,6 +99,14 @@ struct SessionsDeviceHubSheet: View {
         }
     }
 
+    private var serverStatusLabel: String {
+        guard let serverHealth = model.serverHealth else {
+            return model.connectionState == .connected ? "Unknown" : "Offline"
+        }
+
+        return serverHealth.ok ? "Running" : "Unavailable"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -106,6 +114,10 @@ struct SessionsDeviceHubSheet: View {
                     LabeledContent("This iPhone", value: personalDeviceName)
                     LabeledContent("Software", value: deviceSoftwareLabel)
                     LabeledContent("Mac", value: model.snapshot?.host.name ?? "No Mac Connected")
+                    LabeledContent("API", value: serverStatusLabel)
+                    if let baseURL = model.serverHealth?.baseURL {
+                        LabeledContent("API Host", value: baseURL)
+                    }
                     LabeledContent("Access", value: loginStatusLabel)
                     LabeledContent("Last Sync", value: syncLabel)
                 }

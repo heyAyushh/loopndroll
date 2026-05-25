@@ -93,14 +93,43 @@ struct SessionDetailScreen: View {
             }
 
             LabeledContent("Started From", value: currentMetadata.source.capitalized)
+            LabeledContent("Task Type", value: currentMetadata.taskKind.label)
             LabeledContent("Transcript") {
                 Text(currentMetadata.transcriptAvailable ? "Available" : "Not Available")
+            }
+
+            if let gitRepository = currentMetadata.gitRepository {
+                LabeledContent("Git Repo") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(gitRepository.repositoryName)
+                        if let branch = gitRepository.branch {
+                            Text(branch)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if let pullRequestURL = currentMetadata.pullRequestURL {
+                LabeledContent("Pull Request", value: pullRequestURL)
+            }
+
+            if currentMetadata.supportsSubagents {
+                LabeledContent("Subagents", value: "Supported")
             }
 
             if !currentMetadata.installedPlugins.isEmpty {
                 LabeledContent(
                     "Plugins",
                     value: currentMetadata.installedPlugins.map(\.name).joined(separator: ", ")
+                )
+            }
+
+            if !currentMetadata.sources.isEmpty {
+                LabeledContent(
+                    "Sources",
+                    value: currentMetadata.sources.map(\.label).joined(separator: ", ")
                 )
             }
 

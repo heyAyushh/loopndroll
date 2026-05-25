@@ -12,6 +12,7 @@ private enum LaunchArgument {
 final class CompanionAppModel {
     var configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
     var snapshot: MobileSnapshot?
+    var serverHealth: CompanionServerHealth?
     var detailBySessionID: [String: SessionDetail] = [:]
     var connectionState: ConnectivityState = .connecting
     var errorMessage: String?
@@ -94,6 +95,10 @@ final class CompanionAppModel {
 
     var connectivitySummary: String {
         if connectionState == .connected, snapshot != nil {
+            if let serverHealth, serverHealth.ok {
+                return "API running at \(serverHealth.baseURL)."
+            }
+
             return "Connected and ready to monitor sessions."
         }
 
@@ -189,6 +194,7 @@ final class CompanionAppModel {
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
         snapshot = nil
+        serverHealth = nil
         detailBySessionID = [:]
         errorMessage = nil
         CompanionSnapshotCache.clear()
@@ -294,10 +300,12 @@ final class CompanionAppModel {
         errorMessage = nil
 
         do {
+            serverHealth = try? await service.loadServerHealth()
             let nextSnapshot = try await service.loadSnapshot()
             await applySnapshot(nextSnapshot)
         } catch {
             connectionState = error is CompanionConfigurationError ? .unpaired : .offline
+            serverHealth = nil
             errorMessage = error.localizedDescription
         }
 

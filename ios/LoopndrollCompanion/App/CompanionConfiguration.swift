@@ -300,6 +300,7 @@ struct UnconfiguredCompanionService: CompanionService {
         self.error = error
     }
 
+    func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
     func loadSessionDetail(id _: String) async throws -> SessionDetail { throw error }
     func setSessionMode(id _: String, preset _: SessionMode?) async throws -> MobileSnapshot {

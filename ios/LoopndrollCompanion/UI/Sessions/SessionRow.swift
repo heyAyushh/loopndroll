@@ -60,6 +60,10 @@ struct SessionRow: View {
                         systemImage: "puzzlepiece.extension"
                     )
                 }
+
+                if session.metadata.taskKind != .unknown {
+                    Label(session.metadata.taskKind.label, systemImage: "tag")
+                }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)

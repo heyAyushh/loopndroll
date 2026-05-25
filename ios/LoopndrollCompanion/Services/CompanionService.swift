@@ -1,6 +1,7 @@
 import Foundation
 
 protocol CompanionService: Sendable {
+    func loadServerHealth() async throws -> CompanionServerHealth
     func loadSnapshot() async throws -> MobileSnapshot
     func loadSessionDetail(id: String) async throws -> SessionDetail
     func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot

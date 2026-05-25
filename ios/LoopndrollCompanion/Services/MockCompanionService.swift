@@ -114,6 +114,15 @@ actor MockCompanionStore {
 struct MockCompanionService: CompanionService {
     private let store = MockCompanionStore()
 
+    func loadServerHealth() async throws -> CompanionServerHealth {
+        CompanionServerHealth(
+            ok: true,
+            baseURL: "http://127.0.0.1:8787",
+            baseURLs: ["http://127.0.0.1:8787"],
+            serverTime: Date().ISO8601Format()
+        )
+    }
+
     func loadSnapshot() async throws -> MobileSnapshot {
         await store.snapshot
     }
