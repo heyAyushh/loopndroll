@@ -11,6 +11,7 @@ import {
   mapLoopSessionToDetail,
   mapLoopndrollSnapshotToMobile,
 } from "./mobile-mappers";
+import { issueMobilePairingToken, validateMobileAuthorizationHeader } from "./mobile-auth";
 import { registerMobilePushDevice, sendTestPushToInstallation } from "./mobile-push";
 import {
   deleteSession,
@@ -139,10 +140,20 @@ function encodeBase64URL(value: string) {
 function createConnectionCode(): MobileConnectionCode {
   const baseURLs = advertisedBaseURLs();
   const baseURL = baseURLs[0] ?? advertisedBaseURL();
+  const pairingToken = issueMobilePairingToken();
   return {
     baseURL,
     baseURLs,
-    code: encodeBase64URL(JSON.stringify({ baseURL, baseURLs })),
+    pairingTokenId: pairingToken.id,
+    pairingToken: pairingToken.token,
+    code: encodeBase64URL(
+      JSON.stringify({
+        baseURL,
+        baseURLs,
+        pairingTokenId: pairingToken.id,
+        pairingToken: pairingToken.token,
+      }),
+    ),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -152,7 +163,7 @@ let fallbackState = createFallbackMobileState(advertisedBaseURL());
 function jsonResponse(payload: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Headers", "Content-Type");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
   headers.set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
 
   return Response.json(payload, {
@@ -163,6 +174,35 @@ function jsonResponse(payload: unknown, init?: ResponseInit) {
 
 function errorResponse(message: string, status = 400) {
   return jsonResponse({ message }, { status });
+}
+
+function unauthorizedResponse() {
+  return errorResponse("Pair this iPhone with the Mac before using the mobile API.", 401);
+}
+
+function isLoopbackAddress(address: string | null) {
+  return (
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1" ||
+    address === "localhost"
+  );
+}
+
+function shouldRequireMobileAuthentication(method: string, pathname: string) {
+  if (
+    method === "OPTIONS" ||
+    pathname === "/api/mobile/health" ||
+    pathname === "/api/mobile/connection-code"
+  ) {
+    return false;
+  }
+
+  return pathname.startsWith("/api/mobile/");
+}
+
+function isMobileRequestAuthorized(request: Request) {
+  return validateMobileAuthorizationHeader(request.headers.get("authorization"));
 }
 
 async function readRequestBody(request: Request) {
@@ -411,9 +451,16 @@ async function handlePushTestRequest(request: Request) {
   }
 }
 
-async function routeRequest(request: Request) {
+async function routeRequest(request: Request, clientAddress: string | null) {
   const url = new URL(request.url);
   const pathSegments = url.pathname.split("/").filter(Boolean);
+
+  if (
+    shouldRequireMobileAuthentication(request.method, url.pathname) &&
+    !isMobileRequestAuthorized(request)
+  ) {
+    return unauthorizedResponse();
+  }
 
   if (request.method === "GET" && url.pathname === "/api/mobile/snapshot") {
     return handleSnapshotRequest();
@@ -424,11 +471,16 @@ async function routeRequest(request: Request) {
       ok: true,
       baseURL: advertisedBaseURL(),
       baseURLs: advertisedBaseURLs(),
+      requiresAuthentication: true,
       serverTime: new Date().toISOString(),
     });
   }
 
   if (request.method === "GET" && url.pathname === "/api/mobile/connection-code") {
+    if (!isLoopbackAddress(clientAddress)) {
+      return errorResponse("Connection codes are only available from this Mac.", 403);
+    }
+
     return jsonResponse(createConnectionCode());
   }
 
@@ -489,15 +541,17 @@ async function routeRequest(request: Request) {
   return errorResponse("Route not found.", 404);
 }
 
-const server = Bun.serve({
+let server: ReturnType<typeof Bun.serve>;
+
+server = Bun.serve({
   hostname: MOBILE_DEV_SERVER_HOST,
   port: MOBILE_DEV_SERVER_PORT,
-  async fetch(request) {
+  async fetch(request): Promise<Response> {
     if (request.method === "OPTIONS") {
       return jsonResponse({ ok: true });
     }
 
-    return routeRequest(request);
+    return routeRequest(request, server.requestIP(request)?.address ?? null);
   },
 });
 

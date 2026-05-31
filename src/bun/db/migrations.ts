@@ -720,6 +720,22 @@ export const appMigrations: AppMigration[] = [
         on mobile_push_devices(device_token, bundle_id, apns_environment)`,
     ],
   },
+  {
+    id: 17,
+    name: "mobile_pairing_tokens",
+    statements: [
+      `create table if not exists mobile_pairing_tokens (
+        id text primary key,
+        token_hash text not null,
+        label text,
+        created_at text not null,
+        last_used_at text,
+        revoked_at text
+      )`,
+      `create index if not exists mobile_pairing_tokens_active_idx
+        on mobile_pairing_tokens(revoked_at, created_at desc, id)`,
+    ],
+  },
 ];
 
 function nowIsoString() {

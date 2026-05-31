@@ -1,20 +1,42 @@
 import Foundation
+import Security
+
+struct CompanionConnection: Sendable {
+    let baseURLs: [URL]
+    let bearerToken: String?
+
+    var baseURLString: String {
+        baseURLs.first?.absoluteString ?? ""
+    }
+
+    var storageValue: String {
+        baseURLs.map(\.absoluteString).joined(separator: "\n")
+    }
+}
 
 enum CompanionConfiguration {
     static let apiBaseURLOverrideKey = "looper.apiBaseURLOverride"
+    private static let apiBearerTokenService = "dev.looper.companion"
+    private static let apiBearerTokenAccount = "mobile-api-bearer-token"
     private static let supportedConnectionCodeSchemes = ["looper", "loopndroll"]
     private static let supportedConnectionCodeKeys = ["baseURL", "base_url", "url"]
     private static let supportedConnectionCodeListKeys = ["baseURLs", "base_urls", "urls"]
+    private static let supportedPairingTokenIDKeys = ["pairingTokenId", "pairing_token_id", "tokenId"]
+    private static let supportedPairingTokenKeys = ["pairingToken", "pairing_token", "token"]
 
     static func resolvedBaseURLString() -> String {
-        resolvedBaseURLStrings().first?.absoluteString ?? ""
+        resolvedConnection().baseURLString
     }
 
     static func resolvedBaseURLStrings() -> [URL] {
+        resolvedConnection().baseURLs
+    }
+
+    static func resolvedConnection() -> CompanionConnection {
         let storedValue = UserDefaults.standard.string(forKey: apiBaseURLOverrideKey) ?? ""
         let storedURLs = normalizedBaseURLs(from: storedValue)
         if !storedURLs.isEmpty {
-            return storedURLs
+            return CompanionConnection(baseURLs: storedURLs, bearerToken: loadBearerToken())
         }
 
         let bundledValue = (
@@ -27,25 +49,47 @@ enum CompanionConfiguration {
                 .compactMap(\.self)
                 .joined(separator: "\n")
         )
+        let bundledBearerToken = Bundle.main.object(
+            forInfoDictionaryKey: "LOOPER_API_BEARER_TOKEN"
+        ) as? String
 
         if !bundledURLs.isEmpty {
-            return bundledURLs
+            return CompanionConnection(
+                baseURLs: bundledURLs,
+                bearerToken: nonEmptyString(bundledBearerToken)
+            )
         }
 
         #if targetEnvironment(simulator)
-            return [URL(string: "http://127.0.0.1:8787")].compactMap(\.self)
+            return CompanionConnection(
+                baseURLs: [URL(string: "http://127.0.0.1:8787")].compactMap(\.self),
+                bearerToken: nil
+            )
         #else
-            return []
+            return CompanionConnection(baseURLs: [], bearerToken: nil)
         #endif
     }
 
     static func resolveBaseURLString(fromConnectionCode connectionCode: String) throws -> String {
-        try resolveBaseURLStrings(fromConnectionCode: connectionCode).map(\.absoluteString)
+        try resolveConnection(fromConnectionCode: connectionCode).baseURLs.map(\.absoluteString)
             .joined(separator: "\n")
     }
 
     static func resolveBaseURLStrings(fromConnectionCode connectionCode: String) throws -> [URL] {
-        try resolveBaseURLStrings(fromConnectionCode: connectionCode, remainingDepth: 2)
+        try resolveConnection(fromConnectionCode: connectionCode).baseURLs
+    }
+
+    static func resolveConnection(fromConnectionCode connectionCode: String) throws -> CompanionConnection {
+        try resolveConnection(fromConnectionCode: connectionCode, remainingDepth: 2)
+    }
+
+    static func storeConnection(_ connection: CompanionConnection) {
+        storeBaseURLString(connection.storageValue)
+        storeBearerToken(connection.bearerToken)
+    }
+
+    static func normalizedBaseURLsForUserInput(_ value: String) -> [URL] {
+        normalizedBaseURLs(from: value)
     }
 
     static func storeBaseURLString(_ value: String) {
@@ -79,25 +123,25 @@ enum CompanionConfiguration {
         )
     }
 
-    private static func resolveBaseURLStrings(
+    private static func resolveConnection(
         fromConnectionCode connectionCode: String,
         remainingDepth: Int
-    ) throws -> [URL] {
+    ) throws -> CompanionConnection {
         let trimmedConnectionCode = connectionCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedConnectionCode.isEmpty else {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
         if let normalizedBaseURL = try? normalizeBaseURL(trimmedConnectionCode) {
-            return [normalizedBaseURL]
+            return CompanionConnection(baseURLs: [normalizedBaseURL], bearerToken: nil)
         }
 
-        if let baseURLsFromScheme = resolveBaseURLs(fromSchemeCode: trimmedConnectionCode) {
-            return baseURLsFromScheme
+        if let connection = resolveConnection(fromSchemeCode: trimmedConnectionCode) {
+            return connection
         }
 
-        if let payloadBaseURLs = try? resolveBaseURLs(fromJSONPayload: trimmedConnectionCode) {
-            return payloadBaseURLs
+        if let payloadConnection = try? resolveConnection(fromJSONPayload: trimmedConnectionCode) {
+            return payloadConnection
         }
 
         guard remainingDepth > 0, let decodedConnectionCode = decodeBase64URLString(trimmedConnectionCode)
@@ -105,13 +149,13 @@ enum CompanionConfiguration {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return try resolveBaseURLStrings(
+        return try resolveConnection(
             fromConnectionCode: decodedConnectionCode,
             remainingDepth: remainingDepth - 1
         )
     }
 
-    private static func resolveBaseURLs(fromSchemeCode schemeCode: String) -> [URL]? {
+    private static func resolveConnection(fromSchemeCode schemeCode: String) -> CompanionConnection? {
         guard
             let url = URL(string: schemeCode),
             let scheme = url.scheme?.lowercased(),
@@ -134,10 +178,17 @@ enum CompanionConfiguration {
         }.flatMap(\.self) ?? []
 
         let urls = normalizedBaseURLs(from: candidateValues.joined(separator: "\n"))
-        return urls.isEmpty ? nil : urls
+        guard !urls.isEmpty else {
+            return nil
+        }
+
+        return CompanionConnection(
+            baseURLs: urls,
+            bearerToken: bearerToken(from: components.queryItems ?? [])
+        )
     }
 
-    private static func resolveBaseURLs(fromJSONPayload jsonPayload: String) throws -> [URL] {
+    private static func resolveConnection(fromJSONPayload jsonPayload: String) throws -> CompanionConnection {
         let payloadData = Data(jsonPayload.utf8)
         let payload = try JSONDecoder().decode(ConnectionCodePayload.self, from: payloadData)
         let urls = payload.baseURLs.compactMap { try? normalizeBaseURL($0) }
@@ -145,7 +196,7 @@ enum CompanionConfiguration {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return uniqueURLs(urls)
+        return CompanionConnection(baseURLs: uniqueURLs(urls), bearerToken: payload.bearerToken)
     }
 
     private static func normalizeBaseURL(_ value: String) throws -> URL {
@@ -191,6 +242,76 @@ enum CompanionConfiguration {
         }
     }
 
+    private static func bearerToken(from queryItems: [URLQueryItem]) -> String? {
+        var tokenID: String?
+        var token: String?
+
+        for item in queryItems {
+            if supportedPairingTokenIDKeys.contains(item.name) {
+                tokenID = nonEmptyString(item.value)
+            } else if supportedPairingTokenKeys.contains(item.name) {
+                token = nonEmptyString(item.value)
+            }
+        }
+
+        guard let tokenID, let token else {
+            return nil
+        }
+
+        return "\(tokenID).\(token)"
+    }
+
+    private static func nonEmptyString(_ value: String?) -> String? {
+        let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+
+    private static func loadBearerToken() -> String? {
+        let query = bearerTokenKeychainQuery(returnData: true)
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard
+            status == errSecSuccess,
+            let data = item as? Data,
+            let token = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        return nonEmptyString(token)
+    }
+
+    private static func storeBearerToken(_ token: String?) {
+        let baseQuery = bearerTokenKeychainQuery(returnData: false)
+        SecItemDelete(baseQuery as CFDictionary)
+
+        guard let token = nonEmptyString(token),
+              let data = token.data(using: .utf8)
+        else {
+            return
+        }
+
+        var item = baseQuery
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
+    private static func bearerTokenKeychainQuery(returnData: Bool) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: apiBearerTokenService,
+            kSecAttrAccount as String: apiBearerTokenAccount
+        ]
+
+        if returnData {
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+        }
+
+        return query
+    }
+
     private static func decodeBase64URLString(_ value: String) -> String? {
         let compactValue = value.replacingOccurrences(of: " ", with: "")
         let paddedValue = compactValue
@@ -215,6 +336,7 @@ enum CompanionConfiguration {
 
 private struct ConnectionCodePayload: Decodable {
     let baseURLs: [String]
+    let bearerToken: String?
 
     enum CodingKeys: String, CodingKey {
         case baseURL
@@ -223,6 +345,12 @@ private struct ConnectionCodePayload: Decodable {
         case alternateBaseURLs = "base_urls"
         case url
         case urls
+        case pairingTokenId
+        case alternatePairingTokenId = "pairing_token_id"
+        case tokenId
+        case pairingToken
+        case alternatePairingToken = "pairing_token"
+        case token
     }
 
     init(from decoder: Decoder) throws {
@@ -245,7 +373,19 @@ private struct ConnectionCodePayload: Decodable {
             values.append(genericURL)
         }
 
+        let tokenID =
+            try container.decodeIfPresent(String.self, forKey: .pairingTokenId)
+            ?? container.decodeIfPresent(String.self, forKey: .alternatePairingTokenId)
+            ?? container.decodeIfPresent(String.self, forKey: .tokenId)
+        let token =
+            try container.decodeIfPresent(String.self, forKey: .pairingToken)
+            ?? container.decodeIfPresent(String.self, forKey: .alternatePairingToken)
+            ?? container.decodeIfPresent(String.self, forKey: .token)
+
         baseURLs = values
+        bearerToken = tokenID.flatMap { tokenID in
+            token.map { token in "\(tokenID).\(token)" }
+        }
     }
 }
 

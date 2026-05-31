@@ -4,10 +4,16 @@ struct CompanionEnvironment {
     let service: any CompanionService
 
     static func live() -> CompanionEnvironment {
-        let baseURLs = CompanionConfiguration.resolvedBaseURLStrings()
+        let connection = CompanionConfiguration.resolvedConnection()
+        let baseURLs = connection.baseURLs
 
         if !baseURLs.isEmpty {
-            return CompanionEnvironment(service: HTTPCompanionService(baseURLs: baseURLs))
+            return CompanionEnvironment(
+                service: HTTPCompanionService(
+                    baseURLs: baseURLs,
+                    bearerToken: connection.bearerToken
+                )
+            )
         }
 
         let trimmedBaseURL = CompanionConfiguration.resolvedBaseURLString()

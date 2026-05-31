@@ -142,6 +142,15 @@ export const mobilePushDevices = sqliteTable("mobile_push_devices", {
   lastDeliveryError: text("last_delivery_error"),
 });
 
+export const mobilePairingTokens = sqliteTable("mobile_pairing_tokens", {
+  id: text("id").primaryKey(),
+  tokenHash: text("token_hash").notNull(),
+  label: text("label"),
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at"),
+});
+
 export const sessionRefSequence = sqliteTable("session_ref_sequence", {
   id: integer("id").primaryKey(),
   lastValue: integer("last_value").notNull(),

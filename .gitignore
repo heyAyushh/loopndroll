@@ -33,6 +33,7 @@ src-tauri/target/
 **/.build/
 ios/OrbCodeKit/.build/
 ios/build-device/
+ios/build-*/
 
 # Generated companion assets / local agent trees
 docs/generated-orbs/

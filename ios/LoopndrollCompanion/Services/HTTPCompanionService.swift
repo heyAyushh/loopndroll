@@ -2,13 +2,16 @@ import Foundation
 
 struct HTTPCompanionService: CompanionService {
     let baseURLs: [URL]
+    let bearerToken: String?
 
     init(baseURL: URL) {
         self.baseURLs = [baseURL]
+        bearerToken = nil
     }
 
-    init(baseURLs: [URL]) {
+    init(baseURLs: [URL], bearerToken: String? = nil) {
         self.baseURLs = baseURLs
+        self.bearerToken = bearerToken
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -108,6 +111,9 @@ struct HTTPCompanionService: CompanionService {
         request.httpMethod = method
         request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let bearerToken {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
 
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -118,7 +124,13 @@ struct HTTPCompanionService: CompanionService {
             throw HTTPCompanionServiceError.invalidResponse
         }
 
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        guard httpResponse.statusCode != HTTPStatus.unauthorized else {
+            throw HTTPCompanionServiceError.unauthorized
+        }
+
+        guard (HTTPStatus.successLowerBound..<HTTPStatus.successUpperBound)
+            .contains(httpResponse.statusCode)
+        else {
             let serverMessage = String(data: data, encoding: .utf8) ?? "Request failed."
             throw HTTPCompanionServiceError.serverError(serverMessage)
         }
@@ -128,14 +140,23 @@ struct HTTPCompanionService: CompanionService {
     }
 }
 
+private enum HTTPStatus {
+    static let unauthorized = 401
+    static let successLowerBound = 200
+    static let successUpperBound = 300
+}
+
 enum HTTPCompanionServiceError: LocalizedError {
     case invalidResponse
+    case unauthorized
     case serverError(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "The looper API returned an invalid response."
+        case .unauthorized:
+            return "This iPhone is not paired with the Mac."
         case let .serverError(message):
             return message
         }

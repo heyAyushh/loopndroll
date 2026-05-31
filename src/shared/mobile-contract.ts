@@ -137,6 +137,8 @@ export type MobileSnapshot = {
 export type MobileConnectionCode = {
   baseURL: string;
   baseURLs: string[];
+  pairingTokenId: string;
+  pairingToken: string;
   code: string;
   generatedAt: string;
 };

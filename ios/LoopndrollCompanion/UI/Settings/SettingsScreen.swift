@@ -230,23 +230,23 @@ struct SettingsScreen: View {
         }
 
         do {
-            let resolvedBaseURL = try CompanionConfiguration.resolveBaseURLString(
+            let connection = try CompanionConfiguration.resolveConnection(
                 fromConnectionCode: trimmedConnectionCode
             )
             Task {
-                await saveResolvedConnectionBaseURL(resolvedBaseURL)
+                await saveResolvedConnection(connection)
             }
         } catch {
             connectionCodeErrorMessage = error.localizedDescription
         }
     }
 
-    private func saveResolvedConnectionBaseURL(_ baseURL: String) async {
+    private func saveResolvedConnection(_ connection: CompanionConnection) async {
         await MainActor.run {
             connectionCodeErrorMessage = nil
         }
 
-        await model.saveConnectionBaseURL(baseURL)
+        await model.saveConnection(connection)
 
         await MainActor.run {
             draftConnectionCode = ""

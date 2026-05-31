@@ -190,7 +190,19 @@ final class CompanionAppModel {
     }
 
     func saveConnectionBaseURL(_ value: String) async {
-        CompanionConfiguration.storeBaseURLString(value)
+        let baseURLs = CompanionConfiguration.normalizedBaseURLsForUserInput(value)
+        CompanionConfiguration.storeConnection(
+            CompanionConnection(baseURLs: baseURLs, bearerToken: nil)
+        )
+        await reloadConnection()
+    }
+
+    func saveConnection(_ connection: CompanionConnection) async {
+        CompanionConfiguration.storeConnection(connection)
+        await reloadConnection()
+    }
+
+    private func reloadConnection() async {
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
         snapshot = nil
@@ -304,7 +316,7 @@ final class CompanionAppModel {
             let nextSnapshot = try await service.loadSnapshot()
             await applySnapshot(nextSnapshot)
         } catch {
-            connectionState = error is CompanionConfigurationError ? .unpaired : .offline
+            connectionState = connectionState(for: error)
             serverHealth = nil
             errorMessage = error.localizedDescription
         }
@@ -373,9 +385,27 @@ final class CompanionAppModel {
             let nextSnapshot = try await operation()
             await applySnapshot(nextSnapshot)
         } catch {
+            connectionState = connectionState(for: error)
             errorMessage = error.localizedDescription
             Haptics.error()
         }
+    }
+
+    private func connectionState(for error: Error) -> ConnectivityState {
+        if error is CompanionConfigurationError {
+            return .unpaired
+        }
+
+        if let httpError = error as? HTTPCompanionServiceError {
+            switch httpError {
+            case .unauthorized:
+                return .unauthorized
+            case .invalidResponse, .serverError:
+                break
+            }
+        }
+
+        return .offline
     }
 
     private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {
