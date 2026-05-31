@@ -1,0 +1,14 @@
+pub mod assistant;
+pub mod auth;
+pub mod automations;
+pub mod codex;
+pub mod compaction;
+pub mod control_plane;
+pub mod events;
+pub mod goals;
+pub mod hook_integration;
+pub mod hook_registration;
+pub mod http;
+pub mod privacy;
+pub mod scheduler;
+pub mod sync_manifest;
