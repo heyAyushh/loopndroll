@@ -11,19 +11,19 @@ cargo build --release --manifest-path scripts/lint-rule-guard/Cargo.toml
 ## Run the compiled binary
 
 ```bash
-scripts/run-lint-rule-guard.sh --rule max-lines --rule max-lines-per-function src electrobun.config.ts vite.config.ts
+scripts/run-lint-rule-guard.sh --rule max-lines --rule max-lines-per-function crates macos ios scripts
 ```
 
 Fail on any disable directive at all:
 
 ```bash
-scripts/run-lint-rule-guard.sh --any-rule src electrobun.config.ts vite.config.ts
+scripts/run-lint-rule-guard.sh --any-rule crates macos ios scripts
 ```
 
 Exclude folders or paths:
 
 ```bash
-scripts/run-lint-rule-guard.sh --any-rule --exclude src/generated --exclude fixtures .
+scripts/run-lint-rule-guard.sh --any-rule --exclude crates/agent-control-plane/target --exclude fixtures .
 ```
 
 Force-include a path even if it sits under a default excluded folder:

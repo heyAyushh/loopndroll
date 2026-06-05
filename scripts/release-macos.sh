@@ -88,10 +88,8 @@ if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; t
 fi
 
 export RELEASE_BASE_URL="${RELEASE_BASE_URL:-$RELEASE_BASE_URL_DEFAULT}"
-export ELECTROBUN_ENABLE_CODESIGN=true
-export ELECTROBUN_ENABLE_NOTARIZE=true
 
-pnpm run build:stable
+pnpm run build:menubar
 
 compgen -G "artifacts/*" >/dev/null || fail "no release artifacts were generated"
 

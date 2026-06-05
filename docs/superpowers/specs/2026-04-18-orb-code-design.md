@@ -1,4 +1,4 @@
-# Loopndroll Orb Code Design
+# Looper Orb Code Design
 
 Date: 2026-04-18
 Status: Approved direction, pending written spec review

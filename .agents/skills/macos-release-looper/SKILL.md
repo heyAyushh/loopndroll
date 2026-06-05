@@ -1,9 +1,9 @@
 ---
-name: macos-release-loopndroll
-description: Build, sign, notarize, and publish the Loopndroll macOS release for this repository. Use when the user asks to bump the app version, produce a signed/notarized macOS build, or publish/update a GitHub release for Loopndroll without re-discovering the project-specific release flow.
+name: macos-release-looper
+description: Build, sign, notarize, and publish the Looper macOS release for this repository. Use when the user asks to bump the app version, produce a signed/notarized macOS build, or publish/update a GitHub release for Looper without re-discovering the project-specific release flow.
 ---
 
-# Loopndroll macOS Release
+# Looper macOS Release
 
 This repository uses Electrobun for desktop packaging, even though the repo name contains `tauri`.
 
@@ -12,7 +12,7 @@ This repository uses Electrobun for desktop packaging, even though the repo name
 - The release version lives in `package.json`.
 - The app build config is `electrobun.config.ts`.
 - The macOS release entrypoint is `scripts/release-macos.sh`.
-- The default GitHub remote is `origin -> git@github.com:lnikell/loopndroll.git`.
+- The default GitHub remote is `origin -> git@github.com:lnikell/looper.git`.
 - The stable release command is `bash scripts/release-macos.sh v<version>`.
 
 ## Required environment
@@ -45,10 +45,10 @@ bash scripts/release-macos.sh v<version>
 6. After the script finishes, verify:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 build/stable-macos-arm64/Loopndroll.app
-spctl -a -vvv --type exec build/stable-macos-arm64/Loopndroll.app
-xcrun stapler validate artifacts/stable-macos-arm64-Loopndroll.dmg
-gh release view v<version> --repo lnikell/loopndroll
+codesign --verify --deep --strict --verbose=2 build/stable-macos-arm64/Looper.app
+spctl -a -vvv --type exec build/stable-macos-arm64/Looper.app
+xcrun stapler validate artifacts/stable-macos-arm64-Looper.dmg
+gh release view v<version> --repo lnikell/looper
 ```
 
 ## What the release script already does

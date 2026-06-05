@@ -5,7 +5,7 @@ Status: Proposed
 
 ## Summary
 
-Build a clean-room desktop client around the existing Loopndroll workflow, but move the product onto a new architecture:
+Build a clean-room desktop client around the existing Looper workflow, but move the product onto a new architecture:
 
 - a Tauri desktop app for the operator experience
 - a local Rust supervision service as the execution-side source of truth

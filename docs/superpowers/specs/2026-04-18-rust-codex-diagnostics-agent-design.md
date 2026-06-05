@@ -5,13 +5,13 @@ Status: Proposed
 
 ## Summary
 
-Build a standalone Rust diagnostics agent that reads Codex state directly, normalizes Codex thread and rollout activity into a single event timeline, and attributes each session to its caller. This is the first subproject in the broader migration away from the current Bun-based Loopndroll backend.
+Build a standalone Rust diagnostics agent that reads Codex state directly, normalizes Codex thread and rollout activity into a single event timeline, and attributes each session to its caller. This is the first subproject in the broader migration away from the current Bun-based Looper backend.
 
 The agent is read-only in v1. It does not mutate Codex threads, replace the desktop app, or ship iPhone pairing and notification flows yet. Its job is to give the project a trustworthy event spine and enough attribution data to understand what is running, who started it, and whether it is a main thread or a sub-agent.
 
 ## Goals
 
-- Read Codex diagnostics directly without depending on the current Loopndroll Bun backend.
+- Read Codex diagnostics directly without depending on the current Looper Bun backend.
 - Build one normalized event model across Codex SQLite state, Codex log rows, and Codex rollout JSONL files.
 - Identify the current Codex app-server runtime, active threads, and per-thread activity.
 - Attribute each thread to:

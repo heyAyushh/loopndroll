@@ -1,25 +1,25 @@
-# Loopndroll iOS Companion Design
+# Looper iOS Companion Design
 
 Date: 2026-04-17
 Status: Proposed
 
 ## Summary
 
-Build a native iPhone companion app for Loopndroll. The Mac app remains the system of record for Codex sessions, hooks, notifications, and completion checks. The iPhone app connects to the Mac app over Tailscale for live reads and mutations, and receives Apple push notifications through a small Rust relay running on the Codex app server.
+Build a native iPhone companion app for Looper. The Mac app remains the system of record for Codex sessions, hooks, notifications, and completion checks. The iPhone app connects to the Mac app over Tailscale for live reads and mutations, and receives Apple push notifications through a small Rust relay running on the Codex app server.
 
 The iPhone app is not a standalone replacement for the Mac runtime. It is a remote control surface for the existing product.
 
 ## Goals
 
-- Let a paired iPhone see the current Loopndroll state from the Mac app.
-- Let the iPhone manage nearly all user-facing Loopndroll controls except Mac-only hook setup.
+- Let a paired iPhone see the current Looper state from the Mac app.
+- Let the iPhone manage nearly all user-facing Looper controls except Mac-only hook setup.
 - Deliver native iPhone push notifications when Codex stops.
 - Support configurable stop-event actions from the phone.
 - Make the phone experience feel native, including haptics, background-safe navigation, and SwiftUI-first interaction patterns.
 
 ## Non-goals
 
-- Running Codex or Loopndroll hook logic on iPhone.
+- Running Codex or Looper hook logic on iPhone.
 - Mirroring the desktop renderer or sharing the React UI.
 - Replacing Telegram or Slack integrations.
 - Exposing local Mac files, shell access, or Codex configuration editing directly to the phone.
@@ -31,7 +31,7 @@ The iPhone app is not a standalone replacement for the Mac runtime. It is a remo
 
 The iPhone app opens into a focused pairing flow:
 
-1. Welcome screen explains that Loopndroll runs on Mac and the phone is a companion.
+1. Welcome screen explains that Looper runs on Mac and the phone is a companion.
 2. The user taps `Scan Mac QR`.
 3. The Mac app shows a custom QR that contains:
    - Mac device identifier
@@ -148,7 +148,7 @@ This keeps private control traffic peer-to-peer while still satisfying Apple pus
 
 ## Data and API boundary
 
-The current desktop code mixes domain state with Electrobun RPC. For iOS support, the Mac app should introduce a separate service boundary that reuses Loopndroll domain logic but is independent of the renderer transport.
+The current desktop code mixes domain state with Electrobun RPC. For iOS support, the Mac app should introduce a separate service boundary that reuses Looper domain logic but is independent of the renderer transport.
 
 ### New boundary on Mac
 
@@ -164,7 +164,7 @@ Add a `mobile-control-service` layer in the Bun side that exposes stable request
 - push preference updates
 - one-shot stop-event actions
 
-This service should call the same underlying Loopndroll mutation functions already used by the desktop renderer.
+This service should call the same underlying Looper mutation functions already used by the desktop renderer.
 
 ### Shared models
 
@@ -346,11 +346,11 @@ Before calling the feature done:
 
 ## Open decisions resolved in this design
 
-- Product type: iPhone companion app, not standalone Loopndroll runtime
+- Product type: iPhone companion app, not standalone Looper runtime
 - Scope: near-full parity for user-facing management features
 - Live transport: Tailscale
 - Trust model: any Tailnet peer can connect only after app-level pairing
-- Push model: Loopndroll Rust relay on the Codex app server
+- Push model: Looper Rust relay on the Codex app server
 - Pairing model: custom QR flow
 
 ## Finishing criteria

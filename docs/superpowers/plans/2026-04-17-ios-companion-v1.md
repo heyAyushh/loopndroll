@@ -1,12 +1,12 @@
-# Loopndroll iOS Companion V1 Implementation Plan
+# Looper iOS Companion V1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a real native iPhone app in this repo that shows the approved Loopndroll companion experience, uses haptics, and can run against a local Bun dev API with Loopndroll-shaped data.
+**Goal:** Build a real native iPhone app in this repo that shows the approved Looper companion experience, uses haptics, and can run against a local Bun dev API with Looper-shaped data.
 
 **Architecture:** Add a new `ios/` XcodeGen-based SwiftUI app with a small app shell, typed models, a live/mock data service, and haptic helpers. Add a Bun HTTP dev API on the Mac side that exposes a narrow mobile-facing snapshot and mutation surface, so the simulator can show realistic data now and later evolve into the Tailscale control boundary.
 
-**Tech Stack:** SwiftUI, Observation, URLSession, XcodeGen, Bun HTTP server, TypeScript strict mode, existing Loopndroll Bun actions.
+**Tech Stack:** SwiftUI, Observation, URLSession, XcodeGen, Bun HTTP server, TypeScript strict mode, existing Looper Bun actions.
 
 ---
 
@@ -14,9 +14,9 @@
 
 **Files:**
 - Create: `ios/project.yml`
-- Create: `ios/LoopndrollCompanion/LoopndrollCompanionApp.swift`
-- Create: `ios/LoopndrollCompanion/Assets.xcassets/Contents.json`
-- Create: `ios/LoopndrollCompanion/Preview Content/Preview Assets.xcassets/Contents.json`
+- Create: `ios/LooperCompanion/LooperCompanionApp.swift`
+- Create: `ios/LooperCompanion/Assets.xcassets/Contents.json`
+- Create: `ios/LooperCompanion/Preview Content/Preview Assets.xcassets/Contents.json`
 - Modify: `.gitignore`
 
 - [ ] **Step 1: Move implementation off `main`**
@@ -26,18 +26,18 @@ Expected: shell prints `Switched to a new branch 'cx/ios-companion-app'`
 
 - [ ] **Step 2: Add the iOS project scaffold files**
 
-Create `ios/project.yml` with an iOS application target named `LoopndrollCompanion`, deployment target `18.0`, bundle id `com.loopndroll.companion`, asset catalogs, and source roots under `ios/LoopndrollCompanion`.
+Create `ios/project.yml` with an iOS application target named `LooperCompanion`, deployment target `18.0`, bundle id `com.looper.companion`, asset catalogs, and source roots under `ios/LooperCompanion`.
 
-Create `ios/LoopndrollCompanion/LoopndrollCompanionApp.swift` with the minimal app entry:
+Create `ios/LooperCompanion/LooperCompanionApp.swift` with the minimal app entry:
 
 ```swift
 import SwiftUI
 
 @main
-struct LoopndrollCompanionApp: App {
+struct LooperCompanionApp: App {
     var body: some Scene {
         WindowGroup {
-            Text("Loopndroll Companion")
+            Text("Looper Companion")
         }
     }
 }
@@ -50,7 +50,7 @@ Expected: output includes `Generated project at`
 
 - [ ] **Step 4: Build the empty app once**
 
-Run: `xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
+Run: `xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
 Expected: `** BUILD SUCCEEDED **`
 
 - [ ] **Step 5: Commit the scaffold**
@@ -63,11 +63,11 @@ git commit -m "feat: scaffold iOS companion app" -m "- add an XcodeGen-based iPh
 ### Task 2: Add typed companion models, mock data, and haptic support
 
 **Files:**
-- Create: `ios/LoopndrollCompanion/App/CompanionAppModel.swift`
-- Create: `ios/LoopndrollCompanion/App/CompanionEnvironment.swift`
-- Create: `ios/LoopndrollCompanion/Models/CompanionModels.swift`
-- Create: `ios/LoopndrollCompanion/Support/Haptics.swift`
-- Create: `ios/LoopndrollCompanion/Support/PreviewFixtures.swift`
+- Create: `ios/LooperCompanion/App/CompanionAppModel.swift`
+- Create: `ios/LooperCompanion/App/CompanionEnvironment.swift`
+- Create: `ios/LooperCompanion/Models/CompanionModels.swift`
+- Create: `ios/LooperCompanion/Support/Haptics.swift`
+- Create: `ios/LooperCompanion/Support/PreviewFixtures.swift`
 
 - [ ] **Step 1: Define the mobile-facing models**
 
@@ -130,23 +130,23 @@ final class CompanionAppModel {
 
 - [ ] **Step 5: Build to catch type errors**
 
-Run: `xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
+Run: `xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
 Expected: `** BUILD SUCCEEDED **`
 
 ### Task 3: Build the SwiftUI app shell and native screens
 
 **Files:**
-- Create: `ios/LoopndrollCompanion/UI/Root/RootTabView.swift`
-- Create: `ios/LoopndrollCompanion/UI/Sessions/SessionsScreen.swift`
-- Create: `ios/LoopndrollCompanion/UI/Sessions/SessionRow.swift`
-- Create: `ios/LoopndrollCompanion/UI/Sessions/SessionDetailScreen.swift`
-- Create: `ios/LoopndrollCompanion/UI/Settings/SettingsScreen.swift`
-- Create: `ios/LoopndrollCompanion/UI/Common/StatusPill.swift`
-- Modify: `ios/LoopndrollCompanion/LoopndrollCompanionApp.swift`
+- Create: `ios/LooperCompanion/UI/Root/RootTabView.swift`
+- Create: `ios/LooperCompanion/UI/Sessions/SessionsScreen.swift`
+- Create: `ios/LooperCompanion/UI/Sessions/SessionRow.swift`
+- Create: `ios/LooperCompanion/UI/Sessions/SessionDetailScreen.swift`
+- Create: `ios/LooperCompanion/UI/Settings/SettingsScreen.swift`
+- Create: `ios/LooperCompanion/UI/Common/StatusPill.swift`
+- Modify: `ios/LooperCompanion/LooperCompanionApp.swift`
 
 - [ ] **Step 1: Replace the placeholder app entry with an environment-backed shell**
 
-Update `LoopndrollCompanionApp.swift` so it creates a `CompanionAppModel`, injects a service, and renders `RootTabView`.
+Update `LooperCompanionApp.swift` so it creates a `CompanionAppModel`, injects a service, and renders `RootTabView`.
 
 - [ ] **Step 2: Build the two-tab native shell**
 
@@ -190,17 +190,17 @@ Create `SettingsScreen.swift` with sections for:
 
 - [ ] **Step 6: Build and preview the shell**
 
-Run: `xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
+Run: `xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
 Expected: `** BUILD SUCCEEDED **`
 
 ### Task 4: Add a live/mock service layer for the iPhone app
 
 **Files:**
-- Create: `ios/LoopndrollCompanion/Services/CompanionService.swift`
-- Create: `ios/LoopndrollCompanion/Services/HTTPCompanionService.swift`
-- Create: `ios/LoopndrollCompanion/Services/MockCompanionService.swift`
-- Modify: `ios/LoopndrollCompanion/App/CompanionAppModel.swift`
-- Modify: `ios/LoopndrollCompanion/App/CompanionEnvironment.swift`
+- Create: `ios/LooperCompanion/Services/CompanionService.swift`
+- Create: `ios/LooperCompanion/Services/HTTPCompanionService.swift`
+- Create: `ios/LooperCompanion/Services/MockCompanionService.swift`
+- Modify: `ios/LooperCompanion/App/CompanionAppModel.swift`
+- Modify: `ios/LooperCompanion/App/CompanionEnvironment.swift`
 
 - [ ] **Step 1: Define the service protocol**
 
@@ -237,15 +237,15 @@ Update `CompanionAppModel` with `loadSnapshot()` and `loadSessionDetail()` async
 
 - [ ] **Step 5: Verify the app still builds**
 
-Run: `xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
+Run: `xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
 Expected: `** BUILD SUCCEEDED **`
 
 ### Task 5: Add the Bun mobile dev API
 
 **Files:**
 - Create: `src/shared/mobile-contract.ts`
-- Create: `src/bun/mobile-dev-server.ts`
-- Create: `src/bun/mobile-mappers.ts`
+- Create: `legacy/bun/mobile-dev-server.ts`
+- Create: `legacy/bun/mobile-mappers.ts`
 - Modify: `package.json`
 
 - [ ] **Step 1: Define the shared mobile contract**
@@ -262,12 +262,12 @@ export type MobileSnapshot = {
 };
 ```
 
-- [ ] **Step 2: Map existing Loopndroll snapshot data into the mobile contract**
+- [ ] **Step 2: Map existing Looper snapshot data into the mobile contract**
 
 Create `mobile-mappers.ts` with pure mapping helpers:
 
 ```ts
-export function mapLoopndrollSnapshotToMobile(snapshot: LoopndrollSnapshot): MobileSnapshot
+export function mapLooperSnapshotToMobile(snapshot: LooperSnapshot): MobileSnapshot
 export function mapLoopSessionToDetail(session: LoopSession): MobileSessionDetail
 ```
 
@@ -277,19 +277,19 @@ Create `mobile-dev-server.ts` with endpoints:
 - `GET /api/mobile/snapshot`
 - `GET /api/mobile/sessions/:id`
 
-Use the existing `ensureLoopndrollSetup()` and `getLoopndrollSnapshot()` flow, then map to the mobile contract.
+Use the existing `ensureLooperSetup()` and `getLooperSnapshot()` flow, then map to the mobile contract.
 
 - [ ] **Step 4: Add a dev script**
 
 Update `package.json` with:
 
 ```json
-"dev:ios-api": "bun run src/bun/mobile-dev-server.ts"
+"dev:ios-api": "bun run legacy/bun/mobile-dev-server.ts"
 ```
 
 - [ ] **Step 5: Verify the dev API responds**
 
-Run: `bun run src/bun/mobile-dev-server.ts`
+Run: `bun run legacy/bun/mobile-dev-server.ts`
 
 Then in a second shell run:
 
@@ -303,8 +303,8 @@ Expected: valid JSON containing `host`, `globalSettings`, and `sessions`
 
 **Files:**
 - Modify: `ios/project.yml`
-- Modify: `ios/LoopndrollCompanion/App/CompanionEnvironment.swift`
-- Modify: `ios/LoopndrollCompanion/Services/HTTPCompanionService.swift`
+- Modify: `ios/LooperCompanion/App/CompanionEnvironment.swift`
+- Modify: `ios/LooperCompanion/Services/HTTPCompanionService.swift`
 
 - [ ] **Step 1: Add a debug base URL config**
 
@@ -313,7 +313,7 @@ Set a debug environment value in `ios/project.yml`:
 ```yaml
 settings:
   base:
-    LOOPNDROLL_API_BASE_URL: http://127.0.0.1:8787
+    LOOPER_API_BASE_URL: http://127.0.0.1:8787
 ```
 
 - [ ] **Step 2: Resolve the service from configuration**
@@ -336,15 +336,15 @@ Run:
 
 ```bash
 xcodebuild \
-  -project ios/LoopndrollCompanion.xcodeproj \
-  -scheme LoopndrollCompanion \
+  -project ios/LooperCompanion.xcodeproj \
+  -scheme LooperCompanion \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   build
 ```
 
 Then install and launch with `xcrun simctl install` and `xcrun simctl launch`.
 
-Expected: app opens on the simulator and shows the Loopndroll companion shell with sessions and settings.
+Expected: app opens on the simulator and shows the Looper companion shell with sessions and settings.
 
 - [ ] **Step 6: Capture verification artifacts**
 
@@ -376,12 +376,12 @@ Expected: lint, format check, and typecheck pass
 
 - [ ] **Step 3: Build the iPhone app one last time**
 
-Run: `xcodebuild -project ios/LoopndrollCompanion.xcodeproj -scheme LoopndrollCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
+Run: `xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build`
 Expected: `** BUILD SUCCEEDED **`
 
 - [ ] **Step 4: Commit the feature**
 
 ```bash
-git add README.md package.json src/shared/mobile-contract.ts src/bun/mobile-dev-server.ts src/bun/mobile-mappers.ts ios
-git commit -m "feat: add iPhone companion app shell" -m "- add a native SwiftUI Loopndroll companion app\n- add a Bun mobile dev API for simulator integration\n- add haptics, session screens, and settings scaffolding"
+git add README.md package.json src/shared/mobile-contract.ts legacy/bun/mobile-dev-server.ts legacy/bun/mobile-mappers.ts ios
+git commit -m "feat: add iPhone companion app shell" -m "- add a native SwiftUI Looper companion app\n- add a Bun mobile dev API for simulator integration\n- add haptics, session screens, and settings scaffolding"
 ```
