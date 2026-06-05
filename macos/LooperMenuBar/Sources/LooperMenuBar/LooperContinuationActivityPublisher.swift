@@ -75,6 +75,7 @@ final class LooperContinuationActivityPublisher {
         activity.isEligibleForPublicIndexing = false
         activity.keywords = activityKeywords(for: descriptor)
         activity.contentAttributeSet = contentAttributeSet(for: descriptor)
+        activity.webpageURL = webpageURL(for: descriptor)
         activity.userInfo = descriptor.userInfo
         activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
     }
@@ -126,6 +127,11 @@ final class LooperContinuationActivityPublisher {
         }
         .filter { !$0.isEmpty }
         .joined(separator: "\n")
+    }
+
+    private func webpageURL(for descriptor: LooperContinuationActivityDescriptor) -> URL? {
+        descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
+            .flatMap(URL.init(string:))
     }
 
 }
