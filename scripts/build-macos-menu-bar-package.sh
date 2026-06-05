@@ -24,14 +24,38 @@ resolve_code_sign_identity() {
   printf '%s\n' "-"
 }
 
+resolve_macos_provisioning_profile() {
+  if [[ -n "${LOOPER_MACOS_PROVISIONING_PROFILE:-}" ]]; then
+    printf '%s\n' "$LOOPER_MACOS_PROVISIONING_PROFILE"
+    return
+  fi
+
+  local profile
+  for profile in "${MACOS_PROVISIONING_PROFILE_DIR}"/*.provisionprofile; do
+    [[ -f "$profile" ]] || continue
+
+    local platforms
+    platforms="$(security cms -D -i "$profile" 2>/dev/null | plutil -extract Platform json -o - - 2>/dev/null || true)"
+    [[ "$platforms" == *OSX* ]] || continue
+
+    local team_identifier
+    team_identifier="$(security cms -D -i "$profile" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -o - - 2>/dev/null || true)"
+    [[ "$team_identifier" == "$CODE_SIGN_TEAM_ID" ]] || continue
+
+    printf '%s\n' "$profile"
+    return
+  done
+}
+
 APP_NAME="looper"
 BUNDLE_ID="dev.looper.app.ios"
 LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
-CODE_SIGN_IDENTITY="$(resolve_code_sign_identity)"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
-ENABLE_MACOS_ENTITLEMENTS="${LOOPER_MACOS_ENABLE_ENTITLEMENTS:-0}"
-PROVISIONING_PROFILE="${LOOPER_MACOS_PROVISIONING_PROFILE:-}"
+CODE_SIGN_IDENTITY="$(resolve_code_sign_identity)"
+MACOS_PROVISIONING_PROFILE_DIR="${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles"
+ENABLE_MACOS_ENTITLEMENTS="${LOOPER_MACOS_ENABLE_ENTITLEMENTS:-auto}"
+PROVISIONING_PROFILE="$(resolve_macos_provisioning_profile)"
 CONTROL_PLANE_CRATE="crates/agent-control-plane/Cargo.toml"
 ICON_SOURCE="ios/LooperCompanion/looper.icon/Assets/notification-orb.png"
 MENU_BAR_PACKAGE_PATH="macos/LooperMenuBar"
@@ -131,13 +155,18 @@ plutil -insert NSUserActivityTypes -array "$plist_path"
 plutil -insert NSUserActivityTypes.0 -string "$CONTINUATION_ACTIVITY_TYPE" "$plist_path"
 
 codesign_entitlements_args=()
-if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" == "1" ]]; then
-  require_file "$PROVISIONING_PROFILE"
-  cp "$PROVISIONING_PROFILE" "$embedded_profile_path"
-  plutil -create xml1 "$entitlements_path"
-  plutil -insert 'com\.apple\.application-identifier' -string "${CODE_SIGN_TEAM_ID}.${BUNDLE_ID}" "$entitlements_path"
-  plutil -insert 'com\.apple\.developer\.team-identifier' -string "$CODE_SIGN_TEAM_ID" "$entitlements_path"
-  codesign_entitlements_args=(--entitlements "$entitlements_path")
+if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" != "0" ]]; then
+  if [[ -z "$PROVISIONING_PROFILE" ]]; then
+    if [[ "$ENABLE_MACOS_ENTITLEMENTS" == "1" ]]; then
+      fail "macOS entitlements requested but no macOS provisioning profile was found"
+    fi
+  else
+    require_file "$PROVISIONING_PROFILE"
+    cp "$PROVISIONING_PROFILE" "$embedded_profile_path"
+    security cms -D -i "$PROVISIONING_PROFILE" |
+      plutil -extract Entitlements xml1 -o "$entitlements_path" -
+    codesign_entitlements_args=(--entitlements "$entitlements_path")
+  fi
 fi
 
 codesign_with_optional_entitlements() {
