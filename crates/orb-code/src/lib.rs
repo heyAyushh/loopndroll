@@ -155,7 +155,8 @@ mod tests {
     fn scan_survives_downscaled_png() {
         let request = GenerateOrbRequest::new(derive_orb_id("orb-downscaled"));
         let orb_image = generate_orb_image(&request).expect("generate orb image");
-        let downscaled = imageops::resize(&orb_image.image, 256, 256, imageops::FilterType::Lanczos3);
+        let downscaled =
+            imageops::resize(&orb_image.image, 256, 256, imageops::FilterType::Lanczos3);
 
         let mut image_bytes = Vec::new();
         DynamicImage::ImageRgba8(downscaled)

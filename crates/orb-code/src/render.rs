@@ -144,16 +144,16 @@ pub fn render_orb_card(orb_id: &OrbId, image_size: u32) -> Result<RgbaImage> {
                     let surface_normal = surface_point.normalize();
                     let theta = clamp(surface_normal.y, -1.0, 1.0).acos();
                     let phi = surface_normal.z.atan2(surface_normal.x);
-                    rgba = render_core_pixel(
+                    rgba = render_core_pixel(CorePixelSample {
                         surface_point,
                         surface_normal,
                         theta,
                         phi,
                         camera,
                         ray_direction,
-                        &coefficients,
-                        normalized_radius / CORE_OUTER_RATIO,
-                    );
+                        coefficients: &coefficients,
+                        normalized_core_radius: normalized_radius / CORE_OUTER_RATIO,
+                    });
                 }
             }
 
@@ -360,16 +360,28 @@ fn payload_track_bounds(track_index: usize) -> (f64, f64) {
     (inner_edge, outer_edge)
 }
 
-fn render_core_pixel(
+struct CorePixelSample<'a> {
     surface_point: Vec3,
     surface_normal: Vec3,
     theta: f64,
     phi: f64,
     camera: Vec3,
     ray_direction: Vec3,
-    coefficients: &[HarmonicCoefficient],
+    coefficients: &'a [HarmonicCoefficient],
     normalized_core_radius: f64,
-) -> Rgba<u8> {
+}
+
+fn render_core_pixel(sample: CorePixelSample<'_>) -> Rgba<u8> {
+    let CorePixelSample {
+        surface_point,
+        surface_normal,
+        theta,
+        phi,
+        camera,
+        ray_direction,
+        coefficients,
+        normalized_core_radius,
+    } = sample;
     let view_direction = camera.sub(surface_point).normalize();
     let fresnel = (1.0 - surface_normal.dot(view_direction).abs()).powi(4);
     let reflection = surface_normal

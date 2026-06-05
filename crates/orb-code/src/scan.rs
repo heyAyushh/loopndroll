@@ -62,8 +62,8 @@ pub(crate) fn scan_orb_image_from_luma8_with_geometry(
     if width == 0 || height == 0 || data.len() != expected_len {
         return Err(OrbError::MalformedPayload);
     }
-    let grayscale_image = GrayImage::from_raw(width, height, data.to_vec())
-        .ok_or(OrbError::MalformedPayload)?;
+    let grayscale_image =
+        GrayImage::from_raw(width, height, data.to_vec()).ok_or(OrbError::MalformedPayload)?;
     let geometry = detect_orb_geometry(&grayscale_image)?;
     try_decode_near_geometry(&grayscale_image, geometry)
 }
@@ -371,8 +371,7 @@ fn sample_cell_intensity(
     let darkest_mean = darkest_sum / CELL_DARKEST_SAMPLE_COUNT as f64;
     let overall_mean = overall_sum / sample_count as f64;
 
-    (darkest_mean * CELL_DARKEST_WEIGHT + overall_mean * (1.0 - CELL_DARKEST_WEIGHT)).round()
-        as u8
+    (darkest_mean * CELL_DARKEST_WEIGHT + overall_mean * (1.0 - CELL_DARKEST_WEIGHT)).round() as u8
 }
 
 fn payload_track_height_ratio() -> f64 {

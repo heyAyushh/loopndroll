@@ -312,13 +312,16 @@ fn orthonormalize_payload(
         let mut coefficient_vector = DVector::zeros(augmented_raw_count);
         coefficient_vector[orientation_raw_count + payload_index] = 1.0;
 
-        for orientation_index in 0..orientation_matrix.ncols() {
+        for (orientation_index, orientation_coefficient_column) in orientation_coefficient_columns
+            .iter()
+            .enumerate()
+            .take(orientation_matrix.ncols())
+        {
             let projection = orientation_matrix
                 .column(orientation_index)
                 .dot(&sample_vector);
             sample_vector -= orientation_matrix.column(orientation_index).into_owned() * projection;
-            coefficient_vector -=
-                orientation_coefficient_columns[orientation_index].clone() * projection;
+            coefficient_vector -= orientation_coefficient_column.clone() * projection;
         }
 
         for basis_index in 0..basis_columns.len() {
