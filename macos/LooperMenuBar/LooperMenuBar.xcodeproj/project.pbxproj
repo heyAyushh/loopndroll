@@ -1,0 +1,602 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		17C600371FFAD51B82BD7530 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDDFFC62E1D5559E52E031C /* main.swift */; };
+		1C81624F3CFDC84FE035E443 /* notification-orb.png in Resources */ = {isa = PBXBuildFile; fileRef = 3F302E4B2186B4A0767D4C3A /* notification-orb.png */; };
+		1E04E1106F21E423553218DE /* LooperThreadOpenTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */; };
+		3D31F07BE1F94072ED79BE12 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 96F0764C78BFDF2404A48C88 /* AppIcon.icns */; };
+		5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */; };
+		686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */; };
+		8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */; };
+		99F7D7D81D7C784D1983B5EF /* looper-server in CopyFiles */ = {isa = PBXBuildFile; fileRef = 060F24CC3357705E8AD2E9C3 /* looper-server */; };
+		A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA18D48629D32130B01944A /* LooperMenuContent.swift */; };
+		A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */; };
+		A461015CF3FED94D759CF3BF /* LooperLifecycleCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */; };
+		A4644EE00CD1836A0B2604FE /* looper-cli in CopyFiles */ = {isa = PBXBuildFile; fileRef = AB38C2B27A76F7414EB67661 /* looper-cli */; };
+		A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */; };
+		B2EAD78BECB44A3651139391 /* looper in CopyFiles */ = {isa = PBXBuildFile; fileRef = 064C6B683AB182FF0C614500 /* looper */; };
+		B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BE1C0955016B6CBF11C2AF7A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BBBBA7FDC45A9225C979D9E6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AAD7F57E2F0E115082EB5C7D;
+			remoteInfo = LooperMenuBarCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E4E5258EE5DD06E275E3FD7D /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				B2EAD78BECB44A3651139391 /* looper in CopyFiles */,
+				A4644EE00CD1836A0B2604FE /* looper-cli in CopyFiles */,
+				99F7D7D81D7C784D1983B5EF /* looper-server in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperContinuationActivity.swift; sourceTree = "<group>"; };
+		060F24CC3357705E8AD2E9C3 /* looper-server */ = {isa = PBXFileReference; name = "looper-server"; path = "../../crates/agent-control-plane/target/release/looper-server"; sourceTree = "<group>"; };
+		064C6B683AB182FF0C614500 /* looper */ = {isa = PBXFileReference; name = looper; path = "../../crates/agent-control-plane/target/release/looper"; sourceTree = "<group>"; };
+		0CDDFFC62E1D5559E52E031C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameResolver.swift; sourceTree = "<group>"; };
+		3F302E4B2186B4A0767D4C3A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
+		7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperThreadOpenTarget.swift; sourceTree = "<group>"; };
+		85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHumanStatus.swift; sourceTree = "<group>"; };
+		8EA18D48629D32130B01944A /* LooperMenuContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperMenuContent.swift; sourceTree = "<group>"; };
+		96F0764C78BFDF2404A48C88 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		AB38C2B27A76F7414EB67661 /* looper-cli */ = {isa = PBXFileReference; name = "looper-cli"; path = "../../crates/agent-control-plane/target/release/looper-cli"; sourceTree = "<group>"; };
+		CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperLifecycleCoordinator.swift; sourceTree = "<group>"; };
+		D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperContinuationActivityPublisher.swift; sourceTree = "<group>"; };
+		E0D6C532E19E5DCEFBA880AB /* LooperMenuBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LooperMenuBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlPlaneClient.swift; sourceTree = "<group>"; };
+		ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libLooperMenuBarCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		86F4715045EF61DF32DB70EC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		157D6ED0D1EE89B1EF94AD18 /* Assets */ = {
+			isa = PBXGroup;
+			children = (
+				3F302E4B2186B4A0767D4C3A /* notification-orb.png */,
+			);
+			path = Assets;
+			sourceTree = "<group>";
+		};
+		2B57186361A6FBA4345BFA37 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				BF4B311E09B01B2CC3802128 /* LooperMenuBar */,
+				8C68F5A90291EE02737FFCC8 /* LooperMenuBarCore */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		3B5208DBB59D54FFB27315C9 /* looper */ = {
+			isa = PBXGroup;
+			children = (
+				D35A7D9FF32431BC6E3A3136 /* ios */,
+			);
+			name = looper;
+			path = ../..;
+			sourceTree = "<group>";
+		};
+		566466326EC61EA28D6E267C /* Rust Binaries */ = {
+			isa = PBXGroup;
+			children = (
+				064C6B683AB182FF0C614500 /* looper */,
+				AB38C2B27A76F7414EB67661 /* looper-cli */,
+				060F24CC3357705E8AD2E9C3 /* looper-server */,
+			);
+			name = "Rust Binaries";
+			sourceTree = "<group>";
+		};
+		5957D1AA578733B64FA2C437 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */,
+				E0D6C532E19E5DCEFBA880AB /* LooperMenuBar.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8C68F5A90291EE02737FFCC8 /* LooperMenuBarCore */ = {
+			isa = PBXGroup;
+			children = (
+				EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */,
+				03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */,
+				85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */,
+				CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */,
+				8EA18D48629D32130B01944A /* LooperMenuContent.swift */,
+				7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */,
+				2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */,
+			);
+			path = LooperMenuBarCore;
+			sourceTree = "<group>";
+		};
+		9F753648A5CD8AFC81B22DEE /* LooperCompanion */ = {
+			isa = PBXGroup;
+			children = (
+				E27025B4F6B7064A1E2ECB49 /* looper.icon */,
+			);
+			path = LooperCompanion;
+			sourceTree = "<group>";
+		};
+		BF4B311E09B01B2CC3802128 /* LooperMenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */,
+				0CDDFFC62E1D5559E52E031C /* main.swift */,
+			);
+			path = LooperMenuBar;
+			sourceTree = "<group>";
+		};
+		D35A7D9FF32431BC6E3A3136 /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				9F753648A5CD8AFC81B22DEE /* LooperCompanion */,
+			);
+			path = ios;
+			sourceTree = "<group>";
+		};
+		E27025B4F6B7064A1E2ECB49 /* looper.icon */ = {
+			isa = PBXGroup;
+			children = (
+				157D6ED0D1EE89B1EF94AD18 /* Assets */,
+			);
+			path = looper.icon;
+			sourceTree = "<group>";
+		};
+		E5E603C569F5A78D68D6EA70 = {
+			isa = PBXGroup;
+			children = (
+				3B5208DBB59D54FFB27315C9 /* looper */,
+				EEE227049A4F9C648B242015 /* Resources */,
+				566466326EC61EA28D6E267C /* Rust Binaries */,
+				2B57186361A6FBA4345BFA37 /* Sources */,
+				5957D1AA578733B64FA2C437 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EEE227049A4F9C648B242015 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				96F0764C78BFDF2404A48C88 /* AppIcon.icns */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		013F86CD39F55C9ED9AA1DAF /* LooperMenuBar */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 29B9042308606A7E25C2CD88 /* Build configuration list for PBXNativeTarget "LooperMenuBar" */;
+			buildPhases = (
+				972A2C3F1A54EE95BBAD2EB3 /* Build Rust control plane */,
+				F9A228A1221D7DEB249DF638 /* Sources */,
+				9AED7004B6CACEA5B15A0554 /* Resources */,
+				E4E5258EE5DD06E275E3FD7D /* CopyFiles */,
+				86F4715045EF61DF32DB70EC /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A5037E5E9D568C2D1C4B48EF /* PBXTargetDependency */,
+			);
+			name = LooperMenuBar;
+			packageProductDependencies = (
+			);
+			productName = LooperMenuBar;
+			productReference = E0D6C532E19E5DCEFBA880AB /* LooperMenuBar.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AAD7F57E2F0E115082EB5C7D /* LooperMenuBarCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F09A8839643FA0D5F8A5710D /* Build configuration list for PBXNativeTarget "LooperMenuBarCore" */;
+			buildPhases = (
+				4AF00A36B2DAE63BF82C7F0F /* Sources */,
+				03CEF2345DAA3DA38F8A2A39 /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LooperMenuBarCore;
+			packageProductDependencies = (
+			);
+			productName = LooperMenuBarCore;
+			productReference = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BBBBA7FDC45A9225C979D9E6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					013F86CD39F55C9ED9AA1DAF = {
+						DevelopmentTeam = Z5454ZPPUX;
+						ProvisioningStyle = Automatic;
+					};
+					AAD7F57E2F0E115082EB5C7D = {
+						DevelopmentTeam = Z5454ZPPUX;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = E81DD7CCDBFACB53DBE20F11 /* Build configuration list for PBXProject "LooperMenuBar" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E5E603C569F5A78D68D6EA70;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				013F86CD39F55C9ED9AA1DAF /* LooperMenuBar */,
+				AAD7F57E2F0E115082EB5C7D /* LooperMenuBarCore */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9AED7004B6CACEA5B15A0554 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3D31F07BE1F94072ED79BE12 /* AppIcon.icns in Resources */,
+				1C81624F3CFDC84FE035E443 /* notification-orb.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		03CEF2345DAA3DA38F8A2A39 /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		972A2C3F1A54EE95BBAD2EB3 /* Build Rust control plane */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust control plane";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nroot_dir=\"${SRCROOT}/../..\"\ncd \"$root_dir\"\ncargo build --release --manifest-path crates/agent-control-plane/Cargo.toml \\\n  --bin looper \\\n  --bin looper-cli \\\n  --bin looper-server\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4AF00A36B2DAE63BF82C7F0F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */,
+				686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */,
+				5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */,
+				A461015CF3FED94D759CF3BF /* LooperLifecycleCoordinator.swift in Sources */,
+				A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */,
+				1E04E1106F21E423553218DE /* LooperThreadOpenTarget.swift in Sources */,
+				B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F9A228A1221D7DEB249DF638 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */,
+				17C600371FFAD51B82BD7530 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A5037E5E9D568C2D1C4B48EF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AAD7F57E2F0E115082EB5C7D /* LooperMenuBarCore */;
+			targetProxy = BE1C0955016B6CBF11C2AF7A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		029F0630675B5EF2B300DCFE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1E1975835E5F3F803546E9CF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		407BA64BDED7B058E7FFF65B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar.core;
+				PRODUCT_NAME = LooperMenuBarCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		472C81C27C28DFDEC02D88BE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar.core;
+				PRODUCT_NAME = LooperMenuBarCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		8205B5E07A1A2340A03BDA65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Generated/LooperMenuBar.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Generated/LooperMenuBar-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar;
+				PRODUCT_NAME = LooperMenuBar;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		A21AFB1C0992922BA68EC53C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Generated/LooperMenuBar.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Generated/LooperMenuBar-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar;
+				PRODUCT_NAME = LooperMenuBar;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		29B9042308606A7E25C2CD88 /* Build configuration list for PBXNativeTarget "LooperMenuBar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A21AFB1C0992922BA68EC53C /* Debug */,
+				8205B5E07A1A2340A03BDA65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E81DD7CCDBFACB53DBE20F11 /* Build configuration list for PBXProject "LooperMenuBar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				029F0630675B5EF2B300DCFE /* Debug */,
+				1E1975835E5F3F803546E9CF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F09A8839643FA0D5F8A5710D /* Build configuration list for PBXNativeTarget "LooperMenuBarCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				407BA64BDED7B058E7FFF65B /* Debug */,
+				472C81C27C28DFDEC02D88BE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = BBBBA7FDC45A9225C979D9E6 /* Project object */;
+}

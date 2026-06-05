@@ -1,0 +1,90 @@
+name: LooperMenuBar
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    DEVELOPMENT_TEAM: Z5454ZPPUX
+targets:
+  LooperMenuBarCore:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/LooperMenuBarCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar.core
+        PRODUCT_NAME: LooperMenuBarCore
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+  LooperMenuBar:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/LooperMenuBar
+      - path: ../../ios/LooperCompanion/looper.icon/Assets/notification-orb.png
+      - path: Resources/AppIcon.icns
+        group: Resources
+        buildPhase: resources
+      - path: ../../crates/agent-control-plane/target/release/looper
+        optional: true
+        group: Rust Binaries
+        buildPhase:
+          copyFiles:
+            destination: executables
+      - path: ../../crates/agent-control-plane/target/release/looper-cli
+        optional: true
+        group: Rust Binaries
+        buildPhase:
+          copyFiles:
+            destination: executables
+      - path: ../../crates/agent-control-plane/target/release/looper-server
+        optional: true
+        group: Rust Binaries
+        buildPhase:
+          copyFiles:
+            destination: executables
+    dependencies:
+      - target: LooperMenuBarCore
+    preBuildScripts:
+      - name: Build Rust control plane
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        showEnvVars: false
+        script: |
+          set -euo pipefail
+          root_dir="${SRCROOT}/../.."
+          cd "$root_dir"
+          cargo build --release --manifest-path crates/agent-control-plane/Cargo.toml \
+            --bin looper \
+            --bin looper-cli \
+            --bin looper-server
+    info:
+      path: Generated/LooperMenuBar-Info.plist
+      properties:
+        CFBundleDisplayName: looper
+        CFBundleName: looper
+        CFBundleIconFile: AppIcon
+        LSMinimumSystemVersion: "14.0"
+        NSHighResolutionCapable: true
+        NSUserActivityTypes:
+          - dev.looper.app.continue-session
+    entitlements:
+      path: Generated/LooperMenuBar.entitlements
+      properties:
+        com.apple.developer.team-identifier: Z5454ZPPUX
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar
+        PRODUCT_NAME: LooperMenuBar
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: Apple Development
+        DEVELOPMENT_TEAM: Z5454ZPPUX
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+    scheme:
+      gatherCoverageData: false
