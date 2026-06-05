@@ -1,0 +1,14 @@
+pub(crate) const PROMPT_SELECTED: &str = "prompt ";
+pub(crate) const PROMPT_ACTIVE: &str = "prompt-active ";
+pub(crate) const PROMPT_SELECTED_WITH_MODE: &str = "prompt-mode ";
+pub(crate) const PROMPT_ACTIVE_WITH_MODE: &str = "prompt-active-mode ";
+pub(crate) const SET_SESSION_MODE: &str = "mode ";
+pub(crate) const ARCHIVE_SESSION: &str = "archive";
+pub(crate) const MUTE_SESSION: &str = "mute";
+pub(crate) const RENAME_CONNECTION: &str = "rename ";
+pub(crate) const REVOKE_CONNECTION: &str = "revoke";
+pub(crate) const NEW_PAIRING: &str = "new-pairing";
+pub(crate) const SET_DEFAULT_PROMPT: &str = "default-prompt ";
+pub(crate) const SET_GLOBAL_PRESET: &str = "global-preset ";
+pub(crate) const SET_GLOBAL_NOTIFICATION: &str = "global-notification ";
+pub(crate) const SET_GLOBAL_CHECK: &str = "global-check ";

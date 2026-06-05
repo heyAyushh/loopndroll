@@ -10,6 +10,23 @@ use crate::assistant::AssistantKind;
 use crate::hook_registration::LOOPER_HOOK_MARKER;
 use crate::privacy::redact_command_for_display;
 
+const MAX_PROCESS_ANCESTOR_DEPTH: usize = 8;
+const DEVIN_DESKTOP_PROCESS_NEEDLES: &[&str] = &[
+    "/applications/devin.app/",
+    "/applications/devin - next.app/",
+    ".devin-next",
+    "devin - next helper",
+    "devin-desktop",
+    "devin desktop",
+];
+const SUPERCONDUCTOR_PROCESS_NEEDLES: &[&str] = &["superconductor", ".superconductor"];
+const CURSOR_PROCESS_NEEDLES: &[&str] = &["/cursor.app/", ".cursor/extensions", "cursor --type"];
+const CODEX_APP_PROCESS_NEEDLES: &[&str] = &[
+    "/applications/codex.app/",
+    "codex.app/contents/",
+    "com.openai.codex",
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneStatus {
     pub hooks: HookStatus,
@@ -82,6 +99,7 @@ pub enum CodexServerOwner {
     CodexApp,
     CodexCli,
     Cursor,
+    DevinDesktop,
     Superconductor,
     Unknown,
 }
@@ -91,6 +109,7 @@ pub struct ThreadRecord {
     pub thread_id: String,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub transcript_path: Option<String>,
     pub source: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
@@ -370,6 +389,7 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
             {id} as thread_id,
             {title} as title,
             {cwd} as cwd,
+            {transcript_path} as transcript_path,
             {source} as source,
             {model} as model,
             {reasoning} as reasoning_effort,
@@ -387,6 +407,7 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
         id = quoted_identifier(id_column),
         title = nullable_column(&columns, "title"),
         cwd = nullable_column(&columns, "cwd"),
+        transcript_path = nullable_column(&columns, "rollout_path"),
         source = nullable_column(&columns, "source"),
         model = nullable_column(&columns, "model"),
         reasoning = nullable_column(&columns, "reasoning_effort"),
@@ -407,22 +428,23 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
     );
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
-        let archived: Option<i64> = row.get(14)?;
+        let archived: Option<i64> = row.get(15)?;
         Ok(ThreadRecord {
             thread_id: row.get(0)?,
             title: row.get(1)?,
             cwd: row.get(2)?,
-            source: row.get(3)?,
-            model: row.get(4)?,
-            reasoning_effort: row.get(5)?,
-            git_sha: row.get(6)?,
-            git_branch: row.get(7)?,
-            cli_version: row.get(8)?,
-            agent_nickname: row.get(9)?,
-            agent_role: row.get(10)?,
-            agent_path: row.get(11)?,
-            created_at_ms: row.get(12)?,
-            updated_at_ms: row.get(13)?,
+            transcript_path: row.get(3)?,
+            source: row.get(4)?,
+            model: row.get(5)?,
+            reasoning_effort: row.get(6)?,
+            git_sha: row.get(7)?,
+            git_branch: row.get(8)?,
+            cli_version: row.get(9)?,
+            agent_nickname: row.get(10)?,
+            agent_role: row.get(11)?,
+            agent_path: row.get(12)?,
+            created_at_ms: row.get(13)?,
+            updated_at_ms: row.get(14)?,
             archived: archived.unwrap_or(0) != 0,
         })
     })?;
@@ -732,17 +754,13 @@ fn classify_codex_server_owner(
         haystack.push_str(&ancestor.command.to_ascii_lowercase());
     }
 
-    if haystack.contains("superconductor") || haystack.contains(".superconductor") {
+    if contains_any(&haystack, SUPERCONDUCTOR_PROCESS_NEEDLES) {
         CodexServerOwner::Superconductor
-    } else if haystack.contains("/cursor.app/")
-        || haystack.contains(".cursor/extensions")
-        || haystack.contains("cursor --type")
-    {
+    } else if contains_any(&haystack, CURSOR_PROCESS_NEEDLES) {
         CodexServerOwner::Cursor
-    } else if haystack.contains("/applications/codex.app/")
-        || haystack.contains("codex.app/contents/")
-        || haystack.contains("com.openai.codex")
-    {
+    } else if contains_any(&haystack, DEVIN_DESKTOP_PROCESS_NEEDLES) {
+        CodexServerOwner::DevinDesktop
+    } else if contains_any(&haystack, CODEX_APP_PROCESS_NEEDLES) {
         CodexServerOwner::CodexApp
     } else if executable_name(&process.executable)
         .map(|name| name == "codex")
@@ -752,6 +770,10 @@ fn classify_codex_server_owner(
     } else {
         CodexServerOwner::Unknown
     }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 fn executable_name(executable: &str) -> Option<String> {
@@ -771,7 +793,7 @@ fn process_ancestry(
 ) -> Vec<ProcessAncestor> {
     let mut ancestors = Vec::new();
     let mut next_parent_pid = parent_pid;
-    for _ in 0..8 {
+    for _ in 0..MAX_PROCESS_ANCESTOR_DEPTH {
         let Some(pid) = next_parent_pid else {
             break;
         };
@@ -802,9 +824,12 @@ mod tests {
             "300 1 ?? /bin/bash /Users/test/.superconductor/bin/codex app-server".to_owned(),
             "301 300 ?? /opt/homebrew/bin/codex -c mcp_servers.superconductor.url=http://localhost:31418/mcp?sc_token=super-secret&terminal_id=terminal-secret app-server".to_owned(),
             "400 1 ttys001 /opt/homebrew/bin/codex app-server --api-key=cli-secret".to_owned(),
+            "500 1 ?? /Applications/Devin - Next.app/Contents/MacOS/Devin - Next".to_owned(),
+            "501 500 ?? /Applications/Devin - Next.app/Contents/Frameworks/Devin - Next Helper (Plugin).app/Contents/MacOS/Devin - Next Helper (Plugin) --type=utility".to_owned(),
+            "502 501 ?? /Applications/Codex.app/Contents/Resources/codex app-server --listen stdio://".to_owned(),
         ]);
 
-        assert_eq!(servers.len(), 5);
+        assert_eq!(servers.len(), 6);
         assert!(
             servers
                 .iter()
@@ -825,6 +850,23 @@ mod tests {
                 .iter()
                 .any(|server| server.owner == CodexServerOwner::CodexCli)
         );
+        assert!(
+            servers
+                .iter()
+                .any(|server| server.owner == CodexServerOwner::DevinDesktop)
+        );
+    }
+
+    #[test]
+    fn codex_server_inventory_attributes_devin_parent_chain() {
+        let servers = inspect_codex_servers_from_process_lines(&[
+            "600 1 ?? /Applications/Devin - Next.app/Contents/MacOS/Devin - Next".to_owned(),
+            "601 600 ?? npm exec @agentclientprotocol/codex-acp".to_owned(),
+            "602 601 ?? /Users/test/.nvm/bin/node /Users/test/.npm/_npx/openai/node_modules/@openai/codex/bin/codex.js app-server".to_owned(),
+        ]);
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].owner, CodexServerOwner::DevinDesktop);
     }
 
     #[test]

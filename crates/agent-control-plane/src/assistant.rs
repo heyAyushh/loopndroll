@@ -7,11 +7,13 @@ use crate::privacy::redact_command_for_display;
 const SUPERCONDUCTOR_BUNDLE_ID: &str = "com.zarifpour.superconductor";
 const CURSOR_BUNDLE_ID: &str = "com.todesktop.230313mzl4w4u92";
 const DEFAULT_CLAUDE_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
+const DEVIN_DESKTOP_CLI: &str = "devin-desktop-next";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AssistantKind {
     Codex,
+    DevinDesktop,
     Superconductor,
     Cursor,
     ClaudeCode,
@@ -62,6 +64,7 @@ pub fn discover_assistant_adapters() -> Vec<AssistantAdapterCapability> {
     let process_commands = current_process_commands();
     let cli_paths = current_cli_paths(&[
         "codex",
+        DEVIN_DESKTOP_CLI,
         "superconductor",
         "cursor",
         "claude",
@@ -110,6 +113,31 @@ pub fn discover_assistant_adapters_from_sources(
             ],
             detail: "local Codex state, logs, rollout files, hooks, and automations".to_owned(),
         },
+        runtime_only(
+            AssistantKind::DevinDesktop,
+            vec![
+                detections.runtime(
+                    AssistantRuntimeKind::Gui,
+                    "Devin Desktop",
+                    None,
+                    &[
+                        "/applications/devin.app/",
+                        "/applications/devin - next.app/",
+                        ".devin-next",
+                        "devin - next helper",
+                        "devin-desktop",
+                        "devin desktop",
+                    ],
+                ),
+                detections.runtime_by_executable(
+                    AssistantRuntimeKind::Cli,
+                    "Devin Desktop CLI",
+                    None,
+                    &[DEVIN_DESKTOP_CLI],
+                ),
+            ],
+            "GUI/CLI runtime detection only; Codex servers spawned by Devin are attributed separately",
+        ),
         runtime_only(
             AssistantKind::Superconductor,
             vec![
