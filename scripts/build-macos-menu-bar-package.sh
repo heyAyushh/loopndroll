@@ -5,11 +5,30 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+resolve_code_sign_identity() {
+  if [[ -n "${LOOPER_MACOS_CODE_SIGN_IDENTITY:-}" ]]; then
+    printf '%s\n' "$LOOPER_MACOS_CODE_SIGN_IDENTITY"
+    return
+  fi
+
+  local apple_development_identity
+  apple_development_identity="$(
+    security find-identity -v -p codesigning 2>/dev/null |
+      awk -F'"' '/Apple Development:/ { print $2; exit }'
+  )"
+  if [[ -n "$apple_development_identity" ]]; then
+    printf '%s\n' "$apple_development_identity"
+    return
+  fi
+
+  printf '%s\n' "-"
+}
+
 APP_NAME="looper"
 BUNDLE_ID="dev.looper.app.ios"
 LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
-CODE_SIGN_IDENTITY="${LOOPER_MACOS_CODE_SIGN_IDENTITY:--}"
+CODE_SIGN_IDENTITY="$(resolve_code_sign_identity)"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
 ENABLE_MACOS_ENTITLEMENTS="${LOOPER_MACOS_ENABLE_ENTITLEMENTS:-0}"
 PROVISIONING_PROFILE="${LOOPER_MACOS_PROVISIONING_PROFILE:-}"

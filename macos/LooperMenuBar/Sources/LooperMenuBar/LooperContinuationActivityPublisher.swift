@@ -19,7 +19,7 @@ final class LooperContinuationActivityPublisher {
 
     func publish(_ descriptor: LooperContinuationActivityDescriptor) {
         guard descriptor != currentDescriptor else {
-            activityPanel.refreshCurrentActivity()
+            refreshCurrentActivity()
             return
         }
 
@@ -27,8 +27,7 @@ final class LooperContinuationActivityPublisher {
         let activity = currentActivity ?? NSUserActivity(activityType: LooperContinuationActivity.activityType)
         configure(activity, with: descriptor)
         activityPanel.attach(activity, descriptor: descriptor, shouldOrderFront: isNewActivity)
-        activity.needsSave = true
-        activity.becomeCurrent()
+        markActivityCurrent(activity)
 
         currentActivity = activity
         currentDescriptor = descriptor
@@ -59,6 +58,14 @@ final class LooperContinuationActivityPublisher {
 
     private func refreshCurrentActivity() {
         activityPanel.refreshCurrentActivity()
+        if let currentActivity {
+            markActivityCurrent(currentActivity)
+        }
+    }
+
+    private func markActivityCurrent(_ activity: NSUserActivity) {
+        activity.needsSave = true
+        activity.becomeCurrent()
     }
 
     private func configure(
@@ -75,7 +82,6 @@ final class LooperContinuationActivityPublisher {
         activity.isEligibleForPublicIndexing = false
         activity.keywords = activityKeywords(for: descriptor)
         activity.contentAttributeSet = contentAttributeSet(for: descriptor)
-        activity.webpageURL = webpageURL(for: descriptor)
         activity.userInfo = descriptor.userInfo
         activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
     }
@@ -127,11 +133,6 @@ final class LooperContinuationActivityPublisher {
         }
         .filter { !$0.isEmpty }
         .joined(separator: "\n")
-    }
-
-    private func webpageURL(for descriptor: LooperContinuationActivityDescriptor) -> URL? {
-        descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
-            .flatMap(URL.init(string:))
     }
 
 }
