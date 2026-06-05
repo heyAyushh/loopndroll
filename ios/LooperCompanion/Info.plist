@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>looper</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.looper.app.ios</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>looper</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LOOPER_API_BASE_URL</key>
+	<string>$(LOOPER_API_BASE_URL)</string>
+	<key>LOOPER_API_BASE_URLS</key>
+	<string>$(LOOPER_API_BASE_URLS)</string>
+	<key>LOOPER_API_BEARER_TOKEN</key>
+	<string>$(LOOPER_API_BEARER_TOKEN)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a generated orb from another screen.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to unlock looper on this iPhone.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to the looper desktop app on your local network.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>dev.looper.app.continue-session</string>
+	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_looper._tcp</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+</dict>
+</plist>

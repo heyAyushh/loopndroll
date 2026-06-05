@@ -1,4 +1,4 @@
-name: LoopndrollCompanion
+name: LooperCompanion
 options:
   createIntermediateGroups: true
 packages:
@@ -9,12 +9,14 @@ settings:
   base:
     SWIFT_VERSION: 6.0
 targets:
-  LoopndrollCompanion:
+  LooperCompanion:
     type: application
     platform: iOS
     deploymentTarget: "18.0"
     sources:
-      - path: LoopndrollCompanion
+      - path: LooperCompanion
+        excludes:
+          - looper.icon/**
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.ios
@@ -22,21 +24,21 @@ targets:
         DEVELOPMENT_TEAM: Z5454ZPPUX
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: LoopndrollCompanion/Info.plist
+        INFOPLIST_FILE: LooperCompanion/Info.plist
         CURRENT_PROJECT_VERSION: 2
         MARKETING_VERSION: 1.2.0
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        DEVELOPMENT_ASSET_PATHS: "\"LoopndrollCompanion/Preview Content\""
+        DEVELOPMENT_ASSET_PATHS: "\"LooperCompanion/Preview Content\""
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
     dependencies:
       - package: OrbCodeKit
     configs:
       Debug:
-        CODE_SIGN_ENTITLEMENTS: LoopndrollCompanion/LoopndrollCompanion.Debug.entitlements
+        CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Debug.entitlements
         LOOPER_API_BASE_URL: ""
         LOOPER_API_BASE_URLS: ""
       Release:
-        CODE_SIGN_ENTITLEMENTS: LoopndrollCompanion/LoopndrollCompanion.Release.entitlements
+        CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Release.entitlements
         LOOPER_API_BASE_URL: ""
         LOOPER_API_BASE_URLS: ""
