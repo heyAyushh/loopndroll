@@ -6,8 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_NAME="looper"
-BUNDLE_ID="dev.looper.app.menubar"
-LEGACY_BUNDLE_IDS=("dev.looper.app.ios")
+BUNDLE_ID="dev.looper.app.ios"
+LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
 CODE_SIGN_IDENTITY="${LOOPER_MACOS_CODE_SIGN_IDENTITY:--}"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
