@@ -5,11 +5,11 @@ import OSLog
 
 @MainActor
 final class LooperContinuationActivityPublisher {
-    fileprivate enum AnchorWindowLayout {
-        static let size = NSSize(width: 1, height: 1)
-        static let screenInset: CGFloat = 1
-        static let alphaValue: CGFloat = 0.001
-        static let minimumKeyWindowAlphaValue: CGFloat = 0.01
+    fileprivate enum UtilityPanelLayout {
+        static let contentSize = NSSize(width: 36, height: 36)
+        static let screenInset: CGFloat = 6
+        static let backgroundAlpha: CGFloat = 0.03
+        static let cornerRadius: CGFloat = 8
     }
 
     private enum ActivityRefresh {
@@ -27,13 +27,13 @@ final class LooperContinuationActivityPublisher {
     )
 
     private let logger = Logger(subsystem: Logging.subsystem, category: Logging.category)
-    private let activityAnchor = LooperContinuationActivityAnchor()
+    private let activityOwner = LooperContinuationActivityPanelOwner()
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
     private var currentActivityRefreshTask: Task<Void, Never>?
 
     func attachHost(_ host: NSResponder?) {
-        activityAnchor.attachStatusHost(host)
+        activityOwner.attachStatusHost(host)
         logger.info("handoff host attached host=\(self.hostClassName(for: host), privacy: .public)")
         if currentActivity != nil {
             refreshCurrentActivity()
@@ -48,7 +48,7 @@ final class LooperContinuationActivityPublisher {
 
         let activity = currentActivity ?? NSUserActivity(activityType: LooperContinuationActivity.activityType)
         configure(activity, with: descriptor)
-        activityAnchor.publish(activity, descriptor: descriptor)
+        activityOwner.publish(activity, descriptor: descriptor)
         markActivityCurrent(activity)
         logPublishedActivity(activity, descriptor: descriptor)
 
@@ -69,7 +69,7 @@ final class LooperContinuationActivityPublisher {
     func invalidate() {
         currentActivityRefreshTask?.cancel()
         currentActivity?.invalidate()
-        activityAnchor.detach()
+        activityOwner.detach()
         logger.info("handoff activity invalidated")
         currentActivityRefreshTask = nil
         currentActivity = nil
@@ -97,9 +97,9 @@ final class LooperContinuationActivityPublisher {
         if let currentDescriptor {
             configure(currentActivity, with: currentDescriptor)
         }
-        activityAnchor.refreshCurrentActivity()
+        activityOwner.refreshCurrentActivity()
         markActivityCurrent(currentActivity)
-        logger.debug("handoff activity refreshed host=\(self.activityAnchor.hostDescription, privacy: .public)")
+        logger.debug("handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public)")
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {
@@ -137,7 +137,7 @@ final class LooperContinuationActivityPublisher {
             """
             handoff activity published kind=\(kind, privacy: .public) \
             session=\(sessionID, privacy: .public) \
-            host=\(self.activityAnchor.hostDescription, privacy: .public) \
+            host=\(self.activityOwner.hostDescription, privacy: .public) \
             activityTarget=\(activityTarget, privacy: .public) \
             sessionTarget=\(descriptor.targetContentIdentifier, privacy: .public)
             """
@@ -204,32 +204,35 @@ final class LooperContinuationActivityPublisher {
 }
 
 @MainActor
-private final class LooperContinuationActivityAnchor {
+private final class LooperContinuationActivityPanelOwner {
     private weak var statusHost: NSResponder?
-    private let viewController = LooperContinuationActivityAnchorViewController()
-    private lazy var window: LooperContinuationActivityAnchorPanel = {
-        // AppKit Handoff promotes responder activities through a main/key window responder chain.
-        let window = LooperContinuationActivityAnchorPanel(
-            contentRect: NSRect(origin: .zero, size: LooperContinuationActivityPublisher.AnchorWindowLayout.size),
-            styleMask: [.borderless, .nonactivatingPanel],
+    private let viewController = LooperContinuationActivityPanelViewController()
+    private lazy var panel: LooperContinuationActivityUtilityPanel = {
+        // AppKit Handoff promotes responder activities from a real key/main responder owner.
+        let panel = LooperContinuationActivityUtilityPanel(
+            contentRect: NSRect(origin: .zero, size: LooperContinuationActivityPublisher.UtilityPanelLayout.contentSize),
+            styleMask: [.titled, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.alphaValue = max(
-            LooperContinuationActivityPublisher.AnchorWindowLayout.alphaValue,
-            LooperContinuationActivityPublisher.AnchorWindowLayout.minimumKeyWindowAlphaValue
-        )
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.ignoresMouseEvents = true
-        window.isExcludedFromWindowsMenu = true
-        window.isReleasedWhenClosed = false
-        window.level = .normal
-        window.title = LooperContinuationActivityAnchorViewController.Content.windowTitle
-        window.contentViewController = viewController
-        positionWindowInScreen(window)
-        return window
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.isExcludedFromWindowsMenu = true
+        panel.isFloatingPanel = false
+        panel.isOpaque = false
+        panel.isReleasedWhenClosed = false
+        panel.ignoresMouseEvents = true
+        panel.level = .normal
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.tabbingMode = .disallowed
+        panel.title = LooperContinuationActivityPanelViewController.Content.windowTitle
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.contentViewController = viewController
+        hideStandardWindowButtons(in: panel)
+        positionPanelInScreen(panel)
+        return panel
     }()
 
     var hostDescription: String {
@@ -254,13 +257,13 @@ private final class LooperContinuationActivityAnchor {
         _ activity: NSUserActivity,
         descriptor: LooperContinuationActivityDescriptor
     ) {
-        _ = window
+        _ = panel
         viewController.descriptor = descriptor
         viewController.userActivity = activity
         viewController.view.userActivity = activity
         statusHost?.userActivity = activity
-        positionWindowInScreen(window)
-        window.makeKeyAndOrderFront(nil)
+        positionPanelInScreen(panel)
+        panel.makeKeyAndOrderFront(nil)
         refreshCurrentActivity()
     }
 
@@ -284,7 +287,7 @@ private final class LooperContinuationActivityAnchor {
         viewController.view.userActivity = nil
         viewController.userActivity = nil
         viewController.descriptor = nil
-        window.orderOut(nil)
+        panel.orderOut(nil)
     }
 
     private func update(
@@ -297,18 +300,28 @@ private final class LooperContinuationActivityAnchor {
         activity.webpageURL = nil
     }
 
-    private func positionWindowInScreen(_ window: NSWindow) {
+    private func positionPanelInScreen(_ panel: NSWindow) {
         guard let visibleFrame = NSScreen.main?.visibleFrame else {
-            window.setFrameOrigin(.zero)
+            panel.setFrameOrigin(.zero)
             return
         }
 
-        window.setFrameOrigin(
+        panel.setFrameOrigin(
             NSPoint(
-                x: visibleFrame.minX + LooperContinuationActivityPublisher.AnchorWindowLayout.screenInset,
-                y: visibleFrame.maxY - LooperContinuationActivityPublisher.AnchorWindowLayout.screenInset
+                x: visibleFrame.maxX - panel.frame.width - LooperContinuationActivityPublisher.UtilityPanelLayout.screenInset,
+                y: visibleFrame.maxY - panel.frame.height - LooperContinuationActivityPublisher.UtilityPanelLayout.screenInset
             )
         )
+    }
+
+    private func hideStandardWindowButtons(in panel: NSPanel) {
+        [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ].forEach { buttonType in
+            panel.standardWindowButton(buttonType)?.isHidden = true
+        }
     }
 
     private func responderClassName(for responder: NSResponder?) -> String? {
@@ -320,7 +333,7 @@ private final class LooperContinuationActivityAnchor {
     }
 }
 
-private final class LooperContinuationActivityAnchorPanel: NSPanel {
+private final class LooperContinuationActivityUtilityPanel: NSPanel {
     override var canBecomeKey: Bool {
         true
     }
@@ -331,9 +344,9 @@ private final class LooperContinuationActivityAnchorPanel: NSPanel {
 }
 
 @MainActor
-private final class LooperContinuationActivityAnchorViewController: NSViewController {
+private final class LooperContinuationActivityPanelViewController: NSViewController {
     enum Content {
-        static let windowTitle = "looper Handoff Activity Anchor"
+        static let windowTitle = "looper Handoff Activity"
     }
 
     var descriptor: LooperContinuationActivityDescriptor?
@@ -342,9 +355,14 @@ private final class LooperContinuationActivityAnchorViewController: NSViewContro
         view = NSView(
             frame: NSRect(
                 origin: .zero,
-                size: LooperContinuationActivityPublisher.AnchorWindowLayout.size
+                size: LooperContinuationActivityPublisher.UtilityPanelLayout.contentSize
             )
         )
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.windowBackgroundColor
+            .withAlphaComponent(LooperContinuationActivityPublisher.UtilityPanelLayout.backgroundAlpha)
+            .cgColor
+        view.layer?.cornerRadius = LooperContinuationActivityPublisher.UtilityPanelLayout.cornerRadius
     }
 
     override func updateUserActivityState(_ activity: NSUserActivity) {
