@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -30,6 +30,7 @@ const CODEX_APP_PROCESS_NEEDLES: &[&str] = &[
     "codex.app/contents/",
     "com.openai.codex",
 ];
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneStatus {
@@ -662,7 +663,7 @@ fn tool_names(tools: &[DynamicTool], classification: ToolClassification) -> Vec<
 
 fn latest_matching_file(directory: &Path, prefix: &str, suffix: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(directory).ok()?;
-    entries
+    let mut candidates = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
@@ -671,7 +672,29 @@ fn latest_matching_file(directory: &Path, prefix: &str, suffix: &str) -> Option<
                 .map(|name| name.starts_with(prefix) && name.ends_with(suffix))
                 .unwrap_or(false)
         })
-        .max()
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates
+        .into_iter()
+        .rev()
+        .find(|path| is_valid_sqlite_file(path))
+}
+
+fn is_valid_sqlite_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if metadata.len() < SQLITE_HEADER.len() as u64 {
+        return false;
+    }
+
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut header = [0_u8; SQLITE_HEADER.len()];
+    file.read_exact(&mut header)
+        .map(|_| &header == SQLITE_HEADER)
+        .unwrap_or(false)
 }
 
 pub fn inspect_codex_servers_from_process_lines(lines: &[String]) -> Vec<CodexServerProcess> {
@@ -847,7 +870,9 @@ fn process_ancestry(
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexServerOwner, inspect_codex_servers_from_process_lines};
+    use super::{CodexServerOwner, inspect_codex_servers_from_process_lines, latest_matching_file};
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn codex_server_inventory_tracks_all_local_servers_with_owners() {
@@ -916,5 +941,18 @@ mod tests {
         assert!(!json.contains("terminal-secret"));
         assert!(!json.contains("cli-secret"));
         assert!(json.contains("<redacted>"));
+    }
+
+    #[test]
+    fn latest_matching_file_skips_empty_sqlite_placeholders() {
+        let tempdir = tempdir().expect("tempdir");
+        let valid_path = tempdir.path().join("state_5.sqlite");
+        let empty_path = tempdir.path().join("state_9.sqlite");
+        fs::write(&valid_path, super::SQLITE_HEADER).expect("write valid sqlite header");
+        fs::write(&empty_path, []).expect("write empty placeholder");
+
+        let selected = latest_matching_file(tempdir.path(), "state_", ".sqlite");
+
+        assert_eq!(selected.as_deref(), Some(valid_path.as_path()));
     }
 }
