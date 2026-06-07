@@ -65,7 +65,9 @@ pub(super) fn mobile_session_error_response(error: MobileSessionError) -> Respon
     let status = match error {
         MobileSessionError::Store(_)
         | MobileSessionError::Filesystem(_)
-        | MobileSessionError::TimeFormat(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        | MobileSessionError::TimeFormat(_)
+        | MobileSessionError::PromptSnapshotUnavailable(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        MobileSessionError::PromptResumeUnavailable(_) => StatusCode::BAD_GATEWAY,
         MobileSessionError::SessionNotFound => StatusCode::NOT_FOUND,
         MobileSessionError::InvalidPreset
         | MobileSessionError::InvalidScope

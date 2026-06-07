@@ -173,6 +173,10 @@ pub enum MobileSessionError {
     SessionArchived,
     #[error("session cannot receive prompts right now")]
     PromptDeliveryUnavailable,
+    #[error("desktop session state unavailable: {0}")]
+    PromptSnapshotUnavailable(String),
+    #[error("codex resume failed: {0}")]
+    PromptResumeUnavailable(String),
     #[error("notification route not found")]
     NotificationNotFound,
     #[error("completion check not found")]

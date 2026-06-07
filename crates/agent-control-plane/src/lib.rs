@@ -3,6 +3,7 @@ pub mod auth;
 pub mod automations;
 pub mod cli;
 pub mod codex;
+pub mod codex_resume;
 pub mod compaction;
 pub mod control_plane;
 pub mod devin;

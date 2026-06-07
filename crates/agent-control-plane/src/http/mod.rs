@@ -13,11 +13,12 @@ use axum::{
     routing::{delete, get, post},
 };
 
+use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile_api::{
-    mobile_session_detail, mobile_snapshot, validate_mobile_prompt_delivery_target,
+    PromptDeliveryAction, mobile_session_detail, mobile_snapshot, prompt_delivery_action_for_target,
 };
 use crate::mobile_auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
@@ -864,15 +865,9 @@ async fn desktop_session_prompt(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    if let Some(response) = prompt_target_rejection(&control_plane, &thread_id) {
-        return response;
-    }
-    match control_plane
-        .mobile_session_service()
-        .queue_prompt(&thread_id, &input.prompt)
-    {
-        Ok(prompt) => {
-            emit_mobile_prompt_queued(&control_plane, &thread_id, &prompt.id);
+    match dispatch_session_prompt(&control_plane, &thread_id, &input.prompt) {
+        Ok(dispatch) => {
+            emit_prompt_dispatch(&control_plane, &thread_id, &dispatch);
             desktop_mobile_state_response(&control_plane)
         }
         Err(error) => mobile_session_error_response(error),
@@ -903,31 +898,38 @@ fn queue_desktop_batch_prompt(
     snapshot: &DesktopSnapshot,
     input: DesktopSessionBatchPromptRequest,
 ) -> Result<serde_json::Value, MobileSessionError> {
-    if input.prompt.trim().is_empty() {
-        return Err(MobileSessionError::PromptRequired);
-    }
+    let prompt = required_prompt(&input.prompt)?;
     let thread_ids = unique_thread_ids(input.thread_ids);
     if thread_ids.is_empty() {
         return Err(MobileSessionError::SessionNotFound);
     }
     let session_state = control_plane.mobile_session_service().state()?;
-    validate_prompt_targets(snapshot, &session_state, &thread_ids)?;
+    let actions = thread_ids
+        .iter()
+        .map(|thread_id| prompt_delivery_action_for_target(snapshot, &session_state, thread_id))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let session_service = control_plane.mobile_session_service();
     let mut prompt_ids = Vec::with_capacity(thread_ids.len());
-    for thread_id in &thread_ids {
+    let mut resumed_thread_ids = Vec::new();
+    for (thread_id, action) in thread_ids.iter().zip(actions) {
         if let Some(preset) = input.preset.as_deref() {
             session_service.set_session_preset(thread_id, Some(preset))?;
         }
-        let prompt = session_service.queue_prompt(thread_id, &input.prompt)?;
-        emit_mobile_prompt_queued(control_plane, thread_id, &prompt.id);
-        prompt_ids.push(prompt.id);
+        let dispatch =
+            dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)?;
+        emit_prompt_dispatch(control_plane, thread_id, &dispatch);
+        match dispatch {
+            PromptDispatch::Queued { prompt_id } => prompt_ids.push(prompt_id),
+            PromptDispatch::Resumed => resumed_thread_ids.push(thread_id.clone()),
+        }
     }
 
     Ok(serde_json::json!({
         "prompted": thread_ids.len(),
         "threadIds": thread_ids,
         "promptIds": prompt_ids,
+        "resumedThreadIds": resumed_thread_ids,
     }))
 }
 
@@ -942,15 +944,58 @@ fn unique_thread_ids(thread_ids: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn validate_prompt_targets(
-    snapshot: &DesktopSnapshot,
-    session_state: &MobileSessionState,
-    thread_ids: &[String],
-) -> Result<(), MobileSessionError> {
-    for thread_id in thread_ids {
-        validate_mobile_prompt_delivery_target(snapshot, session_state, thread_id)?;
+enum PromptDispatch {
+    Queued { prompt_id: String },
+    Resumed,
+}
+
+fn dispatch_session_prompt(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    prompt: &str,
+) -> Result<PromptDispatch, MobileSessionError> {
+    let prompt = required_prompt(prompt)?;
+    let snapshot = mobile_desktop_snapshot(control_plane)
+        .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
+    let session_state = control_plane.mobile_session_service().state()?;
+    let action = prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?;
+    dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)
+}
+
+fn dispatch_session_prompt_with_action(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    prompt: &str,
+    action: PromptDeliveryAction,
+) -> Result<PromptDispatch, MobileSessionError> {
+    match action {
+        PromptDeliveryAction::QueueForHook => {
+            let prompt = control_plane
+                .mobile_session_service()
+                .queue_prompt(thread_id, prompt)?;
+            Ok(PromptDispatch::Queued {
+                prompt_id: prompt.id,
+            })
+        }
+        PromptDeliveryAction::ResumeCodex(target) => {
+            spawn_thread_resume(&CodexResumeRequest {
+                thread_id: target.thread_id,
+                prompt: prompt.to_owned(),
+                cwd: target.cwd,
+                codex_executable: control_plane.codex_executable().map(str::to_owned),
+            })
+            .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+            Ok(PromptDispatch::Resumed)
+        }
     }
-    Ok(())
+}
+
+fn required_prompt(prompt: &str) -> Result<String, MobileSessionError> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(MobileSessionError::PromptRequired);
+    }
+    Ok(prompt.to_owned())
 }
 
 async fn desktop_session_mute(
@@ -1348,16 +1393,9 @@ async fn mobile_session_prompt(
     if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
         return response;
     }
-    if let Some(response) = prompt_target_rejection(&control_plane, &thread_id) {
-        return response;
-    }
-
-    match control_plane
-        .mobile_session_service()
-        .queue_prompt(&thread_id, &input.prompt)
-    {
-        Ok(prompt) => {
-            emit_mobile_prompt_queued(&control_plane, &thread_id, &prompt.id);
+    match dispatch_session_prompt(&control_plane, &thread_id, &input.prompt) {
+        Ok(dispatch) => {
+            emit_prompt_dispatch(&control_plane, &thread_id, &dispatch);
             mobile_snapshot_response(&control_plane, &headers)
         }
         Err(error) => mobile_session_error_response(error),
@@ -1710,23 +1748,6 @@ fn mobile_session_is_visible(
     mobile_session_detail(snapshot, session_state, thread_id, None).is_some()
 }
 
-fn prompt_target_rejection(control_plane: &ControlPlane, thread_id: &str) -> Option<Response> {
-    let snapshot = match mobile_desktop_snapshot(control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return Some(internal_mobile_error_response(error.to_string())),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return Some(mobile_session_error_response(error)),
-    };
-
-    match validate_mobile_prompt_delivery_target(&snapshot, &session_state, thread_id) {
-        Ok(()) => None,
-        Err(MobileSessionError::SessionNotFound) => Some(mobile_session_not_found_response()),
-        Err(error) => Some(mobile_session_error_response(error)),
-    }
-}
-
 fn handoff_session_html(thread: &DesktopThread, handoff_base_url: Option<&str>) -> String {
     let title = handoff_session_title(thread);
     let subtitle = thread
@@ -1869,6 +1890,17 @@ fn emit_mobile_prompt_queued(control_plane: &ControlPlane, thread_id: &str, prom
         detail: None,
     });
     emit_mobile_session_changed(control_plane, Some(thread_id), Some("prompt-queued"));
+}
+
+fn emit_prompt_dispatch(control_plane: &ControlPlane, thread_id: &str, dispatch: &PromptDispatch) {
+    match dispatch {
+        PromptDispatch::Queued { prompt_id } => {
+            emit_mobile_prompt_queued(control_plane, thread_id, prompt_id);
+        }
+        PromptDispatch::Resumed => {
+            emit_mobile_session_changed(control_plane, Some(thread_id), Some("prompt-resumed"));
+        }
+    }
 }
 
 fn mobile_sse_event(event: &MobileEvent) -> Event {

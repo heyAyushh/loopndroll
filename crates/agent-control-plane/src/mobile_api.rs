@@ -33,6 +33,18 @@ const CODEX_SOURCE_LABEL: &str = "Codex";
 const DEVIN_SOURCE_LABEL: &str = "Devin";
 const GROK_BUILD_SOURCE_LABEL: &str = "Grok Build";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptResumeTarget {
+    pub thread_id: String,
+    pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PromptDeliveryAction {
+    QueueForHook,
+    ResumeCodex(PromptResumeTarget),
+}
+
 pub fn mobile_snapshot(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,
@@ -153,18 +165,26 @@ pub fn validate_mobile_prompt_delivery_target(
     session_state: &MobileSessionState,
     thread_id: &str,
 ) -> Result<(), MobileSessionError> {
+    prompt_delivery_action_for_target(snapshot, session_state, thread_id).map(|_| ())
+}
+
+pub fn prompt_delivery_action_for_target(
+    snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
+    thread_id: &str,
+) -> Result<PromptDeliveryAction, MobileSessionError> {
     let thread = snapshot
         .threads
         .iter()
         .find(|thread| thread.thread_id == thread_id)
         .ok_or(MobileSessionError::SessionNotFound)?;
-    validate_thread_prompt_delivery(thread, session_state)
+    prompt_delivery_action_for_thread(thread, session_state)
 }
 
-fn validate_thread_prompt_delivery(
+fn prompt_delivery_action_for_thread(
     thread: &DesktopThread,
     session_state: &MobileSessionState,
-) -> Result<(), MobileSessionError> {
+) -> Result<PromptDeliveryAction, MobileSessionError> {
     let session_override = session_override(thread, session_state);
     if session_override.map(|state| state.deleted).unwrap_or(false) {
         return Err(MobileSessionError::SessionNotFound);
@@ -178,6 +198,12 @@ fn validate_thread_prompt_delivery(
     if !assistant_supports_prompt_delivery(&thread.capabilities.assistant_kind) {
         return Err(MobileSessionError::PromptDeliveryUnavailable);
     }
+    if thread.capabilities.assistant_kind == AssistantKind::Codex {
+        return Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget {
+            thread_id: thread.thread_id.clone(),
+            cwd: thread.cwd.clone(),
+        }));
+    }
 
     let effective_mode = effective_preset(session_override, session_state);
     let lifecycle = session_state.lifecycle.get(&thread.thread_id);
@@ -187,7 +213,7 @@ fn validate_thread_prompt_delivery(
         lifecycle,
         thread.runtime_status.as_deref(),
     ) {
-        ACTIVE_SESSION_STATUS => Ok(()),
+        ACTIVE_SESSION_STATUS => Ok(PromptDeliveryAction::QueueForHook),
         _ => Err(MobileSessionError::PromptDeliveryUnavailable),
     }
 }
@@ -558,15 +584,19 @@ mod tests {
     use crate::grok_build::{GrokHookOwner, GrokHookStatus};
 
     #[test]
-    fn prompt_delivery_target_allows_active_codex_sessions() {
+    fn prompt_delivery_target_resumes_active_codex_sessions() {
         let thread = test_thread("thread-1", AssistantKind::Codex, None);
         let session_state = session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_ACTIVE);
 
-        assert!(validate_thread_prompt_delivery(&thread, &session_state).is_ok());
+        assert!(matches!(
+            prompt_delivery_action_for_thread(&thread, &session_state),
+            Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget { thread_id, .. }))
+                if thread_id == "thread-1"
+        ));
     }
 
     #[test]
-    fn prompt_delivery_target_rejects_waiting_codex_sessions() {
+    fn prompt_delivery_target_resumes_waiting_codex_sessions() {
         let thread = test_thread("thread-1", AssistantKind::Codex, None);
         let mut session_state =
             session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_STOPPED);
@@ -576,11 +606,10 @@ mod tests {
             .or_default()
             .preset = Some(AWAIT_REPLY_PRESET.to_owned());
 
-        let error = validate_thread_prompt_delivery(&thread, &session_state)
-            .expect_err("waiting session should reject prompt delivery");
         assert!(matches!(
-            error,
-            MobileSessionError::PromptDeliveryUnavailable
+            prompt_delivery_action_for_thread(&thread, &session_state),
+            Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget { thread_id, .. }))
+                if thread_id == "thread-1"
         ));
     }
 
@@ -593,7 +622,7 @@ mod tests {
         );
         let session_state = MobileSessionState::default();
 
-        let error = validate_thread_prompt_delivery(&thread, &session_state)
+        let error = prompt_delivery_action_for_thread(&thread, &session_state)
             .expect_err("Devin sessions are visibility-only prompt targets");
         assert!(matches!(
             error,

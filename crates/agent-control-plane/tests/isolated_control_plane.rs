@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 use agent_control_plane::assistant::{
     AssistantKind, AssistantRuntimeKind, discover_assistant_adapters_from_processes,
@@ -1218,19 +1219,27 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(waiting_session["effectiveMode"], "await-reply");
     assert_eq!(waiting_session["status"], "waiting");
 
-    let rejected_prompt_response = request_with_body_options(
+    let resumed_prompt_snapshot = request_json_body_with_options(
         &router,
         Method::POST,
         "/api/mobile/sessions/thread-main/prompt",
-        serde_json::to_vec(&serde_json::json!({ "prompt": "Too late." })).expect("json body"),
-        &[
-            (axum::http::header::AUTHORIZATION, authorization.as_str()),
-            (axum::http::header::CONTENT_TYPE, "application/json"),
-        ],
+        serde_json::json!({ "prompt": "Resume from phone." }),
+        &auth_headers,
         None,
     )
     .await;
-    assert_eq!(rejected_prompt_response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        mobile_snapshot_session(&resumed_prompt_snapshot, "thread-main")["id"],
+        "thread-main"
+    );
+    assert!(
+        control_plane
+            .store()
+            .mobile_events_since(0, 10)
+            .expect("mobile events")
+            .iter()
+            .any(|event| event.detail.as_deref() == Some("prompt-resumed"))
+    );
 
     record_codex_thread_active(&control_plane, "thread-main");
     let prompt_snapshot = request_json_body_with_options(
@@ -1719,7 +1728,7 @@ fn mobile_event_payload_matches_ios_contract() {
 }
 
 #[tokio::test]
-async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
+async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
@@ -1785,8 +1794,8 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
     )
     .await;
 
-    let prompt_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
-    tokio::pin!(prompt_deadline);
+    let resumed_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(resumed_deadline);
 
     loop {
         tokio::select! {
@@ -1795,8 +1804,8 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
                     Some(Ok(frame)) => {
                         if let Ok(chunk) = frame.into_data() {
                             buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            if buffer.contains("event: prompt.queued")
-                                && buffer.contains("\"eventType\":\"prompt-queued\"")
+                            if buffer.contains("event: session.changed")
+                                && buffer.contains("\"detail\":\"prompt-resumed\"")
                             {
                                 break;
                             }
@@ -1806,8 +1815,8 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
                     None => panic!("sse stream ended early: {buffer}"),
                 }
             }
-            _ = &mut prompt_deadline => {
-                panic!("timed out waiting for prompt.queued SSE event. buffer={buffer}");
+            _ = &mut resumed_deadline => {
+                panic!("timed out waiting for prompt-resumed SSE event. buffer={buffer}");
             }
         }
     }
@@ -1829,7 +1838,7 @@ async fn mobile_events_endpoint_requires_mobile_auth() {
 }
 
 #[tokio::test]
-async fn queueing_mobile_prompt_records_prompt_queued_event() {
+async fn codex_mobile_prompt_records_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
@@ -1858,12 +1867,8 @@ async fn queueing_mobile_prompt_records_prompt_queued_event() {
     assert!(
         events
             .iter()
-            .any(|event| event.event_type == MobileEventKind::PromptQueued)
-    );
-    assert!(
-        events
-            .iter()
-            .any(|event| event.event_type == MobileEventKind::SessionChanged)
+            .any(|event| event.event_type == MobileEventKind::SessionChanged
+                && event.detail.as_deref() == Some("prompt-resumed"))
     );
 }
 
@@ -2016,7 +2021,11 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     .await;
     assert_eq!(prompted["prompted"], 1);
     assert_eq!(prompted["threadIds"][0], "thread-child");
-    assert_ne!(prompted["promptIds"][0], "");
+    assert_eq!(
+        prompted["promptIds"].as_array().expect("prompt ids").len(),
+        0
+    );
+    assert_eq!(prompted["resumedThreadIds"][0], "thread-child");
 
     let deleted_route = request_json_with_options(
         &router,
@@ -2449,9 +2458,24 @@ impl IsolatedCodexFixture {
         self.temp_dir.path().join(".grok")
     }
 
+    fn codex_resume_stub(&self) -> std::path::PathBuf {
+        let executable = self.temp_dir.path().join("codex-resume-stub");
+        if executable.is_file() {
+            return executable;
+        }
+        fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("write codex resume stub");
+        let mut permissions = fs::metadata(&executable)
+            .expect("codex resume stub metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("chmod codex resume stub");
+        executable
+    }
+
     fn control_plane(&self) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
+            codex_executable: Some(self.codex_resume_stub().display().to_string()),
             grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
