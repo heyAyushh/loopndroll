@@ -4,17 +4,11 @@ import LooperMenuBarCore
 
 @MainActor
 final class LooperContinuationActivityPublisher {
-    private enum Timing {
-        static let currentActivityRefreshInterval: Duration = .seconds(3)
-    }
-
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
-    private var currentActivityRefreshTask: Task<Void, Never>?
 
     func publish(_ descriptor: LooperContinuationActivityDescriptor) {
         guard descriptor != currentDescriptor else {
-            refreshCurrentActivity()
             return
         }
 
@@ -24,37 +18,12 @@ final class LooperContinuationActivityPublisher {
 
         currentActivity = activity
         currentDescriptor = descriptor
-        startCurrentActivityRefreshLoop()
     }
 
     func invalidate() {
-        currentActivityRefreshTask?.cancel()
         currentActivity?.invalidate()
-        currentActivityRefreshTask = nil
         currentActivity = nil
         currentDescriptor = nil
-    }
-
-    private func startCurrentActivityRefreshLoop() {
-        guard currentActivityRefreshTask == nil else {
-            return
-        }
-
-        currentActivityRefreshTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Timing.currentActivityRefreshInterval)
-                self?.refreshCurrentActivity()
-            }
-        }
-    }
-
-    private func refreshCurrentActivity() {
-        guard let currentActivity, let currentDescriptor else {
-            return
-        }
-
-        configure(currentActivity, with: currentDescriptor)
-        markActivityCurrent(currentActivity)
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {

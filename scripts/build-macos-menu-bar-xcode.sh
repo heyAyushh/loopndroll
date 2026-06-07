@@ -27,6 +27,19 @@ command -v xcodegen >/dev/null 2>&1 || {
   exit 1
 }
 
+launch_installed_app() {
+  /usr/bin/open "$INSTALL_PATH"
+  for _ in $(seq 1 "$PROCESS_WAIT_ATTEMPTS"); do
+    if pgrep -f "${INSTALL_PATH}/Contents/MacOS/LooperMenuBar" >/dev/null; then
+      return
+    fi
+    sleep "$PROCESS_WAIT_SECONDS"
+  done
+
+  printf 'error: installed app did not launch: %s\n' "$INSTALL_PATH" >&2
+  exit 1
+}
+
 xcodegen generate --spec "${PROJECT_DIR}/project.yml" --project "${PROJECT_DIR}"
 
 xcodebuild \
@@ -62,6 +75,7 @@ if [[ "$install_app" == "true" ]]; then
   fi
   ditto "$app_path" "$INSTALL_PATH"
   codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH"
+  launch_installed_app
 fi
 
 printf 'app=%s\n' "$app_path"
