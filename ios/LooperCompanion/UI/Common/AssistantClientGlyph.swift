@@ -1,4 +1,3 @@
-import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -11,7 +10,7 @@ struct AssistantClientGlyph: View {
 
     var body: some View {
         if client == .codex {
-            CodexLogoMark(isWorking: isWorking)
+            CodexLogoMark()
                 .frame(width: Self.size, height: Self.size)
                 .accessibilityLabel(client.displayTitle)
         } else if let surface = CompanionAssistantSurface(assistantClient: client) {
@@ -29,36 +28,16 @@ struct AssistantClientGlyph: View {
 }
 
 private struct CodexLogoMark: View {
-    let isWorking: Bool
-
     @Environment(\.colorScheme) private var colorScheme
-    @State private var isHovering = false
-
-    private var shouldPlay: Bool {
-        isWorking || isHovering
-    }
 
     private var asset: CodexLogoAsset.Variant {
         CodexLogoAsset.variant(for: colorScheme)
     }
 
     var body: some View {
-        ZStack {
-            CodexLogoPoster(resourceName: asset.posterName)
-
-            if shouldPlay {
-                LoopingResourceVideoView(
-                    resourceName: asset.videoName,
-                    resourceExtension: CodexLogoAsset.videoExtension,
-                    isPlaying: shouldPlay
-                )
-                .mask(CodexLogoPoster(resourceName: asset.posterName))
-                .transition(.opacity)
-            }
-        }
+        CodexLogoPoster(resourceName: asset.posterName)
         .clipShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
         .contentShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
-        .onHover { isHovering = $0 }
     }
 }
 
@@ -72,111 +51,6 @@ private struct CodexLogoPoster: View {
                 .scaledToFill()
         } else {
             AssistantSurfaceLogoMark(surface: .codex)
-        }
-    }
-}
-
-private struct LoopingResourceVideoView: UIViewRepresentable {
-    let resourceName: String
-    let resourceExtension: String
-    let isPlaying: Bool
-
-    func makeUIView(context _: Context) -> LoopingVideoUIView {
-        let view = LoopingVideoUIView()
-        view.configure(url: Bundle.main.url(forResource: resourceName, withExtension: resourceExtension))
-        view.setPlaying(isPlaying)
-        return view
-    }
-
-    func updateUIView(_ uiView: LoopingVideoUIView, context _: Context) {
-        uiView.setPlaying(isPlaying)
-    }
-}
-
-private final class LoopingVideoUIView: UIView {
-    private var queuePlayer: AVQueuePlayer?
-    private var playerLooper: AVPlayerLooper?
-    private var configuredURL: URL?
-    private var isCurrentlyPlaying = false
-
-    override static var layerClass: AnyClass {
-        AVPlayerLayer.self
-    }
-
-    private var playerLayer: AVPlayerLayer {
-        layer as! AVPlayerLayer
-    }
-
-    func configure(url: URL?) {
-        guard configuredURL != url else {
-            return
-        }
-
-        queuePlayer?.pause()
-        queuePlayer = nil
-        playerLooper = nil
-        playerLayer.player = nil
-        configuredURL = url
-        isCurrentlyPlaying = false
-
-        guard let url else {
-            return
-        }
-
-        DecorativeVideoAudioSession.configureIfNeeded()
-        let playerItem = AVPlayerItem(url: url)
-        let player = AVQueuePlayer()
-        player.isMuted = true
-        player.volume = DecorativeVideoAudioSession.silentVolume
-        player.allowsExternalPlayback = false
-        player.preventsDisplaySleepDuringVideoPlayback = false
-        player.actionAtItemEnd = .none
-        queuePlayer = player
-        playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
-        playerLayer.player = player
-        playerLayer.videoGravity = .resizeAspectFill
-    }
-
-    func setPlaying(_ shouldPlay: Bool) {
-        guard let queuePlayer else {
-            return
-        }
-
-        guard shouldPlay != isCurrentlyPlaying else {
-            return
-        }
-
-        isCurrentlyPlaying = shouldPlay
-        if shouldPlay {
-            queuePlayer.play()
-        } else {
-            queuePlayer.pause()
-        }
-    }
-}
-
-@MainActor
-private enum DecorativeVideoAudioSession {
-    static let silentVolume: Float = 0
-
-    private static var isConfigured = false
-
-    static func configureIfNeeded() {
-        guard !isConfigured else {
-            return
-        }
-
-        do {
-            try AVAudioSession.sharedInstance().setCategory(
-                .ambient,
-                mode: .default,
-                options: [.mixWithOthers]
-            )
-            isConfigured = true
-        } catch {
-            CompanionDiagnostics.record(
-                "decorative-video:audio-session-failed error=\(error.localizedDescription)"
-            )
         }
     }
 }
