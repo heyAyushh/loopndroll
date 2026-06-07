@@ -762,18 +762,19 @@ impl ControlPlane {
                 .filter(|session| session.running)
                 .count(),
         };
-        desktop_threads.extend(grok_sessions.iter().map(grok_session_to_desktop_thread));
+        desktop_threads.extend(
+            limited_items(&grok_sessions, thread_limit).map(grok_session_to_desktop_thread),
+        );
         let devin_sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
-        desktop_threads.extend(devin_sessions.iter().map(devin_session_to_desktop_thread));
+        desktop_threads.extend(
+            limited_items(&devin_sessions, thread_limit).map(devin_session_to_desktop_thread),
+        );
         desktop_threads.sort_by(|left, right| {
             right
                 .updated_at_ms
                 .unwrap_or_default()
                 .cmp(&left.updated_at_ms.unwrap_or_default())
         });
-        if let Some(limit) = thread_limit {
-            desktop_threads.truncate(limit);
-        }
         let visible_codex_threads = snapshot_codex_threads;
 
         let compactions = read_recent_compaction_events(
@@ -1093,6 +1094,10 @@ fn codex_threads_for_snapshot(
         threads.truncate(limit);
     }
     threads
+}
+
+fn limited_items<T>(items: &[T], limit: Option<usize>) -> impl Iterator<Item = &T> {
+    items.iter().take(limit.unwrap_or(items.len()))
 }
 
 fn desktop_thread_to_thread_record(thread: &DesktopThread) -> ThreadRecord {

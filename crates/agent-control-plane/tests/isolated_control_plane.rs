@@ -26,6 +26,8 @@ use tower::ServiceExt;
 const MOBILE_SNAPSHOT_VISIBLE_THREAD_LIMIT: usize = 12;
 const EXTRA_MOBILE_SNAPSHOT_THREADS: usize = 20;
 const EXTRA_THREAD_BASE_TIMESTAMP_MS: i64 = 3_000;
+const DEVIN_FIXTURE_EVENT_UPDATED_AT_MS: i64 = 1_780_801_814_955;
+const NEWER_THAN_DEVIN_THREAD_BASE_TIMESTAMP_MS: i64 = DEVIN_FIXTURE_EVENT_UPDATED_AT_MS + 1_000;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -1524,6 +1526,32 @@ async fn desktop_snapshot_includes_devin_sessions() {
 }
 
 #[tokio::test]
+async fn mobile_devin_surface_survives_menu_snapshot_limit() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    fixture.append_newer_than_devin_state_threads(EXTRA_MOBILE_SNAPSHOT_THREADS);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let devin_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let devin_sessions = devin_snapshot["sessions"].as_array().expect("sessions");
+
+    assert_eq!(devin_sessions.len(), 1);
+    assert_eq!(devin_sessions[0]["id"], "devin:devin-cli:brindle-cadet");
+    assert_eq!(devin_sessions[0]["assistantClient"], "devin");
+}
+
+#[tokio::test]
 async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2405,7 +2433,7 @@ impl IsolatedCodexFixture {
                         "acp/devin-cli/brindle-cadet": {
                             "uuid": "event-1",
                             "eventCount": 3,
-                            "lastUpdated": 1780801814955_i64
+                            "lastUpdated": DEVIN_FIXTURE_EVENT_UPDATED_AT_MS
                         }
                     }))
                     .expect("event index json"),
@@ -2615,14 +2643,22 @@ insert into thread_dynamic_tools values
     }
 
     fn append_state_threads(&self, count: usize) {
+        self.append_state_threads_with_base(count, EXTRA_THREAD_BASE_TIMESTAMP_MS);
+    }
+
+    fn append_newer_than_devin_state_threads(&self, count: usize) {
+        self.append_state_threads_with_base(count, NEWER_THAN_DEVIN_THREAD_BASE_TIMESTAMP_MS);
+    }
+
+    fn append_state_threads_with_base(&self, count: usize, base_timestamp_ms: i64) {
         let mut connection =
             Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
         let transaction = connection.transaction().expect("state transaction");
         for index in 0..count {
             let thread_id = format!("thread-extra-{index:02}");
             let title = format!("Extra task {index}");
-            let timestamp = EXTRA_THREAD_BASE_TIMESTAMP_MS
-                + i64::try_from(index).expect("thread index fits timestamp");
+            let timestamp =
+                base_timestamp_ms + i64::try_from(index).expect("thread index fits timestamp");
             transaction
                 .execute(
                     r#"
