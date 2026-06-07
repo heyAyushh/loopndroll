@@ -1,3 +1,4 @@
+import CoreSpotlight
 import Foundation
 
 enum LooperContinuationActivity {
@@ -20,12 +21,34 @@ enum LooperContinuationActivity {
         static let sessionPrefix = "looper.session."
     }
 
+    static func isSupportedActivityType(_ activityType: String) -> Bool {
+        activityType == Self.activityType || activityType == CSSearchableItemActionType
+    }
+
+    static func sessionDeepLinkURL(sessionID: String) -> URL? {
+        let pathAllowedCharacters = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/")
+        )
+        guard let encodedSessionID = sessionID.addingPercentEncoding(
+            withAllowedCharacters: pathAllowedCharacters
+        ) else {
+            return nil
+        }
+
+        var components = URLComponents()
+        components.scheme = deepLinkScheme
+        components.host = sessionDeepLinkHost
+        components.path = "/\(encodedSessionID)"
+        return components.url
+    }
+
     static func sessionID(from activity: NSUserActivity) -> String? {
-        guard activity.activityType == activityType else {
+        guard isSupportedActivityType(activity.activityType) else {
             return nil
         }
 
         return sessionIDFromUserInfo(activity)
+            ?? sessionIDFromSpotlightActivity(activity)
             ?? sessionIDFromTargetContentIdentifier(activity)
             ?? sessionIDFromWebpageURL(activity)
     }
@@ -84,6 +107,16 @@ enum LooperContinuationActivity {
 
     private static func sessionIDFromUserInfo(_ activity: NSUserActivity) -> String? {
         (activity.userInfo?[UserInfoKey.sessionID] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
+    private static func sessionIDFromSpotlightActivity(_ activity: NSUserActivity) -> String? {
+        guard activity.activityType == CSSearchableItemActionType else {
+            return nil
+        }
+
+        return (activity.userInfo?[CSSearchableItemActivityIdentifier] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
     }

@@ -510,23 +510,23 @@ final class CompanionAppModel {
     }
 
     func continueFromMacActivity(_ activity: NSUserActivity) async {
-        guard activity.activityType == LooperContinuationActivity.activityType else {
-            CompanionDiagnostics.record("handoff:model-ignore type=\(activity.activityType)")
+        guard LooperContinuationActivity.isSupportedActivityType(activity.activityType) else {
+            CompanionDiagnostics.record("continuation:model-ignore type=\(activity.activityType)")
             return
         }
 
         guard let sessionID = LooperContinuationActivity.sessionID(from: activity) else {
-            CompanionDiagnostics.lifecycle.info("Handoff activity had no session id; refreshing snapshot")
-            CompanionDiagnostics.record("handoff:model-refresh-no-session")
+            CompanionDiagnostics.lifecycle.info("Continuation activity had no session id; refreshing snapshot")
+            CompanionDiagnostics.record("continuation:model-refresh-no-session")
             await refresh()
             return
         }
 
         adoptHandoffBaseURLIfAvailable(from: activity)
         CompanionDiagnostics.lifecycle.info(
-            "Handoff continuing session id=\(sessionID, privacy: .public)"
+            "Continuation opening session id=\(sessionID, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:model-session id=\(sessionID)")
+        CompanionDiagnostics.record("continuation:model-session id=\(sessionID)")
         await continueFromMacSession(id: sessionID)
     }
 
@@ -540,15 +540,15 @@ final class CompanionAppModel {
 
     func continueFromMacURL(_ url: URL) async {
         guard let sessionID = LooperContinuationActivity.sessionID(from: url) else {
-            CompanionDiagnostics.record("handoff:url-ignore url=\(url.absoluteString)")
+            CompanionDiagnostics.record("continuation:url-ignore url=\(url.absoluteString)")
             return
         }
 
         adoptHandoffBaseURLIfAvailable(from: url)
         CompanionDiagnostics.lifecycle.info(
-            "Handoff URL continuing session id=\(sessionID, privacy: .public)"
+            "Continuation URL opening session id=\(sessionID, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:url-session id=\(sessionID)")
+        CompanionDiagnostics.record("continuation:url-session id=\(sessionID)")
         await continueFromMacSession(id: sessionID)
     }
 
@@ -579,7 +579,6 @@ final class CompanionAppModel {
 
     private func adoptHandoffBaseURLIfAvailable(from activity: NSUserActivity) {
         guard let handoffBaseURL = LooperContinuationActivity.baseURL(from: activity) else {
-            CompanionDiagnostics.record("handoff:base-url-missing")
             return
         }
 
@@ -588,7 +587,6 @@ final class CompanionAppModel {
 
     private func adoptHandoffBaseURLIfAvailable(from url: URL) {
         guard let handoffBaseURL = LooperContinuationActivity.baseURL(from: url) else {
-            CompanionDiagnostics.record("handoff:url-base-url-missing")
             return
         }
 

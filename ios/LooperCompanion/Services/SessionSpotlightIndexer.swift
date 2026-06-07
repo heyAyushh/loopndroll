@@ -37,6 +37,7 @@ struct SessionSearchableItem {
         let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
         attributeSet.title = session.title
         attributeSet.contentDescription = session.assistantPreview ?? "Session \(session.ref)"
+        attributeSet.contentURL = LooperContinuationActivity.sessionDeepLinkURL(sessionID: session.id)
         attributeSet.textContent = [
             session.ref,
             session.title,

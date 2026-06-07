@@ -60,9 +60,9 @@ final class LooperContinuationInbox {
     func enqueue(_ activity: NSUserActivity) {
         pendingActivities.append(activity)
         CompanionDiagnostics.lifecycle.info(
-            "Queued Handoff activity type=\(activity.activityType, privacy: .public)"
+            "Queued continuation activity type=\(activity.activityType, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:inbox-enqueue type=\(activity.activityType)")
+        CompanionDiagnostics.record("continuation:inbox-enqueue type=\(activity.activityType)")
         NotificationCenter.default.post(
             name: .looperDidReceiveContinuationActivity,
             object: activity
@@ -81,11 +81,11 @@ final class LooperAppDelegate: NSObject, UIApplicationDelegate {
         _: UIApplication,
         willContinueUserActivityWithType userActivityType: String
     ) -> Bool {
-        let canContinue = userActivityType == LooperContinuationActivity.activityType
+        let canContinue = LooperContinuationActivity.isSupportedActivityType(userActivityType)
         CompanionDiagnostics.lifecycle.info(
-            "Handoff willContinue type=\(userActivityType, privacy: .public) accepted=\(canContinue, privacy: .public)"
+            "Continuation willContinue type=\(userActivityType, privacy: .public) accepted=\(canContinue, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:will-continue type=\(userActivityType) accepted=\(canContinue)")
+        CompanionDiagnostics.record("continuation:will-continue type=\(userActivityType) accepted=\(canContinue)")
         return canContinue
     }
 
@@ -94,15 +94,15 @@ final class LooperAppDelegate: NSObject, UIApplicationDelegate {
         continue userActivity: NSUserActivity,
         restorationHandler: @escaping ([any UIUserActivityRestoring]?) -> Void
     ) -> Bool {
-        guard userActivity.activityType == LooperContinuationActivity.activityType else {
-            CompanionDiagnostics.record("handoff:delegate-ignore type=\(userActivity.activityType)")
+        guard LooperContinuationActivity.isSupportedActivityType(userActivity.activityType) else {
+            CompanionDiagnostics.record("continuation:delegate-ignore type=\(userActivity.activityType)")
             return false
         }
 
         CompanionDiagnostics.lifecycle.info(
-            "Handoff delegate continue type=\(userActivity.activityType, privacy: .public)"
+            "Continuation delegate continue type=\(userActivity.activityType, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:delegate-continue type=\(userActivity.activityType)")
+        CompanionDiagnostics.record("continuation:delegate-continue type=\(userActivity.activityType)")
         Task { @MainActor in
             LooperContinuationInbox.shared.enqueue(userActivity)
         }
@@ -115,14 +115,14 @@ final class LooperAppDelegate: NSObject, UIApplicationDelegate {
         didFailToContinueUserActivityWithType userActivityType: String,
         error: any Error
     ) {
-        guard userActivityType == LooperContinuationActivity.activityType else {
+        guard LooperContinuationActivity.isSupportedActivityType(userActivityType) else {
             return
         }
 
         CompanionDiagnostics.lifecycle.error(
-            "Handoff continuation failed error=\(error.localizedDescription, privacy: .public)"
+            "Continuation failed error=\(error.localizedDescription, privacy: .public)"
         )
-        CompanionDiagnostics.record("handoff:continue-failed error=\(error.localizedDescription)")
+        CompanionDiagnostics.record("continuation:continue-failed error=\(error.localizedDescription)")
     }
 
     func application(
