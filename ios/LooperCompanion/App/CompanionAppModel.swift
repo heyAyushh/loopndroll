@@ -40,6 +40,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
+    @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
@@ -570,7 +571,7 @@ final class CompanionAppModel {
 
     private func continueFromMacSession(id sessionID: String) async {
         pendingOpenSessionID = sessionID
-        if snapshot == nil || snapshot?.sessions.first(where: { $0.id == sessionID }) == nil {
+        if snapshot == nil || snapshot?.session(withID: sessionID) == nil {
             await loadSnapshot()
         }
         selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
@@ -634,6 +635,15 @@ final class CompanionAppModel {
     }
 
     func refreshSessionDetail(id: String) async {
+        guard !loadingSessionDetailIDs.contains(id) else {
+            return
+        }
+
+        loadingSessionDetailIDs.insert(id)
+        defer {
+            loadingSessionDetailIDs.remove(id)
+        }
+
         do {
             detailBySessionID[id] = try await service.loadSessionDetail(
                 id: id,
@@ -711,7 +721,7 @@ final class CompanionAppModel {
     ) async {
         switch action {
         case .openSession:
-            if snapshot == nil {
+            if snapshot == nil || snapshot?.session(withID: sessionID) == nil {
                 await loadSnapshot()
             }
             selectAssistantSurfaceContainingSessionIfAvailable(sessionID)

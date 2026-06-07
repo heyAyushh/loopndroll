@@ -1303,6 +1303,16 @@ struct MobileSnapshot: Codable, Sendable {
         return Array(sessionsByID.values)
     }
 
+    func session(withID sessionID: String) -> SessionSummary? {
+        if let session = sessions.first(where: { session in session.id == sessionID }) {
+            return session
+        }
+
+        return sessionsAcrossSurfaces.first { session in
+            session.id == sessionID
+        }
+    }
+
     func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
         CompanionAssistantSurface.allCases.first { surface in
             sessions(for: surface).contains { session in

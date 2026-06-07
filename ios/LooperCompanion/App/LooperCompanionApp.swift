@@ -1,3 +1,4 @@
+import CoreSpotlight
 import SwiftUI
 import UserNotifications
 
@@ -19,6 +20,9 @@ struct LooperApp: App {
             RootTabView(model: model, authenticator: authenticator)
                 .preferredColorScheme(appearanceMode.colorScheme)
                 .onContinueUserActivity(LooperContinuationActivity.activityType) { activity in
+                    handleContinuationActivity(activity)
+                }
+                .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     handleContinuationActivity(activity)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .looperDidReceiveContinuationActivity)) { notification in

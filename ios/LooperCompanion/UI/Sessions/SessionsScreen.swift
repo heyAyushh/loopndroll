@@ -221,7 +221,7 @@ struct SessionsScreen: View {
     }
 
     private var snapshotSessionIDs: [String] {
-        model.snapshot?.sessions.map(\.id) ?? []
+        model.snapshot?.sessionsAcrossSurfaces.map(\.id).sorted() ?? []
     }
 
     private var recentSectionFooter: String {
@@ -260,7 +260,7 @@ struct SessionsScreen: View {
 
     private func openPendingSessionIfNeeded() {
         guard let sessionID = model.pendingOpenSessionID,
-              let session = model.snapshot?.sessions.first(where: { $0.id == sessionID })
+              let session = model.snapshot?.session(withID: sessionID)
         else {
             return
         }
