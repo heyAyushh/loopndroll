@@ -30,6 +30,9 @@ resolve_macos_provisioning_profile() {
     return
   fi
 
+  local expected_application_identifier="$MACOS_APPLICATION_IDENTIFIER"
+  local fallback_profile=""
+  local fallback_application_identifier=""
   local profile
   for profile in "${MACOS_PROVISIONING_PROFILE_DIR}"/*.provisionprofile; do
     [[ -f "$profile" ]] || continue
@@ -42,9 +45,45 @@ resolve_macos_provisioning_profile() {
     team_identifier="$(security cms -D -i "$profile" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -o - - 2>/dev/null || true)"
     [[ "$team_identifier" == "$CODE_SIGN_TEAM_ID" ]] || continue
 
-    printf '%s\n' "$profile"
-    return
+    local application_identifier
+    application_identifier="$(profile_application_identifier "$profile")"
+    if [[ "$application_identifier" == "$expected_application_identifier" ]]; then
+      printf '%s\n' "$profile"
+      return
+    fi
+
+    if [[ -z "$fallback_profile" ]]; then
+      fallback_profile="$profile"
+      fallback_application_identifier="$application_identifier"
+    fi
   done
+
+  if [[ -n "$fallback_profile" ]]; then
+    printf 'warning: using fallback macOS provisioning profile with application-identifier=%s; expected %s\n' \
+      "${fallback_application_identifier:-unknown}" \
+      "$expected_application_identifier" >&2
+    printf '%s\n' "$fallback_profile"
+  fi
+}
+
+profile_application_identifier() {
+  security cms -D -i "$1" 2>/dev/null |
+    plutil -extract Entitlements json -o - - 2>/dev/null |
+    node -e '
+const fs = require("fs");
+const entitlements = JSON.parse(fs.readFileSync(0, "utf8"));
+process.stdout.write(entitlements["com.apple.application-identifier"] || entitlements["application-identifier"] || "");
+' 2>/dev/null || true
+}
+
+write_macos_entitlements() {
+  local output_path="$1"
+  plutil -create xml1 "$output_path"
+  "$PLIST_BUDDY" -c "Add :com.apple.application-identifier string ${MACOS_APPLICATION_IDENTIFIER}" "$output_path"
+  "$PLIST_BUDDY" -c "Add :com.apple.developer.team-identifier string ${CODE_SIGN_TEAM_ID}" "$output_path"
+  if [[ "$CODE_SIGN_IDENTITY" == Apple\ Development:* ]]; then
+    "$PLIST_BUDDY" -c "Add :com.apple.security.get-task-allow bool true" "$output_path"
+  fi
 }
 
 APP_NAME="looper"
@@ -52,10 +91,10 @@ BUNDLE_ID="dev.looper.app.ios"
 LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
+MACOS_APPLICATION_IDENTIFIER="${CODE_SIGN_TEAM_ID}.${BUNDLE_ID}"
 CODE_SIGN_IDENTITY="$(resolve_code_sign_identity)"
 MACOS_PROVISIONING_PROFILE_DIR="${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles"
 ENABLE_MACOS_ENTITLEMENTS="${LOOPER_MACOS_ENABLE_ENTITLEMENTS:-auto}"
-PROVISIONING_PROFILE="$(resolve_macos_provisioning_profile)"
 CONTROL_PLANE_CRATE="crates/agent-control-plane/Cargo.toml"
 ICON_SOURCE="ios/LooperCompanion/looper.icon/Assets/notification-orb.png"
 MENU_BAR_PACKAGE_PATH="macos/LooperMenuBar"
@@ -70,6 +109,7 @@ ICON_SIZES=(16 32 128 256 512)
 PROCESS_WAIT_ATTEMPTS=10
 PROCESS_WAIT_SECONDS=0.2
 BACKUP_RETENTION_COUNT=3
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
 fail() {
   printf 'error: %s\n' "$1" >&2
@@ -95,9 +135,13 @@ require_command cargo
 require_command iconutil
 require_command node
 require_command plutil
+require_command security
 require_command sips
 require_command swift
 require_file "$ICON_SOURCE"
+require_file "$PLIST_BUDDY"
+
+PROVISIONING_PROFILE="$(resolve_macos_provisioning_profile)"
 
 version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
 arch="$(uname -m)"
@@ -164,8 +208,7 @@ if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" != "0" ]]; th
   else
     require_file "$PROVISIONING_PROFILE"
     cp "$PROVISIONING_PROFILE" "$embedded_profile_path"
-    security cms -D -i "$PROVISIONING_PROFILE" |
-      plutil -extract Entitlements xml1 -o "$entitlements_path" -
+    write_macos_entitlements "$entitlements_path"
     codesign_entitlements_args=(--entitlements "$entitlements_path")
   fi
 fi

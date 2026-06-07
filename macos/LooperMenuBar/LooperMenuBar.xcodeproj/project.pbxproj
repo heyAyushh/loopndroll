@@ -534,7 +534,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = LooperMenuBar;
 				SDKROOT = macosx;
 			};
@@ -560,7 +560,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = LooperMenuBar;
 				SDKROOT = macosx;
 			};
