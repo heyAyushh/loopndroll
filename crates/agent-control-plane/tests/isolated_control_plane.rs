@@ -353,7 +353,7 @@ async fn degraded_source_is_reported_without_touching_user_state() {
 }
 
 #[tokio::test]
-async fn nested_codex_hooks_json_shape_is_supported() {
+async fn nested_hooks_json_shape_is_supported() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_nested_hooks_json("agent-control-plane hook --managed-by looper");
     fixture.write_config_toml(true);
@@ -436,7 +436,9 @@ async fn unregister_hooks_removes_only_owned_rust_handlers() {
     assert!(hooks_json.contains("/usr/local/bin/custom-user-hook"));
 
     let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
-    assert!(config_toml.contains("codex_hooks = true"));
+    assert!(config_toml.contains("[features]"));
+    assert!(config_toml.contains("hooks = true"));
+    assert!(!config_toml.contains("codex_hooks"));
 
     let status = request_json(&router, "/status/control-plane").await;
     assert_eq!(status["hooks"]["registered_events"][0], "Stop");
@@ -473,7 +475,8 @@ async fn register_hooks_installs_owned_rust_handlers() {
 
     let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
     assert!(config_toml.contains("[features]"));
-    assert!(config_toml.contains("codex_hooks = true"));
+    assert!(config_toml.contains("hooks = true"));
+    assert!(!config_toml.contains("codex_hooks"));
     assert!(config_toml.contains("[model]"));
 }
 
@@ -2521,7 +2524,7 @@ impl IsolatedCodexFixture {
     fn write_config_toml(&self, enabled: bool) {
         fs::write(
             self.codex_home.join("config.toml"),
-            format!("codex_hooks = {enabled}\n"),
+            format!("[features]\nhooks = {enabled}\n"),
         )
         .expect("write config");
     }
@@ -2529,7 +2532,7 @@ impl IsolatedCodexFixture {
     fn write_config_toml_with_model_block(&self) {
         fs::write(
             self.codex_home.join("config.toml"),
-            "[model]\ndefault = \"gpt-5.5\"\n",
+            "[model]\ndefault = \"gpt-5.5\"\n\n[features]\ncodex_hooks = false\n",
         )
         .expect("write config");
     }

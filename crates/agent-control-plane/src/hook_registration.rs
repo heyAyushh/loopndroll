@@ -14,6 +14,10 @@ const STOP_HOOK_TIMEOUT_SECONDS: u64 = 86_400;
 const SESSION_STATUS_MESSAGE: &str = "looper is registering the Codex chat";
 const STOP_STATUS_MESSAGE: &str = "looper is deciding whether Codex should continue";
 const PROMPT_STATUS_MESSAGE: &str = "looper is capturing the chat prompt";
+const FEATURES_TABLE_HEADER: &str = "[features]";
+const HOOKS_FEATURE_KEY: &str = "hooks";
+const LEGACY_CODEX_HOOKS_FEATURE_KEY: &str = "codex_hooks";
+const HOOKS_FEATURE_LINE: &str = "hooks = true";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookRegistrationChange {
@@ -26,7 +30,7 @@ pub fn register_owned_hooks(
     hook_command: &str,
 ) -> Result<HookRegistrationChange> {
     fs::create_dir_all(codex_home).with_context(|| format!("create {}", codex_home.display()))?;
-    ensure_codex_hooks_feature(codex_home)?;
+    ensure_hooks_feature(codex_home)?;
 
     let hooks_path = codex_home.join("hooks.json");
     let mut document = load_hooks_document(&hooks_path)?;
@@ -170,10 +174,10 @@ fn owned_hook_handler(command: &str, timeout: u64, status_message: &str) -> Valu
     })
 }
 
-fn ensure_codex_hooks_feature(codex_home: &Path) -> Result<()> {
+fn ensure_hooks_feature(codex_home: &Path) -> Result<()> {
     let config_path = codex_home.join("config.toml");
     let current = fs::read_to_string(&config_path).unwrap_or_default();
-    let next = set_codex_hooks_enabled(&current);
+    let next = set_hooks_enabled(&current);
     if next != current {
         fs::write(&config_path, next)
             .with_context(|| format!("write {}", config_path.display()))?;
@@ -181,24 +185,21 @@ fn ensure_codex_hooks_feature(codex_home: &Path) -> Result<()> {
     Ok(())
 }
 
-fn set_codex_hooks_enabled(config_text: &str) -> String {
+fn set_hooks_enabled(config_text: &str) -> String {
     let mut lines = config_text
         .lines()
         .map(str::to_owned)
         .collect::<Vec<String>>();
+    lines.retain(|line| !is_toml_key_assignment(line, LEGACY_CODEX_HOOKS_FEATURE_KEY));
+
     if lines.is_empty() {
-        return "[features]\ncodex_hooks = true\n".to_owned();
+        return format!("{FEATURES_TABLE_HEADER}\n{HOOKS_FEATURE_LINE}\n");
     }
 
-    if let Some(index) = lines
+    if let Some(features_index) = lines
         .iter()
-        .position(|line| line.trim_start().starts_with("codex_hooks"))
+        .position(|line| line.trim() == FEATURES_TABLE_HEADER)
     {
-        lines[index] = "codex_hooks = true".to_owned();
-        return finish_config_lines(lines);
-    }
-
-    if let Some(features_index) = lines.iter().position(|line| line.trim() == "[features]") {
         let block_end_index = lines
             .iter()
             .enumerate()
@@ -208,16 +209,35 @@ fn set_codex_hooks_enabled(config_text: &str) -> String {
                 (trimmed.starts_with('[') && trimmed.ends_with(']')).then_some(index)
             })
             .unwrap_or(lines.len());
-        lines.insert(block_end_index, "codex_hooks = true".to_owned());
+        if let Some(hooks_index) = lines[features_index + 1..block_end_index]
+            .iter()
+            .position(|line| is_toml_key_assignment(line, HOOKS_FEATURE_KEY))
+            .map(|index| features_index + 1 + index)
+        {
+            lines[hooks_index] = HOOKS_FEATURE_LINE.to_owned();
+        } else {
+            lines.insert(block_end_index, HOOKS_FEATURE_LINE.to_owned());
+        }
     } else {
         if lines.last().is_some_and(|line| !line.trim().is_empty()) {
             lines.push(String::new());
         }
-        lines.push("[features]".to_owned());
-        lines.push("codex_hooks = true".to_owned());
+        lines.push(FEATURES_TABLE_HEADER.to_owned());
+        lines.push(HOOKS_FEATURE_LINE.to_owned());
     }
 
     finish_config_lines(lines)
+}
+
+fn is_toml_key_assignment(line: &str, key: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    let Some((candidate_key, _)) = trimmed.split_once('=') else {
+        return false;
+    };
+    candidate_key.trim_end() == key
 }
 
 fn finish_config_lines(lines: Vec<String>) -> String {
@@ -318,4 +338,34 @@ fn is_owned_hook_command(command: &str) -> bool {
         .iter()
         .chain(LEGACY_BUN_HOOK_COMMAND_MARKERS)
         .any(|marker| normalized.contains(marker))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_hooks_enabled;
+
+    #[test]
+    fn hook_feature_writer_uses_stable_key_for_empty_config() {
+        assert_eq!(set_hooks_enabled(""), "[features]\nhooks = true\n");
+    }
+
+    #[test]
+    fn hook_feature_writer_replaces_disabled_stable_key() {
+        assert_eq!(
+            set_hooks_enabled("[features]\nhooks = false\n"),
+            "[features]\nhooks = true\n"
+        );
+    }
+
+    #[test]
+    fn hook_feature_writer_removes_legacy_key() {
+        let next = set_hooks_enabled(
+            "[model]\ndefault = \"gpt-5.5\"\n\n[features]\ncodex_hooks = false\n",
+        );
+
+        assert!(next.contains("[model]"));
+        assert!(next.contains("[features]"));
+        assert!(next.contains("hooks = true"));
+        assert!(!next.contains("codex_hooks"));
+    }
 }

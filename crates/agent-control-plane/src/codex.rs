@@ -589,14 +589,9 @@ fn read_hooks_enabled(path: &Path) -> Result<bool> {
     let content = std::fs::read_to_string(path)?;
     let value: toml::Value = toml::from_str(&content)?;
     Ok(value
-        .get("codex_hooks")
+        .get("features")
+        .and_then(|features| features.get("hooks"))
         .and_then(toml::Value::as_bool)
-        .or_else(|| {
-            value
-                .get("features")
-                .and_then(|features| features.get("codex_hooks"))
-                .and_then(toml::Value::as_bool)
-        })
         .unwrap_or(false))
 }
 
