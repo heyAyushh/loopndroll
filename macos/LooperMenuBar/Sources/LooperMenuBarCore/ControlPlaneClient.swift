@@ -14,7 +14,6 @@ public enum ControlPlaneEndpoint: Equatable {
     case controlPlaneStatus
     case desktopSnapshot
     case devinAcpBridgeProbe
-    case devinAcpBridgeAttach
 
     public var path: String {
         switch self {
@@ -32,14 +31,12 @@ public enum ControlPlaneEndpoint: Equatable {
             "/desktop/snapshot"
         case .devinAcpBridgeProbe:
             "/desktop/devin/acp-bridge/probe"
-        case .devinAcpBridgeAttach:
-            "/desktop/devin/acp-bridge/attach"
         }
     }
 
     public var method: String {
         switch self {
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe, .devinAcpBridgeAttach:
+        case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe:
             "POST"
         case .controlPlaneStatus, .desktopSnapshot, .mobileHealth:
             "GET"
@@ -51,7 +48,7 @@ public enum ControlPlaneEndpoint: Equatable {
         case .desktopSnapshot:
             [URLQueryItem(name: "profile", value: "menu")]
         case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
-             .devinAcpBridgeProbe, .devinAcpBridgeAttach:
+             .devinAcpBridgeProbe:
             []
         }
     }
@@ -61,7 +58,7 @@ public enum ControlPlaneEndpoint: Equatable {
         case .desktopSnapshot:
             LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
         case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
-             .devinAcpBridgeProbe, .devinAcpBridgeAttach:
+             .devinAcpBridgeProbe:
             LooperLifecycleDefaults.requestTimeoutSeconds
         }
     }
@@ -81,7 +78,6 @@ public protocol ControlPlaneClient: Sendable {
     func fetchDesktopSnapshot() async throws -> DesktopSnapshotResponse
     func fetchMobileHealth() async throws -> MobileHealthResponse
     func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse
-    func attachDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeAttachResponse
 }
 
 public final class ControlPlaneEndpointStore: @unchecked Sendable {
@@ -149,14 +145,6 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try await postJSON(
             DevinAcpBridgeProbeResponse.self,
             to: .devinAcpBridgeProbe,
-            body: DevinAcpBridgeProbeRequest(agentId: agentId)
-        )
-    }
-
-    public func attachDevinAcpBridge(agentId: String? = nil) async throws -> DevinAcpBridgeAttachResponse {
-        try await postJSON(
-            DevinAcpBridgeAttachResponse.self,
-            to: .devinAcpBridgeAttach,
             body: DevinAcpBridgeProbeRequest(agentId: agentId)
         )
     }
@@ -510,9 +498,9 @@ public struct DevinAcpBridgeStatus: Codable, Equatable, Sendable {
 
     public var defaultProbeAgent: DevinAcpBridgeAgent? {
         guard let defaultAgentId = actions.compactMap(\.defaultAgentId).first else {
-            return agents.first(where: \.attachCapable)
+            return agents.first(where: \.probeCapable)
         }
-        return agents.first { $0.id == defaultAgentId } ?? agents.first(where: \.attachCapable)
+        return agents.first { $0.id == defaultAgentId } ?? agents.first(where: \.probeCapable)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -548,8 +536,8 @@ public struct DevinAcpBridgeAgent: Codable, Equatable, Sendable {
     public let launchConfigured: Bool
     public let controlLevel: String
 
-    public var attachCapable: Bool {
-        enabled && launchConfigured && controlLevel == "client-capable"
+    public var probeCapable: Bool {
+        enabled && launchConfigured && controlLevel == "agent-configured"
     }
 
     enum CodingKeys: String, CodingKey {
@@ -577,51 +565,6 @@ public struct DevinAcpBridgeProbeRequest: Codable, Equatable, Sendable {
 public struct DevinAcpBridgeProbeResponse: Codable, Equatable, Sendable {
     public let probe: DevinAcpBridgeProbe
     public let bridge: DevinAcpBridgeStatus
-    public let attachSession: DevinAcpAttachSession?
-}
-
-public struct DevinAcpBridgeAttachResponse: Codable, Equatable, Sendable {
-    public let attach: DevinAcpBridgeAttach
-    public let bridge: DevinAcpBridgeStatus
-    public let attachSession: DevinAcpAttachSession?
-}
-
-public struct DevinAcpBridgeAttach: Codable, Equatable, Sendable {
-    public let ok: Bool
-    public let status: String
-    public let agentId: String?
-    public let name: String?
-    public let attachReady: Bool
-    public let detail: String
-    public let blockers: [String]
-    public let limitations: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case ok
-        case status
-        case agentId = "agent_id"
-        case name
-        case attachReady = "attach_ready"
-        case detail
-        case blockers
-        case limitations
-    }
-}
-
-public struct DevinAcpAttachSession: Codable, Equatable, Sendable {
-    public let agentId: String
-    public let agentName: String?
-    public let attachedAt: String
-    public let status: String
-    public let detail: String
-
-    enum CodingKeys: String, CodingKey {
-        case agentId = "agent_id"
-        case agentName = "agent_name"
-        case attachedAt = "attached_at"
-        case status
-        case detail
-    }
 }
 
 public struct DevinAcpBridgeProbe: Codable, Equatable, Sendable {
@@ -629,7 +572,7 @@ public struct DevinAcpBridgeProbe: Codable, Equatable, Sendable {
     public let status: String
     public let agentId: String?
     public let name: String?
-    public let attachReady: Bool
+    public let ready: Bool
     public let launchConfigured: Bool
     public let blockers: [String]
     public let detail: String
@@ -639,7 +582,7 @@ public struct DevinAcpBridgeProbe: Codable, Equatable, Sendable {
         case status
         case agentId = "agent_id"
         case name
-        case attachReady = "attach_ready"
+        case ready
         case launchConfigured = "launch_configured"
         case blockers
         case detail

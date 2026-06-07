@@ -290,8 +290,8 @@ struct HTTPControlPlaneClientTests {
               "devin_desktop": {
                 "acp_bridge": {
                   "available": true,
-                  "control_level": "client-capable",
-                  "summary": "Devin ACP bridge can attach to configured agent transports after explicit approval",
+                  "control_level": "agent-configured",
+                  "summary": "Devin Desktop agents are visible from the local ACP registry",
                   "actions": [],
                   "agents": []
                 }
@@ -585,34 +585,10 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
               "probe": {
                 "ok": false,
                 "status": "blocked",
-                "attach_ready": false,
+                "ready": false,
                 "launch_configured": false,
                 "blockers": [],
                 "detail": "test"
-              },
-              "bridge": {
-                "available": false,
-                "control_level": "visibility-only",
-                "summary": "Unavailable",
-                "actions": [],
-                "agents": []
-              }
-            }
-            """
-        )
-    }
-
-    func attachDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeAttachResponse {
-        try decodeFixture(
-            """
-            {
-              "attach": {
-                "ok": false,
-                "status": "blocked",
-                "attach_ready": false,
-                "detail": "test",
-                "blockers": [],
-                "limitations": []
               },
               "bridge": {
                 "available": false,

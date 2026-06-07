@@ -77,12 +77,12 @@ fn print_table(value: &Value) -> Result<()> {
         }
     }
     if let Some(probe) = value.get("probe") {
-        println!("agent_id\tstatus\tattach_ready\tprobe_kind\tdetail");
+        println!("agent_id\tstatus\tready\tprobe_kind\tdetail");
         println!(
             "{}\t{}\t{}\t{}\t{}",
             scalar_text(probe.get("agent_id").unwrap_or(&Value::Null)),
             scalar_text(probe.get("status").unwrap_or(&Value::Null)),
-            scalar_text(probe.get("attach_ready").unwrap_or(&Value::Null)),
+            scalar_text(probe.get("ready").unwrap_or(&Value::Null)),
             scalar_text(probe.get("probe_kind").unwrap_or(&Value::Null)),
             scalar_text(probe.get("detail").unwrap_or(&Value::Null))
         );

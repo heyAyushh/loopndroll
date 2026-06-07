@@ -22,7 +22,6 @@ const DEVIN_STABLE_ORIGINATOR: &str = "Devin";
 const DEVIN_DESKTOP_SOURCE: &str = "devin-desktop";
 const DEVIN_THREAD_ID_PREFIX: &str = "devin";
 const DEVIN_ACP_SESSION_PREFIX: &str = "acp/";
-const DEVIN_PROVIDER_PREFIX: &str = "devin";
 const DEVIN_IDLE_STATUS: &str = "idle";
 const DEVIN_END_TURN_STATUS: &str = "end_turn";
 const USER_RELATIVE_PATH: &str = "User";
@@ -256,7 +255,6 @@ fn discover_devin_sessions_for_source(
     Ok(metadata_cache
         .sessions
         .into_iter()
-        .filter(|session| session.provider_id.starts_with(DEVIN_PROVIDER_PREFIX))
         .map(|session| {
             session_record_from_metadata(session, &event_log_index, &events_path, originator)
         })
@@ -429,7 +427,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn discovers_devin_cli_sessions_from_metadata_and_event_index() {
+    fn discovers_devin_desktop_sessions_for_all_agent_providers() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let home = temp_dir.path();
         let app_support = home.join(DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH);
@@ -495,7 +493,7 @@ mod tests {
                     {
                         "sessionId": "acp/codex/thread",
                         "providerId": "codex",
-                        "title": "not Devin"
+                        "title": "Codex inside Devin"
                     }
                 ]
             }),
@@ -510,7 +508,7 @@ mod tests {
 
         let sessions = discover_devin_sessions(home).expect("sessions");
 
-        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].thread_id, "devin:devin-cli:brindle-cadet");
         assert_eq!(sessions[0].session_id, "acp/devin-cli/brindle-cadet");
         assert_eq!(sessions[0].provider_id, "devin-cli");
@@ -527,6 +525,14 @@ mod tests {
                 .contains("hidden")
         );
         assert!(!sessions[0].is_active());
+
+        let codex_session = sessions
+            .iter()
+            .find(|session| session.provider_id == "codex")
+            .expect("codex session hosted by Devin Desktop");
+        assert_eq!(codex_session.thread_id, "devin:codex:thread");
+        assert_eq!(codex_session.originator, DEVIN_NEXT_ORIGINATOR);
+        assert_eq!(codex_session.title.as_deref(), Some("Codex inside Devin"));
     }
 
     #[test]

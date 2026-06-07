@@ -7,7 +7,7 @@ use super::registry::{DevinAcpAgent, DevinAcpRegistryStatus};
 
 const ACP_BRIDGE_SOURCE: &str = "devin-acp-registry";
 const ACP_BRIDGE_PROBE_ACTION_ID: &str = "probe";
-const ACP_BRIDGE_PROBE_ACTION_LABEL: &str = "Probe ACP agent";
+const ACP_BRIDGE_PROBE_ACTION_LABEL: &str = "Probe Devin agent";
 const ACP_BRIDGE_PROBE_METHOD: &str = "POST";
 const ACP_BRIDGE_PROBE_PATH: &str = "/desktop/devin/acp-bridge/probe";
 const ACP_METHODS: &[&str] = &[
@@ -22,21 +22,17 @@ const ACP_METHODS: &[&str] = &[
     "session/setMode",
     "ext/*",
 ];
-const AUTO_EXECUTION_LIMITATION: &str = "Looper does not auto-execute Devin registry commands.";
-const DEVIN_NATIVE_CONTROL_LIMITATION: &str = "Devin-native stop/continue lifecycle is unavailable until a live Devin ACP session bridge exists.";
-const EXPLICIT_ATTACH_LIMITATION: &str =
-    "Attach/probe must be explicitly requested before starting an ACP agent process.";
+const AUTO_EXECUTION_LIMITATION: &str =
+    "Looper reads Devin Desktop state and never auto-executes registry commands.";
+const DEVIN_NATIVE_CONTROL_LIMITATION: &str =
+    "Devin-native stop/continue lifecycle is unavailable until a real Devin transport exists.";
 const MISSING_LAUNCH_METADATA_LIMITATION: &str =
     "No configured launchable enabled ACP agent was found.";
 const LAUNCH_PREFLIGHT_PROBE_KIND: &str = "launch-preflight";
 const PROBE_READY_DETAIL: &str =
-    "ACP agent is ready for an explicit attach attempt; no registry command was executed.";
+    "Devin agent configuration is visible; no registry command was executed.";
 const PROBE_BLOCKED_DETAIL: &str =
-    "ACP agent is not ready for attach; inspect blockers before trying to launch it.";
-const ATTACH_ACK_DETAIL: &str = "Experimental Devin ACP attach acknowledged after explicit probe; no live ACP transport is running yet.";
-const ATTACH_BLOCKED_DETAIL: &str = "Devin ACP attach blocked until probe preflight succeeds.";
-const ATTACH_NATIVE_CONTROL_LIMITATION: &str =
-    "Attached session does not provide Codex-style stop/continue hooks yet.";
+    "Devin agent configuration is incomplete; inspect blockers before relying on it.";
 const ACP_DISABLED_BLOCKER: &str = "Devin ACP is disabled or missing in Desktop settings.";
 const ACP_REGISTRY_MISSING_BLOCKER: &str = "Devin ACP registry is missing.";
 const ACP_AGENT_MISSING_BLOCKER: &str = "Requested ACP agent was not found in the registry.";
@@ -47,7 +43,7 @@ const ACP_AGENT_LAUNCH_MISSING_BLOCKER: &str = "ACP agent has no sanitized launc
 #[serde(rename_all = "kebab-case")]
 pub enum DevinAcpControlLevel {
     VisibilityOnly,
-    ClientCapable,
+    AgentConfigured,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -94,25 +90,13 @@ pub enum DevinAcpProbeStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DevinAcpBridgeAttach {
-    pub ok: bool,
-    pub status: DevinAcpProbeStatus,
-    pub agent_id: Option<String>,
-    pub name: Option<String>,
-    pub attach_ready: bool,
-    pub detail: String,
-    pub blockers: Vec<String>,
-    pub limitations: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeProbe {
     pub ok: bool,
     pub status: DevinAcpProbeStatus,
     pub agent_id: Option<String>,
     pub name: Option<String>,
     pub control_level: DevinAcpControlLevel,
-    pub attach_ready: bool,
+    pub ready: bool,
     pub probe_kind: String,
     pub launch_configured: bool,
     pub launch_methods: Vec<String>,
@@ -145,30 +129,6 @@ pub fn build_acp_bridge_status(
     }
 }
 
-pub fn build_acp_bridge_attach(
-    installations: &[DevinInstallationStatus],
-    registry: &DevinAcpRegistryStatus,
-    requested_agent_id: Option<&str>,
-) -> DevinAcpBridgeAttach {
-    let probe = build_acp_bridge_probe(installations, registry, requested_agent_id);
-    let mut limitations = bridge_limitations(probe.control_level);
-    limitations.push(ATTACH_NATIVE_CONTROL_LIMITATION.to_owned());
-    DevinAcpBridgeAttach {
-        ok: probe.ok,
-        status: probe.status,
-        agent_id: probe.agent_id,
-        name: probe.name,
-        attach_ready: probe.attach_ready,
-        detail: if probe.ok {
-            ATTACH_ACK_DETAIL.to_owned()
-        } else {
-            ATTACH_BLOCKED_DETAIL.to_owned()
-        },
-        blockers: probe.blockers,
-        limitations,
-    }
-}
-
 pub fn build_acp_bridge_probe(
     installations: &[DevinInstallationStatus],
     registry: &DevinAcpRegistryStatus,
@@ -181,7 +141,7 @@ pub fn build_acp_bridge_probe(
     };
     let blockers = probe_blockers(registry.exists, &settings, agent);
     let control_level = if blockers.is_empty() {
-        DevinAcpControlLevel::ClientCapable
+        DevinAcpControlLevel::AgentConfigured
     } else {
         DevinAcpControlLevel::VisibilityOnly
     };
@@ -196,7 +156,7 @@ fn bridge_agent(
     let enabled = settings.agent_is_enabled(&agent.id);
     let control_level =
         if settings.acp_enabled && registry_exists && enabled && agent.launch_configured {
-            DevinAcpControlLevel::ClientCapable
+            DevinAcpControlLevel::AgentConfigured
         } else {
             DevinAcpControlLevel::VisibilityOnly
         };
@@ -210,9 +170,9 @@ fn bridge_agent(
         preferred: settings.preferred_agent.as_deref() == Some(agent.id.as_str()),
         launch_configured: agent.launch_configured,
         control_level,
-        supports_sessions: control_level == DevinAcpControlLevel::ClientCapable,
-        supports_prompt: control_level == DevinAcpControlLevel::ClientCapable,
-        supports_cancel: control_level == DevinAcpControlLevel::ClientCapable,
+        supports_sessions: false,
+        supports_prompt: false,
+        supports_cancel: false,
         source: ACP_BRIDGE_SOURCE.to_owned(),
     }
 }
@@ -220,9 +180,9 @@ fn bridge_agent(
 fn bridge_control_level(agents: &[DevinAcpBridgeAgent]) -> DevinAcpControlLevel {
     if agents
         .iter()
-        .any(|agent| agent.control_level == DevinAcpControlLevel::ClientCapable)
+        .any(|agent| agent.control_level == DevinAcpControlLevel::AgentConfigured)
     {
-        DevinAcpControlLevel::ClientCapable
+        DevinAcpControlLevel::AgentConfigured
     } else {
         DevinAcpControlLevel::VisibilityOnly
     }
@@ -244,11 +204,13 @@ fn bridge_actions(agents: &[DevinAcpBridgeAgent]) -> Vec<DevinAcpBridgeAction> {
 fn default_probe_agent_id(agents: &[DevinAcpBridgeAgent]) -> Option<String> {
     agents
         .iter()
-        .find(|agent| agent.preferred && agent.control_level == DevinAcpControlLevel::ClientCapable)
+        .find(|agent| {
+            agent.preferred && agent.control_level == DevinAcpControlLevel::AgentConfigured
+        })
         .or_else(|| {
             agents
                 .iter()
-                .find(|agent| agent.control_level == DevinAcpControlLevel::ClientCapable)
+                .find(|agent| agent.control_level == DevinAcpControlLevel::AgentConfigured)
         })
         .map(|agent| agent.id.clone())
 }
@@ -290,7 +252,7 @@ fn missing_agent_probe(
         agent_id: requested_agent_id.map(str::to_owned),
         name: None,
         control_level,
-        attach_ready: false,
+        ready: false,
         probe_kind: LAUNCH_PREFLIGHT_PROBE_KIND.to_owned(),
         launch_configured: false,
         launch_methods: Vec::new(),
@@ -316,7 +278,7 @@ fn ready_or_blocked_probe(
         agent_id: Some(agent.id.clone()),
         name: Some(agent.name.clone()),
         control_level,
-        attach_ready: ok,
+        ready: ok,
         probe_kind: LAUNCH_PREFLIGHT_PROBE_KIND.to_owned(),
         launch_configured: agent.launch_configured,
         launch_methods: agent.launch.methods.clone(),
@@ -367,12 +329,11 @@ fn bridge_summary(
         return "Devin ACP registry has no agents".to_owned();
     }
     match control_level {
-        DevinAcpControlLevel::ClientCapable => {
-            "Devin ACP bridge can attach to configured agent transports after explicit approval"
-                .to_owned()
+        DevinAcpControlLevel::AgentConfigured => {
+            "Devin Desktop agents are visible from the local ACP registry".to_owned()
         }
         DevinAcpControlLevel::VisibilityOnly => {
-            "Devin ACP bridge is visibility-only until a launchable enabled agent is configured"
+            "Devin Desktop agent registry is visibility-only until a launchable enabled agent is configured"
                 .to_owned()
         }
     }
@@ -383,9 +344,7 @@ fn bridge_limitations(control_level: DevinAcpControlLevel) -> Vec<String> {
     limitations.push(AUTO_EXECUTION_LIMITATION.to_owned());
     limitations.push(DEVIN_NATIVE_CONTROL_LIMITATION.to_owned());
     match control_level {
-        DevinAcpControlLevel::ClientCapable => {
-            limitations.push(EXPLICIT_ATTACH_LIMITATION.to_owned());
-        }
+        DevinAcpControlLevel::AgentConfigured => {}
         DevinAcpControlLevel::VisibilityOnly => {
             limitations.push(MISSING_LAUNCH_METADATA_LIMITATION.to_owned());
         }
@@ -477,24 +436,26 @@ mod tests {
     }
 
     #[test]
-    fn launchable_enabled_agents_are_client_capable() {
+    fn launchable_enabled_agents_are_probeable_metadata() {
         let status =
             build_acp_bridge_status(&[installation(&["codex"], Some("codex"))], &registry(true));
 
         assert!(status.available);
-        assert_eq!(status.control_level, DevinAcpControlLevel::ClientCapable);
+        assert_eq!(status.control_level, DevinAcpControlLevel::AgentConfigured);
         assert_eq!(
             status.agents[0].control_level,
-            DevinAcpControlLevel::ClientCapable
+            DevinAcpControlLevel::AgentConfigured
         );
-        assert!(status.agents[0].supports_prompt);
+        assert!(!status.agents[0].supports_prompt);
+        assert!(!status.agents[0].supports_sessions);
+        assert!(!status.agents[0].supports_cancel);
         assert_eq!(status.actions[0].id, ACP_BRIDGE_PROBE_ACTION_ID);
         assert_eq!(status.actions[0].default_agent_id.as_deref(), Some("codex"));
         assert!(
             status
                 .limitations
                 .iter()
-                .any(|limitation| limitation.contains("explicitly requested"))
+                .any(|limitation| limitation.contains("never auto-executes"))
         );
     }
 
@@ -541,7 +502,7 @@ mod tests {
         assert!(probe.ok);
         assert_eq!(probe.status, DevinAcpProbeStatus::Ready);
         assert_eq!(probe.agent_id.as_deref(), Some("codex"));
-        assert!(probe.attach_ready);
+        assert!(probe.ready);
         assert_eq!(probe.launch_methods, vec!["npx"]);
         assert!(probe.detail.contains("no registry command was executed"));
     }

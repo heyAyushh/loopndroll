@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -14,10 +13,10 @@ use crate::codex::{
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
-    DevinAcpBridgeAttach, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinDesktopStatus,
-    DevinInstallationStatus, build_acp_bridge_attach, build_acp_bridge_probe,
-    devin_connection_detail, devin_session_capabilities, devin_session_to_desktop_thread,
-    devin_session_to_thread_record, discover_devin_sessions, inspect_devin_desktop_for_home,
+    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinDesktopStatus, DevinInstallationStatus,
+    build_acp_bridge_probe, devin_connection_detail, devin_session_capabilities,
+    devin_session_to_desktop_thread, devin_session_to_thread_record, discover_devin_sessions,
+    inspect_devin_desktop_for_home,
 };
 use crate::events::{AutomationRunRecord, EventStore};
 use crate::goals::{GoalSummary, read_goals};
@@ -27,9 +26,7 @@ use crate::grok_build::{
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
 use crate::mobile_auth::MobileAuthService;
-use crate::mobile_events::{
-    MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event, mobile_event_now,
-};
+use crate::mobile_events::{MobileEventHub, MobileEventInput, build_mobile_event};
 use crate::mobile_push::MobilePushService;
 use crate::mobile_session::MobileSessionService;
 use crate::sync_manifest::SyncManifest;
@@ -53,7 +50,7 @@ const GROK_BUILD_SESSION_RUNTIME_LABEL: &str = "Grok Build session";
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
-    "Devin ACP status with explicit probe support; lifecycle control is not automatic.";
+    "Devin Desktop agent metadata with explicit probe support; lifecycle control is not automatic.";
 const GROK_BUILD_CONNECTION_ACTION_HINT: &str =
     "Grok Build hooks at ~/.grok/hooks/looper.json; sessions read from ~/.grok/sessions/.";
 const GROK_BUILD_HOOKS_CONNECTION_ID: &str = "grok-build-hooks";
@@ -68,22 +65,11 @@ pub struct ControlPlaneConfig {
     pub home_path: PathBuf,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DevinAcpAttachSession {
-    pub agent_id: String,
-    pub agent_name: Option<String>,
-    pub attached_at: String,
-    pub status: String,
-    pub detail: String,
-}
-
 #[derive(Clone)]
 pub struct ControlPlane {
     config: ControlPlaneConfig,
     store: EventStore,
     mobile_events: MobileEventHub,
-    devin_acp_attach: Arc<Mutex<Option<DevinAcpAttachSession>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,21 +95,12 @@ pub struct DevinDesktopResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeResponse {
     pub bridge: DevinAcpBridgeStatus,
-    pub attach_session: Option<DevinAcpAttachSession>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeProbeResponse {
     pub probe: DevinAcpBridgeProbe,
     pub bridge: DevinAcpBridgeStatus,
-    pub attach_session: Option<DevinAcpAttachSession>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DevinAcpBridgeAttachResponse {
-    pub attach: DevinAcpBridgeAttach,
-    pub bridge: DevinAcpBridgeStatus,
-    pub attach_session: Option<DevinAcpAttachSession>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -232,7 +209,6 @@ impl ControlPlane {
             config,
             store,
             mobile_events: MobileEventHub::new(),
-            devin_acp_attach: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -246,19 +222,6 @@ impl ControlPlane {
             eprintln!("mobile event persistence failed: {error}");
         }
         self.mobile_events.publish(event);
-    }
-
-    pub fn devin_acp_attach_session(&self) -> Option<DevinAcpAttachSession> {
-        self.devin_acp_attach
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-    }
-
-    pub fn set_devin_acp_attach_session(&self, session: Option<DevinAcpAttachSession>) {
-        if let Ok(mut guard) = self.devin_acp_attach.lock() {
-            *guard = session;
-        }
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
@@ -497,7 +460,6 @@ impl ControlPlane {
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
         DevinAcpBridgeResponse {
             bridge: inspect_devin_desktop_for_home(&self.config.home_path).acp_bridge,
-            attach_session: self.devin_acp_attach_session(),
         }
     }
 
@@ -509,40 +471,6 @@ impl ControlPlane {
         DevinAcpBridgeProbeResponse {
             probe: build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id),
             bridge: status.acp_bridge,
-            attach_session: self.devin_acp_attach_session(),
-        }
-    }
-
-    pub fn devin_acp_bridge_attach_response(
-        &self,
-        agent_id: Option<&str>,
-    ) -> DevinAcpBridgeAttachResponse {
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
-        let attach = build_acp_bridge_attach(&status.installations, &status.acp_registry, agent_id);
-        let attach_session = if attach.ok {
-            let session = DevinAcpAttachSession {
-                agent_id: attach.agent_id.clone().unwrap_or_default(),
-                agent_name: attach.name.clone(),
-                attached_at: mobile_event_now(),
-                status: "attached-experimental".to_owned(),
-                detail: attach.detail.clone(),
-            };
-            self.set_devin_acp_attach_session(Some(session.clone()));
-            self.emit_mobile_event(MobileEventInput {
-                kind: MobileEventKind::LifecycleChanged,
-                thread_id: None,
-                prompt_id: None,
-                detail: Some(format!("devin-acp-attach:{}", session.agent_id)),
-            });
-            Some(session)
-        } else {
-            self.set_devin_acp_attach_session(None);
-            None
-        };
-        DevinAcpBridgeAttachResponse {
-            attach,
-            bridge: status.acp_bridge,
-            attach_session,
         }
     }
 

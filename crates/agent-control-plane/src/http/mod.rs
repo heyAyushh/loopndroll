@@ -72,10 +72,6 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             "/desktop/devin/acp-bridge/probe",
             post(desktop_devin_acp_bridge_probe),
         )
-        .route(
-            "/desktop/devin/acp-bridge/attach",
-            post(desktop_devin_acp_bridge_attach),
-        )
         .route("/desktop/connections", get(desktop_connections))
         .route("/desktop/pairing", get(desktop_pairing))
         .route(
@@ -288,18 +284,6 @@ async fn desktop_devin_acp_bridge_probe(
     Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
 ) -> impl IntoResponse {
     Json(control_plane.devin_acp_bridge_probe_response(input.agent_id.as_deref()))
-}
-
-async fn desktop_devin_acp_bridge_attach(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
-) -> Response {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-
-    Json(control_plane.devin_acp_bridge_attach_response(input.agent_id.as_deref())).into_response()
 }
 
 async fn codex_servers(State(control_plane): State<ControlPlane>) -> impl IntoResponse {

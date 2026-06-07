@@ -660,7 +660,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert_eq!(devin["status"]["acp_registry"]["agents"][0]["id"], "codex");
     assert_eq!(
         devin["status"]["acp_bridge"]["control_level"],
-        "client-capable"
+        "agent-configured"
     );
     assert_eq!(
         devin["status"]["acp_bridge"]["agents"][0]["launch_configured"],
@@ -681,7 +681,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert_eq!(acp_bridge["bridge"]["agents"][0]["id"], "codex");
     assert_eq!(
         acp_bridge["bridge"]["agents"][0]["control_level"],
-        "client-capable"
+        "agent-configured"
     );
     assert_eq!(acp_bridge["bridge"]["actions"][0]["id"], "probe");
     assert_eq!(
@@ -696,7 +696,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
             .any(|limitation| limitation
                 .as_str()
                 .expect("limitation")
-                .contains("does not auto-execute"))
+                .contains("never auto-executes"))
     );
     let acp_bridge_json = serde_json::to_string(&acp_bridge).expect("acp bridge json");
     assert!(!acp_bridge_json.contains("must-not-leak"));
@@ -713,7 +713,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     .await;
     assert_eq!(acp_probe["probe"]["status"], "ready");
     assert_eq!(acp_probe["probe"]["agent_id"], "codex");
-    assert_eq!(acp_probe["probe"]["attach_ready"], true);
+    assert_eq!(acp_probe["probe"]["ready"], true);
     assert_eq!(acp_probe["probe"]["probe_kind"], "launch-preflight");
     assert_eq!(
         acp_probe["bridge"]["actions"][0]["default_agent_id"],
@@ -1833,32 +1833,24 @@ async fn queueing_mobile_prompt_records_prompt_queued_event() {
 }
 
 #[tokio::test]
-async fn devin_acp_attach_acknowledges_ready_agent_without_launching() {
+async fn devin_acp_attach_route_is_not_supported() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_settings();
     let router = build_router(fixture.control_plane());
     let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
 
-    let attach = request_json_body_with_options(
+    let attach_response = request_with_body_options(
         &router,
         Method::POST,
         "/desktop/devin/acp-bridge/attach",
-        serde_json::json!({ "agentId": "codex" }),
-        &[],
+        serde_json::to_vec(&serde_json::json!({ "agentId": "codex" })).expect("json body"),
+        &[(axum::http::header::CONTENT_TYPE, "application/json")],
         loopback,
     )
     .await;
 
-    assert_eq!(attach["attach"]["ok"], true);
-    assert_eq!(attach["attach"]["agent_id"], "codex");
-    assert_eq!(attach["attach_session"]["status"], "attached-experimental");
-    assert!(
-        attach["attach"]["detail"]
-            .as_str()
-            .expect("detail")
-            .contains("no live ACP transport")
-    );
+    assert_eq!(attach_response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

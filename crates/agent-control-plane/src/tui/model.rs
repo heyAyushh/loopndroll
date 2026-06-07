@@ -288,7 +288,7 @@ fn devin_bridge_rows(app: &TuiState) -> Vec<RenderRow> {
 
     let mut rows = vec![
         RenderRow::plain(""),
-        RenderRow::section("DEVIN ACP BRIDGE"),
+        RenderRow::section("DEVIN DESKTOP"),
         bridge_row(&json_path(
             &app.snapshot,
             &["devin_desktop", "acp_bridge", "summary"],
@@ -296,7 +296,7 @@ fn devin_bridge_rows(app: &TuiState) -> Vec<RenderRow> {
     ];
     rows.extend(bridge_agents.iter().map(|agent| {
         let control_level = json_path(agent, &["control_level"]);
-        let tone = if control_level == "client-capable" {
+        let tone = if control_level == "agent-configured" {
             RowTone::Good
         } else {
             RowTone::Warning
@@ -601,12 +601,12 @@ fn health_row(label: &str, health: &str) -> RenderRow {
 }
 
 fn bridge_row(summary: &str) -> RenderRow {
-    if summary.contains("can attach") {
-        RenderRow::good(format!("Devin ACP bridge    {summary}"))
+    if summary.contains("agents are visible") {
+        RenderRow::good(format!("Devin Desktop       {summary}"))
     } else if summary.contains("disabled") || summary.contains("no registry") {
-        RenderRow::warning(format!("Devin ACP bridge    {summary}"))
+        RenderRow::warning(format!("Devin Desktop       {summary}"))
     } else {
-        RenderRow::muted(format!("Devin ACP bridge    {summary}"))
+        RenderRow::muted(format!("Devin Desktop       {summary}"))
     }
 }
 
@@ -707,13 +707,13 @@ mod tests {
             snapshot: serde_json::json!({
                 "devin_desktop": {
                     "acp_bridge": {
-                        "summary": "Devin ACP bridge can attach to configured agent transports after explicit approval",
+                        "summary": "Devin Desktop agents are visible from the local ACP registry",
                         "agents": [
                             {
                                 "name": "Codex",
                                 "enabled": true,
                                 "preferred": true,
-                                "control_level": "client-capable",
+                                "control_level": "agent-configured",
                                 "launch_configured": true
                             }
                         ]
@@ -793,13 +793,13 @@ mod tests {
             panel
                 .rows
                 .iter()
-                .any(|row| row.text.starts_with("Devin ACP bridge"))
+                .any(|row| row.text.starts_with("Devin Desktop"))
         );
         assert!(
             panel
                 .rows
                 .iter()
-                .any(|row| row.text.contains("control:client-capable"))
+                .any(|row| row.text.contains("control:agent-configured"))
         );
     }
 }

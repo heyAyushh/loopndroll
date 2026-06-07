@@ -22,7 +22,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var continuationRefreshTask: Task<Void, Never>?
     private var mobileHealth: MobileHealthResponse?
     private var devinProbe: DevinAcpBridgeProbe?
-    private var devinAttach: DevinAcpBridgeAttach?
 
     override init() {
         let endpointStore = ControlPlaneEndpointStore()
@@ -193,7 +192,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     private func devinStatusTitle(_ bridge: DevinAcpBridgeStatus) -> String {
         if let devinProbe {
-            return devinProbe.attachReady ? "\(devinProbe.name ?? devinProbe.agentId ?? "Agent") ready" : "Probe blocked"
+            return devinProbe.ready ? "\(devinProbe.name ?? devinProbe.agentId ?? "Agent") ready" : "Probe blocked"
         }
 
         guard bridge.available else {
@@ -204,7 +203,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             return "No agent"
         }
 
-        return agent.attachCapable ? "\(agent.name) ready" : "\(agent.name) needs attention"
+        return agent.probeCapable ? "\(agent.name) visible" : "\(agent.name) needs attention"
     }
 
     private func addDevinBridgeItems(_ bridge: DevinAcpBridgeStatus, to menu: NSMenu) {
@@ -213,7 +212,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
 
         menu.addItem(NSMenuItem.separator())
-        addDisabledItem("Devin ACP", to: menu)
+        addDisabledItem("Devin Desktop", to: menu)
         addDisabledItem(bridge.summary, to: menu)
 
         if let devinProbe {
@@ -223,12 +222,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             }
         }
 
-        if let devinAttach {
-            addDisabledItem(devinAttach.detail, to: menu)
-        }
-
         let probeItem = NSMenuItem(
-            title: "Probe Devin ACP",
+            title: "Probe Devin Agent",
             action: #selector(probeDevinAcpAction(_:)),
             keyEquivalent: ""
         )
@@ -236,16 +231,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         probeItem.representedObject = bridge.defaultProbeAgent?.id
         probeItem.isEnabled = bridge.defaultProbeAgent != nil
         menu.addItem(probeItem)
-
-        let attachItem = NSMenuItem(
-            title: "Attach Devin ACP (Experimental)",
-            action: #selector(attachDevinAcpAction(_:)),
-            keyEquivalent: ""
-        )
-        attachItem.target = self
-        attachItem.representedObject = bridge.defaultProbeAgent?.id
-        attachItem.isEnabled = bridge.defaultProbeAgent?.attachCapable == true
-        menu.addItem(attachItem)
     }
 
     private func coveredAutomationCount(_ snapshot: DesktopSnapshotResponse) -> Int {
@@ -411,21 +396,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
                 devinProbe = response.probe
             } catch {
                 devinProbe = nil
-                replaceMenu(snapshot: nil, error: error)
-                return
-            }
-            await refreshMenu()
-        }
-    }
-
-    @objc private func attachDevinAcpAction(_ sender: NSMenuItem) {
-        let agentId = sender.representedObject as? String
-        Task {
-            do {
-                let response = try await client.attachDevinAcpBridge(agentId: agentId)
-                devinAttach = response.attach
-            } catch {
-                devinAttach = nil
                 replaceMenu(snapshot: nil, error: error)
                 return
             }

@@ -115,33 +115,18 @@ async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> 
             print_get("/desktop/devin/acp-bridge", format).await
         }
         Some("probe") => run_devin_probe_command(args.get(1), format).await,
-        Some("attach") => run_devin_attach_command(args.get(1), format).await,
         Some("bridge") | Some("acp") | Some("agents")
             if args.get(1).map(String::as_str) == Some("probe") =>
         {
             run_devin_probe_command(args.get(2), format).await
         }
-        Some("bridge") | Some("acp") | Some("agents")
-            if args.get(1).map(String::as_str) == Some("attach") =>
-        {
-            run_devin_attach_command(args.get(2), format).await
-        }
-        _ => bail!("usage: looper devin [status|show|bridge|acp|agents|probe|attach [agent-id]]"),
+        _ => bail!("usage: looper devin [status|show|bridge|acp|agents|probe [agent-id]]"),
     }
 }
 
 async fn run_devin_probe_command(agent_id: Option<&String>, format: OutputFormat) -> Result<()> {
     post_json(
         "/desktop/devin/acp-bridge/probe",
-        devin_probe_body(agent_id.map(String::as_str)),
-        format,
-    )
-    .await
-}
-
-async fn run_devin_attach_command(agent_id: Option<&String>, format: OutputFormat) -> Result<()> {
-    post_json(
-        "/desktop/devin/acp-bridge/attach",
         devin_probe_body(agent_id.map(String::as_str)),
         format,
     )

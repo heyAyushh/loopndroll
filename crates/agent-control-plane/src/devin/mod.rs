@@ -10,9 +10,8 @@ mod registry;
 mod sessions;
 
 pub use self::bridge::{
-    DevinAcpBridgeAgent, DevinAcpBridgeAttach, DevinAcpBridgeProbe, DevinAcpBridgeStatus,
-    DevinAcpControlLevel, DevinAcpProbeStatus, build_acp_bridge_attach, build_acp_bridge_probe,
-    build_acp_bridge_status,
+    DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlLevel,
+    DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
 };
 pub use self::installations::DevinInstallationStatus;
 pub use self::registry::{DevinAcpAgent, DevinAcpLaunchMetadata, DevinAcpRegistryStatus};
@@ -224,7 +223,7 @@ mod tests {
         assert_eq!(status.acp_registry.agents[0].launch_configured, true);
         assert_eq!(
             status.acp_bridge.control_level,
-            DevinAcpControlLevel::ClientCapable
+            DevinAcpControlLevel::AgentConfigured
         );
         assert_eq!(status.acp_bridge.agents[0].enabled, true);
         assert_eq!(status.acp_bridge.agents[0].preferred, true);
