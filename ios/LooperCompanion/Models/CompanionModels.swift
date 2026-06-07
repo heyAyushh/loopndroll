@@ -1081,6 +1081,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var lastUpdatedAt: String
     var assistantPreview: String?
     var isArchived: Bool
+    var canSendPrompt: Bool
+    var promptDeliveryUnavailableReason: String?
     var assistantClient: AssistantClient
     var metadata: SessionMetadata
 
@@ -1093,6 +1095,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case lastUpdatedAt
         case assistantPreview
         case isArchived
+        case canSendPrompt
+        case promptDeliveryUnavailableReason
         case assistantClient
         case metadata
     }
@@ -1106,6 +1110,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         lastUpdatedAt: String,
         assistantPreview: String?,
         isArchived: Bool,
+        canSendPrompt: Bool = true,
+        promptDeliveryUnavailableReason: String? = nil,
         assistantClient: AssistantClient = .unknown,
         metadata: SessionMetadata = .empty
     ) {
@@ -1117,6 +1123,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         self.lastUpdatedAt = lastUpdatedAt
         self.assistantPreview = assistantPreview
         self.isArchived = isArchived
+        self.canSendPrompt = canSendPrompt
+        self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
         self.assistantClient = assistantClient
         self.metadata = metadata
     }
@@ -1132,6 +1140,11 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ??
             (status == .archived)
+        canSendPrompt = try container.decodeIfPresent(Bool.self, forKey: .canSendPrompt) ?? true
+        promptDeliveryUnavailableReason = try container.decodeIfPresent(
+            String.self,
+            forKey: .promptDeliveryUnavailableReason
+        )
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
     }
@@ -1171,6 +1184,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var assistantPreview: String?
     var latestAssistantMessage: String?
     var isArchived: Bool
+    var canSendPrompt: Bool
+    var promptDeliveryUnavailableReason: String?
     var assistantClient: AssistantClient
     var metadata: SessionMetadata
     var notificationIds: [String]
@@ -1189,6 +1204,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case assistantPreview
         case latestAssistantMessage
         case isArchived
+        case canSendPrompt
+        case promptDeliveryUnavailableReason
         case assistantClient
         case metadata
         case notificationIds
@@ -1208,6 +1225,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         assistantPreview: String?,
         latestAssistantMessage: String?,
         isArchived: Bool,
+        canSendPrompt: Bool = true,
+        promptDeliveryUnavailableReason: String? = nil,
         assistantClient: AssistantClient = .unknown,
         metadata: SessionMetadata = .empty,
         notificationIds: [String],
@@ -1225,6 +1244,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.assistantPreview = assistantPreview
         self.latestAssistantMessage = latestAssistantMessage
         self.isArchived = isArchived
+        self.canSendPrompt = canSendPrompt
+        self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
         self.assistantClient = assistantClient
         self.metadata = metadata
         self.notificationIds = notificationIds
@@ -1245,6 +1266,11 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
+        canSendPrompt = try container.decodeIfPresent(Bool.self, forKey: .canSendPrompt) ?? true
+        promptDeliveryUnavailableReason = try container.decodeIfPresent(
+            String.self,
+            forKey: .promptDeliveryUnavailableReason
+        )
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
         notificationIds = try container.decode([String].self, forKey: .notificationIds)

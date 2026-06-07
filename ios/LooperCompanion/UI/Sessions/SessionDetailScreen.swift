@@ -343,14 +343,27 @@ struct SessionDetailScreen: View {
         !isSendingPrompt &&
             !isMutatingSession &&
             !trimmedPrompt.isEmpty &&
+            promptDeliveryIsAvailable &&
             currentMode != nil &&
             !(detail?.isArchived ?? session.isArchived)
     }
 
     private var promptFooterText: String {
-        currentMode == nil
+        if !promptDeliveryIsAvailable {
+            return promptDeliveryUnavailableReason ?? "This session cannot receive prompts from Looper."
+        }
+
+        return currentMode == nil
             ? "Set a mode before sending a prompt."
             : "Prompt is queued for this session mode."
+    }
+
+    private var promptDeliveryIsAvailable: Bool {
+        detail?.canSendPrompt ?? session.canSendPrompt
+    }
+
+    private var promptDeliveryUnavailableReason: String? {
+        detail?.promptDeliveryUnavailableReason ?? session.promptDeliveryUnavailableReason
     }
 
     private func sendPrompt() {

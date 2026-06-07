@@ -218,8 +218,53 @@ fn prompt_delivery_action_for_thread(
     }
 }
 
+const ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
+    "Archived sessions cannot receive prompts.";
+const DEVIN_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
+    "Devin Desktop is read-only in Looper until Devin transport is available.";
+const INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
+    "This session must be running before Looper can queue prompts.";
+
+struct PromptDeliveryAvailability {
+    can_send_prompt: bool,
+    unavailable_reason: Option<&'static str>,
+}
+
 fn assistant_supports_prompt_delivery(assistant_kind: &AssistantKind) -> bool {
     !matches!(assistant_kind, AssistantKind::DevinDesktop)
+}
+
+fn prompt_delivery_availability(
+    thread: &DesktopThread,
+    is_archived: bool,
+    status: &str,
+) -> PromptDeliveryAvailability {
+    if is_archived {
+        return PromptDeliveryAvailability {
+            can_send_prompt: false,
+            unavailable_reason: Some(ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+        };
+    }
+
+    if !assistant_supports_prompt_delivery(&thread.capabilities.assistant_kind) {
+        return PromptDeliveryAvailability {
+            can_send_prompt: false,
+            unavailable_reason: Some(DEVIN_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+        };
+    }
+
+    let requires_active_session = thread.capabilities.assistant_kind != AssistantKind::Codex;
+    if requires_active_session && status != ACTIVE_SESSION_STATUS {
+        return PromptDeliveryAvailability {
+            can_send_prompt: false,
+            unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+        };
+    }
+
+    PromptDeliveryAvailability {
+        can_send_prompt: true,
+        unavailable_reason: None,
+    }
 }
 
 pub fn mobile_session_detail(
@@ -310,6 +355,13 @@ fn session_summary(
         .unwrap_or(thread.archived);
     let effective_mode = effective_preset(session_override, session_state);
     let lifecycle = session_state.lifecycle.get(&thread.thread_id);
+    let status = session_status(
+        is_archived,
+        effective_mode,
+        lifecycle,
+        thread.runtime_status.as_deref(),
+    );
+    let prompt_delivery_availability = prompt_delivery_availability(thread, is_archived, status);
     let assistant_client = infer_assistant_client_from_paths(
         thread.transcript_path.as_deref(),
         thread.cwd.as_deref(),
@@ -321,16 +373,15 @@ fn session_summary(
         "id": thread.thread_id,
         "ref": format!("{THREAD_REF_PREFIX}{}", index + 1),
         "title": session_title(thread),
-        "status": session_status(
-            is_archived,
-            effective_mode,
-            lifecycle,
-            thread.runtime_status.as_deref()
-        ),
+        "status": status,
         "effectiveMode": effective_mode,
         "lastUpdatedAt": thread_timestamp(thread),
         "assistantPreview": nullable_string_value(thread.assistant_preview.as_deref()),
         "isArchived": is_archived,
+        "canSendPrompt": prompt_delivery_availability.can_send_prompt,
+        "promptDeliveryUnavailableReason": nullable_string_value(
+            prompt_delivery_availability.unavailable_reason
+        ),
         "assistantClient": assistant_client,
         "metadata": {
             "kind": kind,
@@ -593,6 +644,9 @@ mod tests {
             Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget { thread_id, .. }))
                 if thread_id == "thread-1"
         ));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], true);
+        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
     }
 
     #[test]
@@ -628,6 +682,12 @@ mod tests {
             error,
             MobileSessionError::PromptDeliveryUnavailable
         ));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            DEVIN_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        );
     }
 
     #[test]
