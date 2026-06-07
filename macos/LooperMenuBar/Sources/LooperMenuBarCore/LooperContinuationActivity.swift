@@ -3,6 +3,7 @@ import Foundation
 public enum LooperContinuationActivity {
     public static let activityType = "dev.looper.app.continue-session"
     public static let persistentIdentifier = "dev.looper.app.continuation.current-session"
+    fileprivate static let sessionTargetContentIdentifierPrefix = "looper.session."
 
     public enum UserInfoKey {
         public static let kind = "kind"
@@ -12,6 +13,38 @@ public enum LooperContinuationActivity {
         public static let sessionPreview = "sessionPreview"
         public static let handoffWebpageURL = "handoffWebpageURL"
         public static let updatedAtMilliseconds = "updatedAtMilliseconds"
+    }
+
+    public static func isSupportedActivityType(_ activityType: String) -> Bool {
+        activityType == Self.activityType
+    }
+
+    public static func sessionID(from activity: NSUserActivity) -> String? {
+        guard isSupportedActivityType(activity.activityType) else {
+            return nil
+        }
+
+        if let sessionID = normalizedString(activity.userInfo?[UserInfoKey.sessionID] as? String) {
+            return sessionID
+        }
+
+        guard let targetContentIdentifier = normalizedString(activity.targetContentIdentifier),
+              targetContentIdentifier.hasPrefix(sessionTargetContentIdentifierPrefix)
+        else {
+            return nil
+        }
+
+        return normalizedString(
+            String(targetContentIdentifier.dropFirst(sessionTargetContentIdentifierPrefix.count))
+        )
+    }
+
+    private static func normalizedString(_ value: String?) -> String? {
+        let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmedValue, !trimmedValue.isEmpty else {
+            return nil
+        }
+        return trimmedValue
     }
 }
 
@@ -26,7 +59,6 @@ public enum LooperContinuationActivityBuilder {
     private static let sessionActivityKind = "session"
     private static let genericActivityTitle = "looper"
     private static let genericTargetContentIdentifier = "looper"
-    private static let sessionTargetContentIdentifierPrefix = "looper.session."
     private static let pathSeparator = "/"
     private static let handoffPathComponent = "handoff"
     private static let sessionsPathComponent = "sessions"
@@ -68,7 +100,7 @@ public enum LooperContinuationActivityBuilder {
 
         return LooperContinuationActivityDescriptor(
             title: title,
-            targetContentIdentifier: "\(sessionTargetContentIdentifierPrefix)\(thread.threadId)",
+            targetContentIdentifier: "\(LooperContinuationActivity.sessionTargetContentIdentifierPrefix)\(thread.threadId)",
             userInfo: userInfo
         )
     }
@@ -84,7 +116,14 @@ public enum LooperContinuationActivityBuilder {
     }
 
     private static func continuationThread(from threads: [DesktopThreadSummary]) -> DesktopThreadSummary? {
-        newestThread(from: threads.filter { !$0.archived }) ?? newestThread(from: threads)
+        let activeCodexThreads = threads.filter { !$0.archived && isCodexThread($0) }
+        let codexThreads = threads.filter(isCodexThread)
+        let activeThreads = threads.filter { !$0.archived }
+
+        return newestThread(from: activeCodexThreads)
+            ?? newestThread(from: codexThreads)
+            ?? newestThread(from: activeThreads)
+            ?? newestThread(from: threads)
     }
 
     private static func newestThread(from threads: [DesktopThreadSummary]) -> DesktopThreadSummary? {
@@ -95,6 +134,15 @@ public enum LooperContinuationActivityBuilder {
 
     private static func timestamp(for thread: DesktopThreadSummary) -> Int64 {
         thread.updatedAtMs ?? Int64.min
+    }
+
+    private static func isCodexThread(_ thread: DesktopThreadSummary) -> Bool {
+        !LooperThreadOpenTarget.isExternalAssistantSession(
+            threadId: thread.threadId,
+            transcriptPath: thread.transcriptPath,
+            workingDirectory: thread.cwd,
+            agentPath: thread.capabilities.agentPath
+        )
     }
 
     private static func titleText(for thread: DesktopThreadSummary) -> String {

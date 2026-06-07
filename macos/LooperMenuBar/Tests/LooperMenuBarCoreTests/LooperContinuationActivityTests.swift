@@ -26,6 +26,22 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func prefersCodexThreadOverNewerExternalSession() throws {
+        let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
+            thread(id: "codex-main", title: "Codex", updatedAtMs: 1),
+            thread(
+                id: "devin:devin-cli:brindle-cadet",
+                title: "Devin",
+                updatedAtMs: 9,
+                agentPath: "/Users/test/Library/Application Support/Devin/session"
+            ),
+        ]))
+
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "codex-main")
+        #expect(descriptor.targetContentIdentifier == "looper.session.codex-main")
+    }
+
+    @Test
     func keepsStableActivityIdentitySeparateFromExactSessionTarget() {
         let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
             thread(id: "session-a", title: "Session A", updatedAtMs: 1),
@@ -65,6 +81,25 @@ struct LooperContinuationActivityTests {
             descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
                 == "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
         )
+    }
+
+    @Test
+    func extractsSessionIDFromContinuationActivity() {
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        activity.userInfo = [
+            LooperContinuationActivity.UserInfoKey.sessionID: "thread-main",
+        ]
+        activity.targetContentIdentifier = "looper.session.thread-fallback"
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == "thread-main")
+    }
+
+    @Test
+    func extractsSessionIDFromTargetContentIdentifier() {
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        activity.targetContentIdentifier = "looper.session.thread-target"
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == "thread-target")
     }
 
     @Test
@@ -134,7 +169,8 @@ struct LooperContinuationActivityTests {
         title: String?,
         updatedAtMs: Int64?,
         assistantPreview: String? = nil,
-        archived: Bool = false
+        archived: Bool = false,
+        agentPath: String? = nil
     ) -> DesktopThreadSummary {
         DesktopThreadSummary(
             threadId: id,
@@ -160,7 +196,7 @@ struct LooperContinuationActivityTests {
                 ),
                 agentNickname: nil,
                 agentRole: nil,
-                agentPath: nil
+                agentPath: agentPath
             )
         )
     }

@@ -6,9 +6,9 @@ import OSLog
 @MainActor
 final class LooperContinuationActivityPublisher {
     fileprivate enum UtilityPanelLayout {
-        static let contentSize = NSSize(width: 36, height: 36)
+        static let contentSize = NSSize(width: 44, height: 44)
         static let screenInset: CGFloat = 6
-        static let backgroundAlpha: CGFloat = 0.03
+        static let backgroundAlpha: CGFloat = 0.16
         static let cornerRadius: CGFloat = 8
     }
 
@@ -211,7 +211,7 @@ private final class LooperContinuationActivityPanelOwner {
         // AppKit Handoff promotes responder activities from a real key/main responder owner.
         let panel = LooperContinuationActivityUtilityPanel(
             contentRect: NSRect(origin: .zero, size: LooperContinuationActivityPublisher.UtilityPanelLayout.contentSize),
-            styleMask: [.titled, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.titled, .utilityWindow, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -219,11 +219,11 @@ private final class LooperContinuationActivityPanelOwner {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isExcludedFromWindowsMenu = true
-        panel.isFloatingPanel = false
+        panel.isFloatingPanel = true
         panel.isOpaque = false
         panel.isReleasedWhenClosed = false
         panel.ignoresMouseEvents = true
-        panel.level = .normal
+        panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.tabbingMode = .disallowed
         panel.title = LooperContinuationActivityPanelViewController.Content.windowTitle
@@ -263,7 +263,9 @@ private final class LooperContinuationActivityPanelOwner {
         viewController.view.userActivity = activity
         statusHost?.userActivity = activity
         positionPanelInScreen(panel)
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         refreshCurrentActivity()
     }
 

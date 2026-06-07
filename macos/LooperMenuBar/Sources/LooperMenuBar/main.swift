@@ -35,7 +35,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         installStatusItem()
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
@@ -51,6 +51,29 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         if !detachServerOnQuit {
             _ = lifecycle.unregisterBeforeQuit()
         }
+    }
+
+    func application(
+        _: NSApplication,
+        willContinueUserActivityWithType userActivityType: String
+    ) -> Bool {
+        LooperContinuationActivity.isSupportedActivityType(userActivityType)
+    }
+
+    func application(
+        _: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        guard LooperContinuationActivity.isSupportedActivityType(userActivity.activityType) else {
+            return false
+        }
+
+        restorationHandler([])
+        Task {
+            await openContinuationActivity(userActivity)
+        }
+        return true
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -109,6 +132,37 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
                 from: snapshot,
                 handoffBaseURL: mobileHealth?.preferredHandoffBaseURL
             )
+        )
+    }
+
+    private func openContinuationActivity(_ activity: NSUserActivity) async {
+        guard let target = await continuationOpenTarget(for: activity) else {
+            return
+        }
+
+        _ = openThread(target)
+    }
+
+    private func continuationOpenTarget(for activity: NSUserActivity) async -> LooperThreadOpenTarget? {
+        guard let threadID = LooperContinuationActivity.sessionID(from: activity) else {
+            return nil
+        }
+
+        if let snapshot = try? await client.fetchDesktopSnapshot(),
+           let thread = snapshot.threads.first(where: { $0.threadId == threadID })
+        {
+            return LooperThreadOpenTarget(
+                threadId: thread.threadId,
+                transcriptPath: thread.transcriptPath,
+                workingDirectory: thread.cwd,
+                agentPath: thread.capabilities.agentPath
+            )
+        }
+
+        return LooperThreadOpenTarget(
+            threadId: threadID,
+            transcriptPath: nil,
+            workingDirectory: nil
         )
     }
 
