@@ -69,6 +69,7 @@ STATUS_ICON_SIZE=64
 ICON_SIZES=(16 32 128 256 512)
 PROCESS_WAIT_ATTEMPTS=10
 PROCESS_WAIT_SECONDS=0.2
+BACKUP_RETENTION_COUNT=3
 
 fail() {
   printf 'error: %s\n' "$1" >&2
@@ -178,6 +179,28 @@ codesign_with_optional_entitlements() {
   fi
 }
 
+prune_install_backups() {
+  local backup_prefix="${INSTALL_PATH}.backup-"
+  local backups=()
+  local backup
+  while IFS= read -r backup; do
+    backups+=("$backup")
+  done < <(find "$(dirname "$INSTALL_PATH")" -maxdepth 1 -type d -name "$(basename "$INSTALL_PATH").backup-*" -print | sort)
+
+  local excess_count=$((${#backups[@]} - BACKUP_RETENTION_COUNT))
+  if [[ "$excess_count" -le 0 ]]; then
+    return
+  fi
+
+  local index
+  for ((index = 0; index < excess_count; index++)); do
+    backup="${backups[$index]}"
+    [[ "$backup" == "$backup_prefix"* ]] || fail "refusing to prune unexpected backup path: $backup"
+    rm -rf "$backup"
+    printf 'pruned_backup=%s\n' "$backup"
+  done
+}
+
 codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${SERVER_EXECUTABLE}"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${LOOPER_EXECUTABLE}"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${CLI_EXECUTABLE}"
@@ -208,6 +231,7 @@ if [[ "$install_app" == "true" ]]; then
   ditto "$app_bundle" "$INSTALL_PATH"
   plutil -lint "${INSTALL_PATH}/Contents/Info.plist"
   codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH"
+  prune_install_backups
 fi
 
 printf 'app=%s\nzip=%s\n' "$app_bundle" "$zip_path"
