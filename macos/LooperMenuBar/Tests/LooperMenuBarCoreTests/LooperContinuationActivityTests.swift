@@ -26,6 +26,18 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func keepsStableActivityIdentitySeparateFromSessionPayload() {
+        let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
+            thread(id: "session-a", title: "Session A", updatedAtMs: 1),
+        ]))
+
+        #expect(LooperContinuationActivity.activityType == "dev.looper.app.continue-session")
+        #expect(LooperContinuationActivity.persistentIdentifier == "dev.looper.app.continuation.current-session")
+        #expect(descriptor.targetContentIdentifier == "looper.session.session-a")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "session-a")
+    }
+
+    @Test
     func carriesDebugHandoffURLWithoutWebFallback() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(
             from: desktopSnapshot(threads: [

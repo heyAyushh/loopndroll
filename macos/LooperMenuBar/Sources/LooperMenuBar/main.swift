@@ -78,7 +78,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             replaceMenu(snapshot: snapshot, error: nil)
         } catch {
             mobileHealth = nil
-            continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
+            continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
             replaceMenu(snapshot: nil, error: error)
         }
     }
@@ -99,7 +99,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             mobileHealth = try? await client.fetchMobileHealth()
             publishContinuationActivity(from: snapshot)
         } catch {
-            continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
+            continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
         }
     }
 

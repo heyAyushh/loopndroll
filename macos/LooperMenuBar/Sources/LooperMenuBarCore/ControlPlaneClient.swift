@@ -2,6 +2,7 @@ import Foundation
 
 public enum LooperLifecycleDefaults {
     public static let requestTimeoutSeconds: TimeInterval = 2
+    public static let desktopSnapshotRequestTimeoutSeconds: TimeInterval = 6
     public static let quitCleanupTimeoutSeconds: TimeInterval = 2
 }
 
@@ -52,6 +53,16 @@ public enum ControlPlaneEndpoint: Equatable {
         case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
              .devinAcpBridgeProbe, .devinAcpBridgeAttach:
             []
+        }
+    }
+
+    public var timeoutInterval: TimeInterval {
+        switch self {
+        case .desktopSnapshot:
+            LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
+        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
+             .devinAcpBridgeProbe, .devinAcpBridgeAttach:
+            LooperLifecycleDefaults.requestTimeoutSeconds
         }
     }
 }
@@ -169,7 +180,7 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         components?.queryItems = endpoint.queryItems.isEmpty ? nil : endpoint.queryItems
         var request = URLRequest(url: components?.url ?? url)
         request.httpMethod = endpoint.method
-        request.timeoutInterval = LooperLifecycleDefaults.requestTimeoutSeconds
+        request.timeoutInterval = endpoint.timeoutInterval
         return request
     }
 

@@ -88,6 +88,11 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .shutdown).httpMethod == "POST")
         #expect(client.request(for: .mobileHealth).httpMethod == "GET")
         #expect(client.request(for: .desktopSnapshot).httpMethod == "GET")
+        #expect(client.request(for: .mobileHealth).timeoutInterval == LooperLifecycleDefaults.requestTimeoutSeconds)
+        #expect(
+            client.request(for: .desktopSnapshot).timeoutInterval
+                == LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
+        )
     }
 
     @Test("reads requests from shared endpoint store")

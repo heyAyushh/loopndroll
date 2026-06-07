@@ -2,6 +2,7 @@ import Foundation
 
 public enum LooperContinuationActivity {
     public static let activityType = "dev.looper.app.continue-session"
+    public static let persistentIdentifier = "dev.looper.app.continuation.current-session"
 
     public enum UserInfoKey {
         public static let kind = "kind"
