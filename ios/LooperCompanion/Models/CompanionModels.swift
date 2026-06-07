@@ -495,12 +495,49 @@ enum SettingsSearchTarget: String, CaseIterable, Hashable, Identifiable, Sendabl
     }
 }
 
+private enum SnapshotDecodingDefault {
+    static let hostID = "rust-control-plane"
+    static let hostName = "Looper"
+    static let globalScope = "global"
+}
+
 struct HostSummary: Codable, Sendable {
     var id: String
     var name: String
     var address: String
     var isReachable: Bool
     var lastSyncedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case address
+        case isReachable
+        case lastSyncedAt
+    }
+
+    init(
+        id: String,
+        name: String,
+        address: String,
+        isReachable: Bool,
+        lastSyncedAt: String
+    ) {
+        self.id = id
+        self.name = name
+        self.address = address
+        self.isReachable = isReachable
+        self.lastSyncedAt = lastSyncedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? SnapshotDecodingDefault.hostID
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? SnapshotDecodingDefault.hostName
+        address = try container.decodeIfPresent(String.self, forKey: .address) ?? ""
+        isReachable = try container.decodeIfPresent(Bool.self, forKey: .isReachable) ?? false
+        lastSyncedAt = try container.decodeIfPresent(String.self, forKey: .lastSyncedAt) ?? ""
+    }
 }
 
 struct CompanionServerHealth: Codable, Sendable {
@@ -572,12 +609,16 @@ struct GlobalSettings: Codable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        defaultPrompt = try container.decode(String.self, forKey: .defaultPrompt)
+        defaultPrompt = try container.decodeIfPresent(String.self, forKey: .defaultPrompt) ?? ""
         globalMode = try container.decodeIfPresent(SessionMode.self, forKey: .globalMode)
-        scope = try container.decode(String.self, forKey: .scope)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope) ??
+            SnapshotDecodingDefault.globalScope
         notificationLabel = try container.decodeIfPresent(String.self, forKey: .notificationLabel)
         completionCheckLabel = try container.decodeIfPresent(String.self, forKey: .completionCheckLabel)
-        completionCheckWaitForReply = try container.decode(Bool.self, forKey: .completionCheckWaitForReply)
+        completionCheckWaitForReply = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .completionCheckWaitForReply
+        ) ?? false
 
         let assistantSurfaceRawValue = try container.decodeIfPresent(String.self, forKey: .assistantSurface)
         assistantSurface = assistantSurfaceRawValue
@@ -961,7 +1002,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
         lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
-        isArchived = try container.decode(Bool.self, forKey: .isArchived)
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ??
+            (status == .archived)
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
     }
@@ -1126,8 +1168,14 @@ struct MobileSnapshot: Codable, Sendable {
         host = try container.decode(HostSummary.self, forKey: .host)
         globalSettings = try container.decode(GlobalSettings.self, forKey: .globalSettings)
         sessions = try container.decode([SessionSummary].self, forKey: .sessions)
-        notifications = try container.decode([NotificationDestination].self, forKey: .notifications)
-        completionChecks = try container.decode([CompletionCheckSummary].self, forKey: .completionChecks)
+        notifications = try container.decodeIfPresent(
+            [NotificationDestination].self,
+            forKey: .notifications
+        ) ?? []
+        completionChecks = try container.decodeIfPresent(
+            [CompletionCheckSummary].self,
+            forKey: .completionChecks
+        ) ?? []
         grokBuild = try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild)
     }
 }

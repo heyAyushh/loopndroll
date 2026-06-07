@@ -7,6 +7,12 @@ private enum LaunchArgument {
     static let sendTestAlertOnLaunch = "--send-test-alert-on-launch"
 }
 
+private enum CachedSnapshotRestoreReason {
+    static let appLaunch = "app-launch"
+    static let bundledConnectionChange = "bundled-connection-change"
+    static let loadFailure = "load-failure"
+}
+
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -51,12 +57,11 @@ final class CompanionAppModel {
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         if didActivateBundledConnection {
-            CompanionSnapshotCache.clear()
+            CompanionDiagnostics.record("model:bundled-connection-activated")
         }
 
-        if !configuredBaseURL.isEmpty, let cachedSnapshot = CompanionSnapshotCache.load() {
-            snapshot = cachedSnapshot
-            sessionSections = SessionSections(sessions: cachedSnapshot.sessions)
+        if !configuredBaseURL.isEmpty {
+            restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
         }
 
         configureStopQuickActions()
@@ -336,12 +341,13 @@ final class CompanionAppModel {
     }
 
     private func resetSnapshotStateForConnectionChange() {
-        snapshot = nil
-        sessionSections = .empty
         serverHealth = nil
         detailBySessionID = [:]
         errorMessage = nil
-        CompanionSnapshotCache.clear()
+        if !restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.bundledConnectionChange) {
+            snapshot = nil
+            sessionSections = .empty
+        }
     }
 
     func refreshLocalNotificationStatus() async {
@@ -466,17 +472,23 @@ final class CompanionAppModel {
                 return
             }
 
+            let didRestoreCachedSnapshot = snapshot == nil &&
+                restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.loadFailure)
+            let hasUsableSnapshot = snapshot != nil
             let nextConnectionState = connectionState(for: error)
             connectionState = nextConnectionState
             if nextConnectionState == .offline || nextConnectionState == .unpaired {
                 serverHealth = nil
             }
-            errorMessage = error.localizedDescription
+            errorMessage = shouldSuppressSnapshotLoadError(
+                state: nextConnectionState,
+                hasUsableSnapshot: hasUsableSnapshot
+            ) ? nil : error.localizedDescription
             CompanionDiagnostics.lifecycle.error(
-                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreCachedSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             CompanionDiagnostics.record(
-                "snapshot:load-failed state=\(nextConnectionState.rawValue) error=\(error.localizedDescription)"
+                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreCachedSnapshot) error=\(error.localizedDescription)"
             )
         }
     }
@@ -803,6 +815,34 @@ final class CompanionAppModel {
 
         let nsError = error as NSError
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    private func shouldSuppressSnapshotLoadError(
+        state: ConnectivityState,
+        hasUsableSnapshot: Bool
+    ) -> Bool {
+        hasUsableSnapshot && state == .offline
+    }
+
+    @discardableResult
+    private func restoreCachedSnapshotIfAvailable(reason: String) -> Bool {
+        guard let cachedSnapshot = CompanionSnapshotCache.load() else {
+            return false
+        }
+
+        applyCachedSnapshot(cachedSnapshot, reason: reason)
+        return true
+    }
+
+    private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {
+        snapshot = cachedSnapshot
+        sessionSections = SessionSections(sessions: cachedSnapshot.sessions)
+        lastUpdatedAt = Date()
+        syncDetailCache(with: cachedSnapshot)
+        syncSpotlightIndex(with: cachedSnapshot.sessions)
+        CompanionDiagnostics.record(
+            "snapshot:cache-restore reason=\(reason) sessions=\(cachedSnapshot.sessions.count)"
+        )
     }
 
     private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {

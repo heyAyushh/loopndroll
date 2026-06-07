@@ -5,21 +5,54 @@ enum CompanionSnapshotCache {
     private static let snapshotFilename = "mobile-snapshot-cache.json"
 
     static func load() -> MobileSnapshot? {
-        if let data = try? Data(contentsOf: snapshotURL()) {
-            let snapshot = try? JSONDecoder().decode(MobileSnapshot.self, from: data)
-            CompanionDiagnostics.cache.info(
-                "Loaded file snapshot cache hasSnapshot=\(snapshot != nil, privacy: .public)"
-            )
-            CompanionDiagnostics.record("cache:load-file hasSnapshot=\(snapshot != nil)")
-            return snapshot
+        let url = snapshotURL()
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                CompanionDiagnostics.cache.error(
+                    "Failed to read snapshot cache error=\(error.localizedDescription, privacy: .public)"
+                )
+                CompanionDiagnostics.record("cache:read-failed error=\(error.localizedDescription)")
+                return nil
+            }
+
+            do {
+                let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: data)
+                CompanionDiagnostics.cache.info("Loaded file snapshot cache hasSnapshot=true")
+                CompanionDiagnostics.record("cache:load-file hasSnapshot=true")
+                return snapshot
+            } catch {
+                CompanionDiagnostics.cache.error(
+                    "Failed to decode snapshot cache error=\(error.localizedDescription, privacy: .public)"
+                )
+                CompanionDiagnostics.cache.info(
+                    "Loaded file snapshot cache hasSnapshot=false"
+                )
+                CompanionDiagnostics.record(
+                    "cache:decode-failed error=\(error.localizedDescription)"
+                )
+                return nil
+            }
         }
 
-        if let legacyData = UserDefaults.standard.data(forKey: snapshotKey),
-           let snapshot = try? JSONDecoder().decode(MobileSnapshot.self, from: legacyData) {
-            save(snapshot)
-            CompanionDiagnostics.cache.info("Migrated legacy snapshot cache")
-            CompanionDiagnostics.record("cache:migrate-legacy")
-            return snapshot
+        if let legacyData = UserDefaults.standard.data(forKey: snapshotKey) {
+            do {
+                let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: legacyData)
+                save(snapshot)
+                CompanionDiagnostics.cache.info("Migrated legacy snapshot cache")
+                CompanionDiagnostics.record("cache:migrate-legacy")
+                return snapshot
+            } catch {
+                CompanionDiagnostics.cache.error(
+                    "Failed to decode legacy snapshot cache error=\(error.localizedDescription, privacy: .public)"
+                )
+                CompanionDiagnostics.record(
+                    "cache:legacy-decode-failed error=\(error.localizedDescription)"
+                )
+            }
         }
 
         CompanionDiagnostics.cache.info("No snapshot cache found")
