@@ -171,20 +171,11 @@ struct SessionsScreen: View {
     }
 
     private var connectionSubtitle: String {
-        guard let host = model.snapshot?.host else {
-            return model.connectivitySummary
+        if selectedAssistantSurface == .grokBuild, let grokBuild = model.snapshot?.grokBuild {
+            return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
         }
 
-        var subtitle = "Last synced \(ModelFormatting.relativeTimestamp(host.lastSyncedAt))"
-
-        if selectedAssistantSurface == .grokBuild,
-           let grokBuild = model.snapshot?.grokBuild
-        {
-            subtitle += " · Grok hooks \(grokBuild.hooksHealthTitle.lowercased())"
-            subtitle += " · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
-        }
-
-        return subtitle
+        return model.connectivitySummary
     }
 
     private func sessionSection(
