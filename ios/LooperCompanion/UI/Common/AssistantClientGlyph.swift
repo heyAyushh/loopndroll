@@ -174,6 +174,25 @@ struct AssistantSurfaceLogoMark: View {
     let surface: CompanionAssistantSurface
 
     var body: some View {
+        switch surface {
+        case .codex:
+            AssistantMonogramLogoMark(
+                monogram: "C",
+                gradientColors: AssistantSurfaceLogoPalette.codexGradient
+            )
+        case .devin:
+            DevinLogoMark()
+        case .grokBuild:
+            GrokLogoMark()
+        }
+    }
+}
+
+private struct AssistantMonogramLogoMark: View {
+    let monogram: String
+    let gradientColors: [Color]
+
+    var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: AssistantSurfaceLogoMetrics.cornerRadius)
                 .fill(
@@ -184,7 +203,7 @@ struct AssistantSurfaceLogoMark: View {
                     )
                 )
 
-            Text(surface.logoMonogram)
+            Text(monogram)
                 .font(
                     .system(
                         size: AssistantSurfaceLogoMetrics.fontSize,
@@ -196,26 +215,89 @@ struct AssistantSurfaceLogoMark: View {
         }
         .aspectRatio(1, contentMode: .fit)
     }
+}
 
-    private var gradientColors: [Color] {
-        switch surface {
-        case .codex:
-            return [
-                Color(red: 0.05, green: 0.12, blue: 0.10),
-                Color(red: 0.11, green: 0.42, blue: 0.32)
-            ]
-        case .devin:
-            return [
-                Color(red: 0.08, green: 0.16, blue: 0.36),
-                Color(red: 0.35, green: 0.28, blue: 0.72)
-            ]
+private struct GrokLogoMark: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Image(GrokLogoAsset.name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(tintColor)
+            .padding(GrokLogoMetrics.symbolInset)
+            .aspectRatio(1, contentMode: .fit)
+    }
+
+    private var tintColor: Color {
+        switch colorScheme {
+        case .dark:
+            return GrokLogoPalette.darkModeTint
+        case .light:
+            return GrokLogoPalette.lightModeTint
+        @unknown default:
+            return GrokLogoPalette.lightModeTint
         }
     }
+}
+
+private struct DevinLogoMark: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Image(DevinLogoAsset.name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(tintColor)
+            .aspectRatio(1, contentMode: .fit)
+    }
+
+    private var tintColor: Color {
+        switch colorScheme {
+        case .dark:
+            return DevinLogoPalette.darkModeTint
+        case .light:
+            return DevinLogoPalette.lightModeTint
+        @unknown default:
+            return DevinLogoPalette.lightModeTint
+        }
+    }
+}
+
+private enum AssistantSurfaceLogoPalette {
+    static let codexGradient = [
+        Color(red: 0.05, green: 0.12, blue: 0.10),
+        Color(red: 0.11, green: 0.42, blue: 0.32)
+    ]
 }
 
 private enum AssistantSurfaceLogoMetrics {
     static let cornerRadius: CGFloat = 7
     static let fontSize: CGFloat = 13
+}
+
+private enum GrokLogoAsset {
+    static let name = "GrokLogo"
+}
+
+private enum DevinLogoAsset {
+    static let name = "DevinLogo"
+}
+
+private enum DevinLogoPalette {
+    static let darkModeTint = Color.white
+    static let lightModeTint = Color.black
+}
+
+private enum GrokLogoMetrics {
+    static let symbolInset: CGFloat = 2
+}
+
+private enum GrokLogoPalette {
+    static let darkModeTint = Color(red: 0.47, green: 0.47, blue: 0.49)
+    static let lightModeTint = Color(red: 0.30, green: 0.30, blue: 0.32)
 }
 
 private enum CodexLogoAsset {
@@ -257,17 +339,10 @@ private extension CompanionAssistantSurface {
             self = .codex
         case .devin:
             self = .devin
+        case .grokBuild:
+            self = .grokBuild
         case .unknown, .cursor, .claudeCode, .superEngineering, .openclaw:
             return nil
-        }
-    }
-
-    var logoMonogram: String {
-        switch self {
-        case .codex:
-            return "C"
-        case .devin:
-            return "D"
         }
     }
 

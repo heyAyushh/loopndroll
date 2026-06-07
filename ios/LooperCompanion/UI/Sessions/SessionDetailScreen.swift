@@ -8,6 +8,7 @@ struct SessionDetailScreen: View {
     @State private var draftPrompt = ""
     @State private var isSendingPrompt = false
     @State private var showingDeleteConfirmation = false
+    @FocusState private var focusedInput: SessionDetailInput?
 
     private var detail: SessionDetail? {
         model.detail(for: session.id)
@@ -53,6 +54,16 @@ struct SessionDetailScreen: View {
         }
         .navigationTitle(session.ref)
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+
+                Button("Done") {
+                    focusedInput = nil
+                }
+            }
+        }
         .task {
             await model.refreshSessionDetail(id: session.id)
         }
@@ -174,6 +185,7 @@ struct SessionDetailScreen: View {
         Section {
             TextEditor(text: $draftPrompt)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
+                .focused($focusedInput, equals: .prompt)
 
             Button {
                 sendPrompt()
@@ -342,10 +354,11 @@ struct SessionDetailScreen: View {
         let prompt = trimmedPrompt
         isSendingPrompt = true
         Task {
-            await model.sendSessionPrompt(prompt, to: session.id)
+            let didSend = await model.sendSessionPrompt(prompt, to: session.id)
             await MainActor.run {
-                if model.errorMessage == nil {
+                if didSend {
                     draftPrompt = ""
+                    focusedInput = nil
                 }
                 isSendingPrompt = false
             }
@@ -362,4 +375,8 @@ struct SessionDetailScreen: View {
             return "bell"
         }
     }
+}
+
+private enum SessionDetailInput {
+    case prompt
 }

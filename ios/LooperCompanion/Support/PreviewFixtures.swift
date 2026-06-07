@@ -82,10 +82,31 @@ enum PreviewFixtures {
                 assistantPreview: "Wiring the Super.Engineering bridge and validating session sync.",
                 isArchived: false,
                 assistantClient: .superEngineering
+            ),
+            SessionSummary(
+                id: "session-6",
+                ref: "C06",
+                title: "Extend Grok Build across surfaces",
+                status: .active,
+                effectiveMode: .infinite,
+                lastUpdatedAt: Date().addingTimeInterval(-900).ISO8601Format(),
+                assistantPreview: "Grok hooks registered and sessions synced across menubar, TUI, and iOS.",
+                isArchived: false,
+                assistantClient: .grokBuild
             )
         ],
         notifications: notifications,
-        completionChecks: completionChecks
+        completionChecks: completionChecks,
+        grokBuild: GrokBuildStatus(
+            hooks: GrokBuildHookStatus(
+                health: "healthy",
+                owner: "looper-rust",
+                registeredEvents: ["session", "stop"],
+                hooksPath: "/Users/test/.grok/hooks/looper.json"
+            ),
+            sessionCount: 1,
+            activeSessionCount: 1
+        )
     )
 
     static let sessionDetails: [String: SessionDetail] = [
@@ -168,6 +189,23 @@ enum PreviewFixtures {
             latestAssistantMessage: "Wiring the Super.Engineering bridge and validating session sync.",
             isArchived: false,
             assistantClient: .superEngineering,
+            notificationIds: ["telegram-main"],
+            completionCheckID: nil,
+            completionCheckWaitForReply: false,
+            availableNotifications: notifications,
+            availableCompletionChecks: completionChecks
+        ),
+        "session-6": SessionDetail(
+            id: "session-6",
+            ref: "C06",
+            title: "Extend Grok Build across surfaces",
+            status: .active,
+            effectiveMode: .infinite,
+            lastUpdatedAt: Date().addingTimeInterval(-900).ISO8601Format(),
+            assistantPreview: "Grok hooks registered and sessions synced across menubar, TUI, and iOS.",
+            latestAssistantMessage: "Grok hooks registered and sessions synced across menubar, TUI, and iOS.",
+            isArchived: false,
+            assistantClient: .grokBuild,
             notificationIds: ["telegram-main"],
             completionCheckID: nil,
             completionCheckWaitForReply: false,

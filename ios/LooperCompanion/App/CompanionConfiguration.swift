@@ -559,6 +559,10 @@ struct UnconfiguredCompanionService: CompanionService {
         self.error = error
     }
 
+    func makeMobileEventStreamClient() -> MobileEventStreamClient {
+        MobileEventStreamClient(baseURLs: [], bearerToken: nil)
+    }
+
     func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
     func loadSessionDetail(id _: String) async throws -> SessionDetail { throw error }
@@ -574,7 +578,7 @@ struct UnconfiguredCompanionService: CompanionService {
     }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot { throw error }
-    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> GlobalSettings { throw error }
+    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot { throw error }
     func registerPushDevice(
         _: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

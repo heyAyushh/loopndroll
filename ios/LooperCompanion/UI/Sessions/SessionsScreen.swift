@@ -119,27 +119,23 @@ struct SessionsScreen: View {
             ContentUnavailableView(
                 unavailableStateTitle,
                 systemImage: model.connectionState.symbolName,
-                description: Text(model.connectivitySummary)
+                description: Text(emptyStateDescription)
             )
         }
     }
 
     private var connectionSection: some View {
         Section {
-            Button {
-                openSettings()
-            } label: {
-                SessionConnectionRow(
-                    title: model.connectivityHeadline,
-                    subtitle: connectionSubtitle,
-                    statusText: model.connectionState.label,
-                    statusTint: CompanionTint.tint(for: model.connectionState),
-                    assistantPicker: {
-                        assistantPicker
-                    }
-                )
-            }
-            .buttonStyle(.plain)
+            SessionConnectionRow(
+                title: model.connectivityHeadline,
+                subtitle: connectionSubtitle,
+                statusText: model.connectionState.label,
+                statusTint: CompanionTint.tint(for: model.connectionState),
+                openSettings: openSettings,
+                assistantPicker: {
+                    assistantPicker
+                }
+            )
             .companionCardRowSurface()
 
             if model.connectionState == .locked {
@@ -177,7 +173,16 @@ struct SessionsScreen: View {
             return model.connectivitySummary
         }
 
-        return "Last synced \(ModelFormatting.relativeTimestamp(host.lastSyncedAt))"
+        var subtitle = "Last synced \(ModelFormatting.relativeTimestamp(host.lastSyncedAt))"
+
+        if selectedAssistantSurface == .grokBuild,
+           let grokBuild = model.snapshot?.grokBuild
+        {
+            subtitle += " · Grok hooks \(grokBuild.hooksHealthTitle.lowercased())"
+            subtitle += " · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
+        }
+
+        return subtitle
     }
 
     private func sessionSection(
@@ -298,10 +303,32 @@ struct SessionsScreen: View {
         }
     }
 
+    private var emptyStateDescription: String {
+        guard model.connectionState == .connected else {
+            return model.connectivitySummary
+        }
+
+        switch selectedAssistantSurface {
+        case .grokBuild:
+            return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
+        case .devin:
+            return "Devin Desktop sessions appear here when Devin is running on your Mac."
+        case .codex:
+            return model.connectivitySummary
+        }
+    }
+
     private var unavailableStateTitle: String {
         switch model.connectionState {
         case .connected:
-            return "No Sessions"
+            switch selectedAssistantSurface {
+            case .grokBuild:
+                return "No Grok Build Sessions"
+            case .devin:
+                return "No Devin Sessions"
+            case .codex:
+                return "No Sessions"
+            }
         case .connecting:
             return "Connecting to Your Mac"
         case .offline:
@@ -328,26 +355,32 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
     let subtitle: String
     let statusText: String
     let statusTint: Color
+    let openSettings: () -> Void
     @ViewBuilder let assistantPicker: () -> AssistantPicker
 
     var body: some View {
         VStack(alignment: .leading, spacing: AssistantSurfaceControlMetrics.verticalSpacing) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
+            Button {
+                openSettings()
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
 
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    StatusPill(text: statusText, tint: statusTint)
                 }
-
-                Spacer(minLength: 12)
-
-                StatusPill(text: statusText, tint: statusTint)
             }
+            .buttonStyle(.plain)
 
             assistantPicker()
         }

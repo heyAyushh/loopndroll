@@ -33,9 +33,9 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
-    @ObservationIgnored private var assistantSurfaceSaveTask: Task<Void, Never>?
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
+    @ObservationIgnored private var mobileEventStreamTask: Task<Void, Never>?
 
     init(
         environment: CompanionEnvironment,
@@ -224,6 +224,64 @@ final class CompanionAppModel {
         }
 
         await registerForRemoteNotificationsIfPossible()
+        startMobileEventStreamIfNeeded()
+    }
+
+    func stopMobileEventStream() {
+        mobileEventStreamTask?.cancel()
+        mobileEventStreamTask = nil
+    }
+
+    func startMobileEventStreamIfNeeded() {
+        guard mobileEventStreamTask == nil else {
+            return
+        }
+
+        let eventStreamClient = service.makeMobileEventStreamClient()
+        mobileEventStreamTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+
+                do {
+                    try await eventStreamClient.streamEvents { event in
+                        await self.handleMobileStreamEvent(event)
+                    }
+                } catch {
+                    guard !Task.isCancelled else {
+                        return
+                    }
+
+                    if !isCancellationError(error) {
+                        CompanionDiagnostics.record(
+                            "events:stream-error error=\(error.localizedDescription)"
+                        )
+                    }
+                }
+
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                try? await Task.sleep(for: CompanionMetrics.eventStreamReconnectDelay)
+            }
+        }
+    }
+
+    private func handleMobileStreamEvent(_ event: MobileStreamEvent) async {
+        CompanionDiagnostics.record(
+            "events:received type=\(event.eventType.rawValue) thread=\(event.threadID ?? "none")"
+        )
+
+        switch event.eventType {
+        case .sessionChanged, .promptQueued, .promptDelivered, .lifecycleChanged:
+            await refresh()
+            if let threadID = event.threadID,
+               detailBySessionID[threadID] != nil {
+                await refreshSessionDetail(id: threadID)
+            }
+        }
     }
 
     func saveConnectionBaseURL(_ value: String) async {
@@ -265,6 +323,7 @@ final class CompanionAppModel {
     }
 
     private func reloadConnection() async {
+        stopMobileEventStream()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
         snapshot = nil
@@ -588,12 +647,13 @@ final class CompanionAppModel {
         }
     }
 
-    func sendSessionPrompt(_ prompt: String, to sessionID: String) async {
+    @discardableResult
+    func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else {
             errorMessage = "Prompt is required."
             Haptics.warning()
-            return
+            return false
         }
 
         let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
@@ -603,6 +663,8 @@ final class CompanionAppModel {
         if didMutate, detailBySessionID[sessionID] != nil {
             await refreshSessionDetail(id: sessionID)
         }
+
+        return didMutate
     }
 
     func muteSession(_ sessionID: String) async {
@@ -668,34 +730,9 @@ final class CompanionAppModel {
 
     @discardableResult
     func saveAssistantSurface(_ surface: CompanionAssistantSurface) async -> Bool {
-        errorMessage = nil
-        let previousSettings = snapshot?.globalSettings
-        applyAssistantSurface(surface)
-        assistantSurfaceSaveTask?.cancel()
-
-        let service = service
-        assistantSurfaceSaveTask = Task { [weak self] in
-            do {
-                let settings = try await service.saveAssistantSurface(surface)
-                guard !Task.isCancelled else {
-                    return
-                }
-
-                await MainActor.run {
-                    self?.applyGlobalSettings(settings)
-                }
-            } catch {
-                guard !Task.isCancelled else {
-                    return
-                }
-
-                await MainActor.run {
-                    self?.handleAssistantSurfaceSaveFailure(error, previousSettings: previousSettings)
-                }
-            }
+        return await mutateSnapshot {
+            try await service.saveAssistantSurface(surface)
         }
-
-        return true
     }
 
     private func mutateSessionSnapshot(
@@ -787,40 +824,6 @@ final class CompanionAppModel {
             previousSnapshot: previousSnapshot,
             currentSnapshot: nextSnapshot
         )
-    }
-
-    private func applyGlobalSettings(_ settings: GlobalSettings) {
-        guard var nextSnapshot = snapshot else {
-            return
-        }
-
-        nextSnapshot.globalSettings = settings
-        snapshot = nextSnapshot
-        connectionState = .connected
-        lastUpdatedAt = Date()
-    }
-
-    private func applyAssistantSurface(_ surface: CompanionAssistantSurface) {
-        guard var nextSnapshot = snapshot else {
-            return
-        }
-
-        nextSnapshot.globalSettings.assistantSurface = surface
-        snapshot = nextSnapshot
-        connectionState = .connected
-        lastUpdatedAt = Date()
-    }
-
-    private func handleAssistantSurfaceSaveFailure(
-        _ error: Error,
-        previousSettings: GlobalSettings?
-    ) {
-        if let previousSettings {
-            applyGlobalSettings(previousSettings)
-        }
-        connectionState = connectionState(for: error)
-        errorMessage = error.localizedDescription
-        Haptics.error()
     }
 
     private func syncSpotlightIndex(with sessions: [SessionSummary]) {

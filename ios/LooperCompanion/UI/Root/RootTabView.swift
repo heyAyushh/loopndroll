@@ -70,6 +70,12 @@ struct RootTabView: View {
             await refreshForActiveSceneIfNeeded()
         }
         .onChange(of: scenePhase) { _, nextPhase in
+            if nextPhase == .active, authenticator.isUnlocked {
+                model.startMobileEventStreamIfNeeded()
+            } else {
+                model.stopMobileEventStream()
+            }
+
             guard nextPhase != .active else {
                 return
             }

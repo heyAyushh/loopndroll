@@ -1,16 +1,31 @@
 import Foundation
+import LooperCompanionCore
 
 private let mockCompanionBaseURL = "preview://looper"
 
 actor MockCompanionStore {
-    var snapshot = PreviewFixtures.snapshot
-    var details = PreviewFixtures.sessionDetails
+    private var allSessions: [SessionSummary]
+    private var allDetails: [String: SessionDetail]
+    var snapshot: MobileSnapshot
+    private var details: [String: SessionDetail]
     var remotePushRegistration = RemotePushRegistrationResponse(
         state: .enabled,
         environment: .development,
         registeredAt: Date().ISO8601Format(),
         message: "Remote push is ready on this Mac."
     )
+
+    init() {
+        let initialSnapshot = PreviewFixtures.snapshot
+        allSessions = initialSnapshot.sessions
+        allDetails = PreviewFixtures.sessionDetails
+        snapshot = initialSnapshot
+        snapshot.sessions = Self.filteredSessions(
+            allSessions,
+            surface: initialSnapshot.globalSettings.assistantSurface
+        )
+        details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
+    }
 
     func sessionDetail(id: String) -> SessionDetail {
         details[id] ?? details.values.first ?? SessionDetail(
@@ -33,7 +48,7 @@ actor MockCompanionStore {
     }
 
     func setMode(id: String, preset: SessionMode?) -> MobileSnapshot {
-        snapshot.sessions = snapshot.sessions.map {
+        allSessions = allSessions.map {
             guard $0.id == id else { return $0 }
             return SessionSummary(
                 id: $0.id,
@@ -49,17 +64,17 @@ actor MockCompanionStore {
             )
         }
 
-        if var detail = details[id] {
+        if var detail = allDetails[id] {
             detail.effectiveMode = preset
             detail.lastUpdatedAt = Date().ISO8601Format()
-            details[id] = detail
+            allDetails[id] = detail
         }
 
-        return snapshot
+        return publishSnapshot()
     }
 
     func setArchived(id: String, archived: Bool) -> MobileSnapshot {
-        snapshot.sessions = snapshot.sessions.map {
+        allSessions = allSessions.map {
             guard $0.id == id else { return $0 }
             return SessionSummary(
                 id: $0.id,
@@ -75,27 +90,27 @@ actor MockCompanionStore {
             )
         }
 
-        if var detail = details[id] {
+        if var detail = allDetails[id] {
             detail.isArchived = archived
             detail.status = archived ? .archived : .active
             detail.lastUpdatedAt = Date().ISO8601Format()
-            details[id] = detail
+            allDetails[id] = detail
         }
 
-        return snapshot
+        return publishSnapshot()
     }
 
     func delete(id: String) -> MobileSnapshot {
-        snapshot.sessions.removeAll { $0.id == id }
-        details.removeValue(forKey: id)
-        return snapshot
+        allSessions.removeAll { $0.id == id }
+        allDetails.removeValue(forKey: id)
+        return publishSnapshot()
     }
 
     func sendPrompt(id: String, prompt: String) -> MobileSnapshot {
         let timestamp = Date().ISO8601Format()
         let preview = "Queued prompt: \(prompt)"
 
-        snapshot.sessions = snapshot.sessions.map {
+        allSessions = allSessions.map {
             guard $0.id == id else { return $0 }
             return SessionSummary(
                 id: $0.id,
@@ -111,33 +126,61 @@ actor MockCompanionStore {
             )
         }
 
-        if var detail = details[id] {
+        if var detail = allDetails[id] {
             detail.assistantPreview = preview
             detail.latestAssistantMessage = preview
             detail.lastUpdatedAt = timestamp
-            details[id] = detail
+            allDetails[id] = detail
         }
 
-        return snapshot
+        return publishSnapshot()
     }
 
     func mute(id: String) -> MobileSnapshot {
-        if var detail = details[id] {
+        if var detail = allDetails[id] {
             detail.notificationIds = []
-            details[id] = detail
+            allDetails[id] = detail
         }
 
-        return snapshot
+        return publishSnapshot()
     }
 
     func savePrompt(_ prompt: String) -> MobileSnapshot {
         snapshot.globalSettings.defaultPrompt = prompt
+        return publishSnapshot()
+    }
+
+    func saveAssistantSurface(_ surface: CompanionAssistantSurface) -> MobileSnapshot {
+        snapshot.globalSettings.assistantSurface = surface
+        return publishSnapshot()
+    }
+
+    @discardableResult
+    private func publishSnapshot() -> MobileSnapshot {
+        let surface = snapshot.globalSettings.assistantSurface
+        snapshot.sessions = Self.filteredSessions(allSessions, surface: surface)
+        details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
         return snapshot
     }
 
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) -> GlobalSettings {
-        snapshot.globalSettings.assistantSurface = surface
-        return snapshot.globalSettings
+    private static func filteredSessions(
+        _ sessions: [SessionSummary],
+        surface: CompanionAssistantSurface
+    ) -> [SessionSummary] {
+        sessions.filter { session in
+            CompanionSurfaceFiltering.matches(
+                assistantClient: session.assistantClient.rawValue,
+                surface: surface.rawValue
+            )
+        }
+    }
+
+    private static func filteredDetails(
+        _ details: [String: SessionDetail],
+        visibleSessions: [SessionSummary]
+    ) -> [String: SessionDetail] {
+        let visibleSessionIDs = Set(visibleSessions.map(\.id))
+        return details.filter { visibleSessionIDs.contains($0.key) }
     }
 
     func registerPushDevice(
@@ -159,6 +202,13 @@ actor MockCompanionStore {
 
 struct MockCompanionService: CompanionService {
     private let store = MockCompanionStore()
+
+    func makeMobileEventStreamClient() -> MobileEventStreamClient {
+        MobileEventStreamClient(
+            baseURLs: [URL(string: mockCompanionBaseURL)!],
+            bearerToken: nil
+        )
+    }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
@@ -201,7 +251,7 @@ struct MockCompanionService: CompanionService {
         await store.savePrompt(prompt)
     }
 
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> GlobalSettings {
+    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot {
         await store.saveAssistantSurface(surface)
     }
 

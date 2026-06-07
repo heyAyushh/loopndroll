@@ -25,6 +25,7 @@
 		3D5A7809C8C19205CAEE478D /* AssistantClientGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD847E9AD9142AA0F82C325D /* AssistantClientGlyph.swift */; };
 		4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */; };
 		4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2489ABFC353256268974517A /* MockCompanionService.swift */; };
+		7F8E9D0C1B2A394857463524 /* MobileEventStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192837465 /* MobileEventStream.swift */; };
 		5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */; };
 		614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */; };
 		626E73486A4D4B1DA9409649 /* LooperCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3F8AB98DA026EB40D6D0D3 /* LooperCompanionApp.swift */; };
@@ -61,6 +62,7 @@
 		DB8D397922B1F1D52B93AC00 /* codex-logo-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = AAC18AF27E6A1E8F0909C45F /* codex-logo-poster.png */; };
 		DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */; };
 		DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */; };
+		18293A4B5C6D7E8F90123456 /* LooperCompanionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0718293A4B5C6D7E8F901234 /* LooperCompanionCore */; };
 		DEADABB2FAB9574917ACDCB3 /* OrbCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */; };
 		F8CEA95579671A21AF796C46 /* SessionSearchRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37F135BB1B061C9ACFE9DCD /* SessionSearchRows.swift */; };
 		F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */; };
@@ -73,6 +75,7 @@
 		155542B6D3718553CC20717F /* LooperCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LooperCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionPasskeyAuthenticationClient.swift; sourceTree = "<group>"; };
 		1AE006F2F407024A15E4727F /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192837465 /* MobileEventStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEventStream.swift; sourceTree = "<group>"; };
 		2489ABFC353256268974517A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
 		2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Release.entitlements; sourceTree = "<group>"; };
 		2E6662FF1A21320CE35B28AF /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
@@ -91,6 +94,7 @@
 		64992FB2DA134F019F69163E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppModel.swift; sourceTree = "<group>"; };
 		66B602FC6F0126FEDA7623BA /* OrbCodeKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OrbCodeKit; path = OrbCodeKit; sourceTree = SOURCE_ROOT; };
+		E5F60718293A4B5C6D7E8F90 /* LooperCompanionCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperCompanionCore; path = LooperCompanionCore; sourceTree = SOURCE_ROOT; };
 		6EC1A0190D9046B11D3FCC6B /* CompanionTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionTheme.swift; sourceTree = "<group>"; };
 		6F3F8AB98DA026EB40D6D0D3 /* LooperCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCompanionApp.swift; sourceTree = "<group>"; };
 		7038F1ECA616F6FCCCBB27BF /* OnboardingScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingScreen.swift; sourceTree = "<group>"; };
@@ -135,6 +139,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				18293A4B5C6D7E8F90123456 /* LooperCompanionCore in Frameworks */,
 				DEADABB2FAB9574917ACDCB3 /* OrbCodeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -159,6 +164,7 @@
 		28DFFCD51B447E38915A6DC1 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				E5F60718293A4B5C6D7E8F90 /* LooperCompanionCore */,
 				66B602FC6F0126FEDA7623BA /* OrbCodeKit */,
 			);
 			name = Packages;
@@ -233,6 +239,7 @@
 			children = (
 				56C79B6AF7BC32D952CE288D /* CompanionService.swift */,
 				46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */,
+				1A2B3C4D5E6F708192837465 /* MobileEventStream.swift */,
 				2489ABFC353256268974517A /* MockCompanionService.swift */,
 				A415685A0D0A05E2D83C2E80 /* SessionSpotlightIndexer.swift */,
 				ACE4AA7E26A90DEF6007679B /* SpotlightSearchService.swift */,
@@ -370,6 +377,7 @@
 			);
 			name = LooperCompanion;
 			packageProductDependencies = (
+				0718293A4B5C6D7E8F901234 /* LooperCompanionCore */,
 				350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */,
 			);
 			productName = LooperCompanion;
@@ -402,6 +410,7 @@
 			mainGroup = AF0B8F711A735F4564DA799E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				F60718293A4B5C6D7E8F9012 /* XCLocalSwiftPackageReference "LooperCompanionCore" */,
 				3554AC755BD33C16845B5833 /* XCLocalSwiftPackageReference "OrbCodeKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -462,6 +471,7 @@
 				3234EEB1D3D23E9E2A761B89 /* MazeGameView.swift in Sources */,
 				F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */,
 				4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */,
+				7F8E9D0C1B2A394857463524 /* MobileEventStream.swift in Sources */,
 				3AE7B647FFE2E6529D655E38 /* MotionController.swift in Sources */,
 				8B6CB0A811613F054EFD021B /* OnboardingScreen.swift in Sources */,
 				DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */,
@@ -681,6 +691,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		F60718293A4B5C6D7E8F9012 /* XCLocalSwiftPackageReference "LooperCompanionCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = LooperCompanionCore;
+		};
 		3554AC755BD33C16845B5833 /* XCLocalSwiftPackageReference "OrbCodeKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = OrbCodeKit;
@@ -688,6 +702,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0718293A4B5C6D7E8F901234 /* LooperCompanionCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LooperCompanionCore;
+		};
 		350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OrbCodeKit;

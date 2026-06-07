@@ -43,6 +43,7 @@ enum CompanionMetrics {
     static let screenPadding: CGFloat = 20
     static let sectionSpacing: CGFloat = 28
     static let autoRefreshInterval: Duration = .seconds(20)
+    static let eventStreamReconnectDelay: Duration = .seconds(3)
 }
 
 enum CompanionDiagnostics {

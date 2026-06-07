@@ -513,6 +513,7 @@ struct CompanionServerHealth: Codable, Sendable {
 enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex
     case devin
+    case grokBuild = "grok-build"
 
     static let defaultSurface = Self.codex
 
@@ -526,6 +527,8 @@ enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sen
             return "Codex"
         case .devin:
             return "Devin"
+        case .grokBuild:
+            return "Grok Build"
         }
     }
 }
@@ -659,6 +662,7 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
     case claudeCode = "claude-code"
     case superEngineering = "super-engineering"
     case openclaw
+    case grokBuild = "grok-build"
 
     var displayTitle: String {
         switch self {
@@ -676,6 +680,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return "Super.Engineering"
         case .openclaw:
             return "OpenClaw"
+        case .grokBuild:
+            return "Grok Build"
         }
     }
 
@@ -696,6 +702,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return ["super", "super.engineering", "super engineering", "superengineering"]
         case .openclaw:
             return ["openclaw", "open claw", "claw"]
+        case .grokBuild:
+            return ["grok", "grok build", "xai"]
         }
     }
 
@@ -715,6 +723,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return "gearshape.2"
         case .openclaw:
             return "pawprint.fill"
+        case .grokBuild:
+            return "sparkle"
         }
     }
 }
@@ -1054,12 +1064,72 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     }
 }
 
+struct GrokBuildHookStatus: Codable, Equatable, Sendable {
+    var health: String
+    var owner: String
+    var registeredEvents: [String]
+    var hooksPath: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case health
+        case owner
+        case registeredEvents
+        case hooksPath
+    }
+}
+
+struct GrokBuildStatus: Codable, Equatable, Sendable {
+    var hooks: GrokBuildHookStatus
+    var sessionCount: Int
+    var activeSessionCount: Int
+
+    var hooksHealthTitle: String {
+        hooks.health.capitalized
+    }
+}
+
 struct MobileSnapshot: Codable, Sendable {
     var host: HostSummary
     var globalSettings: GlobalSettings
     var sessions: [SessionSummary]
     var notifications: [NotificationDestination]
     var completionChecks: [CompletionCheckSummary]
+    var grokBuild: GrokBuildStatus?
+
+    init(
+        host: HostSummary,
+        globalSettings: GlobalSettings,
+        sessions: [SessionSummary],
+        notifications: [NotificationDestination],
+        completionChecks: [CompletionCheckSummary],
+        grokBuild: GrokBuildStatus? = nil
+    ) {
+        self.host = host
+        self.globalSettings = globalSettings
+        self.sessions = sessions
+        self.notifications = notifications
+        self.completionChecks = completionChecks
+        self.grokBuild = grokBuild
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host
+        case globalSettings
+        case sessions
+        case notifications
+        case completionChecks
+        case grokBuild
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        host = try container.decode(HostSummary.self, forKey: .host)
+        globalSettings = try container.decode(GlobalSettings.self, forKey: .globalSettings)
+        sessions = try container.decode([SessionSummary].self, forKey: .sessions)
+        notifications = try container.decode([NotificationDestination].self, forKey: .notifications)
+        completionChecks = try container.decode([CompletionCheckSummary].self, forKey: .completionChecks)
+        grokBuild = try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild)
+    }
 }
 
 struct SessionSections: Sendable {

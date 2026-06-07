@@ -125,6 +125,20 @@ struct SessionsDeviceHubSheet: View {
                 }
                 .listRowBackground(Color.clear)
 
+                if let grokBuild = model.snapshot?.grokBuild {
+                    Section("Grok Build") {
+                        LabeledContent("Hooks", value: grokBuild.hooksHealthTitle)
+                        LabeledContent(
+                            "Sessions",
+                            value: "\(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
+                        )
+                        if let hooksPath = grokBuild.hooks.hooksPath {
+                            LabeledContent("Hooks File", value: hooksPath)
+                        }
+                    }
+                    .listRowBackground(Color.clear)
+                }
+
                 Section("Actions") {
                     Button {
                         isOrbScannerPresented = true

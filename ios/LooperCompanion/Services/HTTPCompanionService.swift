@@ -1,6 +1,12 @@
 import Foundation
 
 struct HTTPCompanionService: CompanionService {
+    private static let sessionPathPrefix = "/api/mobile/sessions"
+    private static let pathSeparator = "/"
+    private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
+    private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
+        .subtracting(pathSegmentReservedCharacters)
+
     let baseURLs: [URL]
     let bearerToken: String?
 
@@ -14,6 +20,10 @@ struct HTTPCompanionService: CompanionService {
         self.bearerToken = bearerToken
     }
 
+    func makeMobileEventStreamClient() -> MobileEventStreamClient {
+        MobileEventStreamClient(baseURLs: baseURLs, bearerToken: bearerToken)
+    }
+
     func loadServerHealth() async throws -> CompanionServerHealth {
         try await request(path: "/api/mobile/health", method: HTTPMethod.get)
     }
@@ -23,12 +33,12 @@ struct HTTPCompanionService: CompanionService {
     }
 
     func loadSessionDetail(id: String) async throws -> SessionDetail {
-        try await request(path: "/api/mobile/sessions/\(id)", method: HTTPMethod.get)
+        try await request(path: sessionPath(id: id), method: HTTPMethod.get)
     }
 
     func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot {
         try await request(
-            path: "/api/mobile/sessions/\(id)/mode",
+            path: sessionPath(id: id, suffix: "mode"),
             method: HTTPMethod.post,
             body: ["preset": preset?.rawValue ?? NSNull()]
         )
@@ -36,19 +46,19 @@ struct HTTPCompanionService: CompanionService {
 
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
         try await request(
-            path: "/api/mobile/sessions/\(id)/archive",
+            path: sessionPath(id: id, suffix: "archive"),
             method: HTTPMethod.post,
             body: ["archived": archived]
         )
     }
 
     func deleteSession(id: String) async throws -> MobileSnapshot {
-        try await request(path: "/api/mobile/sessions/\(id)", method: HTTPMethod.delete)
+        try await request(path: sessionPath(id: id), method: HTTPMethod.delete)
     }
 
     func sendSessionPrompt(id: String, prompt: String) async throws -> MobileSnapshot {
         try await request(
-            path: "/api/mobile/sessions/\(id)/prompt",
+            path: sessionPath(id: id, suffix: "prompt"),
             method: HTTPMethod.post,
             body: ["prompt": prompt]
         )
@@ -56,7 +66,7 @@ struct HTTPCompanionService: CompanionService {
 
     func muteSession(id: String) async throws -> MobileSnapshot {
         try await request(
-            path: "/api/mobile/sessions/\(id)/mute",
+            path: sessionPath(id: id, suffix: "mute"),
             method: HTTPMethod.post
         )
     }
@@ -69,7 +79,7 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> GlobalSettings {
+    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot {
         try await request(
             path: "/api/mobile/settings/assistant-surface",
             method: HTTPMethod.post,
@@ -195,7 +205,7 @@ struct HTTPCompanionService: CompanionService {
         method: HTTPMethod,
         body: [String: Any]? = nil
     ) async throws -> Data {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        var request = URLRequest(url: try requestURL(baseURL: baseURL, path: path))
         request.httpMethod = method.rawValue
         request.timeoutInterval = HTTPRequestTimeout.interval(path: path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -267,6 +277,47 @@ struct HTTPCompanionService: CompanionService {
             "http:success path=\(path) status=\(httpResponse.statusCode) bytes=\(data.count)"
         )
         return data
+    }
+
+    private func sessionPath(id: String, suffix: String? = nil) throws -> String {
+        guard let encodedID = id.addingPercentEncoding(
+            withAllowedCharacters: Self.pathSegmentAllowedCharacters
+        ), !encodedID.isEmpty
+        else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+
+        if let suffix = normalizedPathSuffix(suffix) {
+            return "\(Self.sessionPathPrefix)\(Self.pathSeparator)\(encodedID)\(Self.pathSeparator)\(suffix)"
+        }
+        return "\(Self.sessionPathPrefix)\(Self.pathSeparator)\(encodedID)"
+    }
+
+    private func requestURL(baseURL: URL, path: String) throws -> URL {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+
+        let basePath = components.percentEncodedPath.trimmingCharacters(
+            in: Self.pathSegmentReservedCharacters
+        )
+        let requestPath = path.trimmingCharacters(in: Self.pathSegmentReservedCharacters)
+        let joinedPath = [basePath, requestPath]
+            .filter { !$0.isEmpty }
+            .joined(separator: Self.pathSeparator)
+        components.percentEncodedPath = "\(Self.pathSeparator)\(joinedPath)"
+        guard let url = components.url else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        return url
+    }
+
+    private func normalizedPathSuffix(_ suffix: String?) -> String? {
+        let trimmedSuffix = suffix?.trimmingCharacters(in: Self.pathSegmentReservedCharacters)
+        guard let trimmedSuffix, !trimmedSuffix.isEmpty else {
+            return nil
+        }
+        return trimmedSuffix
     }
 
     private func firstSuccessfulGetData(baseURLs: [URL], path: String) async throws -> Data {
