@@ -146,11 +146,9 @@ struct RootTabView: View {
                 .pinballSurfaceCollectionEnabled(shouldCollectPinballSurfaces(for: .sessions))
             }
 
-            if selectedTab != .search {
-                Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
-                    SettingsScreen(model: model, authenticator: authenticator)
-                        .pinballSurfaceCollectionEnabled(shouldCollectPinballSurfaces(for: .settings))
-                }
+            Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
+                SettingsScreen(model: model, authenticator: authenticator)
+                    .pinballSurfaceCollectionEnabled(shouldCollectPinballSurfaces(for: .settings))
             }
 
             Tab("Search", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {

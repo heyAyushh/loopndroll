@@ -20,6 +20,8 @@ struct SessionsScreen: View {
     @State private var showsAllRunningSessions = false
     @State private var showsAllArchivedSessions = false
     @State private var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
+    @State private var pendingAssistantSurface: CompanionAssistantSurface?
+    @State private var isSavingAssistantSurface = false
 
     private var hasVisibleSessions: Bool {
         !model.needsAttentionSessions.isEmpty ||
@@ -99,7 +101,7 @@ struct SessionsScreen: View {
                 openPendingSessionIfNeeded()
             }
             .task(id: model.snapshot?.globalSettings.assistantSurface) {
-                selectedAssistantSurface = model.snapshot?.globalSettings.assistantSurface ?? .defaultSurface
+                syncAssistantSurfaceFromSnapshot()
             }
             .overlay {
                 overlayState
@@ -292,15 +294,52 @@ struct SessionsScreen: View {
             return
         }
 
-        let previousSurface = selectedAssistantSurface
         selectedAssistantSurface = surface
+        pendingAssistantSurface = surface
+        startAssistantSurfaceSaveIfNeeded()
+    }
 
-        Task {
-            let didSave = await model.saveAssistantSurface(surface)
-            if !didSave {
-                selectedAssistantSurface = model.snapshot?.globalSettings.assistantSurface ?? previousSurface
+    private func syncAssistantSurfaceFromSnapshot() {
+        guard !isSavingAssistantSurface, pendingAssistantSurface == nil else {
+            return
+        }
+
+        selectedAssistantSurface = committedAssistantSurface
+    }
+
+    @MainActor
+    private func startAssistantSurfaceSaveIfNeeded() {
+        guard !isSavingAssistantSurface else {
+            return
+        }
+
+        isSavingAssistantSurface = true
+        Task { @MainActor in
+            await savePendingAssistantSurfaces()
+        }
+    }
+
+    @MainActor
+    private func savePendingAssistantSurfaces() async {
+        var shouldRevertToCommittedSurface = false
+
+        while let nextAssistantSurface = pendingAssistantSurface {
+            pendingAssistantSurface = nil
+            let didSave = await model.saveAssistantSurface(nextAssistantSurface)
+            if !didSave, pendingAssistantSurface == nil {
+                shouldRevertToCommittedSurface = true
+                break
             }
         }
+
+        isSavingAssistantSurface = false
+        selectedAssistantSurface = shouldRevertToCommittedSurface
+            ? committedAssistantSurface
+            : model.snapshot?.globalSettings.assistantSurface ?? selectedAssistantSurface
+    }
+
+    private var committedAssistantSurface: CompanionAssistantSurface {
+        model.snapshot?.globalSettings.assistantSurface ?? .defaultSurface
     }
 
     private var emptyStateDescription: String {
