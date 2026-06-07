@@ -10,7 +10,7 @@ pub(super) const DEFAULT_SCOPE: &str = "global";
 pub(super) const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 
 const LOOP_SCOPES: &[&str] = &["global", "per-task"];
-const ASSISTANT_SURFACES: &[&str] = &["codex", "devin"];
+const ASSISTANT_SURFACES: &[&str] = &["codex", "devin", "grok-build"];
 
 pub(super) fn normalized_preset(preset: Option<&str>) -> MobileSessionResult<Option<String>> {
     let Some(preset) = preset.and_then(normalized_optional) else {

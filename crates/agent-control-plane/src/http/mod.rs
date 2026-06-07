@@ -14,11 +14,16 @@ use axum::{
 };
 
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
+use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
-use crate::mobile_api::{mobile_global_settings, mobile_session_detail, mobile_snapshot};
+use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
 use crate::mobile_auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
+};
+use crate::mobile_events::{
+    MobileEvent, MobileEventInput, MobileEventKind, MobileEventRecord, mobile_event_now,
+    mobile_event_sse_name,
 };
 use crate::mobile_push::MobilePushRegistrationRequest;
 use crate::mobile_session::{
@@ -65,6 +70,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route(
             "/desktop/devin/acp-bridge/probe",
             post(desktop_devin_acp_bridge_probe),
+        )
+        .route(
+            "/desktop/devin/acp-bridge/attach",
+            post(desktop_devin_acp_bridge_attach),
         )
         .route("/desktop/connections", get(desktop_connections))
         .route("/desktop/pairing", get(desktop_pairing))
@@ -165,6 +174,7 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             get(mobile_connection_orb),
         )
         .route("/api/mobile/snapshot", get(mobile_snapshot_handler))
+        .route("/api/mobile/events", get(mobile_events_handler))
         .route(
             "/api/mobile/sessions/:thread_id",
             get(mobile_session_detail_handler).delete(mobile_session_delete),
@@ -224,11 +234,13 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
 
 async fn health(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     let status = control_plane.status();
+    let grok_hooks = inspect_grok_hooks(control_plane.grok_home());
     Json(serde_json::json!({
         "service": "looper",
         "ok": status.source.health == "healthy",
         "source": status.source,
         "hooks": status.hooks,
+        "grok_hooks": grok_hooks,
     }))
 }
 
@@ -275,6 +287,18 @@ async fn desktop_devin_acp_bridge_probe(
     Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
 ) -> impl IntoResponse {
     Json(control_plane.devin_acp_bridge_probe_response(input.agent_id.as_deref()))
+}
+
+async fn desktop_devin_acp_bridge_attach(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+
+    Json(control_plane.devin_acp_bridge_attach_response(input.agent_id.as_deref())).into_response()
 }
 
 async fn codex_servers(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -802,7 +826,15 @@ async fn desktop_session_mode(
         .mobile_session_service()
         .set_session_preset(&thread_id, input.preset.as_deref())
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_lifecycle_changed(
+                &control_plane,
+                &thread_id,
+                input.preset.as_deref().or(Some("mode-cleared")),
+            );
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("mode-updated"));
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -820,7 +852,18 @@ async fn desktop_session_archive(
         .mobile_session_service()
         .set_session_archived(&thread_id, input.archived)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_session_changed(
+                &control_plane,
+                Some(&thread_id),
+                Some(if input.archived {
+                    "archived"
+                } else {
+                    "unarchived"
+                }),
+            );
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -838,7 +881,10 @@ async fn desktop_session_prompt(
         .mobile_session_service()
         .queue_prompt(&thread_id, &input.prompt)
     {
-        Ok(_) => desktop_mobile_state_response(&control_plane),
+        Ok(prompt) => {
+            emit_mobile_prompt_queued(&control_plane, &thread_id, &prompt.id);
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -883,6 +929,7 @@ fn queue_desktop_batch_prompt(
             session_service.set_session_preset(thread_id, Some(preset))?;
         }
         let prompt = session_service.queue_prompt(thread_id, &input.prompt)?;
+        emit_mobile_prompt_queued(control_plane, thread_id, &prompt.id);
         prompt_ids.push(prompt.id);
     }
 
@@ -935,7 +982,10 @@ async fn desktop_session_mute(
         .mobile_session_service()
         .mute_session(&thread_id)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("muted"));
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -952,7 +1002,10 @@ async fn desktop_session_delete(
         .mobile_session_service()
         .delete_session(&thread_id)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("deleted"));
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1109,6 +1162,76 @@ async fn mobile_snapshot_handler(
     mobile_snapshot_response(&control_plane, &headers)
 }
 
+async fn mobile_events_handler(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+
+    let mut receiver = control_plane.mobile_event_hub().subscribe();
+    let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
+    let mut last_event_ms = control_plane
+        .store()
+        .latest_mobile_event_created_at_ms()
+        .unwrap_or_default();
+    let connected_payload = serde_json::to_string(&serde_json::json!({
+        "event_type": "connected",
+        "server_time": mobile_event_now(),
+        "revision": last_revision,
+    }))
+    .unwrap_or_else(|_| "{}".to_owned());
+
+    let stream = stream! {
+        yield Ok::<Event, Infallible>(Event::default().event("connected").data(connected_payload));
+        let mut poll_interval = tokio::time::interval(Duration::from_secs(2));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                received = receiver.recv() => {
+                    match received {
+                        Ok(event) => {
+                            last_event_ms = last_event_ms.max(
+                                control_plane.store().latest_mobile_event_created_at_ms().unwrap_or(last_event_ms)
+                            );
+                            yield Ok::<Event, Infallible>(mobile_sse_event(&event));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = poll_interval.tick() => {
+                    if let Ok(records) = control_plane.store().mobile_events_since(last_event_ms, 32) {
+                        for record in records {
+                            last_event_ms = last_event_ms.max(record.created_at_ms);
+                            yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                        }
+                    }
+
+                    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
+                        if revision != last_revision {
+                            last_revision = revision;
+                            yield Ok::<Event, Infallible>(mobile_sse_event(&MobileEvent {
+                                event_type: MobileEventKind::SessionChanged,
+                                thread_id: None,
+                                prompt_id: None,
+                                detail: Some("snapshot-revision-changed".to_owned()),
+                                server_time: mobile_event_now(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
 async fn mobile_session_detail_handler(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
@@ -1149,7 +1272,15 @@ async fn mobile_session_mode(
         .mobile_session_service()
         .set_session_preset(&thread_id, input.preset.as_deref())
     {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(()) => {
+            emit_mobile_lifecycle_changed(
+                &control_plane,
+                &thread_id,
+                input.preset.as_deref().or(Some("mode-cleared")),
+            );
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("mode-updated"));
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1171,7 +1302,18 @@ async fn mobile_session_archive(
         .mobile_session_service()
         .set_session_archived(&thread_id, input.archived)
     {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(()) => {
+            emit_mobile_session_changed(
+                &control_plane,
+                Some(&thread_id),
+                Some(if input.archived {
+                    "archived"
+                } else {
+                    "unarchived"
+                }),
+            );
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1192,7 +1334,10 @@ async fn mobile_session_delete(
         .mobile_session_service()
         .delete_session(&thread_id)
     {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(()) => {
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("deleted"));
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1214,7 +1359,10 @@ async fn mobile_session_prompt(
         .mobile_session_service()
         .queue_prompt(&thread_id, &input.prompt)
     {
-        Ok(_) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(prompt) => {
+            emit_mobile_prompt_queued(&control_plane, &thread_id, &prompt.id);
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1235,7 +1383,10 @@ async fn mobile_session_mute(
         .mobile_session_service()
         .mute_session(&thread_id)
     {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(()) => {
+            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("muted"));
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1253,7 +1404,10 @@ async fn mobile_default_prompt(
         .mobile_session_service()
         .save_default_prompt(&input.default_prompt)
     {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
+        Ok(()) => {
+            emit_mobile_session_changed(&control_plane, None, Some("default-prompt-updated"));
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1271,7 +1425,15 @@ async fn mobile_assistant_surface(
         .mobile_session_service()
         .set_assistant_surface(&input.assistant_surface)
     {
-        Ok(()) => mobile_global_settings_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_lifecycle_changed(
+                &control_plane,
+                "global",
+                Some(input.assistant_surface.as_str()),
+            );
+            emit_mobile_session_changed(&control_plane, None, Some("assistant-surface-updated"));
+            mobile_snapshot_response(&control_plane, &headers)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1520,15 +1682,6 @@ fn mobile_snapshot_response(control_plane: &ControlPlane, headers: &HeaderMap) -
         .into_response()
 }
 
-fn mobile_global_settings_response(control_plane: &ControlPlane) -> Response {
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return mobile_session_error_response(error),
-    };
-
-    (StatusCode::OK, Json(mobile_global_settings(&session_state))).into_response()
-}
-
 fn missing_mobile_session_rejection(
     control_plane: &ControlPlane,
     thread_id: &str,
@@ -1666,4 +1819,57 @@ fn percent_encoded_url_component(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn emit_mobile_session_changed(
+    control_plane: &ControlPlane,
+    thread_id: Option<&str>,
+    detail: Option<&str>,
+) {
+    control_plane.emit_mobile_event(MobileEventInput {
+        kind: MobileEventKind::SessionChanged,
+        thread_id: thread_id.map(str::to_owned),
+        prompt_id: None,
+        detail: detail.map(str::to_owned),
+    });
+}
+
+fn emit_mobile_lifecycle_changed(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    detail: Option<&str>,
+) {
+    control_plane.emit_mobile_event(MobileEventInput {
+        kind: MobileEventKind::LifecycleChanged,
+        thread_id: Some(thread_id.to_owned()),
+        prompt_id: None,
+        detail: detail.map(str::to_owned),
+    });
+}
+
+fn emit_mobile_prompt_queued(control_plane: &ControlPlane, thread_id: &str, prompt_id: &str) {
+    control_plane.emit_mobile_event(MobileEventInput {
+        kind: MobileEventKind::PromptQueued,
+        thread_id: Some(thread_id.to_owned()),
+        prompt_id: Some(prompt_id.to_owned()),
+        detail: None,
+    });
+    emit_mobile_session_changed(control_plane, Some(thread_id), Some("prompt-queued"));
+}
+
+fn mobile_sse_event(event: &MobileEvent) -> Event {
+    let payload = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_owned());
+    Event::default()
+        .event(mobile_event_sse_name(event.event_type))
+        .data(payload)
+}
+
+fn mobile_sse_event_from_record(record: &MobileEventRecord) -> Event {
+    mobile_sse_event(&MobileEvent {
+        event_type: record.event_type,
+        thread_id: record.thread_id.clone(),
+        prompt_id: record.prompt_id.clone(),
+        detail: record.detail.clone(),
+        server_time: mobile_event_now(),
+    })
 }

@@ -7,13 +7,19 @@ use serde_json::Value;
 mod bridge;
 mod installations;
 mod registry;
+mod sessions;
 
 pub use self::bridge::{
-    DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlLevel,
-    DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
+    DevinAcpBridgeAgent, DevinAcpBridgeAttach, DevinAcpBridgeProbe, DevinAcpBridgeStatus,
+    DevinAcpControlLevel, DevinAcpProbeStatus, build_acp_bridge_attach, build_acp_bridge_probe,
+    build_acp_bridge_status,
 };
 pub use self::installations::DevinInstallationStatus;
 pub use self::registry::{DevinAcpAgent, DevinAcpLaunchMetadata, DevinAcpRegistryStatus};
+pub use self::sessions::{
+    DevinSessionRecord, devin_session_capabilities, devin_session_to_desktop_thread,
+    devin_session_to_thread_record, discover_devin_sessions,
+};
 
 pub(super) const DEVIN_NEXT_CHANNEL: &str = "next";
 pub(super) const DEVIN_NEXT_DATA_RELATIVE_PATH: &str = ".devin-next";
@@ -27,8 +33,9 @@ pub(super) const DEVIN_PROCESS_NEEDLES: &[&str] = &[
 pub(super) const DEVIN_STABLE_CHANNEL: &str = "stable";
 
 const HOME_ENV: &str = "HOME";
-const DEVIN_STABLE_APP_SUPPORT_RELATIVE_PATH: &str = "Library/Application Support/Devin";
-const DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH: &str = "Library/Application Support/Devin - Next";
+pub(super) const DEVIN_STABLE_APP_SUPPORT_RELATIVE_PATH: &str = "Library/Application Support/Devin";
+pub(super) const DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH: &str =
+    "Library/Application Support/Devin - Next";
 const DEVIN_ACP_REGISTRY_RELATIVE_PATH: &str = "acp/registry.json";
 const DEVIN_ARGV_RELATIVE_PATH: &str = "argv.json";
 const DEVIN_EXTENSIONS_RELATIVE_PATH: &str = "extensions";

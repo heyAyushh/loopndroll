@@ -8,6 +8,23 @@ const SUPERCONDUCTOR_BUNDLE_ID: &str = "com.zarifpour.superconductor";
 const CURSOR_BUNDLE_ID: &str = "com.todesktop.230313mzl4w4u92";
 const DEFAULT_CLAUDE_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
 const DEVIN_DESKTOP_CLI: &str = "devin-desktop-next";
+const GROK_BUILD_CLI: &str = "grok";
+const GROK_BUILD_PROCESS_NEEDLES: &[&str] =
+    &["/.grok/", ".grok/sessions", "grok agent", "grok-build"];
+const CODEX_CLIENT: &str = "codex";
+const DEVIN_CLIENT: &str = "devin";
+const GROK_BUILD_CLIENT: &str = "grok-build";
+const CODEX_ORIGINATOR_NEEDLES: &[&str] = &["codex desktop", "codex app"];
+const DEVIN_ORIGINATOR_NEEDLES: &[&str] = &["devin", "devin desktop", "devin next", "devin - next"];
+const CODEX_SURFACE_CLIENTS: &[&str] = &[
+    CODEX_CLIENT,
+    "cursor",
+    "claude-code",
+    "super-engineering",
+    "openclaw",
+];
+const DEVIN_SURFACE_CLIENTS: &[&str] = &[DEVIN_CLIENT];
+const GROK_BUILD_SURFACE_CLIENTS: &[&str] = &[GROK_BUILD_CLIENT];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -23,6 +40,8 @@ pub enum AssistantKind {
     OpenClaw,
     Hermes,
     Poke,
+    #[serde(rename = "grok-build")]
+    GrokBuild,
     Unknown,
 }
 
@@ -74,6 +93,7 @@ pub fn discover_assistant_adapters() -> Vec<AssistantAdapterCapability> {
         "open-claw",
         "hermes",
         "poke",
+        GROK_BUILD_CLI,
     ]);
     discover_assistant_adapters_from_sources(&process_commands, &cli_paths)
 }
@@ -113,9 +133,14 @@ pub fn discover_assistant_adapters_from_sources(
             ],
             detail: "local Codex state, logs, rollout files, hooks, and automations".to_owned(),
         },
-        runtime_only(
-            AssistantKind::DevinDesktop,
-            vec![
+        AssistantAdapterCapability {
+            assistant_kind: AssistantKind::DevinDesktop,
+            live_sessions: true,
+            tool_inventory: false,
+            spawn_graph: false,
+            diff_summary: false,
+            auth_capabilities: true,
+            runtimes: vec![
                 detections.runtime(
                     AssistantRuntimeKind::Gui,
                     "Devin Desktop",
@@ -136,8 +161,9 @@ pub fn discover_assistant_adapters_from_sources(
                     &[DEVIN_DESKTOP_CLI],
                 ),
             ],
-            "GUI/CLI runtime detection only; Codex servers spawned by Devin are attributed separately",
-        ),
+            detail: "Devin Desktop runtime, Devin Cloud metadata, and local ACP event-log sessions"
+                .to_owned(),
+        },
         runtime_only(
             AssistantKind::Superconductor,
             vec![
@@ -232,7 +258,144 @@ pub fn discover_assistant_adapters_from_sources(
             )],
             "CLI runtime detection only; session reader not implemented in this phase",
         ),
+        AssistantAdapterCapability {
+            assistant_kind: AssistantKind::GrokBuild,
+            live_sessions: true,
+            tool_inventory: false,
+            spawn_graph: false,
+            diff_summary: false,
+            auth_capabilities: false,
+            runtimes: vec![
+                detections.runtime_by_executable(
+                    AssistantRuntimeKind::Cli,
+                    "Grok Build CLI",
+                    None,
+                    &[GROK_BUILD_CLI],
+                ),
+                detections.runtime(
+                    AssistantRuntimeKind::Cli,
+                    "Grok Build session",
+                    None,
+                    GROK_BUILD_PROCESS_NEEDLES,
+                ),
+            ],
+            detail: "Grok hooks at ~/.grok/hooks/looper.json; sessions read from ~/.grok/sessions/"
+                .to_owned(),
+        },
     ]
+}
+
+pub fn infer_assistant_client_from_paths(
+    transcript_path: Option<&str>,
+    cwd: Option<&str>,
+    source: Option<&str>,
+    originator: Option<&str>,
+    agent_path: Option<&str>,
+) -> &'static str {
+    let primary_haystack = [transcript_path, source, originator, agent_path]
+        .into_iter()
+        .flatten()
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let path_haystack = [transcript_path, cwd, source, agent_path]
+        .into_iter()
+        .flatten()
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if path_contains_any(&primary_haystack, GROK_BUILD_PROCESS_NEEDLES) {
+        return GROK_BUILD_CLIENT;
+    }
+    if originator_contains_any(originator, DEVIN_ORIGINATOR_NEEDLES) {
+        return DEVIN_CLIENT;
+    }
+    if originator_contains_any(originator, CODEX_ORIGINATOR_NEEDLES) {
+        return CODEX_CLIENT;
+    }
+    if path_contains_any(
+        &path_haystack,
+        &[
+            ".devin-next",
+            "/applications/devin.app/",
+            "/applications/devin - next.app/",
+            "devin-desktop",
+        ],
+    ) {
+        return DEVIN_CLIENT;
+    }
+    if path_contains_any(&path_haystack, GROK_BUILD_PROCESS_NEEDLES) {
+        return GROK_BUILD_CLIENT;
+    }
+    if path_contains_any(
+        &path_haystack,
+        &["/.cursor/", ".cursor/extensions", "/cursor.app/"],
+    ) {
+        return "cursor";
+    }
+    if path_contains_any(
+        &path_haystack,
+        &[".claude/", "claude-code", "claudefordesktop"],
+    ) {
+        return "claude-code";
+    }
+    if path_contains_any(&path_haystack, &[".superconductor", "super-engineering"]) {
+        return "super-engineering";
+    }
+    if path_contains_any(&path_haystack, &["openclaw", "open-claw"]) {
+        return "openclaw";
+    }
+    if path_contains_any(&path_haystack, &["/.codex/", ".codex/sessions"]) {
+        return CODEX_CLIENT;
+    }
+
+    CODEX_CLIENT
+}
+
+pub fn assistant_kind_from_client(client: &str) -> AssistantKind {
+    match client {
+        "grok-build" => AssistantKind::GrokBuild,
+        "devin" => AssistantKind::DevinDesktop,
+        "cursor" => AssistantKind::Cursor,
+        "claude-code" => AssistantKind::ClaudeCode,
+        "super-engineering" => AssistantKind::Superconductor,
+        "openclaw" => AssistantKind::OpenClaw,
+        _ => AssistantKind::Codex,
+    }
+}
+
+pub fn session_matches_assistant_surface(
+    transcript_path: Option<&str>,
+    cwd: Option<&str>,
+    source: Option<&str>,
+    originator: Option<&str>,
+    agent_path: Option<&str>,
+    surface: &str,
+) -> bool {
+    let client =
+        infer_assistant_client_from_paths(transcript_path, cwd, source, originator, agent_path);
+    assistant_client_matches_surface(client, surface)
+}
+
+pub fn assistant_client_matches_surface(client: &str, surface: &str) -> bool {
+    match surface {
+        DEVIN_CLIENT => DEVIN_SURFACE_CLIENTS.contains(&client),
+        GROK_BUILD_CLIENT => GROK_BUILD_SURFACE_CLIENTS.contains(&client),
+        _ => CODEX_SURFACE_CLIENTS.contains(&client),
+    }
+}
+
+fn path_contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles
+        .iter()
+        .any(|needle| haystack.contains(&needle.to_ascii_lowercase()))
+}
+
+fn originator_contains_any(originator: Option<&str>, needles: &[&str]) -> bool {
+    originator
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|originator| needles.iter().any(|needle| originator.contains(needle)))
 }
 
 fn runtime_only(
@@ -385,4 +548,137 @@ fn current_cli_paths(command_names: &[&str]) -> BTreeMap<String, String> {
 
 fn first_executable_from_command(command: &str) -> Option<String> {
     command.split_whitespace().next().map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infers_grok_build_client_from_grok_session_paths() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.grok/sessions/project/thread.jsonl"),
+                Some("/Users/test/project"),
+                None,
+                None,
+                None,
+            ),
+            "grok-build"
+        );
+    }
+
+    #[test]
+    fn infers_grok_build_client_from_worktree_cwd() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                None,
+                Some("/Users/test/.grok/worktrees/documents-looper/sse"),
+                None,
+                None,
+                None,
+            ),
+            "grok-build"
+        );
+    }
+
+    #[test]
+    fn infers_grok_build_client_from_agent_path() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                None,
+                Some("/Users/test/project"),
+                None,
+                None,
+                Some("/Users/test/.grok/bin/grok"),
+            ),
+            "grok-build"
+        );
+    }
+
+    #[test]
+    fn infers_codex_client_when_paths_are_ambiguous() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.codex/sessions/thread-main.jsonl"),
+                Some("/Users/test/project"),
+                None,
+                None,
+                None,
+            ),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn infers_codex_client_from_codex_desktop_originator_with_vscode_source() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.codex/sessions/thread-main.jsonl"),
+                None,
+                Some("vscode"),
+                Some("Codex Desktop"),
+                None,
+            ),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn infers_devin_client_from_devin_originator_with_vscode_source() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.codex/sessions/thread-main.jsonl"),
+                Some("/Users/test/project"),
+                Some("vscode"),
+                Some("Devin - Next"),
+                None,
+            ),
+            "devin"
+        );
+    }
+
+    #[test]
+    fn assistant_surface_filter_hides_cross_surface_sessions() {
+        assert!(session_matches_assistant_surface(
+            Some("/Users/test/.grok/sessions/thread.jsonl"),
+            None,
+            None,
+            None,
+            None,
+            "grok-build",
+        ));
+        assert!(!session_matches_assistant_surface(
+            Some("/Users/test/.grok/sessions/thread.jsonl"),
+            None,
+            None,
+            None,
+            None,
+            "codex",
+        ));
+        assert!(session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/thread-main.jsonl"),
+            None,
+            None,
+            Some("Codex Desktop"),
+            None,
+            "codex",
+        ));
+        assert!(session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/devin-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("vscode"),
+            Some("Devin - Next"),
+            None,
+            "devin",
+        ));
+        assert!(!session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/devin-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("vscode"),
+            Some("Devin - Next"),
+            None,
+            "codex",
+        ));
+    }
 }

@@ -2,9 +2,12 @@ use serde_json::{Value, json};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::control_plane::{DesktopSnapshot, DesktopThread};
+use crate::assistant::{infer_assistant_client_from_paths, session_matches_assistant_surface};
+use crate::control_plane::{DesktopSnapshot, DesktopThread, GrokBuildStatus};
+use crate::grok_build::GrokHookStatus;
 use crate::mobile_session::{
-    DEFAULT_REMOTE_PROMPT, MobileCompletionCheck, MobileNotificationRoute, MobileSessionOverride,
+    DEFAULT_REMOTE_PROMPT, MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED,
+    MobileCompletionCheck, MobileNotificationRoute, MobileSessionLifecycle, MobileSessionOverride,
     MobileSessionState,
 };
 
@@ -18,9 +21,9 @@ const INSTANT_CHAT_SESSION_KIND: &str = "instant-chat";
 const TRANSCRIPT_SOURCE_KIND: &str = "transcript";
 const TRANSCRIPT_SOURCE_LABEL: &str = "Transcript";
 const AWAIT_REPLY_PRESET: &str = "await-reply";
-const ACTIVE_SESSION_STATUS: &str = "active";
+const ACTIVE_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_ACTIVE;
 const ARCHIVED_SESSION_STATUS: &str = "archived";
-const STOPPED_SESSION_STATUS: &str = "stopped";
+const STOPPED_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_STOPPED;
 const WAITING_SESSION_STATUS: &str = "waiting";
 
 pub fn mobile_snapshot(
@@ -37,6 +40,16 @@ pub fn mobile_snapshot(
             .iter()
             .enumerate()
             .filter(|(_, thread)| !is_deleted(thread, session_state))
+            .filter(|(_, thread)| {
+                session_matches_assistant_surface(
+                    thread.transcript_path.as_deref(),
+                    thread.cwd.as_deref(),
+                    thread.source.as_deref(),
+                    thread.originator.as_deref(),
+                    thread.agent_path.as_deref(),
+                    &session_state.assistant_surface,
+                )
+            })
             .map(|(index, thread)| session_summary(thread, index, session_state))
             .collect::<Vec<_>>(),
         "notifications": session_state
@@ -49,6 +62,24 @@ pub fn mobile_snapshot(
             .iter()
             .map(completion_check_summary)
             .collect::<Vec<_>>(),
+        "grokBuild": mobile_grok_build_status(&snapshot.grok_build),
+    })
+}
+
+pub fn mobile_grok_build_status(grok_build: &GrokBuildStatus) -> Value {
+    json!({
+        "hooks": mobile_grok_hook_status(&grok_build.hooks),
+        "sessionCount": grok_build.session_count,
+        "activeSessionCount": grok_build.active_session_count,
+    })
+}
+
+fn mobile_grok_hook_status(hooks: &GrokHookStatus) -> Value {
+    json!({
+        "health": hooks.health,
+        "owner": hooks.owner,
+        "registeredEvents": hooks.registered_events,
+        "hooksPath": hooks.hooks_path,
     })
 }
 
@@ -87,6 +118,16 @@ pub fn mobile_session_detail(
         snapshot.threads.iter().enumerate().find(|(_, thread)| {
             thread.thread_id == thread_id && !is_deleted(thread, session_state)
         })?;
+    if !session_matches_assistant_surface(
+        thread.transcript_path.as_deref(),
+        thread.cwd.as_deref(),
+        thread.source.as_deref(),
+        thread.originator.as_deref(),
+        thread.agent_path.as_deref(),
+        &session_state.assistant_surface,
+    ) {
+        return None;
+    }
     let session_override = session_override(thread, session_state);
     let mut detail = session_summary(thread, index, session_state);
     let detail_object = detail.as_object_mut()?;
@@ -160,19 +201,27 @@ fn session_summary(
         .and_then(|state| state.archived)
         .unwrap_or(thread.archived);
     let effective_mode = effective_preset(session_override, session_state);
+    let lifecycle = session_state.lifecycle.get(&thread.thread_id);
     json!({
         "id": thread.thread_id,
         "ref": format!("{THREAD_REF_PREFIX}{}", index + 1),
         "title": session_title(thread),
-        "status": session_status(is_archived, effective_mode),
+        "status": session_status(is_archived, effective_mode, lifecycle),
         "effectiveMode": effective_mode,
         "lastUpdatedAt": thread_timestamp(thread),
         "assistantPreview": nullable_string_value(thread.assistant_preview.as_deref()),
         "isArchived": is_archived,
-        "assistantClient": "codex",
+        "assistantClient": infer_assistant_client_from_paths(
+            thread.transcript_path.as_deref(),
+            thread.cwd.as_deref(),
+            thread.source.as_deref(),
+            thread.originator.as_deref(),
+            thread.agent_path.as_deref(),
+        ),
         "metadata": {
             "kind": kind,
             "source": thread.source.as_deref().unwrap_or(UNKNOWN_TASK_KIND),
+            "originator": nullable_string_value(thread.originator.as_deref()),
             "projectName": thread.cwd.as_deref().map(project_name_from_path),
             "projectPath": thread.cwd,
             "taskKind": UNKNOWN_TASK_KIND,
@@ -283,15 +332,30 @@ fn session_title(thread: &DesktopThread) -> String {
         .unwrap_or_else(|| thread.thread_id.clone())
 }
 
-fn session_status(is_archived: bool, effective_mode: Option<&str>) -> &'static str {
+fn session_status(
+    is_archived: bool,
+    effective_mode: Option<&str>,
+    lifecycle: Option<&MobileSessionLifecycle>,
+) -> &'static str {
     if is_archived {
         return ARCHIVED_SESSION_STATUS;
     }
 
+    if let Some(lifecycle) = lifecycle {
+        match lifecycle.status.as_str() {
+            MOBILE_SESSION_STATUS_ACTIVE => return ACTIVE_SESSION_STATUS,
+            MOBILE_SESSION_STATUS_STOPPED => return inactive_session_status(effective_mode),
+            _ => {}
+        }
+    }
+
+    inactive_session_status(effective_mode)
+}
+
+fn inactive_session_status(effective_mode: Option<&str>) -> &'static str {
     match effective_mode {
         Some(AWAIT_REPLY_PRESET) => WAITING_SESSION_STATUS,
-        Some(_) => ACTIVE_SESSION_STATUS,
-        None => STOPPED_SESSION_STATUS,
+        _ => STOPPED_SESSION_STATUS,
     }
 }
 
@@ -386,4 +450,34 @@ fn is_deleted(thread: &DesktopThread, session_state: &MobileSessionState) -> boo
 
 fn latest_assistant_message(thread: &DesktopThread) -> Option<String> {
     thread.assistant_preview.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grok_build::{GrokHookOwner, GrokHookStatus};
+
+    #[test]
+    fn mobile_grok_build_status_uses_mobile_contract() {
+        let status = mobile_grok_build_status(&GrokBuildStatus {
+            hooks: GrokHookStatus {
+                registered_events: vec!["session".to_owned(), "stop".to_owned()],
+                active_command: Some("looper hook".to_owned()),
+                owner: GrokHookOwner::LooperRust,
+                health: "healthy".to_owned(),
+                hooks_path: Some("/Users/test/.grok/hooks/looper.json".to_owned()),
+            },
+            session_count: 3,
+            active_session_count: 2,
+        });
+
+        assert_eq!(status["sessionCount"], 3);
+        assert_eq!(status["activeSessionCount"], 2);
+        assert_eq!(status["hooks"]["health"], "healthy");
+        assert_eq!(status["hooks"]["owner"], "looper-rust");
+        assert_eq!(
+            status["hooks"]["registeredEvents"],
+            serde_json::json!(["session", "stop"])
+        );
+    }
 }

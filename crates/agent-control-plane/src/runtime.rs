@@ -5,6 +5,9 @@ use anyhow::Result;
 use tokio::net::TcpListener;
 
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::grok_build::{
+    GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
+};
 use crate::http::build_router;
 use crate::mobile_network::{BonjourAdvertisement, DEFAULT_AGENT_CONTROL_PLANE_PORT};
 use crate::mobile_session::MobileHookPayload;
@@ -23,6 +26,7 @@ const TELEGRAM_BRIDGE_TICK_SECONDS: u64 = 5;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SERVER_EXECUTABLE_NAME: &str = "looper-server";
 const DEFAULT_SERVER_SCHEME: &str = "http";
+const STOP_HOOK_EVENT: &str = "Stop";
 
 pub async fn run_server() -> Result<()> {
     let control_plane = default_control_plane()?;
@@ -51,37 +55,82 @@ pub async fn run_server() -> Result<()> {
 pub fn run_hook_mode() -> Result<()> {
     let mut input = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-    let payload = serde_json::from_str::<MobileHookPayload>(&input).unwrap_or(MobileHookPayload {
+    let payload = parse_hook_payload(&input).unwrap_or(MobileHookPayload {
         hook_event_name: String::new(),
         session_id: None,
         turn_id: None,
         cwd: None,
         last_assistant_message: None,
     });
+    let grok_hook = is_grok_hook_invocation();
     let control_plane = default_control_plane()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    runtime.block_on(async {
-        if let Err(error) =
-            crate::hook_notifications::send_stop_notifications(&control_plane, &payload).await
-        {
-            eprintln!("stop notification delivery failed: {error}");
-        }
-    });
     let service = control_plane.mobile_session_service();
-    if let Some(decision) = service.hook_decision_for_payload(&payload)? {
-        println!("{}", serde_json::to_string(&decision)?);
+    let outcome = service.hook_outcome_for_payload(&payload)?;
+    service.record_hook_lifecycle(&payload, outcome.decision.is_some())?;
+    if let Some(thread_id) = payload.session_id.as_deref() {
+        control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
+            kind: crate::mobile_events::MobileEventKind::SessionChanged,
+            thread_id: Some(thread_id.to_owned()),
+            prompt_id: None,
+            detail: Some(payload.hook_event_name.clone()),
+        });
+        if let Some(prompt_id) = outcome.delivered_prompt_id.as_deref() {
+            control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
+                kind: crate::mobile_events::MobileEventKind::PromptDelivered,
+                thread_id: Some(thread_id.to_owned()),
+                prompt_id: Some(prompt_id.to_owned()),
+                detail: None,
+            });
+        }
+        if let Some(decision) = outcome.decision.as_ref() {
+            control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
+                kind: crate::mobile_events::MobileEventKind::LifecycleChanged,
+                thread_id: Some(thread_id.to_owned()),
+                prompt_id: None,
+                detail: Some(decision.reason.clone()),
+            });
+        }
+    }
+    if outcome.decision.is_none() && payload.hook_event_name == STOP_HOOK_EVENT {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            if let Err(error) =
+                crate::hook_notifications::send_stop_notifications(&control_plane, &payload).await
+            {
+                eprintln!("stop notification delivery failed: {error}");
+            }
+        });
+    }
+    if let Some(decision) = outcome.decision {
+        if grok_hook && decision.decision == "block" {
+            if let Some(session_id) = payload.session_id.as_deref() {
+                if let Err(error) = spawn_session_continue(&GrokContinueRequest {
+                    session_id: session_id.to_owned(),
+                    prompt: decision.reason.clone(),
+                    cwd: payload.cwd.clone(),
+                    grok_executable: None,
+                    grok_home: Some(control_plane.grok_home().clone()),
+                }) {
+                    eprintln!("grok session continue failed: {error}");
+                }
+            }
+        } else {
+            println!("{}", serde_json::to_string(&decision)?);
+        }
     }
     Ok(())
 }
 
 pub fn default_control_plane() -> Result<ControlPlane> {
+    let home_path = home_dir();
     Ok(ControlPlane::new(ControlPlaneConfig {
         codex_home: default_codex_home(),
+        grok_home: crate::grok_build::default_grok_home(&home_path),
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),
-        home_path: home_dir(),
+        home_path,
     }))
 }
 

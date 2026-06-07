@@ -10,6 +10,10 @@ use agent_control_plane::auth::{
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::http::build_router;
+use agent_control_plane::mobile_events::{
+    MobileEventInput, MobileEventKind, build_mobile_event, mobile_event_sse_name,
+};
+use agent_control_plane::mobile_session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -448,7 +452,7 @@ async fn register_hooks_installs_owned_rust_handlers() {
     let response = request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(response["action"], "register-hooks");
     assert_eq!(response["removed_handlers"], 0);
-    assert_eq!(response["installed_handlers"], 3);
+    assert_eq!(response["installed_handlers"], 6);
     assert_eq!(response["hooks_auto_registration"], true);
     assert_eq!(response["status"]["hooks"]["enabled"], true);
     assert_eq!(response["status"]["hooks"]["owner"], "looper-rust");
@@ -459,6 +463,13 @@ async fn register_hooks_installs_owned_rust_handlers() {
     assert!(hooks_json.contains("Stop"));
     assert!(hooks_json.contains("UserPromptSubmit"));
     assert!(hooks_json.contains("/usr/local/bin/custom-user-hook"));
+
+    let grok_hooks_json =
+        fs::read_to_string(fixture.grok_home().join("hooks/looper.json")).expect("grok hooks");
+    assert!(grok_hooks_json.contains("agent-control-plane --hook --managed-by looper"));
+    assert!(grok_hooks_json.contains("SessionStart"));
+    assert!(grok_hooks_json.contains("Stop"));
+    assert!(grok_hooks_json.contains("UserPromptSubmit"));
 
     let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
     assert!(config_toml.contains("[features]"));
@@ -485,7 +496,7 @@ async fn live_unregister_preserves_auto_registration_for_next_launch() {
     let register_response =
         request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(register_response["hooks_auto_registration"], true);
-    assert_eq!(register_response["installed_handlers"], 3);
+    assert_eq!(register_response["installed_handlers"], 6);
     assert_eq!(register_response["status"]["hooks"]["owner"], "looper-rust");
 }
 
@@ -604,6 +615,35 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
                     .expect("devin detail")
                     .contains("preferred: codex"))
     );
+    let grok_connections: Vec<_> = connections["connections"]
+        .as_array()
+        .expect("connections")
+        .iter()
+        .filter(|connection| connection["kind"] == "grok-build")
+        .collect();
+    assert!(
+        grok_connections
+            .iter()
+            .any(|connection| connection["id"] == "grok-build-cli"),
+        "expected grok-build-cli connection"
+    );
+    assert!(
+        grok_connections
+            .iter()
+            .any(|connection| connection["id"] == "grok-build-hooks"),
+        "expected grok-build-hooks connection"
+    );
+    for connection in grok_connections {
+        assert!(
+            connection["status"] == "connected"
+                || connection["status"] == "installed"
+                || connection["status"] == "missing"
+                || connection["status"] == "healthy"
+                || connection["status"] == "configured",
+            "unexpected grok-build status: {}",
+            connection["status"]
+        );
+    }
 
     let devin =
         request_json_with_options(&router, Method::GET, "/desktop/devin", &[], loopback_socket)
@@ -1066,7 +1106,8 @@ async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
 async fn mobile_session_controls_are_owned_by_rust() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
@@ -1084,18 +1125,6 @@ async fn mobile_session_controls_are_owned_by_rust() {
         "Continue exactly from phone."
     );
 
-    let assistant_surface_settings = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert_eq!(assistant_surface_settings["assistantSurface"], "devin");
-    assert!(assistant_surface_settings.get("sessions").is_none());
-
     let mode_snapshot = request_json_body_with_options(
         &router,
         Method::POST,
@@ -1111,7 +1140,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
     );
     assert_eq!(
         mobile_snapshot_session(&mode_snapshot, "thread-main")["status"],
-        "active"
+        "stopped"
     );
 
     let detail = request_json_with_options(
@@ -1123,7 +1152,53 @@ async fn mobile_session_controls_are_owned_by_rust() {
     )
     .await;
     assert_eq!(detail["effectiveMode"], "max-turns-1");
-    assert_eq!(detail["status"], "active");
+    assert_eq!(detail["status"], "stopped");
+
+    control_plane
+        .mobile_session_service()
+        .record_hook_lifecycle(
+            &MobileHookPayload {
+                hook_event_name: "UserPromptSubmit".to_owned(),
+                session_id: Some("thread-main".to_owned()),
+                turn_id: None,
+                cwd: None,
+                last_assistant_message: None,
+            },
+            false,
+        )
+        .expect("record running lifecycle");
+    let running_detail = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-main",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(running_detail["status"], "active");
+
+    control_plane
+        .mobile_session_service()
+        .record_hook_lifecycle(
+            &MobileHookPayload {
+                hook_event_name: "Stop".to_owned(),
+                session_id: Some("thread-main".to_owned()),
+                turn_id: None,
+                cwd: None,
+                last_assistant_message: None,
+            },
+            false,
+        )
+        .expect("record stopped lifecycle");
+    let stopped_detail = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-main",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(stopped_detail["status"], "stopped");
 
     let waiting_mode_snapshot = request_json_body_with_options(
         &router,
@@ -1204,6 +1279,453 @@ async fn mobile_session_controls_are_owned_by_rust() {
     )
     .await;
     assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+
+    let assistant_surface_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        assistant_surface_snapshot["globalSettings"]["assistantSurface"],
+        "devin"
+    );
+    assert!(assistant_surface_snapshot["sessions"].as_array().is_some());
+
+    let grok_surface_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "grok-build" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        grok_surface_snapshot["globalSettings"]["assistantSurface"],
+        "grok-build"
+    );
+}
+
+#[tokio::test]
+async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let grok_transcript = std::path::PathBuf::from("/Users/test/.grok/sessions/grok-thread.jsonl");
+    fixture.attach_transcript_path("thread-main", &grok_transcript);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let codex_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert!(
+        codex_snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .all(|session| session["id"] != "thread-main")
+    );
+
+    let grok_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "grok-build" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let grok_session = mobile_snapshot_session(&grok_snapshot, "thread-main");
+    assert_eq!(grok_session["assistantClient"], "grok-build");
+
+    let hidden_detail = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-child",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(hidden_detail.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.set_thread_source("thread-main", "vscode");
+    let codex_transcript = fixture.write_transcript(
+        "thread-main-codex-originator.jsonl",
+        &[serde_json::json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "thread-main",
+                "originator": "Codex Desktop",
+                "source": "vscode"
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &codex_transcript);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let codex_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let codex_session = mobile_snapshot_session(&codex_snapshot, "thread-main");
+    assert_eq!(codex_session["assistantClient"], "codex");
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    let hidden_devin_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert!(
+        hidden_devin_snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .all(|session| session["id"] != "thread-main")
+    );
+
+    let devin_transcript = fixture.write_transcript(
+        "thread-main-devin-originator.jsonl",
+        &[serde_json::json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "thread-main",
+                "originator": "Devin - Next",
+                "source": "vscode"
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &devin_transcript);
+
+    let devin_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let devin_session = mobile_snapshot_session(&devin_snapshot, "thread-main");
+    assert_eq!(devin_session["assistantClient"], "devin");
+}
+
+#[tokio::test]
+async fn desktop_snapshot_includes_grok_sessions() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_grok_session("grok-session-1", "/tmp/project", "Ship Grok hooks");
+    let router = build_router(fixture.control_plane());
+
+    let snapshot = request_json(&router, "/desktop/snapshot").await;
+    assert_eq!(snapshot["grok_build"]["session_count"], 1);
+    assert_eq!(snapshot["grok_build"]["active_session_count"], 1);
+    let grok_thread = snapshot["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["thread_id"] == "grok-session-1")
+        .expect("grok session thread");
+    assert_eq!(grok_thread["source"], "grok-build");
+    assert_eq!(grok_thread["title"], "Ship Grok hooks");
+}
+
+#[tokio::test]
+async fn desktop_snapshot_includes_devin_sessions() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    let router = build_router(fixture.control_plane());
+
+    let snapshot = request_json(&router, "/desktop/snapshot").await;
+    assert_eq!(snapshot["thread_count"], 3);
+    let devin_thread = snapshot["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["thread_id"] == "devin:devin-cli:brindle-cadet")
+        .expect("devin session thread");
+    assert_eq!(devin_thread["source"], "devin-desktop");
+    assert_eq!(devin_thread["originator"], "Devin - Next");
+    assert_eq!(devin_thread["assistant_preview"], "Hello from Devin");
+    assert_eq!(
+        devin_thread["capabilities"]["assistant_kind"],
+        "devin-desktop"
+    );
+    assert!(
+        !serde_json::to_string(devin_thread)
+            .expect("devin thread json")
+            .contains("hidden thought")
+    );
+
+    let thread_detail = request_json(&router, "/threads/devin:devin-cli:brindle-cadet").await;
+    assert_eq!(
+        thread_detail["capabilities"]["assistant_kind"],
+        "devin-desktop"
+    );
+
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let mobile_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let devin_session = mobile_snapshot_session(&mobile_snapshot, "devin:devin-cli:brindle-cadet");
+    assert_eq!(devin_session["assistantClient"], "devin");
+    assert_eq!(devin_session["assistantPreview"], "Hello from Devin");
+}
+
+#[tokio::test]
+async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_grok_session("grok-session-1", "/tmp/project", "Ship Grok hooks");
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "grok-build" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    let grok_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let grok_session = mobile_snapshot_session(&grok_snapshot, "grok-session-1");
+    assert_eq!(grok_session["assistantClient"], "grok-build");
+    assert_eq!(grok_session["title"], "Ship Grok hooks");
+    assert_eq!(grok_snapshot["grokBuild"]["sessionCount"], 1);
+    assert_eq!(grok_snapshot["grokBuild"]["activeSessionCount"], 1);
+    assert!(grok_snapshot["grokBuild"]["hooks"]["health"].is_string());
+}
+
+#[test]
+fn mobile_event_payload_matches_ios_contract() {
+    let event = build_mobile_event(MobileEventInput {
+        kind: MobileEventKind::PromptQueued,
+        thread_id: Some("thread-main".to_owned()),
+        prompt_id: Some("prompt-123".to_owned()),
+        detail: None,
+    });
+    let payload = serde_json::to_string(&event).expect("json");
+    assert!(payload.contains("\"eventType\":\"prompt-queued\""));
+    assert!(payload.contains("\"threadId\":\"thread-main\""));
+    assert!(payload.contains("\"promptId\":\"prompt-123\""));
+    assert_eq!(mobile_event_sse_name(event.event_type), "prompt.queued");
+}
+
+#[tokio::test]
+async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let service = control_plane.mobile_session_service();
+    service
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("set mode");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let request = axum::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/mobile/events")
+        .header(axum::http::header::AUTHORIZATION, authorization.as_str())
+        .header(axum::http::header::ACCEPT, "text/event-stream")
+        .body(Body::empty())
+        .expect("request");
+    let response = router.clone().oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(content_type.contains("text/event-stream"));
+
+    let router_for_prompt = router.clone();
+    let authorization_for_prompt = authorization.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _snapshot = request_json_body_with_options(
+            &router_for_prompt,
+            Method::POST,
+            "/api/mobile/sessions/thread-main/prompt",
+            serde_json::json!({ "prompt": "Keep going from phone." }),
+            &[(
+                axum::http::header::AUTHORIZATION,
+                authorization_for_prompt.as_str(),
+            )],
+            None,
+        )
+        .await;
+    });
+
+    let mut body = response.into_body();
+    let mut buffer = String::new();
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            frame = body.frame() => {
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Ok(chunk) = frame.into_data() {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            if buffer.contains("event: prompt.queued")
+                                && buffer.contains("\"eventType\":\"prompt-queued\"")
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(error)) => panic!("sse frame error: {error}"),
+                    None => panic!("sse stream ended early: {buffer}"),
+                }
+            }
+            _ = &mut deadline => {
+                panic!("timed out waiting for prompt.queued SSE event. buffer={buffer}");
+            }
+        }
+    }
+
+    assert!(buffer.contains("event: connected"));
+    assert!(buffer.contains("\"threadId\":\"thread-main\""));
+}
+
+#[tokio::test]
+async fn mobile_events_endpoint_requires_mobile_auth() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let router = build_router(fixture.control_plane());
+
+    let response =
+        request_with_options(&router, Method::GET, "/api/mobile/events", &[], None).await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn queueing_mobile_prompt_records_prompt_queued_event() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let service = control_plane.mobile_session_service();
+    service
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("set mode");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let _snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/sessions/thread-main/prompt",
+        serde_json::json!({ "prompt": "Keep going from phone." }),
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    let events = control_plane
+        .store()
+        .mobile_events_since(0, 10)
+        .expect("mobile events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == MobileEventKind::PromptQueued)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == MobileEventKind::SessionChanged)
+    );
+}
+
+#[tokio::test]
+async fn devin_acp_attach_acknowledges_ready_agent_without_launching() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_settings();
+    let router = build_router(fixture.control_plane());
+    let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
+
+    let attach = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/devin/acp-bridge/attach",
+        serde_json::json!({ "agentId": "codex" }),
+        &[],
+        loopback,
+    )
+    .await;
+
+    assert_eq!(attach["attach"]["ok"], true);
+    assert_eq!(attach["attach"]["agent_id"], "codex");
+    assert_eq!(attach["attach_session"]["status"], "attached-experimental");
+    assert!(
+        attach["attach"]["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("no live ACP transport")
+    );
 }
 
 #[tokio::test]
@@ -1453,12 +1975,14 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
         "/Applications/Superconductor.app/Contents/MacOS/Superconductor --host".to_owned(),
         "/Applications/Cursor.app/Contents/MacOS/Cursor --type=renderer".to_owned(),
         "/opt/homebrew/bin/opencode run --json".to_owned(),
+        "/Users/test/.grok/bin/grok agent stdio --model grok-build".to_owned(),
     ]);
 
     let devin = adapters
         .iter()
         .find(|adapter| adapter.assistant_kind == AssistantKind::DevinDesktop)
         .expect("devin adapter");
+    assert!(devin.live_sessions);
     assert!(
         devin
             .runtimes
@@ -1498,6 +2022,17 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
             .iter()
             .any(|runtime| runtime.kind == AssistantRuntimeKind::Cli && runtime.running)
     );
+
+    let grok_build = adapters
+        .iter()
+        .find(|adapter| adapter.assistant_kind == AssistantKind::GrokBuild)
+        .expect("grok build adapter");
+    assert!(
+        grok_build
+            .runtimes
+            .iter()
+            .any(|runtime| runtime.label == "Grok Build session" && runtime.running)
+    );
 }
 
 #[test]
@@ -1515,6 +2050,7 @@ fn assistant_adapters_separate_cli_installed_from_running() {
         "opencode".to_owned(),
         "/Users/test/.opencode/bin/opencode".to_owned(),
     );
+    cli_paths.insert("grok".to_owned(), "/Users/test/.grok/bin/grok".to_owned());
 
     let adapters = discover_assistant_adapters_from_sources(
         &[
@@ -1559,6 +2095,18 @@ fn assistant_adapters_separate_cli_installed_from_running() {
         .expect("opencode cli");
     assert!(opencode_cli.installed);
     assert!(!opencode_cli.running);
+
+    let grok_build = adapters
+        .iter()
+        .find(|adapter| adapter.assistant_kind == AssistantKind::GrokBuild)
+        .expect("grok build adapter");
+    let grok_cli = grok_build
+        .runtimes
+        .iter()
+        .find(|runtime| runtime.label == "Grok Build CLI")
+        .expect("grok cli");
+    assert!(grok_cli.installed);
+    assert!(!grok_cli.running);
 }
 
 fn mobile_snapshot_session<'a>(
@@ -1684,15 +2232,21 @@ impl IsolatedCodexFixture {
         let temp_dir = TempDir::new().expect("temp dir");
         let codex_home = temp_dir.path().join(".codex");
         fs::create_dir_all(codex_home.join("sessions")).expect("codex dirs");
+        fs::create_dir_all(temp_dir.path().join(".grok/sessions")).expect("grok dirs");
         Self {
             temp_dir,
             codex_home,
         }
     }
 
+    fn grok_home(&self) -> std::path::PathBuf {
+        self.temp_dir.path().join(".grok")
+    }
+
     fn control_plane(&self) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
+            grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             home_path: self.temp_dir.path().to_path_buf(),
@@ -1746,6 +2300,115 @@ impl IsolatedCodexFixture {
             .to_string(),
         )
         .expect("write devin registry");
+    }
+
+    fn write_devin_next_session(&self) {
+        let app_support = self
+            .temp_dir
+            .path()
+            .join("Library/Application Support/Devin - Next");
+        let state_db_path = app_support
+            .join("User")
+            .join("globalStorage")
+            .join("state.vscdb");
+        fs::create_dir_all(state_db_path.parent().expect("state parent"))
+            .expect("create devin state parent");
+        let events_path = app_support.join("User").join("acp-events");
+        fs::create_dir_all(&events_path).expect("create devin events path");
+        fs::write(
+            events_path.join("event-1.ndjson"),
+            [
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "agent_thought_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "hidden thought"
+                        },
+                        "_meta": {
+                            "cognition.ai/streamingMessageId": "thought-1"
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "Hello "
+                        },
+                        "_meta": {
+                            "cognition.ai/streamingMessageId": "assistant-1"
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "from Devin"
+                        },
+                        "_meta": {
+                            "cognition.ai/streamingMessageId": "assistant-1"
+                        }
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write devin event log");
+        let connection = Connection::open(&state_db_path).expect("devin state");
+        connection
+            .execute("create table ItemTable (key text, value blob)", [])
+            .expect("create devin item table");
+        connection
+            .execute(
+                "insert into ItemTable (key, value) values (?1, ?2)",
+                (
+                    "windsurf.acp.metadataCache",
+                    serde_json::to_vec(&serde_json::json!({
+                        "sessions": [
+                            {
+                                "sessionId": "acp/devin-cli/brindle-cadet",
+                                "providerId": "devin-cli",
+                                "title": "Devin task",
+                                "cwd": "/tmp/devin-project",
+                                "status": "end_turn",
+                                "updatedAt": "2026-06-07T03:10:03+00:00",
+                                "_meta": {
+                                    "cognition.ai/createdAt": "2026-06-07T03:09:52.477Z",
+                                    "cognition.ai/isArchived": false
+                                }
+                            }
+                        ]
+                    }))
+                    .expect("metadata json"),
+                ),
+            )
+            .expect("insert devin metadata");
+        connection
+            .execute(
+                "insert into ItemTable (key, value) values (?1, ?2)",
+                (
+                    "windsurf.acp.eventLog.index",
+                    serde_json::to_vec(&serde_json::json!({
+                        "acp/devin-cli/brindle-cadet": {
+                            "uuid": "event-1",
+                            "eventCount": 3,
+                            "lastUpdated": 1780801814955_i64
+                        }
+                    }))
+                    .expect("event index json"),
+                ),
+            )
+            .expect("insert devin event index");
     }
 
     fn write_hooks_json(&self, command: &str) {
@@ -1871,6 +2534,39 @@ impl IsolatedCodexFixture {
         .expect("write config");
     }
 
+    fn write_grok_session(&self, session_id: &str, cwd: &str, title: &str) {
+        let session_dir = self
+            .grok_home()
+            .join("sessions")
+            .join("%2Ftmp%2Fproject")
+            .join(session_id);
+        fs::create_dir_all(&session_dir).expect("create grok session dir");
+        fs::write(
+            session_dir.join("summary.json"),
+            serde_json::json!({
+                "info": {
+                    "id": session_id,
+                    "cwd": cwd
+                },
+                "session_summary": title,
+                "generated_title": title,
+                "updated_at": "2026-06-06T12:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("write grok summary");
+        fs::write(session_dir.join("updates.jsonl"), "{}\n").expect("write grok updates");
+        fs::write(
+            self.grok_home().join("active_sessions.json"),
+            serde_json::json!([{
+                "session_id": session_id,
+                "cwd": cwd
+            }])
+            .to_string(),
+        )
+        .expect("write active sessions");
+    }
+
     fn write_state_db(&self) {
         let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
         connection
@@ -1972,15 +2668,34 @@ insert into threads (
 
     fn attach_transcript_path(&self, thread_id: &str, transcript_path: &std::path::Path) {
         let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
-        connection
-            .execute("alter table threads add column rollout_path text", [])
-            .expect("add rollout path");
+        let has_rollout_path = connection
+            .query_row(
+                "select exists(select 1 from pragma_table_info('threads') where name = 'rollout_path')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("check rollout path column");
+        if !has_rollout_path {
+            connection
+                .execute("alter table threads add column rollout_path text", [])
+                .expect("add rollout path");
+        }
         connection
             .execute(
                 "update threads set rollout_path = ?1 where thread_id = ?2",
                 rusqlite::params![transcript_path.display().to_string(), thread_id],
             )
             .expect("attach transcript");
+    }
+
+    fn set_thread_source(&self, thread_id: &str, source: &str) {
+        let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
+        connection
+            .execute(
+                "update threads set source = ?1 where thread_id = ?2",
+                rusqlite::params![source, thread_id],
+            )
+            .expect("set thread source");
     }
 
     fn write_live_shape_state_db(&self) {

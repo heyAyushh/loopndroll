@@ -4,6 +4,10 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::mobile_events::{
+    MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_sse_name,
+};
+
 const ENABLED_SETTING: i64 = 1;
 const DISABLED_SETTING: i64 = 0;
 
@@ -80,9 +84,78 @@ create table if not exists sync_manifest_snapshots (
 );
 
 insert or ignore into service_settings (id, hooks_auto_registration) values (1, 1);
+
+create table if not exists mobile_event_log (
+  event_id text primary key,
+  event_type text not null,
+  thread_id text,
+  prompt_id text,
+  detail text,
+  created_at_ms integer not null
+);
+
+create index if not exists mobile_event_log_created_at_ms
+  on mobile_event_log(created_at_ms desc);
 "#,
         )?;
         Ok(())
+    }
+
+    pub fn record_mobile_event(&self, event: &MobileEvent) -> Result<MobileEventRecord> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        let created_at_ms =
+            (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+        let record = MobileEventRecord {
+            event_id: format!("mobile-event-{}", uuid::Uuid::new_v4()),
+            event_type: event.event_type,
+            thread_id: event.thread_id.clone(),
+            prompt_id: event.prompt_id.clone(),
+            detail: event.detail.clone(),
+            created_at_ms,
+        };
+        connection.execute(
+            "insert into mobile_event_log (
+                event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+             ) values (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.event_id,
+                mobile_event_sse_name(record.event_type),
+                record.thread_id,
+                record.prompt_id,
+                record.detail,
+                record.created_at_ms,
+            ],
+        )?;
+        Ok(record)
+    }
+
+    pub fn mobile_events_since(
+        &self,
+        since_created_at_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<MobileEventRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        let mut statement = connection.prepare(
+            "select event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+             from mobile_event_log
+             where created_at_ms > ?1
+             order by created_at_ms asc
+             limit ?2",
+        )?;
+        let rows = statement.query_map(params![since_created_at_ms, limit as i64], |row| {
+            let event_type = parse_mobile_event_kind(&row.get::<_, String>(1)?);
+            Ok(MobileEventRecord {
+                event_id: row.get(0)?,
+                event_type,
+                thread_id: row.get(2)?,
+                prompt_id: row.get(3)?,
+                detail: row.get(4)?,
+                created_at_ms: row.get(5)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn record_automation_run(
@@ -213,6 +286,18 @@ insert or ignore into service_settings (id, hooks_auto_registration) values (1, 
         Ok(record)
     }
 
+    pub fn latest_mobile_event_created_at_ms(&self) -> Result<i64> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        connection
+            .query_row(
+                "select coalesce(max(created_at_ms), 0) from mobile_event_log",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     pub fn latest_sync_manifest_snapshot(&self) -> Result<Option<SyncManifestSnapshotRecord>> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -234,5 +319,14 @@ insert or ignore into service_settings (id, hooks_auto_registration) values (1, 
             )
             .optional()
             .map_err(Into::into)
+    }
+}
+
+fn parse_mobile_event_kind(value: &str) -> MobileEventKind {
+    match value {
+        "prompt.queued" => MobileEventKind::PromptQueued,
+        "prompt.delivered" => MobileEventKind::PromptDelivered,
+        "lifecycle.changed" => MobileEventKind::LifecycleChanged,
+        _ => MobileEventKind::SessionChanged,
     }
 }

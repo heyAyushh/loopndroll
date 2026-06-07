@@ -121,11 +121,15 @@ pub(super) fn panel_model(app: &TuiState) -> PanelModel {
 fn dashboard_rows(app: &TuiState) -> Vec<RenderRow> {
     let server_health = json_path(&app.status, &["source", "health"]);
     let hooks_health = json_path(&app.status, &["hooks", "health"]);
+    let grok_hooks_health = json_path(&app.snapshot, &["grok_build", "hooks", "health"]);
+    let grok_session_count = json_path(&app.snapshot, &["grok_build", "session_count"]);
+    let grok_active_sessions = json_path(&app.snapshot, &["grok_build", "active_session_count"]);
     let bridge_summary = json_path(&app.snapshot, &["devin_desktop", "acp_bridge", "summary"]);
     vec![
         RenderRow::section("SYSTEM"),
         health_row("server", &server_health),
-        health_row("hooks", &hooks_health),
+        health_row("codex hooks", &hooks_health),
+        health_row("grok hooks", &grok_hooks_health),
         RenderRow::section("WORK"),
         RenderRow::accent(format!(
             "active sessions      {}",
@@ -147,6 +151,18 @@ fn dashboard_rows(app: &TuiState) -> Vec<RenderRow> {
         RenderRow::plain(format!(
             "Devin Desktop        {}",
             connections_by_kind(app, "devin")
+        )),
+        RenderRow::plain(format!(
+            "Grok Build CLI       {}",
+            connections_by_id(app, "grok-build-cli")
+        )),
+        RenderRow::plain(format!(
+            "Grok Build hooks     {}",
+            connections_by_id(app, "grok-build-hooks")
+        )),
+        RenderRow::plain(format!(
+            "Grok sessions        {} active / {} total",
+            grok_active_sessions, grok_session_count
         )),
         RenderRow::plain(format!(
             "Devin ACP agents     {}",
@@ -208,7 +224,7 @@ fn connection_rows(app: &TuiState) -> Vec<RenderRow> {
             .collect::<Vec<_>>(),
     );
     if value_array(&app.connections, "connections").is_empty() {
-        rows.push(RenderRow::muted("no iPhones paired yet"));
+        rows.push(RenderRow::muted("no managed connections"));
     }
     rows.extend(selected_connection_rows(app));
     rows.extend(devin_bridge_rows(app));
@@ -564,6 +580,14 @@ fn connections_by_kind(app: &TuiState, kind: &str) -> usize {
         .iter()
         .filter(|connection| connection.get("kind").and_then(Value::as_str) == Some(kind))
         .count()
+}
+
+fn connections_by_id(app: &TuiState, id: &str) -> String {
+    value_array(&app.connections, "connections")
+        .iter()
+        .find(|connection| connection.get("id").and_then(Value::as_str) == Some(id))
+        .map(|connection| json_path(connection, &["status"]))
+        .unwrap_or_else(|| "missing".to_owned())
 }
 
 fn health_row(label: &str, health: &str) -> RenderRow {

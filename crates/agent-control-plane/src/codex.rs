@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -6,7 +8,9 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::assistant::AssistantKind;
+use crate::assistant::{
+    AssistantKind, assistant_kind_from_client, infer_assistant_client_from_paths,
+};
 use crate::hook_registration::LOOPER_HOOK_MARKER;
 use crate::privacy::redact_command_for_display;
 
@@ -111,6 +115,7 @@ pub struct ThreadRecord {
     pub cwd: Option<String>,
     pub transcript_path: Option<String>,
     pub source: Option<String>,
+    pub originator: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
     pub git_sha: Option<String>,
@@ -300,6 +305,10 @@ pub fn capabilities_for_thread(codex_home: &Path, thread_id: &str) -> Result<Thr
 }
 
 pub fn capabilities_for_state_thread(state: &StateData, thread_id: &str) -> ThreadCapabilities {
+    let thread = state
+        .threads
+        .iter()
+        .find(|thread| thread.thread_id == thread_id);
     let tools = state
         .dynamic_tools_by_thread
         .get(thread_id)
@@ -309,10 +318,21 @@ pub fn capabilities_for_state_thread(state: &StateData, thread_id: &str) -> Thre
     let mcp_tools = tool_names(&tools, ToolClassification::Mcp);
     let app_tools = tool_names(&tools, ToolClassification::App);
     let automation_tools = tool_names(&tools, ToolClassification::Automation);
+    let assistant_kind = thread
+        .map(|thread| {
+            assistant_kind_from_client(infer_assistant_client_from_paths(
+                thread.transcript_path.as_deref(),
+                thread.cwd.as_deref(),
+                thread.source.as_deref(),
+                thread.originator.as_deref(),
+                thread.agent_path.as_deref(),
+            ))
+        })
+        .unwrap_or(AssistantKind::Codex);
 
     ThreadCapabilities {
         thread_id: thread_id.to_owned(),
-        assistant_kind: AssistantKind::Codex,
+        assistant_kind,
         mcp_tools,
         app_tools,
         automation_tools,
@@ -429,12 +449,17 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
         let archived: Option<i64> = row.get(15)?;
+        let transcript_path: Option<String> = row.get(3)?;
+        let originator = transcript_path
+            .as_deref()
+            .and_then(transcript_originator_for_path);
         Ok(ThreadRecord {
             thread_id: row.get(0)?,
             title: row.get(1)?,
             cwd: row.get(2)?,
-            transcript_path: row.get(3)?,
+            transcript_path,
             source: row.get(4)?,
+            originator,
             model: row.get(5)?,
             reasoning_effort: row.get(6)?,
             git_sha: row.get(7)?,
@@ -449,6 +474,20 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn transcript_originator_for_path(path: &str) -> Option<String> {
+    let first_line = BufReader::new(File::open(path).ok()?)
+        .lines()
+        .next()?
+        .ok()?;
+    let value = serde_json::from_str::<Value>(&first_line).ok()?;
+    value
+        .get("payload")
+        .and_then(|payload| payload.get("originator"))
+        .and_then(Value::as_str)
+        .filter(|originator| !originator.trim().is_empty())
+        .map(str::to_owned)
 }
 
 fn read_dynamic_tools(connection: &Connection) -> Result<BTreeMap<String, Vec<DynamicTool>>> {

@@ -23,10 +23,15 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
         .expect("archive");
     service.mute_session("thread-1").expect("mute");
 
-    let state = service.state().expect("state");
-    let thread = state.sessions.get("thread-1").expect("thread override");
+    let mut state = service.state().expect("state");
     assert_eq!(state.default_prompt, "Continue this exact task.");
     assert_eq!(state.assistant_surface, "devin");
+    service
+        .set_assistant_surface("grok-build")
+        .expect("set grok assistant surface");
+    state = service.state().expect("state");
+    assert_eq!(state.assistant_surface, "grok-build");
+    let thread = state.sessions.get("thread-1").expect("thread override");
     assert_eq!(thread.preset.as_deref(), Some("max-turns-1"));
     assert_eq!(thread.archived, Some(true));
     assert!(thread.muted);
@@ -229,6 +234,88 @@ fn mobile_session_infinite_mode_reuses_persistent_mobile_prompt() {
 
     assert_eq!(first_decision.reason, "Keep using this phone prompt.");
     assert_eq!(second_decision.reason, "Keep using this phone prompt.");
+}
+
+#[test]
+fn mobile_session_queue_prompt_uses_global_mode() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let service = MobileSessionService::new(temp_dir.path().join("control-plane.sqlite"));
+
+    service
+        .set_global_preset(Some("infinite"))
+        .expect("set global preset");
+    service
+        .queue_prompt("thread-1", "Use the global phone prompt.")
+        .expect("queue prompt");
+
+    let decision = service
+        .stop_decision("thread-1")
+        .expect("stop decision")
+        .expect("blocks with queued prompt");
+
+    assert_eq!(decision.reason, "Use the global phone prompt.");
+}
+
+#[test]
+fn mobile_session_records_hook_lifecycle() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let service = MobileSessionService::new(temp_dir.path().join("control-plane.sqlite"));
+
+    let prompt_payload = MobileHookPayload {
+        hook_event_name: "UserPromptSubmit".to_owned(),
+        session_id: Some("thread-1".to_owned()),
+        turn_id: None,
+        cwd: None,
+        last_assistant_message: None,
+    };
+    service
+        .record_hook_lifecycle(&prompt_payload, false)
+        .expect("record prompt lifecycle");
+    let active_state = service.state().expect("active state");
+    assert_eq!(active_state.lifecycle["thread-1"].status.as_str(), "active");
+
+    let stop_payload = MobileHookPayload {
+        hook_event_name: "Stop".to_owned(),
+        session_id: Some("thread-1".to_owned()),
+        turn_id: None,
+        cwd: None,
+        last_assistant_message: None,
+    };
+    service
+        .record_hook_lifecycle(&stop_payload, false)
+        .expect("record stopped lifecycle");
+    let stopped_state = service.state().expect("stopped state");
+    assert_eq!(
+        stopped_state.lifecycle["thread-1"].status.as_str(),
+        "stopped"
+    );
+
+    service
+        .record_hook_lifecycle(&stop_payload, true)
+        .expect("record continued lifecycle");
+    let continued_state = service.state().expect("continued state");
+    assert_eq!(
+        continued_state.lifecycle["thread-1"].status.as_str(),
+        "active"
+    );
+}
+
+#[test]
+fn mobile_session_hook_payload_accepts_codex_snake_case() {
+    let payload: MobileHookPayload = serde_json::from_value(serde_json::json!({
+        "hook_event_name": "Stop",
+        "session_id": "thread-1",
+        "turn_id": "turn-1",
+        "cwd": "/tmp/looper",
+        "last_assistant_message": "Done."
+    }))
+    .expect("parse snake case hook payload");
+
+    assert_eq!(payload.hook_event_name, "Stop");
+    assert_eq!(payload.session_id.as_deref(), Some("thread-1"));
+    assert_eq!(payload.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(payload.cwd.as_deref(), Some("/tmp/looper"));
+    assert_eq!(payload.last_assistant_message.as_deref(), Some("Done."));
 }
 
 #[test]

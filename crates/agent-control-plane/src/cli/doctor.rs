@@ -82,13 +82,19 @@ async fn get_doctor_json(path: &str) -> std::result::Result<Value, String> {
 fn doctor_control_plane_health_check(health: &Value) -> Value {
     let source_health = health_text(health, &["source", "health"]);
     let hook_health = health_text(health, &["hooks", "health"]);
+    let grok_hook_health = health_text(health, &["grok_hooks", "health"]);
+    let grok_hooks_ok = grok_hook_health
+        .as_deref()
+        .is_none_or(|health| health == HEALTHY_STATUS_VALUE || health == "missing");
     let is_healthy = health.get("ok").and_then(Value::as_bool) == Some(true)
         && source_health.as_deref() == Some(HEALTHY_STATUS_VALUE)
-        && hook_health.as_deref() == Some(HEALTHY_STATUS_VALUE);
+        && hook_health.as_deref() == Some(HEALTHY_STATUS_VALUE)
+        && grok_hooks_ok;
     let detail = format!(
-        "source={} hooks={}",
+        "source={} hooks={} grok_hooks={}",
         source_health.unwrap_or_else(|| "missing".to_owned()),
-        hook_health.unwrap_or_else(|| "missing".to_owned())
+        hook_health.unwrap_or_else(|| "missing".to_owned()),
+        grok_hook_health.unwrap_or_else(|| "missing".to_owned())
     );
     doctor_check(
         DOCTOR_CHECK_SERVER,
@@ -162,6 +168,33 @@ mod tests {
             "ok": true,
             "source": { "health": "healthy" },
             "hooks": { "health": "degraded" },
+            "grok_hooks": { "health": "healthy" },
+        });
+        let check = doctor_control_plane_health_check(&health);
+        assert_eq!(check["ok"], false);
+        assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
+    }
+
+    #[test]
+    fn doctor_control_plane_health_allows_missing_grok_hooks() {
+        let health = serde_json::json!({
+            "ok": true,
+            "source": { "health": "healthy" },
+            "hooks": { "health": "healthy" },
+            "grok_hooks": { "health": "missing" },
+        });
+        let check = doctor_control_plane_health_check(&health);
+        assert_eq!(check["ok"], true);
+        assert_eq!(check["status"], DOCTOR_STATUS_OK);
+    }
+
+    #[test]
+    fn doctor_control_plane_health_rejects_foreign_grok_hooks() {
+        let health = serde_json::json!({
+            "ok": true,
+            "source": { "health": "healthy" },
+            "hooks": { "health": "healthy" },
+            "grok_hooks": { "health": "configured" },
         });
         let check = doctor_control_plane_health_check(&health);
         assert_eq!(check["ok"], false);

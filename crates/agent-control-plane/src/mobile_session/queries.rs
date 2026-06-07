@@ -7,7 +7,8 @@ use super::normalization::{
 };
 use super::notifications::telegram_token_from_bot_url;
 use super::{
-    MobileCompletionCheck, MobileNotificationRoute, MobileSessionError, MobileSessionResult,
+    MobileCompletionCheck, MobileNotificationRoute, MobileSessionError, MobileSessionLifecycle,
+    MobileSessionResult,
 };
 
 pub(super) const REMOTE_PROMPT_STATUS_QUEUED: &str = "queued";
@@ -18,7 +19,7 @@ pub(super) fn prompt_for_mode(
     thread_id: &str,
     delivery_mode: &str,
     mark_delivered: bool,
-) -> MobileSessionResult<Option<String>> {
+) -> MobileSessionResult<Option<(String, String)>> {
     let row = connection
         .query_row(
             "select id, prompt
@@ -35,6 +36,9 @@ pub(super) fn prompt_for_mode(
     let Some((prompt_id, prompt)) = row else {
         return Ok(None);
     };
+    let Some(prompt) = normalized_optional(&prompt) else {
+        return Ok(None);
+    };
     if mark_delivered {
         connection.execute(
             "update mobile_remote_prompts
@@ -43,7 +47,7 @@ pub(super) fn prompt_for_mode(
             params![REMOTE_PROMPT_STATUS_DELIVERED, now_iso_string()?, prompt_id],
         )?;
     }
-    Ok(normalized_optional(&prompt))
+    Ok(Some((prompt_id, prompt)))
 }
 
 pub(super) fn read_notifications(
@@ -126,4 +130,25 @@ pub(super) fn read_session_notifications(
             .push(notification_id);
     }
     Ok(notification_ids_by_thread)
+}
+
+pub(super) fn read_session_lifecycle(
+    connection: &Connection,
+) -> MobileSessionResult<BTreeMap<String, MobileSessionLifecycle>> {
+    let mut statement = connection.prepare(
+        "select thread_id, status, updated_at
+         from mobile_session_lifecycle
+         order by thread_id asc",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            MobileSessionLifecycle {
+                status: row.get(1)?,
+                updated_at: row.get(2)?,
+            },
+        ))
+    })?;
+    rows.collect::<Result<BTreeMap<_, _>, _>>()
+        .map_err(MobileSessionError::Store)
 }

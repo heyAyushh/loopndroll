@@ -19,11 +19,15 @@ mod settings;
 pub use self::notifications::build_telegram_bot_url;
 
 use self::normalization::{ENABLED_FLAG, normalized_assistant_surface, normalized_preset};
-use self::queries::{read_completion_checks, read_notifications, read_session_notifications};
+use self::queries::{
+    read_completion_checks, read_notifications, read_session_lifecycle, read_session_notifications,
+};
 use self::schema::initialize_store;
 use self::settings::MobileSettingsRow;
 
 pub const DEFAULT_REMOTE_PROMPT: &str = "Continue from where this session stopped.";
+pub(crate) const MOBILE_SESSION_STATUS_ACTIVE: &str = "active";
+pub(crate) const MOBILE_SESSION_STATUS_STOPPED: &str = "stopped";
 
 #[derive(Clone, Debug)]
 pub struct MobileSessionService {
@@ -43,6 +47,7 @@ pub struct MobileSessionState {
     pub notifications: Vec<MobileNotificationRoute>,
     pub completion_checks: Vec<MobileCompletionCheck>,
     pub sessions: BTreeMap<String, MobileSessionOverride>,
+    pub lifecycle: BTreeMap<String, MobileSessionLifecycle>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +61,13 @@ pub struct MobileSessionOverride {
     pub notification_ids: Vec<String>,
     pub completion_check_id: Option<String>,
     pub completion_check_wait_for_reply: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MobileSessionLifecycle {
+    pub status: String,
+    pub updated_at: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -112,10 +124,14 @@ pub struct MobileQueuedPrompt {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MobileHookPayload {
+    #[serde(alias = "hook_event_name")]
     pub hook_event_name: String,
+    #[serde(alias = "session_id")]
     pub session_id: Option<String>,
+    #[serde(alias = "turn_id")]
     pub turn_id: Option<String>,
     pub cwd: Option<String>,
+    #[serde(alias = "last_assistant_message")]
     pub last_assistant_message: Option<String>,
 }
 
@@ -123,6 +139,13 @@ pub struct MobileHookPayload {
 pub struct MobileStopDecision {
     pub decision: String,
     pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MobileHookOutcome {
+    pub decision: Option<MobileStopDecision>,
+    pub delivered_prompt_id: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -139,7 +162,7 @@ pub enum MobileSessionError {
     InvalidPreset,
     #[error("scope must be global or per-task")]
     InvalidScope,
-    #[error("assistant surface must be codex or devin")]
+    #[error("assistant surface must be codex, devin, or grok-build")]
     InvalidAssistantSurface,
     #[error("prompt is required")]
     PromptRequired,
@@ -255,6 +278,7 @@ impl MobileSessionService {
             ))
         })?;
         let sessions = rows.collect::<Result<BTreeMap<_, _>, _>>()?;
+        let lifecycle = read_session_lifecycle(&connection)?;
 
         Ok(MobileSessionState {
             default_prompt: settings.default_prompt,
@@ -271,6 +295,7 @@ impl MobileSessionService {
             notifications,
             completion_checks,
             sessions,
+            lifecycle,
         })
     }
 }

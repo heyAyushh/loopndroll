@@ -9,6 +9,7 @@ pub(super) const MOBILE_SESSION_OVERRIDES_TABLE: &str = "mobile_session_override
 pub(super) const MOBILE_SESSION_RUNTIME_TABLE: &str = "mobile_session_runtime";
 pub(super) const MOBILE_REMOTE_PROMPTS_TABLE: &str = "mobile_remote_prompts";
 pub(super) const MOBILE_SESSION_NOTIFICATIONS_TABLE: &str = "mobile_session_notifications";
+pub(super) const MOBILE_SESSION_LIFECYCLE_TABLE: &str = "mobile_session_lifecycle";
 pub(super) const MOBILE_LEGACY_IMPORTS_TABLE: &str = "mobile_legacy_imports";
 
 const MOBILE_SCHEMA_SQL: &str = r#"
@@ -95,6 +96,12 @@ create unique index if not exists mobile_remote_prompts_thread_delivery_mode_idx
 create table if not exists mobile_session_runtime (
   thread_id text primary key,
   remaining_turns integer,
+  updated_at text not null
+);
+
+create table if not exists mobile_session_lifecycle (
+  thread_id text primary key,
+  status text not null,
   updated_at text not null
 );
 "#;

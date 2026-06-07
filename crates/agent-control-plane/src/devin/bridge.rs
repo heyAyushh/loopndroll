@@ -33,6 +33,10 @@ const PROBE_READY_DETAIL: &str =
     "ACP agent is ready for an explicit attach attempt; no registry command was executed.";
 const PROBE_BLOCKED_DETAIL: &str =
     "ACP agent is not ready for attach; inspect blockers before trying to launch it.";
+const ATTACH_ACK_DETAIL: &str = "Experimental Devin ACP attach acknowledged after explicit probe; no live ACP transport is running yet.";
+const ATTACH_BLOCKED_DETAIL: &str = "Devin ACP attach blocked until probe preflight succeeds.";
+const ATTACH_NATIVE_CONTROL_LIMITATION: &str =
+    "Attached session does not provide Codex-style stop/continue hooks yet.";
 const ACP_DISABLED_BLOCKER: &str = "Devin ACP is disabled or missing in Desktop settings.";
 const ACP_REGISTRY_MISSING_BLOCKER: &str = "Devin ACP registry is missing.";
 const ACP_AGENT_MISSING_BLOCKER: &str = "Requested ACP agent was not found in the registry.";
@@ -90,6 +94,18 @@ pub enum DevinAcpProbeStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DevinAcpBridgeAttach {
+    pub ok: bool,
+    pub status: DevinAcpProbeStatus,
+    pub agent_id: Option<String>,
+    pub name: Option<String>,
+    pub attach_ready: bool,
+    pub detail: String,
+    pub blockers: Vec<String>,
+    pub limitations: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeProbe {
     pub ok: bool,
     pub status: DevinAcpProbeStatus,
@@ -126,6 +142,30 @@ pub fn build_acp_bridge_status(
         limitations: bridge_limitations(control_level),
         actions: bridge_actions(&agents),
         agents,
+    }
+}
+
+pub fn build_acp_bridge_attach(
+    installations: &[DevinInstallationStatus],
+    registry: &DevinAcpRegistryStatus,
+    requested_agent_id: Option<&str>,
+) -> DevinAcpBridgeAttach {
+    let probe = build_acp_bridge_probe(installations, registry, requested_agent_id);
+    let mut limitations = bridge_limitations(probe.control_level);
+    limitations.push(ATTACH_NATIVE_CONTROL_LIMITATION.to_owned());
+    DevinAcpBridgeAttach {
+        ok: probe.ok,
+        status: probe.status,
+        agent_id: probe.agent_id,
+        name: probe.name,
+        attach_ready: probe.attach_ready,
+        detail: if probe.ok {
+            ATTACH_ACK_DETAIL.to_owned()
+        } else {
+            ATTACH_BLOCKED_DETAIL.to_owned()
+        },
+        blockers: probe.blockers,
+        limitations,
     }
 }
 
