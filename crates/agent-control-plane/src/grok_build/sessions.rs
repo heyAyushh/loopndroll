@@ -12,6 +12,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities};
 use crate::control_plane::DesktopThread;
+use crate::mobile_session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
 const SESSIONS_DIR: &str = "sessions";
 const ACTIVE_SESSIONS_FILE: &str = "active_sessions.json";
@@ -117,6 +118,12 @@ pub fn discover_grok_sessions(grok_home: &Path) -> Result<Vec<GrokSessionRecord>
 }
 
 pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThread {
+    let runtime_status = if session.running {
+        MOBILE_SESSION_STATUS_ACTIVE
+    } else {
+        MOBILE_SESSION_STATUS_STOPPED
+    };
+
     DesktopThread {
         thread_id: session.session_id.clone(),
         title: session.title.clone(),
@@ -135,6 +142,7 @@ pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThr
         created_at_ms: None,
         updated_at_ms: parse_timestamp_ms(&session.updated_at),
         assistant_preview: session.assistant_preview.clone(),
+        runtime_status: Some(runtime_status.to_owned()),
         archived: false,
         capabilities: ThreadCapabilities {
             thread_id: session.session_id.clone(),

@@ -235,7 +235,12 @@ fn session_summary(
         "id": thread.thread_id,
         "ref": format!("{THREAD_REF_PREFIX}{}", index + 1),
         "title": session_title(thread),
-        "status": session_status(is_archived, effective_mode, lifecycle),
+        "status": session_status(
+            is_archived,
+            effective_mode,
+            lifecycle,
+            thread.runtime_status.as_deref()
+        ),
         "effectiveMode": effective_mode,
         "lastUpdatedAt": thread_timestamp(thread),
         "assistantPreview": nullable_string_value(thread.assistant_preview.as_deref()),
@@ -365,6 +370,7 @@ fn session_status(
     is_archived: bool,
     effective_mode: Option<&str>,
     lifecycle: Option<&MobileSessionLifecycle>,
+    runtime_status: Option<&str>,
 ) -> &'static str {
     if is_archived {
         return ARCHIVED_SESSION_STATUS;
@@ -376,6 +382,10 @@ fn session_status(
             MOBILE_SESSION_STATUS_STOPPED => return inactive_session_status(effective_mode),
             _ => {}
         }
+    }
+
+    if runtime_status == Some(MOBILE_SESSION_STATUS_ACTIVE) {
+        return ACTIVE_SESSION_STATUS;
     }
 
     inactive_session_status(effective_mode)

@@ -1396,6 +1396,35 @@ async fn mobile_snapshot_includes_every_assistant_surface() {
 }
 
 #[tokio::test]
+async fn mobile_snapshot_marks_running_adapter_sessions_active() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_active_devin_next_session();
+    fixture.write_grok_session("grok-session-1", "/tmp/project", "Ship Grok hooks");
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        mobile_surface_session(&snapshot, "devin", "devin:devin-cli:brindle-cadet")["status"],
+        "active"
+    );
+    assert_eq!(
+        mobile_surface_session(&snapshot, "grok-build", "grok-session-1")["status"],
+        "active"
+    );
+}
+
+#[tokio::test]
 async fn mobile_session_detail_accepts_selected_surface_override() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2214,6 +2243,19 @@ fn mobile_snapshot_session<'a>(
         .expect("session")
 }
 
+fn mobile_surface_session<'a>(
+    snapshot: &'a serde_json::Value,
+    surface: &str,
+    session_id: &str,
+) -> &'a serde_json::Value {
+    snapshot["surfaceSessions"][surface]
+        .as_array()
+        .expect("surface sessions")
+        .iter()
+        .find(|session| session["id"] == session_id)
+        .expect("surface session")
+}
+
 fn assert_surface_sessions_include(
     surface_sessions: &serde_json::Map<String, serde_json::Value>,
     surface: &str,
@@ -2411,6 +2453,14 @@ impl IsolatedCodexFixture {
     }
 
     fn write_devin_next_session(&self) {
+        self.write_devin_next_session_with_status("end_turn");
+    }
+
+    fn write_active_devin_next_session(&self) {
+        self.write_devin_next_session_with_status("running");
+    }
+
+    fn write_devin_next_session_with_status(&self, status: &str) {
         let app_support = self
             .temp_dir
             .path()
@@ -2488,7 +2538,7 @@ impl IsolatedCodexFixture {
                                 "providerId": "devin-cli",
                                 "title": "Devin task",
                                 "cwd": "/tmp/devin-project",
-                                "status": "end_turn",
+                                "status": status,
                                 "updatedAt": "2026-06-07T03:10:03+00:00",
                                 "_meta": {
                                     "cognition.ai/createdAt": "2026-06-07T03:09:52.477Z",

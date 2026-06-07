@@ -15,6 +15,7 @@ use super::{DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH, DEVIN_STABLE_APP_SUPPORT_RELAT
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities, ThreadRecord};
 use crate::control_plane::DesktopThread;
+use crate::mobile_session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
 const DEVIN_NEXT_ORIGINATOR: &str = "Devin - Next";
 const DEVIN_STABLE_ORIGINATOR: &str = "Devin";
@@ -125,6 +126,12 @@ pub fn discover_devin_sessions(home: &Path) -> Result<Vec<DevinSessionRecord>> {
 }
 
 pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopThread {
+    let runtime_status = if session.is_active() {
+        MOBILE_SESSION_STATUS_ACTIVE
+    } else {
+        MOBILE_SESSION_STATUS_STOPPED
+    };
+
     DesktopThread {
         thread_id: session.thread_id.clone(),
         title: session.title.clone(),
@@ -146,6 +153,7 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        runtime_status: Some(runtime_status.to_owned()),
         archived: session.archived,
         capabilities: devin_session_capabilities(session),
     }

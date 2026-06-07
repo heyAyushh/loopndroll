@@ -220,6 +220,7 @@ pub struct DesktopThread {
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub runtime_status: Option<String>,
     pub archived: bool,
     pub capabilities: ThreadCapabilities,
 }
@@ -748,6 +749,7 @@ impl ControlPlane {
                         .transcript_path
                         .as_deref()
                         .and_then(|path| latest_assistant_message_for_path(Path::new(path))),
+                    runtime_status: None,
                     archived: thread.archived,
                     capabilities,
                 })
