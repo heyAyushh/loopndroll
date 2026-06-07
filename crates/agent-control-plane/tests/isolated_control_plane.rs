@@ -2463,7 +2463,30 @@ impl IsolatedCodexFixture {
         if executable.is_file() {
             return executable;
         }
-        fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("write codex resume stub");
+        fs::write(
+            &executable,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":"looper-initialize"'*)
+      printf '%s\n' '{"id":"looper-initialize","result":{}}'
+      ;;
+    *'"id":"looper-thread-resume"'*)
+      printf '%s\n' '{"id":"looper-thread-resume","result":{"thread":{"id":"thread-stub"}}}'
+      ;;
+    *'"id":"looper-turn-start"'*)
+      thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      if [ -z "$thread_id" ]; then
+        thread_id="thread-stub"
+      fi
+      printf '%s\n' '{"id":"looper-turn-start","result":{"turn":{"id":"turn-stub","status":"inProgress"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"'"$thread_id"'","turn":{"id":"turn-stub","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        )
+        .expect("write codex resume stub");
         let mut permissions = fs::metadata(&executable)
             .expect("codex resume stub metadata")
             .permissions();
