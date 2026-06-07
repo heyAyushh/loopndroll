@@ -120,7 +120,7 @@ struct SessionDetailScreen: View {
                 }
             }
 
-            LabeledContent("Started From", value: currentMetadata.source.capitalized)
+            LabeledContent("Started From", value: currentMetadata.sourceDisplayName)
             LabeledContent("Task Type", value: currentMetadata.taskKind.label)
             LabeledContent("Transcript") {
                 Text(currentMetadata.transcriptAvailable ? "Available" : "Not Available")

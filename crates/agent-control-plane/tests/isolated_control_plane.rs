@@ -1486,6 +1486,15 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
     .await;
     let codex_session = mobile_snapshot_session(&codex_snapshot, "thread-main");
     assert_eq!(codex_session["assistantClient"], "codex");
+    assert_eq!(codex_session["metadata"]["source"], "vscode");
+    assert_eq!(codex_session["metadata"]["sourceDisplayName"], "Codex");
+    assert!(
+        !codex_session["metadata"]["tags"]
+            .as_array()
+            .expect("tags")
+            .iter()
+            .any(|tag| tag.as_str() == Some("vscode"))
+    );
 
     request_json_body_with_options(
         &router,
@@ -1536,6 +1545,8 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
     .await;
     let devin_session = mobile_snapshot_session(&devin_snapshot, "thread-main");
     assert_eq!(devin_session["assistantClient"], "devin");
+    assert_eq!(devin_session["metadata"]["source"], "vscode");
+    assert_eq!(devin_session["metadata"]["sourceDisplayName"], "Devin");
 }
 
 #[tokio::test]

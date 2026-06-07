@@ -163,6 +163,7 @@ enum SessionSearchEngine {
                     session.status == .waiting ? "needs attention" : "",
                     session.assistantClient.displayTitle,
                     session.metadata.displayTitle,
+                    session.metadata.sourceDisplayName,
                     session.metadata.projectPath ?? "",
                     session.metadata.taskKind.label,
                     session.metadata.taskKind.rawValue,
@@ -174,7 +175,7 @@ enum SessionSearchEngine {
                     session.metadata.kind.rawValue,
                     session.metadata.installedPlugins.map(\.name).joined(separator: " "),
                     session.metadata.sources.map(\.value).joined(separator: " ")
-                ] + session.assistantClient.searchKeywords + session.metadata.tags
+                ] + session.assistantClient.searchKeywords + session.metadata.userFacingTags
             )
 
             guard let score else {

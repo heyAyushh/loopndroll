@@ -846,6 +846,7 @@ struct SessionSourceReference: Codable, Hashable, Sendable {
 struct SessionMetadata: Codable, Hashable, Sendable {
     var kind: SessionKind
     var source: String
+    var sourceDisplayName: String
     var projectName: String?
     var projectPath: String?
     var taskKind: SessionTaskKind
@@ -860,6 +861,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     static let empty = SessionMetadata(
         kind: .instantChat,
         source: "unknown",
+        sourceDisplayName: "Unknown",
         projectName: nil,
         projectPath: nil,
         taskKind: .unknown,
@@ -875,6 +877,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case kind
         case source
+        case sourceDisplayName
         case projectName
         case projectPath
         case taskKind
@@ -890,6 +893,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     init(
         kind: SessionKind,
         source: String,
+        sourceDisplayName: String,
         projectName: String?,
         projectPath: String?,
         taskKind: SessionTaskKind,
@@ -903,6 +907,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     ) {
         self.kind = kind
         self.source = source
+        self.sourceDisplayName = sourceDisplayName
         self.projectName = projectName
         self.projectPath = projectPath
         self.taskKind = taskKind
@@ -919,6 +924,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         kind = try container.decodeIfPresent(SessionKind.self, forKey: .kind) ?? .instantChat
         source = try container.decodeIfPresent(String.self, forKey: .source) ?? "unknown"
+        sourceDisplayName = try container.decodeIfPresent(String.self, forKey: .sourceDisplayName) ??
+            Self.displayName(forRawSource: source)
         projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
         projectPath = try container.decodeIfPresent(String.self, forKey: .projectPath)
         taskKind = try container.decodeIfPresent(SessionTaskKind.self, forKey: .taskKind) ?? .unknown
@@ -940,6 +947,29 @@ struct SessionMetadata: Codable, Hashable, Sendable {
             return projectName ?? "Project"
         case .instantChat:
             return "Instant Chat"
+        }
+    }
+
+    var userFacingTags: [String] {
+        let rawSourceTags = Set(["vscode", "devin-desktop", "grok-build", source])
+        return tags.filter { !rawSourceTags.contains($0) }
+    }
+
+    private static func displayName(forRawSource source: String) -> String {
+        switch source {
+        case "vscode":
+            return "Codex"
+        case "devin-desktop":
+            return "Devin"
+        case "grok-build":
+            return "Grok Build"
+        case "unknown":
+            return "Unknown"
+        default:
+            return source
+                .split(separator: "-")
+                .map { $0.capitalized }
+                .joined(separator: " ")
         }
     }
 }

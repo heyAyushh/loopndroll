@@ -44,6 +44,7 @@ struct SessionSearchableItem {
             session.status.label,
             session.assistantClient.displayTitle,
             session.metadata.displayTitle,
+            session.metadata.sourceDisplayName,
             session.metadata.projectPath ?? "",
             session.metadata.taskKind.label,
             session.metadata.gitRepository?.repositoryName ?? "",
@@ -61,7 +62,7 @@ struct SessionSearchableItem {
             session.status.label,
             session.metadata.kind.rawValue,
             session.metadata.taskKind.rawValue
-        ] + session.assistantClient.searchKeywords + session.metadata.tags
+        ] + session.assistantClient.searchKeywords + session.metadata.userFacingTags
         attributeSet.displayName = session.title
 
         let item = CSSearchableItem(

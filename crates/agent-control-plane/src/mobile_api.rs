@@ -27,6 +27,9 @@ const ACTIVE_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_ACTIVE;
 const ARCHIVED_SESSION_STATUS: &str = "archived";
 const STOPPED_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_STOPPED;
 const WAITING_SESSION_STATUS: &str = "waiting";
+const CODEX_SOURCE_LABEL: &str = "Codex";
+const DEVIN_SOURCE_LABEL: &str = "Devin";
+const GROK_BUILD_SOURCE_LABEL: &str = "Grok Build";
 
 pub fn mobile_snapshot(
     snapshot: &DesktopSnapshot,
@@ -231,6 +234,13 @@ fn session_summary(
         .unwrap_or(thread.archived);
     let effective_mode = effective_preset(session_override, session_state);
     let lifecycle = session_state.lifecycle.get(&thread.thread_id);
+    let assistant_client = infer_assistant_client_from_paths(
+        thread.transcript_path.as_deref(),
+        thread.cwd.as_deref(),
+        thread.source.as_deref(),
+        thread.originator.as_deref(),
+        thread.agent_path.as_deref(),
+    );
     json!({
         "id": thread.thread_id,
         "ref": format!("{THREAD_REF_PREFIX}{}", index + 1),
@@ -245,16 +255,11 @@ fn session_summary(
         "lastUpdatedAt": thread_timestamp(thread),
         "assistantPreview": nullable_string_value(thread.assistant_preview.as_deref()),
         "isArchived": is_archived,
-        "assistantClient": infer_assistant_client_from_paths(
-            thread.transcript_path.as_deref(),
-            thread.cwd.as_deref(),
-            thread.source.as_deref(),
-            thread.originator.as_deref(),
-            thread.agent_path.as_deref(),
-        ),
+        "assistantClient": assistant_client,
         "metadata": {
             "kind": kind,
             "source": thread.source.as_deref().unwrap_or(UNKNOWN_TASK_KIND),
+            "sourceDisplayName": source_display_name(&assistant_client),
             "originator": nullable_string_value(thread.originator.as_deref()),
             "projectName": thread.cwd.as_deref().map(project_name_from_path),
             "projectPath": thread.cwd,
@@ -265,9 +270,17 @@ fn session_summary(
             "supportsSubagents": true,
             "installedPlugins": [],
             "sources": session_sources(thread),
-            "tags": session_tags(thread, kind),
+            "tags": session_tags(kind, source_display_name(&assistant_client)),
         },
     })
+}
+
+fn source_display_name(assistant_client: &str) -> &'static str {
+    match assistant_client {
+        "devin" => DEVIN_SOURCE_LABEL,
+        "grok-build" => GROK_BUILD_SOURCE_LABEL,
+        _ => CODEX_SOURCE_LABEL,
+    }
 }
 
 fn notification_summary(notification: &MobileNotificationRoute) -> Value {
@@ -467,11 +480,8 @@ fn session_sources(thread: &DesktopThread) -> Vec<Value> {
     sources
 }
 
-fn session_tags(thread: &DesktopThread, kind: &str) -> Vec<String> {
-    [Some(kind.to_owned()), thread.source.clone()]
-        .into_iter()
-        .flatten()
-        .collect()
+fn session_tags(kind: &str, source_display_name: &str) -> Vec<String> {
+    vec![kind.to_owned(), source_display_name.to_owned()]
 }
 
 fn session_override<'a>(
