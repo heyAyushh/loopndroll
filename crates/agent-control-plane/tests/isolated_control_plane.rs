@@ -374,6 +374,48 @@ async fn nested_hooks_json_shape_is_supported() {
 }
 
 #[tokio::test]
+async fn disabled_owned_hook_state_degrades_health_until_register_repairs_it() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_nested_hooks_json("agent-control-plane hook --managed-by looper");
+    fixture.write_config_toml_with_disabled_owned_hook_state();
+    let router = build_router(fixture.control_plane());
+
+    let degraded_status = request_json(&router, "/status/control-plane").await;
+    assert_eq!(degraded_status["hooks"]["owner"], "looper-rust");
+    assert_eq!(degraded_status["hooks"]["health"], "degraded");
+    assert!(
+        degraded_status["hooks"]["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .any(|issue| issue
+                .as_str()
+                .expect("issue")
+                .contains("user_prompt_submit:0:0"))
+    );
+
+    let register_response =
+        request_json_with_method(&router, Method::POST, "/hooks/register").await;
+    assert_eq!(register_response["status"]["hooks"]["health"], "healthy");
+    assert!(
+        register_response["status"]["hooks"]["issues"]
+            .as_array()
+            .expect("issues")
+            .is_empty()
+    );
+
+    let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
+    assert!(config_toml.contains(&format!(
+        "[hooks.state.\"{}:user_prompt_submit:0:0\"]\nenabled = true",
+        fixture.codex_home.join("hooks.json").display()
+    )));
+    assert!(config_toml.contains(&format!(
+        "[hooks.state.\"{}:user_prompt_submit:1:0\"]\nenabled = false",
+        fixture.codex_home.join("hooks.json").display()
+    )));
+}
+
+#[tokio::test]
 async fn live_codex_thread_schema_is_supported() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_hooks_json("agent-control-plane hook --managed-by looper");
@@ -2791,6 +2833,28 @@ done
         fs::write(
             self.codex_home.join("config.toml"),
             "[model]\ndefault = \"gpt-5.5\"\n\n[features]\ncodex_hooks = false\n",
+        )
+        .expect("write config");
+    }
+
+    fn write_config_toml_with_disabled_owned_hook_state(&self) {
+        fs::write(
+            self.codex_home.join("config.toml"),
+            format!(
+                r#"[features]
+hooks = true
+
+[hooks.state."{}:user_prompt_submit:0:0"]
+enabled = false
+trusted_hash = "sha256:owned"
+
+[hooks.state."{}:user_prompt_submit:1:0"]
+enabled = false
+trusted_hash = "sha256:user"
+"#,
+                self.codex_home.join("hooks.json").display(),
+                self.codex_home.join("hooks.json").display(),
+            ),
         )
         .expect("write config");
     }

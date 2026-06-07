@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::assistant::{
     AssistantKind, assistant_kind_from_client, infer_assistant_client_from_paths,
 };
-use crate::hook_registration::LOOPER_HOOK_MARKER;
+use crate::hook_registration::{LOOPER_HOOK_MARKER, owned_hook_state_keys_for_hooks_path};
 use crate::privacy::redact_command_for_display;
 
 const MAX_PROCESS_ANCESTOR_DEPTH: usize = 8;
@@ -251,7 +251,8 @@ pub fn inspect_control_plane(codex_home: &Path) -> ControlPlaneStatus {
 }
 
 pub fn inspect_hooks(codex_home: &Path) -> HookStatus {
-    let enabled = read_hooks_enabled(&codex_home.join("config.toml")).unwrap_or(false);
+    let config_path = codex_home.join("config.toml");
+    let enabled = read_hooks_enabled(&config_path).unwrap_or(false);
     let hooks_path = codex_home.join("hooks.json");
     let mut issues = Vec::new();
     let (registered_events, active_command) = match read_hooks_json(&hooks_path) {
@@ -261,8 +262,22 @@ pub fn inspect_hooks(codex_home: &Path) -> HookStatus {
             (Vec::new(), None)
         }
     };
+    match read_disabled_owned_hook_states(&config_path, &hooks_path) {
+        Ok(disabled_states) => {
+            issues.extend(
+                disabled_states
+                    .into_iter()
+                    .map(|state| format!("Codex disabled Looper hook state {state}")),
+            );
+        }
+        Err(error) => issues.push(error.to_string()),
+    }
     let owner = classify_hook_owner(active_command.as_deref());
-    let health = if enabled && !registered_events.is_empty() && owner != HookOwner::Unknown {
+    let health = if enabled
+        && issues.is_empty()
+        && !registered_events.is_empty()
+        && owner != HookOwner::Unknown
+    {
         "healthy"
     } else if enabled {
         "degraded"
@@ -612,6 +627,33 @@ fn read_hooks_json(path: &Path) -> Result<(Vec<String>, Option<String>)> {
         .find_map(|event| object.get(event))
         .and_then(first_hook_command);
     Ok((events, active_command))
+}
+
+fn read_disabled_owned_hook_states(config_path: &Path, hooks_path: &Path) -> Result<Vec<String>> {
+    if !config_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(config_path)?;
+    let value: toml::Value = toml::from_str(&content)?;
+    let Some(state_table) = value
+        .get("hooks")
+        .and_then(|hooks| hooks.get("state"))
+        .and_then(toml::Value::as_table)
+    else {
+        return Ok(Vec::new());
+    };
+    let owned_state_keys = owned_hook_state_keys_for_hooks_path(hooks_path);
+    let disabled_states = owned_state_keys
+        .into_iter()
+        .filter(|key| {
+            state_table
+                .get(key)
+                .and_then(|state| state.get("enabled"))
+                .and_then(toml::Value::as_bool)
+                == Some(false)
+        })
+        .collect();
+    Ok(disabled_states)
 }
 
 fn first_hook_command(value: &Value) -> Option<String> {

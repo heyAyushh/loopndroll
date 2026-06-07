@@ -18,6 +18,13 @@ const FEATURES_TABLE_HEADER: &str = "[features]";
 const HOOKS_FEATURE_KEY: &str = "hooks";
 const LEGACY_CODEX_HOOKS_FEATURE_KEY: &str = "codex_hooks";
 const HOOKS_FEATURE_LINE: &str = "hooks = true";
+const HOOK_STATE_TABLE_PREFIX: &str = "[hooks.state.\"";
+const TOML_TABLE_SUFFIX: &str = "\"]";
+const ENABLED_KEY: &str = "enabled";
+const HOOK_ENABLED_LINE: &str = "enabled = true";
+const OWNED_HOOK_GROUP_INDEX: usize = 0;
+const OWNED_HOOK_HANDLER_INDEX: usize = 0;
+const OWNED_HOOK_STATE_EVENT_KEYS: &[&str] = &["session_start", "stop", "user_prompt_submit"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookRegistrationChange {
@@ -176,13 +183,32 @@ fn owned_hook_handler(command: &str, timeout: u64, status_message: &str) -> Valu
 
 fn ensure_hooks_feature(codex_home: &Path) -> Result<()> {
     let config_path = codex_home.join("config.toml");
+    let hooks_path = codex_home.join("hooks.json");
     let current = fs::read_to_string(&config_path).unwrap_or_default();
-    let next = set_hooks_enabled(&current);
+    let next = repair_hooks_config(&current, &hooks_path);
     if next != current {
         fs::write(&config_path, next)
             .with_context(|| format!("write {}", config_path.display()))?;
     }
     Ok(())
+}
+
+pub fn owned_hook_state_keys_for_hooks_path(hooks_path: &Path) -> Vec<String> {
+    OWNED_HOOK_STATE_EVENT_KEYS
+        .iter()
+        .map(|event_name| {
+            format!(
+                "{}:{event_name}:{OWNED_HOOK_GROUP_INDEX}:{OWNED_HOOK_HANDLER_INDEX}",
+                hooks_path.display()
+            )
+        })
+        .collect()
+}
+
+fn repair_hooks_config(config_text: &str, hooks_path: &Path) -> String {
+    let owned_state_keys = owned_hook_state_keys_for_hooks_path(hooks_path);
+    let with_feature_enabled = set_hooks_enabled(config_text);
+    set_owned_hook_state_enabled(&with_feature_enabled, &owned_state_keys)
 }
 
 fn set_hooks_enabled(config_text: &str) -> String {
@@ -227,6 +253,55 @@ fn set_hooks_enabled(config_text: &str) -> String {
     }
 
     finish_config_lines(lines)
+}
+
+fn set_owned_hook_state_enabled(config_text: &str, owned_state_keys: &[String]) -> String {
+    let lines = config_text
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<String>>();
+    let mut repaired_lines = Vec::with_capacity(lines.len() + owned_state_keys.len());
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index].clone();
+        let state_key = hook_state_table_key(line.trim());
+        if state_key.is_some_and(|key| owned_state_keys.iter().any(|owned| owned == key)) {
+            repaired_lines.push(line);
+            index += 1;
+            let owned_section_start = repaired_lines.len();
+            let mut found_enabled_key = false;
+
+            while index < lines.len() && !is_toml_table_header(lines[index].trim()) {
+                if is_toml_key_assignment(&lines[index], ENABLED_KEY) {
+                    repaired_lines.push(HOOK_ENABLED_LINE.to_owned());
+                    found_enabled_key = true;
+                } else {
+                    repaired_lines.push(lines[index].clone());
+                }
+                index += 1;
+            }
+
+            if !found_enabled_key {
+                repaired_lines.insert(owned_section_start, HOOK_ENABLED_LINE.to_owned());
+            }
+        } else {
+            repaired_lines.push(line);
+            index += 1;
+        }
+    }
+
+    finish_config_lines(repaired_lines)
+}
+
+fn hook_state_table_key(header: &str) -> Option<&str> {
+    header
+        .strip_prefix(HOOK_STATE_TABLE_PREFIX)
+        .and_then(|key| key.strip_suffix(TOML_TABLE_SUFFIX))
+}
+
+fn is_toml_table_header(line: &str) -> bool {
+    line.starts_with('[') && line.ends_with(']')
 }
 
 fn is_toml_key_assignment(line: &str, key: &str) -> bool {
@@ -342,7 +417,9 @@ fn is_owned_hook_command(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::set_hooks_enabled;
+    use std::path::Path;
+
+    use super::{repair_hooks_config, set_hooks_enabled};
 
     #[test]
     fn hook_feature_writer_uses_stable_key_for_empty_config() {
@@ -367,5 +444,61 @@ mod tests {
         assert!(next.contains("[features]"));
         assert!(next.contains("hooks = true"));
         assert!(!next.contains("codex_hooks"));
+    }
+
+    #[test]
+    fn hook_config_repair_reenables_owned_prompt_state_only() {
+        let next = repair_hooks_config(
+            r#"[features]
+hooks = true
+
+[hooks.state."/Users/ay/.codex/hooks.json:user_prompt_submit:0:0"]
+enabled = false
+trusted_hash = "sha256:owned"
+
+[hooks.state."/Users/ay/.codex/hooks.json:user_prompt_submit:1:0"]
+enabled = false
+trusted_hash = "sha256:user"
+
+[hooks.state."/tmp/other/hooks.json:user_prompt_submit:0:0"]
+enabled = false
+"#,
+            Path::new("/Users/ay/.codex/hooks.json"),
+        );
+
+        assert!(next.contains(
+            r#"[hooks.state."/Users/ay/.codex/hooks.json:user_prompt_submit:0:0"]
+enabled = true
+trusted_hash = "sha256:owned""#
+        ));
+        assert!(next.contains(
+            r#"[hooks.state."/Users/ay/.codex/hooks.json:user_prompt_submit:1:0"]
+enabled = false
+trusted_hash = "sha256:user""#
+        ));
+        assert!(next.contains(
+            r#"[hooks.state."/tmp/other/hooks.json:user_prompt_submit:0:0"]
+enabled = false"#
+        ));
+    }
+
+    #[test]
+    fn hook_config_repair_adds_enabled_to_owned_state() {
+        let next = repair_hooks_config(
+            r#"[features]
+hooks = false
+
+[hooks.state."/Users/ay/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:owned"
+"#,
+            Path::new("/Users/ay/.codex/hooks.json"),
+        );
+
+        assert!(next.contains("hooks = true"));
+        assert!(next.contains(
+            r#"[hooks.state."/Users/ay/.codex/hooks.json:stop:0:0"]
+enabled = true
+trusted_hash = "sha256:owned""#
+        ));
     }
 }
