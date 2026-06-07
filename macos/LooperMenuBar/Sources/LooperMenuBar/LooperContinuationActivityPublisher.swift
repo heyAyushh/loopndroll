@@ -1,24 +1,39 @@
 import AppKit
 import CoreSpotlight
 import LooperMenuBarCore
+import OSLog
 
 @MainActor
 final class LooperContinuationActivityPublisher {
-    fileprivate enum HostWindowLayout {
-        static let size = NSSize(width: 1, height: 1)
-        static let offscreenInset: CGFloat = 96
-        static let alphaValue: CGFloat = 0.01
+    private enum ActivityRefresh {
         static let currentActivityRefreshInterval: Duration = .seconds(3)
+    }
+
+    private enum Logging {
+        static let subsystem = "dev.looper.app.ios"
+        static let category = "handoff"
+        static let missingValue = "none"
     }
 
     private static let persistentActivityIdentifier = NSUserActivityPersistentIdentifier(
         LooperContinuationActivity.persistentIdentifier
     )
 
-    private let activityHost = LooperContinuationActivityHost()
+    private let logger = Logger(subsystem: Logging.subsystem, category: Logging.category)
+    private weak var activityHost: NSResponder?
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
     private var currentActivityRefreshTask: Task<Void, Never>?
+
+    func attachHost(_ host: NSResponder?) {
+        activityHost?.userActivity = nil
+        activityHost = host
+        logger.info("handoff host attached host=\(self.hostClassName(for: host), privacy: .public)")
+        if let currentActivity {
+            host?.userActivity = currentActivity
+            refreshCurrentActivity()
+        }
+    }
 
     func publish(_ descriptor: LooperContinuationActivityDescriptor) {
         guard descriptor != currentDescriptor else {
@@ -27,9 +42,10 @@ final class LooperContinuationActivityPublisher {
         }
 
         let activity = currentActivity ?? NSUserActivity(activityType: LooperContinuationActivity.activityType)
-        configure(activity, with: descriptor, shouldUpdateIdentity: shouldUpdateActivityIdentity(for: descriptor))
-        activityHost.attach(activity, descriptor: descriptor)
+        configure(activity, with: descriptor)
+        activityHost?.userActivity = activity
         markActivityCurrent(activity)
+        logPublishedActivity(activity, descriptor: descriptor)
 
         currentActivity = activity
         currentDescriptor = descriptor
@@ -48,7 +64,8 @@ final class LooperContinuationActivityPublisher {
     func invalidate() {
         currentActivityRefreshTask?.cancel()
         currentActivity?.invalidate()
-        activityHost.detach()
+        activityHost?.userActivity = nil
+        logger.info("handoff activity invalidated")
         currentActivityRefreshTask = nil
         currentActivity = nil
         currentDescriptor = nil
@@ -61,17 +78,23 @@ final class LooperContinuationActivityPublisher {
 
         currentActivityRefreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: HostWindowLayout.currentActivityRefreshInterval)
+                try? await Task.sleep(for: ActivityRefresh.currentActivityRefreshInterval)
                 self?.refreshCurrentActivity()
             }
         }
     }
 
     private func refreshCurrentActivity() {
-        activityHost.refreshCurrentActivity()
-        if let currentActivity {
-            markActivityCurrent(currentActivity)
+        guard let currentActivity else {
+            return
         }
+
+        if let currentDescriptor {
+            configure(currentActivity, with: currentDescriptor)
+        }
+        activityHost?.userActivity = currentActivity
+        markActivityCurrent(currentActivity)
+        logger.debug("handoff activity refreshed host=\(self.hostClassName(for: self.activityHost), privacy: .public)")
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {
@@ -79,26 +102,15 @@ final class LooperContinuationActivityPublisher {
         activity.becomeCurrent()
     }
 
-    private func shouldUpdateActivityIdentity(for descriptor: LooperContinuationActivityDescriptor) -> Bool {
-        guard let currentDescriptor else {
-            return true
-        }
-
-        return currentDescriptor.targetContentIdentifier != descriptor.targetContentIdentifier
-    }
-
     private func configure(
         _ activity: NSUserActivity,
-        with descriptor: LooperContinuationActivityDescriptor,
-        shouldUpdateIdentity: Bool
+        with descriptor: LooperContinuationActivityDescriptor
     ) {
         activity.title = activityTitle(for: descriptor)
         if activity.persistentIdentifier != Self.persistentActivityIdentifier {
             activity.persistentIdentifier = Self.persistentActivityIdentifier
         }
-        if shouldUpdateIdentity {
-            activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        }
+        activity.targetContentIdentifier = LooperContinuationActivity.targetContentIdentifier
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
@@ -106,6 +118,32 @@ final class LooperContinuationActivityPublisher {
         activity.contentAttributeSet = contentAttributeSet(for: descriptor)
         activity.addUserInfoEntries(from: descriptor.userInfo)
         activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
+    }
+
+    private func logPublishedActivity(
+        _ activity: NSUserActivity,
+        descriptor: LooperContinuationActivityDescriptor
+    ) {
+        let kind = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.kind] ?? Logging.missingValue
+        let sessionID = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] ?? Logging.missingValue
+        let activityTarget = activity.targetContentIdentifier ?? Logging.missingValue
+        logger.info(
+            """
+            handoff activity published kind=\(kind, privacy: .public) \
+            session=\(sessionID, privacy: .public) \
+            host=\(self.hostClassName(for: self.activityHost), privacy: .public) \
+            activityTarget=\(activityTarget, privacy: .public) \
+            sessionTarget=\(descriptor.targetContentIdentifier, privacy: .public)
+            """
+        )
+    }
+
+    private func hostClassName(for host: NSResponder?) -> String {
+        guard let host else {
+            return Logging.missingValue
+        }
+
+        return String(describing: type(of: host))
     }
 
     private func activityTitle(for descriptor: LooperContinuationActivityDescriptor) -> String {
@@ -157,110 +195,4 @@ final class LooperContinuationActivityPublisher {
         .joined(separator: "\n")
     }
 
-}
-
-@MainActor
-private final class LooperContinuationActivityHost {
-    private let viewController = LooperContinuationActivityHostViewController()
-    private lazy var window: NSWindow = {
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: LooperContinuationActivityPublisher.HostWindowLayout.size),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.alphaValue = LooperContinuationActivityPublisher.HostWindowLayout.alphaValue
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
-        window.level = .normal
-        window.title = LooperContinuationActivityHostViewController.Content.windowTitle
-        window.contentViewController = viewController
-        positionWindowOffscreen(window)
-        return window
-    }()
-
-    func attach(
-        _ activity: NSUserActivity,
-        descriptor: LooperContinuationActivityDescriptor
-    ) {
-        _ = window
-        viewController.descriptor = descriptor
-        viewController.userActivity = activity
-        positionWindowOffscreen(window)
-        window.orderFrontRegardless()
-        refreshCurrentActivity()
-    }
-
-    func refreshCurrentActivity() {
-        guard let activity = viewController.userActivity else {
-            return
-        }
-
-        viewController.updateUserActivityState(activity)
-        activity.needsSave = true
-        activity.becomeCurrent()
-    }
-
-    func detach() {
-        viewController.userActivity = nil
-        viewController.descriptor = nil
-        window.orderOut(nil)
-    }
-
-    private func positionWindowOffscreen(_ window: NSWindow) {
-        guard let visibleFrame = NSScreen.main?.visibleFrame else {
-            window.setFrameOrigin(.zero)
-            return
-        }
-
-        window.setFrameOrigin(
-            NSPoint(
-                x: visibleFrame.maxX + LooperContinuationActivityPublisher.HostWindowLayout.offscreenInset,
-                y: visibleFrame.maxY + LooperContinuationActivityPublisher.HostWindowLayout.offscreenInset
-            )
-        )
-    }
-}
-
-@MainActor
-private final class LooperContinuationActivityHostViewController: NSViewController {
-    enum Content {
-        static let windowTitle = "looper Handoff"
-    }
-
-    var descriptor: LooperContinuationActivityDescriptor?
-
-    override func loadView() {
-        view = NSView(
-            frame: NSRect(
-                origin: .zero,
-                size: LooperContinuationActivityPublisher.HostWindowLayout.size
-            )
-        )
-    }
-
-    override func updateUserActivityState(_ activity: NSUserActivity) {
-        super.updateUserActivityState(activity)
-        guard let descriptor else {
-            return
-        }
-
-        activity.title = [
-            descriptor.title,
-            descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionSubtitle],
-        ]
-        .compactMap { value in
-            value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        .filter { !$0.isEmpty }
-        .joined(separator: " - ")
-        activity.addUserInfoEntries(from: descriptor.userInfo)
-        activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
-        activity.isEligibleForHandoff = true
-        activity.isEligibleForSearch = false
-        activity.isEligibleForPublicIndexing = false
-    }
 }

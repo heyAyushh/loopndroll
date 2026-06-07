@@ -33,6 +33,7 @@ struct LooperContinuationActivityTests {
 
         #expect(LooperContinuationActivity.activityType == "dev.looper.app.continue-session")
         #expect(LooperContinuationActivity.persistentIdentifier == "dev.looper.app.continuation.current-session")
+        #expect(LooperContinuationActivity.targetContentIdentifier == "dev.looper.app.continuation.current-session")
         #expect(descriptor.targetContentIdentifier == "looper.session.session-a")
         #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "session-a")
     }

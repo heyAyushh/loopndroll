@@ -63,6 +63,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         applyHumanStatus(.starting(detachOnQuit: detachServerOnQuit), to: item)
+        continuationPublisher.attachHost(item.button)
 
         let menu = makeMenu(snapshot: nil, error: nil)
         item.menu = menu
