@@ -42,6 +42,67 @@ enum LooperContinuationActivity {
         return components.url
     }
 
+    static func configureContinuationActivity(
+        _ activity: NSUserActivity,
+        sessionID: String,
+        handoffBaseURL: URL?
+    ) {
+        guard let normalizedSessionID = normalizedString(sessionID)?.nilIfEmpty else {
+            return
+        }
+
+        var userInfo = [
+            UserInfoKey.sessionID: normalizedSessionID
+        ]
+        if let handoffWebpageURL = handoffWebpageURL(
+            for: normalizedSessionID,
+            handoffBaseURL: handoffBaseURL
+        ) {
+            userInfo[UserInfoKey.handoffWebpageURL] = handoffWebpageURL.absoluteString
+            activity.webpageURL = handoffWebpageURL
+        } else {
+            activity.webpageURL = nil
+        }
+        activity.userInfo = userInfo
+        activity.targetContentIdentifier = "\(TargetContentIdentifier.sessionPrefix)\(normalizedSessionID)"
+        activity.persistentIdentifier = activity.targetContentIdentifier
+        activity.title = "Looper Session \(normalizedSessionID)"
+        activity.isEligibleForHandoff = true
+        activity.isEligibleForSearch = false
+        activity.needsSave = true
+    }
+
+    static func handoffWebpageURL(
+        for sessionID: String,
+        handoffBaseURL: URL?
+    ) -> URL? {
+        guard let handoffBaseURL, let normalizedSessionID = normalizedString(sessionID)?.nilIfEmpty else {
+            return nil
+        }
+
+        let allowedSessionCharacters = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/")
+        )
+        guard let encodedSessionID = normalizedSessionID.addingPercentEncoding(
+            withAllowedCharacters: allowedSessionCharacters
+        ) else {
+            return nil
+        }
+
+        var components = URLComponents(url: handoffBaseURL, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        components?.fragment = nil
+        let trimmedPath = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        let normalizedPath = trimmedPath.isEmpty ? "" : "/\(trimmedPath)"
+        components?.path = [
+            normalizedPath,
+            HandoffWebPath.handoffComponent,
+            HandoffWebPath.sessionsComponent,
+            encodedSessionID
+        ].joined(separator: "/")
+        return components?.url
+    }
+
     static func sessionID(from activity: NSUserActivity) -> String? {
         guard isSupportedActivityType(activity.activityType) else {
             return nil
@@ -184,6 +245,10 @@ enum LooperContinuationActivity {
             == HandoffWebPath.sessionsComponent &&
             pathComponents[pathComponents.count - HandoffWebPath.handoffComponentOffset]
             == HandoffWebPath.handoffComponent
+    }
+
+    private static func normalizedString(_ value: String) -> String? {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private enum HandoffWebPath {

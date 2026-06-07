@@ -54,6 +54,13 @@ struct SessionDetailScreen: View {
         }
         .navigationTitle(session.ref)
         .navigationBarTitleDisplayMode(.inline)
+        .userActivity(LooperContinuationActivity.activityType, isActive: true) { activity in
+            LooperContinuationActivity.configureContinuationActivity(
+                activity,
+                sessionID: session.id,
+                handoffBaseURL: URL(string: model.configuredBaseURL)
+            )
+        }
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
