@@ -15,7 +15,9 @@ struct SessionSpotlightRecord: Equatable, Sendable {
     let ref: String
     let title: String
     let status: SessionStatus
+    let lastUpdatedAt: String
     let assistantPreview: String?
+    let isArchived: Bool
     let assistantClient: AssistantClient
     let metadata: SessionMetadata
 
@@ -24,9 +26,41 @@ struct SessionSpotlightRecord: Equatable, Sendable {
         ref = session.ref
         title = session.title
         status = session.status
+        lastUpdatedAt = session.lastUpdatedAt
         assistantPreview = session.assistantPreview
+        isArchived = session.isArchived
         assistantClient = session.assistantClient
         metadata = session.metadata
+    }
+}
+
+enum SessionSpotlightIndexingPolicy {
+    static func indexableSessions(from sessions: [SessionSummary]) -> [SessionSummary] {
+        let sortedSessions = uniqueSessionsByID(sessions).sorted(by: SessionSummary.isNewerOrLowerRef)
+        var currentSessions: [SessionSummary] = []
+        var stoppedSessions: [SessionSummary] = []
+
+        for session in sortedSessions where shouldIndex(session) {
+            if session.status == .stopped {
+                stoppedSessions.append(session)
+            } else {
+                currentSessions.append(session)
+            }
+        }
+
+        return (currentSessions + stoppedSessions.prefix(SessionDisplayPolicy.collapsedSectionLimit))
+            .sorted(by: SessionSummary.isNewerOrLowerRef)
+    }
+
+    private static func shouldIndex(_ session: SessionSummary) -> Bool {
+        !session.isArchived && session.status != .archived
+    }
+
+    private static func uniqueSessionsByID(_ sessions: [SessionSummary]) -> [SessionSummary] {
+        var seenSessionIDs = Set<String>()
+        return sessions.filter { session in
+            seenSessionIDs.insert(session.id).inserted
+        }
     }
 }
 
@@ -38,6 +72,10 @@ struct SessionSearchableItem {
         attributeSet.title = session.title
         attributeSet.contentDescription = session.assistantPreview ?? "Session \(session.ref)"
         attributeSet.contentURL = LooperContinuationActivity.sessionDeepLinkURL(sessionID: session.id)
+        if let lastUpdatedDate = session.lastUpdatedDate {
+            attributeSet.contentModificationDate = lastUpdatedDate
+            attributeSet.lastUsedDate = lastUpdatedDate
+        }
         attributeSet.textContent = [
             session.ref,
             session.title,

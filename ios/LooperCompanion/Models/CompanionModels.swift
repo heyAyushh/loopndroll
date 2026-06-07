@@ -1072,6 +1072,30 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+extension SessionSummary {
+    var lastUpdatedDate: Date? {
+        SessionTimestampParser.date(from: lastUpdatedAt)
+    }
+
+    static func isNewerOrLowerRef(
+        leftSession: SessionSummary,
+        rightSession: SessionSummary
+    ) -> Bool {
+        if let leftDate = leftSession.lastUpdatedDate,
+           let rightDate = rightSession.lastUpdatedDate,
+           leftDate != rightDate
+        {
+            return leftDate > rightDate
+        }
+
+        if leftSession.lastUpdatedAt != rightSession.lastUpdatedAt {
+            return leftSession.lastUpdatedAt > rightSession.lastUpdatedAt
+        }
+
+        return leftSession.ref < rightSession.ref
+    }
+}
+
 struct SessionDetail: Codable, Identifiable, Sendable {
     var id: String
     var ref: String
@@ -1288,6 +1312,10 @@ struct MobileSnapshot: Codable, Sendable {
     }
 }
 
+enum SessionDisplayPolicy {
+    static let collapsedSectionLimit = 40
+}
+
 struct SessionSections: Sendable {
     static let empty = SessionSections(sessions: [])
 
@@ -1343,38 +1371,12 @@ struct SessionSections: Sendable {
         leftSession: SessionSummary,
         rightSession: SessionSummary
     ) -> Bool {
-        if leftSession.lastUpdatedAt != rightSession.lastUpdatedAt {
-            return leftSession.lastUpdatedAt > rightSession.lastUpdatedAt
-        }
-
-        return leftSession.ref < rightSession.ref
+        SessionSummary.isNewerOrLowerRef(leftSession: leftSession, rightSession: rightSession)
     }
 }
 
-enum ModelFormatting {
-    private static let unavailableTimestampLabel = "Unknown"
-
-    static func relativeTimestamp(_ value: String) -> String {
-        guard let date = date(from: value) else {
-            return unavailableTimestampLabel
-        }
-
-        return date.formatted(.relative(presentation: .named))
-    }
-
-    static func friendlyDateTime(_ value: String) -> String {
-        guard let date = date(from: value) else {
-            return unavailableTimestampLabel
-        }
-
-        return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    static func friendlyMode(_ mode: SessionMode?) -> String {
-        mode?.label ?? "Off"
-    }
-
-    private static func date(from value: String) -> Date? {
+enum SessionTimestampParser {
+    static func date(from value: String) -> Date? {
         iso8601Formatter(formatOptions: [.withInternetDateTime, .withFractionalSeconds])
             .date(from: value) ??
             iso8601Formatter(formatOptions: [.withInternetDateTime])
@@ -1387,5 +1389,29 @@ enum ModelFormatting {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = formatOptions
         return formatter
+    }
+}
+
+enum ModelFormatting {
+    private static let unavailableTimestampLabel = "Unknown"
+
+    static func relativeTimestamp(_ value: String) -> String {
+        guard let date = SessionTimestampParser.date(from: value) else {
+            return unavailableTimestampLabel
+        }
+
+        return date.formatted(.relative(presentation: .named))
+    }
+
+    static func friendlyDateTime(_ value: String) -> String {
+        guard let date = SessionTimestampParser.date(from: value) else {
+            return unavailableTimestampLabel
+        }
+
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func friendlyMode(_ mode: SessionMode?) -> String {
+        mode?.label ?? "Off"
     }
 }

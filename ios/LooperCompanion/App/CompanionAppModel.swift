@@ -40,6 +40,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
+    @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private var mobileEventStreamTask: Task<Void, Never>?
@@ -977,29 +978,35 @@ final class CompanionAppModel {
     }
 
     private func syncSpotlightIndex(with sessions: [SessionSummary]) {
-        let nextRecords = Dictionary(uniqueKeysWithValues: sessions.map { session in
+        let indexableSessions = SessionSpotlightIndexingPolicy.indexableSessions(from: sessions)
+        let nextRecords = Dictionary(uniqueKeysWithValues: indexableSessions.map { session in
             (session.id, SessionSpotlightRecord(session: session))
         })
         let removedIDs = Set(spotlightRecordsBySessionID.keys).subtracting(nextRecords.keys)
-        let changedSessions = sessions.filter { session in
+        let changedSessions = indexableSessions.filter { session in
             nextRecords[session.id] != spotlightRecordsBySessionID[session.id]
         }
+        let shouldRebuildIndex = !hasRebuiltSpotlightIndexThisLaunch
 
-        guard !removedIDs.isEmpty || !changedSessions.isEmpty else {
+        guard shouldRebuildIndex || !removedIDs.isEmpty || !changedSessions.isEmpty else {
             return
         }
 
         spotlightRecordsBySessionID = nextRecords
+        hasRebuiltSpotlightIndexThisLaunch = true
         let spotlightIndexer = spotlightIndexer
 
         Task.detached(priority: .utility) {
             do {
-                if !removedIDs.isEmpty {
+                if shouldRebuildIndex {
+                    try await spotlightIndexer.deleteAllSessions()
+                } else if !removedIDs.isEmpty {
                     try await spotlightIndexer.deleteSessions(withIDs: Array(removedIDs))
                 }
 
-                if !changedSessions.isEmpty {
-                    try await spotlightIndexer.indexSessions(changedSessions)
+                let sessionsToIndex = shouldRebuildIndex ? indexableSessions : changedSessions
+                if !sessionsToIndex.isEmpty {
+                    try await spotlightIndexer.indexSessions(sessionsToIndex)
                 }
             } catch {
                 print("Failed to index sessions to Spotlight: \(error)")

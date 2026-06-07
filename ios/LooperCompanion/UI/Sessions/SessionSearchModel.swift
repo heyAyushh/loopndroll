@@ -189,7 +189,10 @@ enum SessionSearchEngine {
                 return lhs.score < rhs.score
             }
 
-            return lhs.session.lastUpdatedAt > rhs.session.lastUpdatedAt
+            return SessionSummary.isNewerOrLowerRef(
+                leftSession: lhs.session,
+                rightSession: rhs.session
+            )
         }
     }
 

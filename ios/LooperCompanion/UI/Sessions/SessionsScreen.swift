@@ -1,9 +1,5 @@
 import SwiftUI
 
-private enum SessionListDisplay {
-    static let defaultSectionLimit = 40
-}
-
 private enum AssistantSurfaceControlMetrics {
     static let verticalSpacing: CGFloat = 10
     static let controlTopPadding: CGFloat = 6
@@ -192,7 +188,7 @@ struct SessionsScreen: View {
                 .companionCardRowSurface()
             }
 
-            if allowsExpansion && sessions.count > SessionListDisplay.defaultSectionLimit {
+            if allowsExpansion && sessions.count > SessionDisplayPolicy.collapsedSectionLimit {
                 Button {
                     isExpanded.wrappedValue.toggle()
                 } label: {
@@ -220,7 +216,7 @@ struct SessionsScreen: View {
         from sessions: [SessionSummary],
         isExpanded: Bool
     ) -> ArraySlice<SessionSummary> {
-        let limit = isExpanded ? sessions.count : SessionListDisplay.defaultSectionLimit
+        let limit = isExpanded ? sessions.count : SessionDisplayPolicy.collapsedSectionLimit
         return sessions.prefix(limit)
     }
 
@@ -229,11 +225,11 @@ struct SessionsScreen: View {
     }
 
     private var recentSectionFooter: String {
-        guard model.stoppedSessions.count > SessionListDisplay.defaultSectionLimit else {
+        guard model.stoppedSessions.count > SessionDisplayPolicy.collapsedSectionLimit else {
             return "Stopped sessions stay here until archived."
         }
 
-        return "Showing the latest \(SessionListDisplay.defaultSectionLimit.formatted()) stopped sessions. Use Search for older sessions."
+        return "Showing the latest \(SessionDisplayPolicy.collapsedSectionLimit.formatted()) stopped sessions. Use Search for older sessions."
     }
 
     private func sectionTitle(_ title: String, count: Int, showsCount: Bool) -> String {
