@@ -16,7 +16,9 @@ use axum::{
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
-use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
+use crate::mobile_api::{
+    mobile_session_detail, mobile_snapshot, validate_mobile_prompt_delivery_target,
+};
 use crate::mobile_auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
@@ -862,6 +864,9 @@ async fn desktop_session_prompt(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
+    if let Some(response) = prompt_target_rejection(&control_plane, &thread_id) {
+        return response;
+    }
     match control_plane
         .mobile_session_service()
         .queue_prompt(&thread_id, &input.prompt)
@@ -905,7 +910,8 @@ fn queue_desktop_batch_prompt(
     if thread_ids.is_empty() {
         return Err(MobileSessionError::SessionNotFound);
     }
-    validate_prompt_targets(snapshot, &thread_ids)?;
+    let session_state = control_plane.mobile_session_service().state()?;
+    validate_prompt_targets(snapshot, &session_state, &thread_ids)?;
 
     let session_service = control_plane.mobile_session_service();
     let mut prompt_ids = Vec::with_capacity(thread_ids.len());
@@ -938,19 +944,11 @@ fn unique_thread_ids(thread_ids: Vec<String>) -> Vec<String> {
 
 fn validate_prompt_targets(
     snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
     thread_ids: &[String],
 ) -> Result<(), MobileSessionError> {
     for thread_id in thread_ids {
-        let Some(thread) = snapshot
-            .threads
-            .iter()
-            .find(|thread| thread.thread_id == *thread_id)
-        else {
-            return Err(MobileSessionError::SessionNotFound);
-        };
-        if thread.archived {
-            return Err(MobileSessionError::SessionArchived);
-        }
+        validate_mobile_prompt_delivery_target(snapshot, session_state, thread_id)?;
     }
     Ok(())
 }
@@ -1350,6 +1348,9 @@ async fn mobile_session_prompt(
     if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
         return response;
     }
+    if let Some(response) = prompt_target_rejection(&control_plane, &thread_id) {
+        return response;
+    }
 
     match control_plane
         .mobile_session_service()
@@ -1707,6 +1708,23 @@ fn mobile_session_is_visible(
     thread_id: &str,
 ) -> bool {
     mobile_session_detail(snapshot, session_state, thread_id, None).is_some()
+}
+
+fn prompt_target_rejection(control_plane: &ControlPlane, thread_id: &str) -> Option<Response> {
+    let snapshot = match mobile_desktop_snapshot(control_plane) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return Some(internal_mobile_error_response(error.to_string())),
+    };
+    let session_state = match control_plane.mobile_session_service().state() {
+        Ok(session_state) => session_state,
+        Err(error) => return Some(mobile_session_error_response(error)),
+    };
+
+    match validate_mobile_prompt_delivery_target(&snapshot, &session_state, thread_id) {
+        Ok(()) => None,
+        Err(MobileSessionError::SessionNotFound) => Some(mobile_session_not_found_response()),
+        Err(error) => Some(mobile_session_error_response(error)),
+    }
 }
 
 fn handoff_session_html(thread: &DesktopThread, handoff_base_url: Option<&str>) -> String {

@@ -4,13 +4,15 @@ use serde_json::{Value, json};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::assistant::{infer_assistant_client_from_paths, session_matches_assistant_surface};
+use crate::assistant::{
+    AssistantKind, infer_assistant_client_from_paths, session_matches_assistant_surface,
+};
 use crate::control_plane::{DesktopSnapshot, DesktopThread, GrokBuildStatus};
 use crate::grok_build::GrokHookStatus;
 use crate::mobile_session::{
     ASSISTANT_SURFACES, DEFAULT_REMOTE_PROMPT, MOBILE_SESSION_STATUS_ACTIVE,
     MOBILE_SESSION_STATUS_STOPPED, MobileCompletionCheck, MobileNotificationRoute,
-    MobileSessionLifecycle, MobileSessionOverride, MobileSessionState,
+    MobileSessionError, MobileSessionLifecycle, MobileSessionOverride, MobileSessionState,
 };
 
 const HOST_ID: &str = "rust-control-plane";
@@ -144,6 +146,54 @@ pub fn mobile_global_settings(session_state: &MobileSessionState) -> Value {
         "completionCheckWaitForReply": session_state.global_completion_check_wait_for_reply,
         "assistantSurface": session_state.assistant_surface,
     })
+}
+
+pub fn validate_mobile_prompt_delivery_target(
+    snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
+    thread_id: &str,
+) -> Result<(), MobileSessionError> {
+    let thread = snapshot
+        .threads
+        .iter()
+        .find(|thread| thread.thread_id == thread_id)
+        .ok_or(MobileSessionError::SessionNotFound)?;
+    validate_thread_prompt_delivery(thread, session_state)
+}
+
+fn validate_thread_prompt_delivery(
+    thread: &DesktopThread,
+    session_state: &MobileSessionState,
+) -> Result<(), MobileSessionError> {
+    let session_override = session_override(thread, session_state);
+    if session_override.map(|state| state.deleted).unwrap_or(false) {
+        return Err(MobileSessionError::SessionNotFound);
+    }
+    let is_archived = session_override
+        .and_then(|state| state.archived)
+        .unwrap_or(thread.archived);
+    if is_archived {
+        return Err(MobileSessionError::SessionArchived);
+    }
+    if !assistant_supports_prompt_delivery(&thread.capabilities.assistant_kind) {
+        return Err(MobileSessionError::PromptDeliveryUnavailable);
+    }
+
+    let effective_mode = effective_preset(session_override, session_state);
+    let lifecycle = session_state.lifecycle.get(&thread.thread_id);
+    match session_status(
+        is_archived,
+        effective_mode,
+        lifecycle,
+        thread.runtime_status.as_deref(),
+    ) {
+        ACTIVE_SESSION_STATUS => Ok(()),
+        _ => Err(MobileSessionError::PromptDeliveryUnavailable),
+    }
+}
+
+fn assistant_supports_prompt_delivery(assistant_kind: &AssistantKind) -> bool {
+    !matches!(assistant_kind, AssistantKind::DevinDesktop)
 }
 
 pub fn mobile_session_detail(
@@ -504,7 +554,52 @@ fn latest_assistant_message(thread: &DesktopThread) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities};
     use crate::grok_build::{GrokHookOwner, GrokHookStatus};
+
+    #[test]
+    fn prompt_delivery_target_allows_active_codex_sessions() {
+        let thread = test_thread("thread-1", AssistantKind::Codex, None);
+        let session_state = session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_ACTIVE);
+
+        assert!(validate_thread_prompt_delivery(&thread, &session_state).is_ok());
+    }
+
+    #[test]
+    fn prompt_delivery_target_rejects_waiting_codex_sessions() {
+        let thread = test_thread("thread-1", AssistantKind::Codex, None);
+        let mut session_state =
+            session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_STOPPED);
+        session_state
+            .sessions
+            .entry("thread-1".to_owned())
+            .or_default()
+            .preset = Some(AWAIT_REPLY_PRESET.to_owned());
+
+        let error = validate_thread_prompt_delivery(&thread, &session_state)
+            .expect_err("waiting session should reject prompt delivery");
+        assert!(matches!(
+            error,
+            MobileSessionError::PromptDeliveryUnavailable
+        ));
+    }
+
+    #[test]
+    fn prompt_delivery_target_rejects_visibility_only_devin_sessions() {
+        let thread = test_thread(
+            "devin:session-1",
+            AssistantKind::DevinDesktop,
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
+        );
+        let session_state = MobileSessionState::default();
+
+        let error = validate_thread_prompt_delivery(&thread, &session_state)
+            .expect_err("Devin sessions are visibility-only prompt targets");
+        assert!(matches!(
+            error,
+            MobileSessionError::PromptDeliveryUnavailable
+        ));
+    }
 
     #[test]
     fn mobile_grok_build_status_uses_mobile_contract() {
@@ -528,5 +623,68 @@ mod tests {
             status["hooks"]["registeredEvents"],
             serde_json::json!(["session", "stop"])
         );
+    }
+
+    fn session_state_with_lifecycle(thread_id: &str, status: &str) -> MobileSessionState {
+        let mut session_state = MobileSessionState::default();
+        session_state.lifecycle.insert(
+            thread_id.to_owned(),
+            MobileSessionLifecycle {
+                status: status.to_owned(),
+                updated_at: "2026-06-07T00:00:00Z".to_owned(),
+            },
+        );
+        session_state
+    }
+
+    fn test_thread(
+        thread_id: &str,
+        assistant_kind: AssistantKind,
+        runtime_status: Option<&str>,
+    ) -> DesktopThread {
+        DesktopThread {
+            thread_id: thread_id.to_owned(),
+            title: Some("Test session".to_owned()),
+            cwd: None,
+            transcript_path: None,
+            source: None,
+            originator: None,
+            model: None,
+            reasoning_effort: None,
+            git_sha: None,
+            git_branch: None,
+            cli_version: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            created_at_ms: Some(1),
+            updated_at_ms: Some(2),
+            assistant_preview: None,
+            runtime_status: runtime_status.map(str::to_owned),
+            archived: false,
+            capabilities: ThreadCapabilities {
+                thread_id: thread_id.to_owned(),
+                assistant_kind,
+                tools: Vec::new(),
+                mcp_tools: Vec::new(),
+                app_tools: Vec::new(),
+                automation_tools: Vec::new(),
+                spawn: SpawnGraph {
+                    parent_thread_id: None,
+                    root_thread_id: thread_id.to_owned(),
+                    children: Vec::new(),
+                    launch_kind: LaunchKind::Main,
+                },
+                diff: DiffSummary {
+                    git_branch: None,
+                    git_sha: None,
+                    produced_file_changes: false,
+                    paths: Vec::new(),
+                },
+                agent_nickname: None,
+                agent_role: None,
+                agent_path: None,
+            },
+        }
     }
 }

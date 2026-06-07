@@ -1218,6 +1218,21 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(waiting_session["effectiveMode"], "await-reply");
     assert_eq!(waiting_session["status"], "waiting");
 
+    let rejected_prompt_response = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/sessions/thread-main/prompt",
+        serde_json::to_vec(&serde_json::json!({ "prompt": "Too late." })).expect("json body"),
+        &[
+            (axum::http::header::AUTHORIZATION, authorization.as_str()),
+            (axum::http::header::CONTENT_TYPE, "application/json"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(rejected_prompt_response.status(), StatusCode::CONFLICT);
+
+    record_codex_thread_active(&control_plane, "thread-main");
     let prompt_snapshot = request_json_body_with_options(
         &router,
         Method::POST,
@@ -1712,6 +1727,7 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
     service
         .set_session_preset("thread-main", Some("await-reply"))
         .expect("set mode");
+    record_codex_thread_active(&control_plane, "thread-main");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1731,28 +1747,46 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
         .unwrap_or_default();
     assert!(content_type.contains("text/event-stream"));
 
-    let router_for_prompt = router.clone();
-    let authorization_for_prompt = authorization.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _snapshot = request_json_body_with_options(
-            &router_for_prompt,
-            Method::POST,
-            "/api/mobile/sessions/thread-main/prompt",
-            serde_json::json!({ "prompt": "Keep going from phone." }),
-            &[(
-                axum::http::header::AUTHORIZATION,
-                authorization_for_prompt.as_str(),
-            )],
-            None,
-        )
-        .await;
-    });
-
     let mut body = response.into_body();
     let mut buffer = String::new();
-    let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
-    tokio::pin!(deadline);
+    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(connected_deadline);
+
+    loop {
+        tokio::select! {
+            frame = body.frame() => {
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Ok(chunk) = frame.into_data() {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            if buffer.contains("event: connected")
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(error)) => panic!("sse frame error: {error}"),
+                    None => panic!("sse stream ended early: {buffer}"),
+                }
+            }
+            _ = &mut connected_deadline => {
+                panic!("timed out waiting for connected SSE event. buffer={buffer}");
+            }
+        }
+    }
+
+    let _snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/sessions/thread-main/prompt",
+        serde_json::json!({ "prompt": "Keep going from phone." }),
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    let prompt_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(prompt_deadline);
 
     loop {
         tokio::select! {
@@ -1772,7 +1806,7 @@ async fn mobile_events_sse_streams_broadcast_prompt_queued_event() {
                     None => panic!("sse stream ended early: {buffer}"),
                 }
             }
-            _ = &mut deadline => {
+            _ = &mut prompt_deadline => {
                 panic!("timed out waiting for prompt.queued SSE event. buffer={buffer}");
             }
         }
@@ -1803,6 +1837,7 @@ async fn queueing_mobile_prompt_records_prompt_queued_event() {
     service
         .set_session_preset("thread-main", Some("await-reply"))
         .expect("set mode");
+    record_codex_thread_active(&control_plane, "thread-main");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1857,7 +1892,8 @@ async fn devin_acp_attach_route_is_not_supported() {
 async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
 
     let state = request_json_body_with_options(
@@ -1964,6 +2000,7 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     .await;
     assert_eq!(archived["sessions"]["thread-main"]["archived"], true);
 
+    record_codex_thread_active(&control_plane, "thread-child");
     let prompted = request_json_body_with_options(
         &router,
         Method::POST,
@@ -2284,6 +2321,22 @@ async fn request_json_with_method(
     path: &str,
 ) -> serde_json::Value {
     request_json_with_options(router, method, path, &[], None).await
+}
+
+fn record_codex_thread_active(control_plane: &ControlPlane, thread_id: &str) {
+    control_plane
+        .mobile_session_service()
+        .record_hook_lifecycle(
+            &MobileHookPayload {
+                hook_event_name: "UserPromptSubmit".to_owned(),
+                session_id: Some(thread_id.to_owned()),
+                turn_id: None,
+                cwd: None,
+                last_assistant_message: None,
+            },
+            false,
+        )
+        .expect("record active Codex lifecycle");
 }
 
 async fn request_json_with_options(

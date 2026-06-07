@@ -171,6 +171,8 @@ pub enum MobileSessionError {
     ModeRequired,
     #[error("archived sessions cannot receive prompts")]
     SessionArchived,
+    #[error("session cannot receive prompts right now")]
+    PromptDeliveryUnavailable,
     #[error("notification route not found")]
     NotificationNotFound,
     #[error("completion check not found")]
