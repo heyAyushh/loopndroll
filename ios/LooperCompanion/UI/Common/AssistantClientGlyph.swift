@@ -123,9 +123,13 @@ private final class LoopingVideoUIView: UIView {
             return
         }
 
+        DecorativeVideoAudioSession.configureIfNeeded()
         let playerItem = AVPlayerItem(url: url)
         let player = AVQueuePlayer()
         player.isMuted = true
+        player.volume = DecorativeVideoAudioSession.silentVolume
+        player.allowsExternalPlayback = false
+        player.preventsDisplaySleepDuringVideoPlayback = false
         player.actionAtItemEnd = .none
         queuePlayer = player
         playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
@@ -144,11 +148,35 @@ private final class LoopingVideoUIView: UIView {
 
         isCurrentlyPlaying = shouldPlay
         if shouldPlay {
-            queuePlayer.seek(to: .zero)
             queuePlayer.play()
         } else {
             queuePlayer.pause()
-            queuePlayer.seek(to: .zero)
+        }
+    }
+}
+
+@MainActor
+private enum DecorativeVideoAudioSession {
+    static let silentVolume: Float = 0
+
+    private static var isConfigured = false
+
+    static func configureIfNeeded() {
+        guard !isConfigured else {
+            return
+        }
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .ambient,
+                mode: .default,
+                options: [.mixWithOthers]
+            )
+            isConfigured = true
+        } catch {
+            CompanionDiagnostics.record(
+                "decorative-video:audio-session-failed error=\(error.localizedDescription)"
+            )
         }
     }
 }
