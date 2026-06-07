@@ -267,7 +267,7 @@ struct HTTPCompanionService: CompanionService {
         guard (HTTPStatus.successLowerBound..<HTTPStatus.successUpperBound)
             .contains(httpResponse.statusCode)
         else {
-            let serverMessage = String(data: data, encoding: .utf8) ?? "Request failed."
+            let serverMessage = serverErrorMessage(from: data)
             CompanionDiagnostics.networking.error(
                 "Request server error path=\(path, privacy: .public) status=\(httpResponse.statusCode, privacy: .public)"
             )
@@ -555,6 +555,20 @@ private enum MobileAPIErrorCode {
 
 private enum MobileAPIErrorMessage {
     static let passkeySessionRequired = "Unlock looper with Face ID before using the mobile API."
+    static let requestFailed = "Request failed."
+}
+
+private func serverErrorMessage(from data: Data) -> String {
+    if let envelope = try? JSONDecoder().decode(MobileAPIErrorEnvelope.self, from: data),
+       let message = envelope.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !message.isEmpty
+    {
+        return message
+    }
+
+    let fallbackMessage = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return fallbackMessage.isEmpty ? MobileAPIErrorMessage.requestFailed : fallbackMessage
 }
 
 private func unauthorizedError(from data: Data) -> HTTPCompanionServiceError {

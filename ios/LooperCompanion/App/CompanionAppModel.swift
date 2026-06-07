@@ -832,7 +832,7 @@ final class CompanionAppModel {
             case .passkeySessionRequired:
                 return .locked
             case .invalidResponse, .serverError:
-                break
+                return .connected
             }
         }
 
