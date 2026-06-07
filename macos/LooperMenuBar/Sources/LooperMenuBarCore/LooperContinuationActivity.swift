@@ -26,6 +26,12 @@ public enum LooperContinuationActivityBuilder {
     private static let genericActivityTitle = "looper"
     private static let genericTargetContentIdentifier = "looper"
     private static let sessionTargetContentIdentifierPrefix = "looper.session."
+    private static let pathSeparator = "/"
+    private static let handoffPathComponent = "handoff"
+    private static let sessionsPathComponent = "sessions"
+    private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
+    private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
+        .subtracting(pathSegmentReservedCharacters)
 
     public static func descriptor(
         from snapshot: DesktopSnapshotResponse,
@@ -107,9 +113,32 @@ public enum LooperContinuationActivityBuilder {
     }
 
     private static func handoffWebpageURL(baseURL: URL, threadID: String) -> URL {
-        baseURL
-            .appendingPathComponent("handoff", isDirectory: true)
-            .appendingPathComponent("sessions", isDirectory: true)
-            .appendingPathComponent(threadID, isDirectory: false)
+        guard let encodedThreadID = threadID.addingPercentEncoding(
+            withAllowedCharacters: pathSegmentAllowedCharacters
+        ), !encodedThreadID.isEmpty,
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else {
+            return baseURL
+        }
+
+        let basePath = components.percentEncodedPath.trimmingCharacters(
+            in: pathSegmentReservedCharacters
+        )
+        components.percentEncodedPath = [
+            basePath,
+            handoffPathComponent,
+            sessionsPathComponent,
+            encodedThreadID,
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: pathSeparator)
+        .withLeadingPathSeparator
+        return components.url ?? baseURL
+    }
+}
+
+private extension String {
+    var withLeadingPathSeparator: String {
+        hasPrefix("/") ? self : "/\(self)"
     }
 }

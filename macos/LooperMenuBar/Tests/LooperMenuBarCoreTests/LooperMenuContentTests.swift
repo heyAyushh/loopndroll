@@ -63,7 +63,7 @@ struct LooperMenuContentTests {
 
         let target = try #require(sections.first?.rows.first?.openTarget)
         #expect(target.threadId == "thread-main")
-        #expect(target.codexURL?.absoluteString == "codex://thread/thread-main")
+        #expect(target.codexURL?.absoluteString == "codex://threads/thread-main")
         #expect(target.transcriptURL?.path == "/Users/test/.codex/sessions/thread-main.jsonl")
         #expect(target.projectURL?.path == "/Users/test/project")
     }

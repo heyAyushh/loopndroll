@@ -282,6 +282,15 @@ struct HTTPControlPlaneClientTests {
                   "degraded_reason": null
                 }
               },
+              "devin_desktop": {
+                "acp_bridge": {
+                  "available": true,
+                  "control_level": "client-capable",
+                  "summary": "Devin ACP bridge can attach to configured agent transports after explicit approval",
+                  "actions": [],
+                  "agents": []
+                }
+              },
               "thread_count": 2,
               "active_thread_count": 1,
               "archived_thread_count": 1,
@@ -381,7 +390,28 @@ struct HTTPControlPlaneClientTests {
                   "registered_events": ["SessionStart"]
                 }
               },
-              "assistant_adapters": [],
+              "assistant_adapters": [
+                {
+                  "assistant_kind": "grok-build",
+                  "live_sessions": false,
+                  "tool_inventory": false,
+                  "spawn_graph": false,
+                  "diff_summary": false,
+                  "auth_capabilities": false,
+                  "runtimes": [
+                    {
+                      "kind": "cli",
+                      "running": true,
+                      "installed": true,
+                      "label": "Grok Build CLI",
+                      "bundle_id": null,
+                      "executable": "/Users/test/.grok/bin/grok",
+                      "command": null
+                    }
+                  ],
+                  "detail": "CLI runtime detection only"
+                }
+              ],
               "compactions": [
                 {
                   "event_id": "event-1",
@@ -407,6 +437,59 @@ struct HTTPControlPlaneClientTests {
         #expect(snapshot.automations[0].controlPlaneCovered)
         #expect(snapshot.goals[0].title == "Ship Looper")
         #expect(snapshot.compactions[0].eventType == "codex.context_compacted")
+        #expect(snapshot.grokBuildStatusTitle == "CLI running")
+        #expect(snapshot.grokBuildAdapter?.assistantKind == "grok-build")
+    }
+
+    @Test("decodes desktop snapshot without assistant adapters")
+    func decodesDesktopSnapshotWithoutAssistantAdapters() throws {
+        let data = Data(
+            """
+            {
+              "control_plane": {
+                "hooks": {
+                  "enabled": true,
+                  "registered_events": [],
+                  "active_command": null,
+                  "owner": "looper-rust",
+                  "health": "healthy",
+                  "issues": [],
+                  "recent_failures_count": 0
+                },
+                "codex_servers": [],
+                "source": {
+                  "codex_home": "/Users/test/.codex",
+                  "state_db": null,
+                  "logs_db": null,
+                  "sessions_root": "/Users/test/.codex/sessions",
+                  "health": "healthy",
+                  "degraded_reason": null
+                }
+              },
+              "devin_desktop": {
+                "acp_bridge": {
+                  "available": false,
+                  "control_level": "visibility-only",
+                  "summary": "Unavailable",
+                  "actions": [],
+                  "agents": []
+                }
+              },
+              "thread_count": 0,
+              "active_thread_count": 0,
+              "archived_thread_count": 0,
+              "threads": [],
+              "automations": [],
+              "goals": [],
+              "compactions": []
+            }
+            """.utf8
+        )
+
+        let snapshot = try JSONDecoder().decode(DesktopSnapshotResponse.self, from: data)
+
+        #expect(snapshot.assistantAdapters.isEmpty)
+        #expect(snapshot.grokBuildStatusTitle == "Unavailable")
     }
 }
 
@@ -423,6 +506,20 @@ private enum RecordingServiceCall: Equatable {
 
 private enum RecordingServiceError: Error {
     case failed
+}
+
+private func decodeFixture<Response: Decodable>(_ json: String) throws -> Response {
+    try JSONDecoder().decode(Response.self, from: Data(json.utf8))
+}
+
+private func emptyDevinBridge() -> DevinAcpBridgeStatus {
+    DevinAcpBridgeStatus(
+        available: false,
+        controlLevel: "visibility-only",
+        summary: "Unavailable",
+        actions: [],
+        agents: []
+    )
 }
 
 private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked Sendable {
@@ -476,16 +573,66 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
         )
     }
 
+    func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse {
+        try decodeFixture(
+            """
+            {
+              "probe": {
+                "ok": false,
+                "status": "blocked",
+                "attach_ready": false,
+                "launch_configured": false,
+                "blockers": [],
+                "detail": "test"
+              },
+              "bridge": {
+                "available": false,
+                "control_level": "visibility-only",
+                "summary": "Unavailable",
+                "actions": [],
+                "agents": []
+              }
+            }
+            """
+        )
+    }
+
+    func attachDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeAttachResponse {
+        try decodeFixture(
+            """
+            {
+              "attach": {
+                "ok": false,
+                "status": "blocked",
+                "attach_ready": false,
+                "detail": "test",
+                "blockers": [],
+                "limitations": []
+              },
+              "bridge": {
+                "available": false,
+                "control_level": "visibility-only",
+                "summary": "Unavailable",
+                "actions": [],
+                "agents": []
+              }
+            }
+            """
+        )
+    }
+
     func fetchDesktopSnapshot() async throws -> DesktopSnapshotResponse {
         DesktopSnapshotResponse(
             controlPlane: try await fetchControlPlaneStatus(),
+            devinDesktop: DevinDesktopStatus(acpBridge: emptyDevinBridge()),
             threadCount: 0,
             activeThreadCount: 0,
             archivedThreadCount: 0,
             threads: [],
             automations: [],
             goals: [],
-            compactions: []
+            compactions: [],
+            assistantAdapters: []
         )
     }
 

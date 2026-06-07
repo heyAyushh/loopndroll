@@ -6,9 +6,20 @@ public struct LooperThreadOpenTarget: Equatable, Sendable {
     public let transcriptURL: URL?
     public let projectURL: URL?
 
-    public init(threadId: String, transcriptPath: String?, workingDirectory: String?) {
+    public init(
+        threadId: String,
+        transcriptPath: String?,
+        workingDirectory: String?,
+        agentPath: String? = nil
+    ) {
         self.threadId = threadId
-        self.codexURL = Self.codexThreadURL(for: threadId)
+        let usesExternalAssistantSession = Self.isExternalAssistantSession(
+            threadId: threadId,
+            transcriptPath: transcriptPath,
+            workingDirectory: workingDirectory,
+            agentPath: agentPath
+        )
+        self.codexURL = usesExternalAssistantSession ? nil : Self.codexThreadURL(for: threadId)
         self.transcriptURL = Self.fileURL(from: transcriptPath, isDirectory: false)
         self.projectURL = Self.fileURL(from: workingDirectory, isDirectory: true)
     }
@@ -43,6 +54,32 @@ public struct LooperThreadOpenTarget: Equatable, Sendable {
             return nil
         }
         return trimmedValue
+    }
+
+    static func isExternalAssistantSession(
+        threadId: String,
+        transcriptPath: String?,
+        workingDirectory: String?,
+        agentPath: String? = nil
+    ) -> Bool {
+        let needles = [
+            "/.grok/",
+            ".grok/sessions",
+            "grok agent",
+            "grok-build",
+            "devin:devin-cli:",
+            "devin:devin-cloud:",
+            "acp/devin-cli/",
+            "acp/devin-cloud/",
+            "/library/application support/devin/",
+            "/library/application support/devin - next/",
+            "devin-desktop",
+        ]
+        return [threadId, transcriptPath, workingDirectory, agentPath]
+            .compactMap { $0?.lowercased() }
+            .contains { haystack in
+                needles.contains { haystack.contains($0) }
+            }
     }
 
     private enum DeepLink {

@@ -39,17 +39,21 @@ public struct LooperHumanStatus: Equatable, Sendable {
         detachOnQuit: Bool
     ) -> Self {
         let sourceHealthy = snapshot.controlPlane.source.health == healthyValue
-        let hooksHealthy = snapshot.controlPlane.hooks.health == healthyValue
+        let codexHooksHealthy = snapshot.controlPlane.hooks.health == healthyValue
+        let grokHooksHealthy = snapshot.grokBuild.map { $0.hooks.health == healthyValue } ?? true
         let mobileReady = mobileHealth?.ok == true && mobileHealth?.requiresAuthentication == true
         let detail = [
             "source=\(snapshot.controlPlane.source.health)",
-            "hooks=\(snapshot.controlPlane.hooks.health)",
+            "codexHooks=\(snapshot.controlPlane.hooks.health)",
+            "grokHooks=\(snapshot.grokBuild?.hooks.health ?? "unknown")",
             "iPhone=\(mobileReady ? "ready" : "unknown")",
         ].joined(separator: " ")
 
+        let isReady = sourceHealthy && codexHooksHealthy && grokHooksHealthy
+
         return Self(
-            kind: sourceHealthy && hooksHealthy ? .ready : .needsAttention,
-            title: sourceHealthy && hooksHealthy ? "Ready" : "Needs attention",
+            kind: isReady ? .ready : .needsAttention,
+            title: isReady ? "Ready" : "Needs attention",
             detail: detail,
             lifecycle: lifecycleText(detachOnQuit: detachOnQuit)
         )

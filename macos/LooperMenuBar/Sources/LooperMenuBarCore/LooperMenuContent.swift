@@ -38,7 +38,8 @@ public enum LooperMenuContent {
             openTarget: LooperThreadOpenTarget(
                 threadId: thread.threadId,
                 transcriptPath: thread.transcriptPath,
-                workingDirectory: thread.cwd
+                workingDirectory: thread.cwd,
+                agentPath: thread.capabilities.agentPath
             )
         )
     }

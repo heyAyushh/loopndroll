@@ -13,6 +13,7 @@ public enum ControlPlaneEndpoint: Equatable {
     case controlPlaneStatus
     case desktopSnapshot
     case devinAcpBridgeProbe
+    case devinAcpBridgeAttach
 
     public var path: String {
         switch self {
@@ -30,12 +31,14 @@ public enum ControlPlaneEndpoint: Equatable {
             "/desktop/snapshot"
         case .devinAcpBridgeProbe:
             "/desktop/devin/acp-bridge/probe"
+        case .devinAcpBridgeAttach:
+            "/desktop/devin/acp-bridge/attach"
         }
     }
 
     public var method: String {
         switch self {
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe:
+        case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe, .devinAcpBridgeAttach:
             "POST"
         case .controlPlaneStatus, .desktopSnapshot, .mobileHealth:
             "GET"
@@ -46,7 +49,8 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .desktopSnapshot:
             [URLQueryItem(name: "profile", value: "menu")]
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus, .devinAcpBridgeProbe:
+        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
+             .devinAcpBridgeProbe, .devinAcpBridgeAttach:
             []
         }
     }
@@ -66,6 +70,7 @@ public protocol ControlPlaneClient: Sendable {
     func fetchDesktopSnapshot() async throws -> DesktopSnapshotResponse
     func fetchMobileHealth() async throws -> MobileHealthResponse
     func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse
+    func attachDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeAttachResponse
 }
 
 public final class ControlPlaneEndpointStore: @unchecked Sendable {
@@ -133,6 +138,14 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try await postJSON(
             DevinAcpBridgeProbeResponse.self,
             to: .devinAcpBridgeProbe,
+            body: DevinAcpBridgeProbeRequest(agentId: agentId)
+        )
+    }
+
+    public func attachDevinAcpBridge(agentId: String? = nil) async throws -> DevinAcpBridgeAttachResponse {
+        try await postJSON(
+            DevinAcpBridgeAttachResponse.self,
+            to: .devinAcpBridgeAttach,
             body: DevinAcpBridgeProbeRequest(agentId: agentId)
         )
     }
@@ -323,9 +336,54 @@ public struct SourceStatusSummary: Codable, Equatable, Sendable {
     }
 }
 
+public struct AssistantAdapterCapability: Codable, Equatable, Sendable {
+    public let assistantKind: String
+    public let runtimes: [AssistantRuntimeSummary]
+    public let detail: String
+
+    enum CodingKeys: String, CodingKey {
+        case assistantKind = "assistant_kind"
+        case runtimes
+        case detail
+    }
+}
+
+public struct AssistantRuntimeSummary: Codable, Equatable, Sendable {
+    public let kind: String
+    public let running: Bool
+    public let installed: Bool
+    public let label: String
+    public let executable: String?
+}
+
+public struct GrokBuildStatus: Codable, Equatable, Sendable {
+    public let hooks: GrokBuildHookStatus
+    public let sessionCount: Int
+    public let activeSessionCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case hooks
+        case sessionCount = "session_count"
+        case activeSessionCount = "active_session_count"
+    }
+}
+
+public struct GrokBuildHookStatus: Codable, Equatable, Sendable {
+    public let health: String
+    public let owner: String
+    public let registeredEvents: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case health
+        case owner
+        case registeredEvents = "registered_events"
+    }
+}
+
 public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     public let controlPlane: ControlPlaneStatusResponse
     public let devinDesktop: DevinDesktopStatus
+    public let grokBuild: GrokBuildStatus?
     public let threadCount: Int
     public let activeThreadCount: Int
     public let archivedThreadCount: Int
@@ -333,10 +391,40 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     public let automations: [DesktopAutomationSummary]
     public let goals: [GoalSummary]
     public let compactions: [CompactionEventSummary]
+    public let assistantAdapters: [AssistantAdapterCapability]
+
+    public var grokBuildAdapter: AssistantAdapterCapability? {
+        assistantAdapters.first { $0.assistantKind == "grok-build" }
+    }
+
+    public var grokBuildStatusTitle: String {
+        guard let adapter = grokBuildAdapter else {
+            return "Unavailable"
+        }
+
+        let cliRuntime = adapter.runtimes.first { $0.label == "Grok Build CLI" }
+        let sessionRuntime = adapter.runtimes.first { $0.label == "Grok Build session" }
+
+        if sessionRuntime?.running == true {
+            return "Session active"
+        }
+        if cliRuntime?.running == true {
+            return "CLI running"
+        }
+        if cliRuntime?.installed == true {
+            return "Installed"
+        }
+        return "Missing"
+    }
+
+    public var grokBuildHooksTitle: String {
+        grokBuild?.hooks.health.capitalized ?? "Unavailable"
+    }
 
     enum CodingKeys: String, CodingKey {
         case controlPlane = "control_plane"
         case devinDesktop = "devin_desktop"
+        case grokBuild = "grok_build"
         case threadCount = "thread_count"
         case activeThreadCount = "active_thread_count"
         case archivedThreadCount = "archived_thread_count"
@@ -344,6 +432,53 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         case automations
         case goals
         case compactions
+        case assistantAdapters = "assistant_adapters"
+    }
+
+    public init(
+        controlPlane: ControlPlaneStatusResponse,
+        devinDesktop: DevinDesktopStatus,
+        grokBuild: GrokBuildStatus? = nil,
+        threadCount: Int,
+        activeThreadCount: Int,
+        archivedThreadCount: Int,
+        threads: [DesktopThreadSummary],
+        automations: [DesktopAutomationSummary],
+        goals: [GoalSummary],
+        compactions: [CompactionEventSummary],
+        assistantAdapters: [AssistantAdapterCapability] = []
+    ) {
+        self.controlPlane = controlPlane
+        self.devinDesktop = devinDesktop
+        self.grokBuild = grokBuild
+        self.threadCount = threadCount
+        self.activeThreadCount = activeThreadCount
+        self.archivedThreadCount = archivedThreadCount
+        self.threads = threads
+        self.automations = automations
+        self.goals = goals
+        self.compactions = compactions
+        self.assistantAdapters = assistantAdapters
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            controlPlane: try container.decode(ControlPlaneStatusResponse.self, forKey: .controlPlane),
+            devinDesktop: try container.decode(DevinDesktopStatus.self, forKey: .devinDesktop),
+            grokBuild: try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild),
+            threadCount: try container.decode(Int.self, forKey: .threadCount),
+            activeThreadCount: try container.decode(Int.self, forKey: .activeThreadCount),
+            archivedThreadCount: try container.decode(Int.self, forKey: .archivedThreadCount),
+            threads: try container.decode([DesktopThreadSummary].self, forKey: .threads),
+            automations: try container.decode([DesktopAutomationSummary].self, forKey: .automations),
+            goals: try container.decode([GoalSummary].self, forKey: .goals),
+            compactions: try container.decode([CompactionEventSummary].self, forKey: .compactions),
+            assistantAdapters: try container.decodeIfPresent(
+                [AssistantAdapterCapability].self,
+                forKey: .assistantAdapters
+            ) ?? []
+        )
     }
 }
 
@@ -431,6 +566,51 @@ public struct DevinAcpBridgeProbeRequest: Codable, Equatable, Sendable {
 public struct DevinAcpBridgeProbeResponse: Codable, Equatable, Sendable {
     public let probe: DevinAcpBridgeProbe
     public let bridge: DevinAcpBridgeStatus
+    public let attachSession: DevinAcpAttachSession?
+}
+
+public struct DevinAcpBridgeAttachResponse: Codable, Equatable, Sendable {
+    public let attach: DevinAcpBridgeAttach
+    public let bridge: DevinAcpBridgeStatus
+    public let attachSession: DevinAcpAttachSession?
+}
+
+public struct DevinAcpBridgeAttach: Codable, Equatable, Sendable {
+    public let ok: Bool
+    public let status: String
+    public let agentId: String?
+    public let name: String?
+    public let attachReady: Bool
+    public let detail: String
+    public let blockers: [String]
+    public let limitations: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case status
+        case agentId = "agent_id"
+        case name
+        case attachReady = "attach_ready"
+        case detail
+        case blockers
+        case limitations
+    }
+}
+
+public struct DevinAcpAttachSession: Codable, Equatable, Sendable {
+    public let agentId: String
+    public let agentName: String?
+    public let attachedAt: String
+    public let status: String
+    public let detail: String
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case agentName = "agent_name"
+        case attachedAt = "attached_at"
+        case status
+        case detail
+    }
 }
 
 public struct DevinAcpBridgeProbe: Codable, Equatable, Sendable {

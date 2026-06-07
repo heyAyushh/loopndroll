@@ -41,6 +41,21 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func encodesSlashSeparatedSessionIDsInHandoffURL() throws {
+        let descriptor = LooperContinuationActivityBuilder.descriptor(
+            from: desktopSnapshot(threads: [
+                thread(id: "acp/devin-cli/brindle-cadet", title: "Devin", updatedAtMs: 1),
+            ]),
+            handoffBaseURL: URL(string: "http://192.168.1.4:8765")
+        )
+
+        #expect(
+            descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
+                == "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
+        )
+    }
+
+    @Test
     func fallsBackToGenericActivityWhenNoThreadsExist() {
         let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: []))
 
@@ -82,13 +97,23 @@ struct LooperContinuationActivityTests {
                     degradedReason: nil
                 )
             ),
+            devinDesktop: DevinDesktopStatus(
+                acpBridge: DevinAcpBridgeStatus(
+                    available: false,
+                    controlLevel: "visibility-only",
+                    summary: "Unavailable",
+                    actions: [],
+                    agents: []
+                )
+            ),
             threadCount: threads.count,
             activeThreadCount: threads.filter { !$0.archived }.count,
             archivedThreadCount: threads.filter(\.archived).count,
             threads: threads,
             automations: [],
             goals: [],
-            compactions: []
+            compactions: [],
+            assistantAdapters: []
         )
     }
 

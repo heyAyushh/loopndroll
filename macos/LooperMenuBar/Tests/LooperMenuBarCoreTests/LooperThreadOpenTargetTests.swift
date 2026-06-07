@@ -11,7 +11,7 @@ struct LooperThreadOpenTargetTests {
             workingDirectory: "/Users/test/project"
         )
 
-        #expect(target.codexURL?.absoluteString == "codex://thread/thread-main")
+        #expect(target.codexURL?.absoluteString == "codex://threads/thread-main")
         #expect(target.transcriptURL?.path == "/Users/test/.codex/sessions/thread-main.jsonl")
         #expect(target.projectURL?.path == "/Users/test/project")
         #expect(target.firstLocalFallbackURL == target.transcriptURL)
@@ -25,7 +25,7 @@ struct LooperThreadOpenTargetTests {
             workingDirectory: "  "
         )
 
-        #expect(target.codexURL?.absoluteString == "codex://thread/thread%20with%20spaces")
+        #expect(target.codexURL?.absoluteString == "codex://threads/thread%20with%20spaces")
         #expect(target.transcriptURL?.path == "/Users/test/.codex/sessions/thread.jsonl")
         #expect(target.projectURL == nil)
     }
@@ -39,5 +39,50 @@ struct LooperThreadOpenTargetTests {
         )
 
         #expect(target.firstLocalFallbackURL == target.projectURL)
+    }
+
+    @Test
+    func skipsCodexDeepLinkForGrokBuildSessions() {
+        let target = LooperThreadOpenTarget(
+            threadId: "thread-grok",
+            transcriptPath: "/Users/test/.grok/sessions/thread-grok/updates.jsonl",
+            workingDirectory: "/Users/test/project"
+        )
+
+        #expect(target.codexURL == nil)
+        #expect(target.transcriptURL?.path == "/Users/test/.grok/sessions/thread-grok/updates.jsonl")
+        #expect(target.firstLocalFallbackURL == target.transcriptURL)
+    }
+
+    @Test
+    func skipsCodexDeepLinkForGrokWorktreeAndAgentPath() {
+        let worktreeTarget = LooperThreadOpenTarget(
+            threadId: "thread-worktree",
+            transcriptPath: nil,
+            workingDirectory: "/Users/test/.grok/worktrees/documents-looper/sse"
+        )
+        let agentTarget = LooperThreadOpenTarget(
+            threadId: "thread-agent",
+            transcriptPath: nil,
+            workingDirectory: "/Users/test/project",
+            agentPath: "/Users/test/.grok/bin/grok"
+        )
+
+        #expect(worktreeTarget.codexURL == nil)
+        #expect(agentTarget.codexURL == nil)
+        #expect(agentTarget.firstLocalFallbackURL == agentTarget.projectURL)
+    }
+
+    @Test
+    func skipsCodexDeepLinkForDevinSessions() {
+        let target = LooperThreadOpenTarget(
+            threadId: "devin:devin-cli:brindle-cadet",
+            transcriptPath: "/Users/test/Library/Application Support/Devin - Next/User/acp-events/event.ndjson",
+            workingDirectory: "/Users/test/project"
+        )
+
+        #expect(target.codexURL == nil)
+        #expect(target.transcriptURL?.path == "/Users/test/Library/Application Support/Devin - Next/User/acp-events/event.ndjson")
+        #expect(target.firstLocalFallbackURL == target.transcriptURL)
     }
 }

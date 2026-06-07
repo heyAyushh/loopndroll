@@ -22,6 +22,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var continuationRefreshTask: Task<Void, Never>?
     private var mobileHealth: MobileHealthResponse?
     private var devinProbe: DevinAcpBridgeProbe?
+    private var devinAttach: DevinAcpBridgeAttach?
 
     override init() {
         let endpointStore = ControlPlaneEndpointStore()
@@ -139,8 +140,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         menu.addItem(NSMenuItem.separator())
         addActionItem("Refresh", action: #selector(refreshMenuAction(_:)), keyEquivalent: "r", to: menu)
-        addActionItem("Repair Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: menu)
-        addActionItem("Clear Live Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: menu)
+        addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: menu)
+        addActionItem("Clear Live Codex & Grok Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: menu)
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: menu)
         addDetachServerItem(to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
@@ -156,11 +157,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             detachOnQuit: detachServerOnQuit
         )
         addDisabledItem("Status: \(status.title)", to: menu)
-        addDisabledItem("Hooks: \(snapshot.controlPlane.hooks.health)", to: menu)
+        addDisabledItem("Codex hooks: \(snapshot.controlPlane.hooks.health)", to: menu)
         addDisabledItem("iPhone: \(mobileStatusTitle())", to: menu)
         addDisabledItem("Lifecycle: \(status.lifecycle)", to: menu)
         addDisabledItem("Chats: \(snapshot.activeThreadCount) active, \(snapshot.archivedThreadCount) archived", to: menu)
         addDisabledItem("Codex: \(snapshot.controlPlane.codexServers.count) local servers", to: menu)
+        addDisabledItem("Grok Build: \(snapshot.grokBuildStatusTitle)", to: menu)
+        addDisabledItem("Grok hooks: \(snapshot.grokBuildHooksTitle)", to: menu)
+        if let grokBuild = snapshot.grokBuild {
+            addDisabledItem(
+                "Grok sessions: \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total",
+                to: menu
+            )
+        }
         addDisabledItem("Devin: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: menu)
         addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: menu)
         addDisabledItem("Goals: \(snapshot.goals.count)", to: menu)
@@ -214,6 +223,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             }
         }
 
+        if let devinAttach {
+            addDisabledItem(devinAttach.detail, to: menu)
+        }
+
         let probeItem = NSMenuItem(
             title: "Probe Devin ACP",
             action: #selector(probeDevinAcpAction(_:)),
@@ -223,6 +236,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         probeItem.representedObject = bridge.defaultProbeAgent?.id
         probeItem.isEnabled = bridge.defaultProbeAgent != nil
         menu.addItem(probeItem)
+
+        let attachItem = NSMenuItem(
+            title: "Attach Devin ACP (Experimental)",
+            action: #selector(attachDevinAcpAction(_:)),
+            keyEquivalent: ""
+        )
+        attachItem.target = self
+        attachItem.representedObject = bridge.defaultProbeAgent?.id
+        attachItem.isEnabled = bridge.defaultProbeAgent?.attachCapable == true
+        menu.addItem(attachItem)
     }
 
     private func coveredAutomationCount(_ snapshot: DesktopSnapshotResponse) -> Int {
@@ -388,6 +411,21 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
                 devinProbe = response.probe
             } catch {
                 devinProbe = nil
+                replaceMenu(snapshot: nil, error: error)
+                return
+            }
+            await refreshMenu()
+        }
+    }
+
+    @objc private func attachDevinAcpAction(_ sender: NSMenuItem) {
+        let agentId = sender.representedObject as? String
+        Task {
+            do {
+                let response = try await client.attachDevinAcpBridge(agentId: agentId)
+                devinAttach = response.attach
+            } catch {
+                devinAttach = nil
                 replaceMenu(snapshot: nil, error: error)
                 return
             }
