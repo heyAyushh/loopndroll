@@ -24,8 +24,7 @@ const ACP_METHODS: &[&str] = &[
 ];
 const AUTO_EXECUTION_LIMITATION: &str =
     "Looper reads Devin Desktop state and never auto-executes registry commands.";
-const DEVIN_NATIVE_CONTROL_LIMITATION: &str =
-    "Devin-native stop/continue lifecycle is unavailable until a real Devin transport exists.";
+const DEVIN_TRANSPORT_LIMITATION: &str = "Prompt delivery uses Looper-owned CLI resume; stop-hook lifecycle still depends on the agent runtime.";
 const MISSING_LAUNCH_METADATA_LIMITATION: &str =
     "No configured launchable enabled ACP agent was found.";
 const LAUNCH_PREFLIGHT_PROBE_KIND: &str = "launch-preflight";
@@ -170,8 +169,8 @@ fn bridge_agent(
         preferred: settings.preferred_agent.as_deref() == Some(agent.id.as_str()),
         launch_configured: agent.launch_configured,
         control_level,
-        supports_sessions: false,
-        supports_prompt: false,
+        supports_sessions: control_level == DevinAcpControlLevel::AgentConfigured,
+        supports_prompt: control_level == DevinAcpControlLevel::AgentConfigured,
         supports_cancel: false,
         source: ACP_BRIDGE_SOURCE.to_owned(),
     }
@@ -342,7 +341,7 @@ fn bridge_summary(
 fn bridge_limitations(control_level: DevinAcpControlLevel) -> Vec<String> {
     let mut limitations = Vec::with_capacity(3);
     limitations.push(AUTO_EXECUTION_LIMITATION.to_owned());
-    limitations.push(DEVIN_NATIVE_CONTROL_LIMITATION.to_owned());
+    limitations.push(DEVIN_TRANSPORT_LIMITATION.to_owned());
     match control_level {
         DevinAcpControlLevel::AgentConfigured => {}
         DevinAcpControlLevel::VisibilityOnly => {
@@ -446,8 +445,8 @@ mod tests {
             status.agents[0].control_level,
             DevinAcpControlLevel::AgentConfigured
         );
-        assert!(!status.agents[0].supports_prompt);
-        assert!(!status.agents[0].supports_sessions);
+        assert!(status.agents[0].supports_prompt);
+        assert!(status.agents[0].supports_sessions);
         assert!(!status.agents[0].supports_cancel);
         assert_eq!(status.actions[0].id, ACP_BRIDGE_PROBE_ACTION_ID);
         assert_eq!(status.actions[0].default_agent_id.as_deref(), Some("codex"));

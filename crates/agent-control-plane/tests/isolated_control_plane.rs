@@ -29,6 +29,8 @@ const EXTRA_MOBILE_SNAPSHOT_THREADS: usize = 20;
 const EXTRA_THREAD_BASE_TIMESTAMP_MS: i64 = 3_000;
 const DEVIN_FIXTURE_EVENT_UPDATED_AT_MS: i64 = 1_780_801_814_955;
 const NEWER_THAN_DEVIN_THREAD_BASE_TIMESTAMP_MS: i64 = DEVIN_FIXTURE_EVENT_UPDATED_AT_MS + 1_000;
+const STUB_WAIT_ATTEMPTS: usize = 100;
+const STUB_WAIT_INTERVAL_MS: u64 = 50;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -1915,6 +1917,52 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
 }
 
 #[tokio::test]
+async fn devin_mobile_prompt_resumes_native_session() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .mobile_session_service()
+        .set_assistant_surface("devin")
+        .expect("set Devin surface");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let _snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
+        serde_json::json!({ "prompt": "Keep going from phone." }),
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        fixture.devin_resume_args(),
+        vec![
+            "--resume".to_owned(),
+            "brindle-cadet".to_owned(),
+            "-p".to_owned(),
+            "Keep going from phone.".to_owned(),
+        ]
+    );
+
+    let events = control_plane
+        .store()
+        .mobile_events_since(0, 10)
+        .expect("mobile events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == MobileEventKind::SessionChanged
+                && event.thread_id.as_deref() == Some("devin:devin-cli:brindle-cadet")
+                && event.detail.as_deref() == Some("prompt-resumed"))
+    );
+}
+
+#[tokio::test]
 async fn devin_acp_attach_route_is_not_supported() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2537,10 +2585,51 @@ done
         executable
     }
 
+    fn devin_resume_stub(&self) -> std::path::PathBuf {
+        let executable = self.temp_dir.path().join("devin-resume-stub");
+        if executable.is_file() {
+            return executable;
+        }
+        let args_path = self.devin_resume_args_path();
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+                args_path.display()
+            ),
+        )
+        .expect("write devin resume stub");
+        let mut permissions = fs::metadata(&executable)
+            .expect("devin resume stub metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("chmod devin resume stub");
+        executable
+    }
+
+    fn devin_resume_args_path(&self) -> std::path::PathBuf {
+        self.temp_dir.path().join("devin-resume-args.txt")
+    }
+
+    fn devin_resume_args(&self) -> Vec<String> {
+        let args_path = self.devin_resume_args_path();
+        for _ in 0..STUB_WAIT_ATTEMPTS {
+            if let Ok(args) = fs::read_to_string(&args_path) {
+                return args.lines().map(str::to_owned).collect();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(STUB_WAIT_INTERVAL_MS));
+        }
+        panic!(
+            "timed out waiting for devin args at {}",
+            args_path.display()
+        );
+    }
+
     fn control_plane(&self) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(self.codex_resume_stub().display().to_string()),
+            devin_executable: Some(self.devin_resume_stub().display().to_string()),
             grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),

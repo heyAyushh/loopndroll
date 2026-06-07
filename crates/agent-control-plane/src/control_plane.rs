@@ -60,6 +60,7 @@ const GROK_BUILD_HOOKS_CONNECTION_LABEL: &str = "Grok Build hooks";
 pub struct ControlPlaneConfig {
     pub codex_home: PathBuf,
     pub codex_executable: Option<String>,
+    pub devin_executable: Option<String>,
     pub grok_home: PathBuf,
     pub store_path: PathBuf,
     pub hook_command: Option<String>,
@@ -312,6 +313,10 @@ impl ControlPlane {
 
     pub fn codex_executable(&self) -> Option<&str> {
         self.config.codex_executable.as_deref()
+    }
+
+    pub fn devin_executable(&self) -> Option<&str> {
+        self.config.devin_executable.as_deref()
     }
 
     pub fn grok_home(&self) -> &PathBuf {
@@ -1200,6 +1205,7 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
+            devin_executable: None,
             grok_home: fixture_dir.path().join(".grok"),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,

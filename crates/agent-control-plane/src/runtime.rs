@@ -128,6 +128,7 @@ pub fn default_control_plane() -> Result<ControlPlane> {
     Ok(ControlPlane::new(ControlPlaneConfig {
         codex_home: default_codex_home(),
         codex_executable: None,
+        devin_executable: None,
         grok_home: crate::grok_build::default_grok_home(&home_path),
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),

@@ -58,6 +58,18 @@ pub struct DevinSessionRecord {
     pub archived: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DevinThreadIdentity {
+    pub provider_id: String,
+    pub session_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DevinPromptTransport {
+    Codex,
+    DevinCli,
+}
+
 #[derive(Clone, Copy)]
 struct DevinSessionSource {
     app_support_relative_path: &'static str,
@@ -421,6 +433,30 @@ fn public_thread_id_for_session_id(session_id: &str) -> String {
     format!("{DEVIN_THREAD_ID_PREFIX}:{normalized_session_id}")
 }
 
+pub fn devin_thread_identity_from_public_thread_id(thread_id: &str) -> Option<DevinThreadIdentity> {
+    let remainder = thread_id.strip_prefix("devin:")?;
+    let (provider_id, session_id) = remainder.split_once(':')?;
+    let provider_id = non_empty_identity_segment(provider_id)?;
+    let session_id = non_empty_identity_segment(&session_id.replace(':', "/"))?;
+    Some(DevinThreadIdentity {
+        provider_id,
+        session_id,
+    })
+}
+
+fn non_empty_identity_segment(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPromptTransport> {
+    match provider_id.trim() {
+        "codex" | "codex-acp" => Some(DevinPromptTransport::Codex),
+        "devin-cli" => Some(DevinPromptTransport::DevinCli),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,6 +608,42 @@ mod tests {
         assert_eq!(sessions[0].originator, DEVIN_STABLE_ORIGINATOR);
         assert!(sessions[0].transcript_path.is_none());
         assert!(sessions[0].archived);
+    }
+
+    #[test]
+    fn recovers_native_agent_session_identity_from_public_thread_id() {
+        assert_eq!(
+            devin_thread_identity_from_public_thread_id("devin:devin-cli:shadow-canidae"),
+            Some(DevinThreadIdentity {
+                provider_id: "devin-cli".to_owned(),
+                session_id: "shadow-canidae".to_owned(),
+            })
+        );
+        assert_eq!(
+            devin_thread_identity_from_public_thread_id("devin:codex:019e:path"),
+            Some(DevinThreadIdentity {
+                provider_id: "codex".to_owned(),
+                session_id: "019e/path".to_owned(),
+            })
+        );
+        assert_eq!(
+            devin_thread_identity_from_public_thread_id("thread-main"),
+            None
+        );
+    }
+
+    #[test]
+    fn prompt_transport_is_explicit_per_devin_provider() {
+        assert_eq!(
+            devin_prompt_transport_for_provider("codex-acp"),
+            Some(DevinPromptTransport::Codex)
+        );
+        assert_eq!(
+            devin_prompt_transport_for_provider("devin-cli"),
+            Some(DevinPromptTransport::DevinCli)
+        );
+        assert_eq!(devin_prompt_transport_for_provider("claude-acp"), None);
+        assert_eq!(devin_prompt_transport_for_provider("devin-cloud"), None);
     }
 
     fn write_state_db(state_db_path: &Path, metadata_cache: Value, event_log_index: Value) {

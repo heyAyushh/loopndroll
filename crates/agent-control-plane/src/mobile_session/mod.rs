@@ -175,7 +175,7 @@ pub enum MobileSessionError {
     PromptDeliveryUnavailable,
     #[error("desktop session state unavailable: {0}")]
     PromptSnapshotUnavailable(String),
-    #[error("codex resume failed: {0}")]
+    #[error("prompt resume failed: {0}")]
     PromptResumeUnavailable(String),
     #[error("notification route not found")]
     NotificationNotFound,

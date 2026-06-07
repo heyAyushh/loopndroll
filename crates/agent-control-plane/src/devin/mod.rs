@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod bridge;
+mod continuation;
 mod installations;
 mod registry;
 mod sessions;
@@ -13,11 +14,16 @@ pub use self::bridge::{
     DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlLevel,
     DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
 };
+pub use self::continuation::{
+    DevinContinueRequest, resolve_devin_executable, spawn_session_continue,
+};
 pub use self::installations::DevinInstallationStatus;
 pub use self::registry::{DevinAcpAgent, DevinAcpLaunchMetadata, DevinAcpRegistryStatus};
 pub use self::sessions::{
-    DevinSessionRecord, devin_session_capabilities, devin_session_to_desktop_thread,
-    devin_session_to_thread_record, discover_devin_sessions,
+    DevinPromptTransport, DevinSessionRecord, DevinThreadIdentity,
+    devin_prompt_transport_for_provider, devin_session_capabilities,
+    devin_session_to_desktop_thread, devin_session_to_thread_record,
+    devin_thread_identity_from_public_thread_id, discover_devin_sessions,
 };
 
 pub(super) const DEVIN_NEXT_CHANNEL: &str = "next";
