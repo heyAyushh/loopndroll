@@ -1134,6 +1134,7 @@ struct MobileSnapshot: Codable, Sendable {
     var host: HostSummary
     var globalSettings: GlobalSettings
     var sessions: [SessionSummary]
+    var surfaceSessions: [String: [SessionSummary]]
     var notifications: [NotificationDestination]
     var completionChecks: [CompletionCheckSummary]
     var grokBuild: GrokBuildStatus?
@@ -1142,6 +1143,7 @@ struct MobileSnapshot: Codable, Sendable {
         host: HostSummary,
         globalSettings: GlobalSettings,
         sessions: [SessionSummary],
+        surfaceSessions: [String: [SessionSummary]] = [:],
         notifications: [NotificationDestination],
         completionChecks: [CompletionCheckSummary],
         grokBuild: GrokBuildStatus? = nil
@@ -1149,6 +1151,7 @@ struct MobileSnapshot: Codable, Sendable {
         self.host = host
         self.globalSettings = globalSettings
         self.sessions = sessions
+        self.surfaceSessions = surfaceSessions
         self.notifications = notifications
         self.completionChecks = completionChecks
         self.grokBuild = grokBuild
@@ -1158,6 +1161,7 @@ struct MobileSnapshot: Codable, Sendable {
         case host
         case globalSettings
         case sessions
+        case surfaceSessions
         case notifications
         case completionChecks
         case grokBuild
@@ -1168,6 +1172,10 @@ struct MobileSnapshot: Codable, Sendable {
         host = try container.decode(HostSummary.self, forKey: .host)
         globalSettings = try container.decode(GlobalSettings.self, forKey: .globalSettings)
         sessions = try container.decode([SessionSummary].self, forKey: .sessions)
+        surfaceSessions = try container.decodeIfPresent(
+            [String: [SessionSummary]].self,
+            forKey: .surfaceSessions
+        ) ?? [:]
         notifications = try container.decodeIfPresent(
             [NotificationDestination].self,
             forKey: .notifications
@@ -1177,6 +1185,43 @@ struct MobileSnapshot: Codable, Sendable {
             forKey: .completionChecks
         ) ?? []
         grokBuild = try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild)
+    }
+
+    func visibleSnapshot(for surface: CompanionAssistantSurface) -> MobileSnapshot {
+        var visibleSnapshot = self
+        visibleSnapshot.globalSettings.assistantSurface = surface
+        visibleSnapshot.sessions = sessions(for: surface)
+        return visibleSnapshot
+    }
+
+    func sessions(for surface: CompanionAssistantSurface) -> [SessionSummary] {
+        if let sessions = surfaceSessions[surface.rawValue] {
+            return sessions
+        }
+
+        guard globalSettings.assistantSurface == surface else {
+            return []
+        }
+
+        return sessions
+    }
+
+    var sessionsAcrossSurfaces: [SessionSummary] {
+        var sessionsByID: [String: SessionSummary] = [:]
+        for surface in CompanionAssistantSurface.allCases {
+            for session in sessions(for: surface) {
+                sessionsByID[session.id] = session
+            }
+        }
+        return Array(sessionsByID.values)
+    }
+
+    func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
+        CompanionAssistantSurface.allCases.first { surface in
+            sessions(for: surface).contains { session in
+                session.id == sessionID
+            }
+        }
     }
 }
 

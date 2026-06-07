@@ -19,9 +19,6 @@ struct SessionsScreen: View {
     @State private var showsAllNeedsAttentionSessions = false
     @State private var showsAllRunningSessions = false
     @State private var showsAllArchivedSessions = false
-    @State private var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
-    @State private var pendingAssistantSurface: CompanionAssistantSurface?
-    @State private var isSavingAssistantSurface = false
 
     private var hasVisibleSessions: Bool {
         !model.needsAttentionSessions.isEmpty ||
@@ -100,9 +97,6 @@ struct SessionsScreen: View {
             .task(id: model.pendingOpenSessionID) {
                 openPendingSessionIfNeeded()
             }
-            .task(id: model.snapshot?.globalSettings.assistantSurface) {
-                syncAssistantSurfaceFromSnapshot()
-            }
             .overlay {
                 overlayState
             }
@@ -162,16 +156,16 @@ struct SessionsScreen: View {
     private var assistantPicker: some View {
         AssistantSurfacePicker(
             selection: Binding(
-                get: { selectedAssistantSurface },
+                get: { model.selectedAssistantSurface },
                 set: { updateAssistantSurface($0) }
             ),
-            isDisabled: model.connectionState != .connected
+            isDisabled: !model.canSwitchAssistantSurface
         )
         .padding(.top, AssistantSurfaceControlMetrics.controlTopPadding)
     }
 
     private var connectionSubtitle: String {
-        if selectedAssistantSurface == .grokBuild, let grokBuild = model.snapshot?.grokBuild {
+        if model.selectedAssistantSurface == .grokBuild, let grokBuild = model.snapshot?.grokBuild {
             return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
         }
 
@@ -281,56 +275,7 @@ struct SessionsScreen: View {
     }
 
     private func updateAssistantSurface(_ surface: CompanionAssistantSurface) {
-        guard selectedAssistantSurface != surface else {
-            return
-        }
-
-        selectedAssistantSurface = surface
-        pendingAssistantSurface = surface
-        startAssistantSurfaceSaveIfNeeded()
-    }
-
-    private func syncAssistantSurfaceFromSnapshot() {
-        guard !isSavingAssistantSurface, pendingAssistantSurface == nil else {
-            return
-        }
-
-        selectedAssistantSurface = committedAssistantSurface
-    }
-
-    @MainActor
-    private func startAssistantSurfaceSaveIfNeeded() {
-        guard !isSavingAssistantSurface else {
-            return
-        }
-
-        isSavingAssistantSurface = true
-        Task { @MainActor in
-            await savePendingAssistantSurfaces()
-        }
-    }
-
-    @MainActor
-    private func savePendingAssistantSurfaces() async {
-        var shouldRevertToCommittedSurface = false
-
-        while let nextAssistantSurface = pendingAssistantSurface {
-            pendingAssistantSurface = nil
-            let didSave = await model.saveAssistantSurface(nextAssistantSurface)
-            if !didSave, pendingAssistantSurface == nil {
-                shouldRevertToCommittedSurface = true
-                break
-            }
-        }
-
-        isSavingAssistantSurface = false
-        selectedAssistantSurface = shouldRevertToCommittedSurface
-            ? committedAssistantSurface
-            : model.snapshot?.globalSettings.assistantSurface ?? selectedAssistantSurface
-    }
-
-    private var committedAssistantSurface: CompanionAssistantSurface {
-        model.snapshot?.globalSettings.assistantSurface ?? .defaultSurface
+        model.selectAssistantSurface(surface)
     }
 
     private var emptyStateDescription: String {
@@ -338,7 +283,7 @@ struct SessionsScreen: View {
             return model.connectivitySummary
         }
 
-        switch selectedAssistantSurface {
+        switch model.selectedAssistantSurface {
         case .grokBuild:
             return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
         case .devin:
@@ -351,7 +296,7 @@ struct SessionsScreen: View {
     private var unavailableStateTitle: String {
         switch model.connectionState {
         case .connected:
-            switch selectedAssistantSurface {
+            switch model.selectedAssistantSurface {
             case .grokBuild:
                 return "No Grok Build Sessions"
             case .devin:

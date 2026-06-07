@@ -4,7 +4,7 @@ protocol CompanionService: Sendable {
     func makeMobileEventStreamClient() -> MobileEventStreamClient
     func loadServerHealth() async throws -> CompanionServerHealth
     func loadSnapshot() async throws -> MobileSnapshot
-    func loadSessionDetail(id: String) async throws -> SessionDetail
+    func loadSessionDetail(id: String, surface: CompanionAssistantSurface?) async throws -> SessionDetail
     func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot
     func deleteSession(id: String) async throws -> MobileSnapshot

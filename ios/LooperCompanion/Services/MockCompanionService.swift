@@ -24,11 +24,22 @@ actor MockCompanionStore {
             allSessions,
             surface: initialSnapshot.globalSettings.assistantSurface
         )
+        snapshot.surfaceSessions = Self.surfaceSessions(allSessions)
         details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
     }
 
-    func sessionDetail(id: String) -> SessionDetail {
-        details[id] ?? details.values.first ?? SessionDetail(
+    func sessionDetail(id: String, surface: CompanionAssistantSurface?) -> SessionDetail {
+        let visibleDetails: [String: SessionDetail]
+        if let surface {
+            visibleDetails = Self.filteredDetails(
+                allDetails,
+                visibleSessions: Self.filteredSessions(allSessions, surface: surface)
+            )
+        } else {
+            visibleDetails = details
+        }
+
+        return visibleDetails[id] ?? visibleDetails.values.first ?? SessionDetail(
             id: id,
             ref: "C0",
             title: "Unknown Session",
@@ -159,6 +170,7 @@ actor MockCompanionStore {
     private func publishSnapshot() -> MobileSnapshot {
         let surface = snapshot.globalSettings.assistantSurface
         snapshot.sessions = Self.filteredSessions(allSessions, surface: surface)
+        snapshot.surfaceSessions = Self.surfaceSessions(allSessions)
         details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
         return snapshot
     }
@@ -173,6 +185,14 @@ actor MockCompanionStore {
                 surface: surface.rawValue
             )
         }
+    }
+
+    private static func surfaceSessions(
+        _ sessions: [SessionSummary]
+    ) -> [String: [SessionSummary]] {
+        Dictionary(uniqueKeysWithValues: CompanionAssistantSurface.allCases.map { surface in
+            (surface.rawValue, filteredSessions(sessions, surface: surface))
+        })
     }
 
     private static func filteredDetails(
@@ -223,8 +243,11 @@ struct MockCompanionService: CompanionService {
         await store.snapshot
     }
 
-    func loadSessionDetail(id: String) async throws -> SessionDetail {
-        await store.sessionDetail(id: id)
+    func loadSessionDetail(
+        id: String,
+        surface: CompanionAssistantSurface? = nil
+    ) async throws -> SessionDetail {
+        await store.sessionDetail(id: id, surface: surface)
     }
 
     func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot {

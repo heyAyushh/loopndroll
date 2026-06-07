@@ -18,6 +18,7 @@ mod settings;
 
 pub use self::notifications::build_telegram_bot_url;
 
+pub(crate) use self::normalization::ASSISTANT_SURFACES;
 use self::normalization::{ENABLED_FLAG, normalized_assistant_surface, normalized_preset};
 use self::queries::{
     read_completion_checks, read_notifications, read_session_lifecycle, read_session_notifications,

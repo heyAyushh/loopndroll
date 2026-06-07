@@ -3,6 +3,7 @@ import Foundation
 struct HTTPCompanionService: CompanionService {
     private static let sessionPathPrefix = "/api/mobile/sessions"
     private static let pathSeparator = "/"
+    private static let assistantSurfaceQueryItemName = "assistantSurface"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
     private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
         .subtracting(pathSegmentReservedCharacters)
@@ -32,8 +33,14 @@ struct HTTPCompanionService: CompanionService {
         try await request(path: "/api/mobile/snapshot", method: HTTPMethod.get)
     }
 
-    func loadSessionDetail(id: String) async throws -> SessionDetail {
-        try await request(path: sessionPath(id: id), method: HTTPMethod.get)
+    func loadSessionDetail(
+        id: String,
+        surface: CompanionAssistantSurface?
+    ) async throws -> SessionDetail {
+        try await request(
+            path: path(sessionPath(id: id), assistantSurface: surface),
+            method: HTTPMethod.get
+        )
     }
 
     func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot {
@@ -297,19 +304,42 @@ struct HTTPCompanionService: CompanionService {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw HTTPCompanionServiceError.invalidResponse
         }
+        let requestComponents = URLComponents(string: path)
 
         let basePath = components.percentEncodedPath.trimmingCharacters(
             in: Self.pathSegmentReservedCharacters
         )
-        let requestPath = path.trimmingCharacters(in: Self.pathSegmentReservedCharacters)
+        let requestPath = (requestComponents?.percentEncodedPath ?? path).trimmingCharacters(
+            in: Self.pathSegmentReservedCharacters
+        )
         let joinedPath = [basePath, requestPath]
             .filter { !$0.isEmpty }
             .joined(separator: Self.pathSeparator)
         components.percentEncodedPath = "\(Self.pathSeparator)\(joinedPath)"
+        components.percentEncodedQuery = requestComponents?.percentEncodedQuery
         guard let url = components.url else {
             throw HTTPCompanionServiceError.invalidResponse
         }
         return url
+    }
+
+    private func path(
+        _ path: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) -> String {
+        guard let assistantSurface else {
+            return path
+        }
+
+        var components = URLComponents()
+        components.path = path
+        components.queryItems = [
+            URLQueryItem(
+                name: Self.assistantSurfaceQueryItemName,
+                value: assistantSurface.rawValue
+            )
+        ]
+        return components.string ?? path
     }
 
     private func normalizedPathSuffix(_ suffix: String?) -> String? {

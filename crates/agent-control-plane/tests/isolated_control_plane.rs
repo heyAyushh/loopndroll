@@ -1365,6 +1365,68 @@ async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
 }
 
 #[tokio::test]
+async fn mobile_snapshot_includes_every_assistant_surface() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    fixture.write_grok_session("grok-session-1", "/tmp/project", "Ship Grok hooks");
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    assert_eq!(snapshot["globalSettings"]["assistantSurface"], "codex");
+    let codex_session = mobile_snapshot_session(&snapshot, "thread-main");
+    assert_eq!(codex_session["assistantClient"], "codex");
+
+    let surface_sessions = snapshot["surfaceSessions"]
+        .as_object()
+        .expect("surface sessions");
+    assert_surface_sessions_include(surface_sessions, "codex", "thread-main");
+    assert_surface_sessions_include(surface_sessions, "devin", "devin:devin-cli:brindle-cadet");
+    assert_surface_sessions_include(surface_sessions, "grok-build", "grok-session-1");
+}
+
+#[tokio::test]
+async fn mobile_session_detail_accepts_selected_surface_override() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let hidden_detail = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/devin:devin-cli:brindle-cadet",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(hidden_detail.status(), StatusCode::NOT_FOUND);
+
+    let visible_detail = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/devin:devin-cli:brindle-cadet?assistantSurface=devin",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(visible_detail["id"], "devin:devin-cli:brindle-cadet");
+    assert_eq!(visible_detail["assistantClient"], "devin");
+}
+
+#[tokio::test]
 async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2150,6 +2212,21 @@ fn mobile_snapshot_session<'a>(
         .iter()
         .find(|session| session["id"] == session_id)
         .expect("session")
+}
+
+fn assert_surface_sessions_include(
+    surface_sessions: &serde_json::Map<String, serde_json::Value>,
+    surface: &str,
+    session_id: &str,
+) {
+    assert!(
+        surface_sessions[surface]
+            .as_array()
+            .expect("surface session list")
+            .iter()
+            .any(|session| session["id"] == session_id),
+        "expected {surface} sessions to include {session_id}"
+    );
 }
 
 async fn request_json(router: &axum::Router, path: &str) -> serde_json::Value {

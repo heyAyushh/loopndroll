@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -6,9 +8,9 @@ use crate::assistant::{infer_assistant_client_from_paths, session_matches_assist
 use crate::control_plane::{DesktopSnapshot, DesktopThread, GrokBuildStatus};
 use crate::grok_build::GrokHookStatus;
 use crate::mobile_session::{
-    DEFAULT_REMOTE_PROMPT, MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED,
-    MobileCompletionCheck, MobileNotificationRoute, MobileSessionLifecycle, MobileSessionOverride,
-    MobileSessionState,
+    ASSISTANT_SURFACES, DEFAULT_REMOTE_PROMPT, MOBILE_SESSION_STATUS_ACTIVE,
+    MOBILE_SESSION_STATUS_STOPPED, MobileCompletionCheck, MobileNotificationRoute,
+    MobileSessionLifecycle, MobileSessionOverride, MobileSessionState,
 };
 
 const HOST_ID: &str = "rust-control-plane";
@@ -32,26 +34,17 @@ pub fn mobile_snapshot(
     base_url: &str,
     synced_at: &str,
 ) -> Value {
+    let surface_sessions = mobile_surface_sessions(snapshot, session_state);
+    let sessions = surface_sessions
+        .get(&session_state.assistant_surface)
+        .cloned()
+        .unwrap_or_default();
+
     json!({
         "host": host_summary(base_url, synced_at),
         "globalSettings": mobile_global_settings(session_state),
-        "sessions": snapshot
-            .threads
-            .iter()
-            .enumerate()
-            .filter(|(_, thread)| !is_deleted(thread, session_state))
-            .filter(|(_, thread)| {
-                session_matches_assistant_surface(
-                    thread.transcript_path.as_deref(),
-                    thread.cwd.as_deref(),
-                    thread.source.as_deref(),
-                    thread.originator.as_deref(),
-                    thread.agent_path.as_deref(),
-                    &session_state.assistant_surface,
-                )
-            })
-            .map(|(index, thread)| session_summary(thread, index, session_state))
-            .collect::<Vec<_>>(),
+        "sessions": sessions,
+        "surfaceSessions": surface_sessions,
         "notifications": session_state
             .notifications
             .iter()
@@ -64,6 +57,47 @@ pub fn mobile_snapshot(
             .collect::<Vec<_>>(),
         "grokBuild": mobile_grok_build_status(&snapshot.grok_build),
     })
+}
+
+fn mobile_surface_sessions(
+    snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
+) -> BTreeMap<String, Vec<Value>> {
+    ASSISTANT_SURFACES
+        .iter()
+        .map(|surface| {
+            (
+                (*surface).to_owned(),
+                mobile_sessions_for_surface(snapshot, session_state, surface),
+            )
+        })
+        .collect()
+}
+
+fn mobile_sessions_for_surface(
+    snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
+    surface: &str,
+) -> Vec<Value> {
+    snapshot
+        .threads
+        .iter()
+        .enumerate()
+        .filter(|(_, thread)| !is_deleted(thread, session_state))
+        .filter(|(_, thread)| thread_matches_assistant_surface(thread, surface))
+        .map(|(index, thread)| session_summary(thread, index, session_state))
+        .collect()
+}
+
+fn thread_matches_assistant_surface(thread: &DesktopThread, surface: &str) -> bool {
+    session_matches_assistant_surface(
+        thread.transcript_path.as_deref(),
+        thread.cwd.as_deref(),
+        thread.source.as_deref(),
+        thread.originator.as_deref(),
+        thread.agent_path.as_deref(),
+        surface,
+    )
 }
 
 pub fn mobile_grok_build_status(grok_build: &GrokBuildStatus) -> Value {
@@ -113,19 +147,14 @@ pub fn mobile_session_detail(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,
     thread_id: &str,
+    assistant_surface: Option<&str>,
 ) -> Option<Value> {
     let (index, thread) =
         snapshot.threads.iter().enumerate().find(|(_, thread)| {
             thread.thread_id == thread_id && !is_deleted(thread, session_state)
         })?;
-    if !session_matches_assistant_surface(
-        thread.transcript_path.as_deref(),
-        thread.cwd.as_deref(),
-        thread.source.as_deref(),
-        thread.originator.as_deref(),
-        thread.agent_path.as_deref(),
-        &session_state.assistant_surface,
-    ) {
+    let visible_surface = assistant_surface.unwrap_or(&session_state.assistant_surface);
+    if !thread_matches_assistant_surface(thread, visible_surface) {
         return None;
     }
     let session_override = session_override(thread, session_state);

@@ -27,7 +27,7 @@ use crate::mobile_events::{
 };
 use crate::mobile_push::MobilePushRegistrationRequest;
 use crate::mobile_session::{
-    MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
+    ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
 
 mod mobile_access;
@@ -45,7 +45,8 @@ use self::requests::{
     DesktopSessionBatchPromptRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
     DesktopTelegramChatsRequest, MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
-    MobileSessionArchiveRequest, MobileSessionModeRequest, MobileSessionPromptRequest,
+    MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
+    MobileSessionPromptRequest,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -786,7 +787,7 @@ async fn desktop_session_detail(
         Ok(session_state) => session_state,
         Err(error) => return mobile_session_error_response(error),
     };
-    match mobile_session_detail(&snapshot, &session_state, &thread_id) {
+    match mobile_session_detail(&snapshot, &session_state, &thread_id, None) {
         Some(detail) => (StatusCode::OK, Json(detail)).into_response(),
         None => mobile_session_not_found_response(),
     }
@@ -1236,9 +1237,15 @@ async fn mobile_session_detail_handler(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
     Path(thread_id): Path<String>,
+    Query(query): Query<MobileSessionDetailQuery>,
 ) -> impl IntoResponse {
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
+    }
+    if let Some(assistant_surface) = query.assistant_surface.as_deref() {
+        if !ASSISTANT_SURFACES.contains(&assistant_surface) {
+            return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
+        }
     }
 
     let snapshot = match mobile_desktop_snapshot(&control_plane) {
@@ -1249,7 +1256,12 @@ async fn mobile_session_detail_handler(
         Ok(session_state) => session_state,
         Err(error) => return mobile_session_error_response(error),
     };
-    match mobile_session_detail(&snapshot, &session_state, &thread_id) {
+    match mobile_session_detail(
+        &snapshot,
+        &session_state,
+        &thread_id,
+        query.assistant_surface.as_deref(),
+    ) {
         Some(detail) => (StatusCode::OK, Json(detail)).into_response(),
         None => mobile_session_not_found_response(),
     }
@@ -1710,7 +1722,7 @@ fn mobile_session_is_visible(
     session_state: &MobileSessionState,
     thread_id: &str,
 ) -> bool {
-    mobile_session_detail(snapshot, session_state, thread_id).is_some()
+    mobile_session_detail(snapshot, session_state, thread_id, None).is_some()
 }
 
 fn handoff_session_html(thread: &DesktopThread, handoff_base_url: Option<&str>) -> String {

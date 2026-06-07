@@ -32,6 +32,7 @@ final class CompanionAppModel {
     private(set) var mutatingSessionIDs: Set<String> = []
     var pendingOpenSessionID: String?
     private(set) var sessionSections = SessionSections.empty
+    var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
 
     @ObservationIgnored private var service: any CompanionService
     @ObservationIgnored private let notificationManager: LocalNotificationManager
@@ -42,6 +43,9 @@ final class CompanionAppModel {
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private var mobileEventStreamTask: Task<Void, Never>?
+    @ObservationIgnored private var hasUserSelectedAssistantSurface = false
+    @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
+    @ObservationIgnored private var isSavingAssistantSurface = false
 
     init(
         environment: CompanionEnvironment,
@@ -100,6 +104,10 @@ final class CompanionAppModel {
 
     var sessionsBadgeCount: Int {
         sessionSections.needsAttentionCount
+    }
+
+    var canSwitchAssistantSurface: Bool {
+        snapshot != nil || connectionState == .connected
     }
 
     var connectivityHeadline: String {
@@ -333,6 +341,10 @@ final class CompanionAppModel {
         service = CompanionEnvironment.live().service
         snapshot = nil
         sessionSections = .empty
+        selectedAssistantSurface = .defaultSurface
+        hasUserSelectedAssistantSurface = false
+        pendingAssistantSurfaceSave = nil
+        isSavingAssistantSurface = false
         serverHealth = nil
         detailBySessionID = [:]
         errorMessage = nil
@@ -560,6 +572,7 @@ final class CompanionAppModel {
         if snapshot == nil || snapshot?.sessions.first(where: { $0.id == sessionID }) == nil {
             await loadSnapshot()
         }
+        selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
 
         await refreshSessionDetail(id: sessionID)
     }
@@ -623,7 +636,10 @@ final class CompanionAppModel {
 
     func refreshSessionDetail(id: String) async {
         do {
-            detailBySessionID[id] = try await service.loadSessionDetail(id: id)
+            detailBySessionID[id] = try await service.loadSessionDetail(
+                id: id,
+                surface: selectedAssistantSurface
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -699,6 +715,7 @@ final class CompanionAppModel {
             if snapshot == nil {
                 await loadSnapshot()
             }
+            selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
             pendingOpenSessionID = sessionID
             await refreshSessionDetail(id: sessionID)
         case .continueChat:
@@ -740,11 +757,16 @@ final class CompanionAppModel {
         }
     }
 
-    @discardableResult
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async -> Bool {
-        return await mutateSnapshot {
-            try await service.saveAssistantSurface(surface)
+    func selectAssistantSurface(_ surface: CompanionAssistantSurface) {
+        guard selectedAssistantSurface != surface else {
+            return
         }
+
+        hasUserSelectedAssistantSurface = true
+        selectedAssistantSurface = surface
+        applyVisibleAssistantSurface(surface)
+        pendingAssistantSurfaceSave = surface
+        startAssistantSurfaceSaveIfNeeded()
     }
 
     private func mutateSessionSnapshot(
@@ -835,26 +857,30 @@ final class CompanionAppModel {
     }
 
     private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {
-        snapshot = cachedSnapshot
-        sessionSections = SessionSections(sessions: cachedSnapshot.sessions)
+        let visibleSnapshot = applySnapshotState(
+            cachedSnapshot,
+            preferredSurface: cachedSnapshot.globalSettings.assistantSurface
+        )
         lastUpdatedAt = Date()
-        syncDetailCache(with: cachedSnapshot)
-        syncSpotlightIndex(with: cachedSnapshot.sessions)
+        syncDetailCache(with: visibleSnapshot)
+        syncSpotlightIndex(with: visibleSnapshot.sessionsAcrossSurfaces)
         CompanionDiagnostics.record(
-            "snapshot:cache-restore reason=\(reason) sessions=\(cachedSnapshot.sessions.count)"
+            "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
     }
 
     private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {
         let previousSnapshot = snapshot
-        snapshot = nextSnapshot
-        sessionSections = SessionSections(sessions: nextSnapshot.sessions)
+        let visibleSnapshot = applySnapshotState(
+            nextSnapshot,
+            preferredSurface: preferredAssistantSurface(for: nextSnapshot)
+        )
         connectionState = .connected
         lastUpdatedAt = Date()
-        CompanionSnapshotCache.save(nextSnapshot)
-        syncDetailCache(with: nextSnapshot)
+        CompanionSnapshotCache.save(visibleSnapshot)
+        syncDetailCache(with: visibleSnapshot)
 
-        syncSpotlightIndex(with: nextSnapshot.sessions)
+        syncSpotlightIndex(with: visibleSnapshot.sessionsAcrossSurfaces)
 
         guard shouldUseLocalFallbackNotifications else {
             return
@@ -862,8 +888,94 @@ final class CompanionAppModel {
 
         await notificationManager.deliverStopNotifications(
             previousSnapshot: previousSnapshot,
-            currentSnapshot: nextSnapshot
+            currentSnapshot: visibleSnapshot
         )
+    }
+
+    private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
+        guard let snapshot else {
+            sessionSections = .empty
+            return
+        }
+
+        let visibleSnapshot = applySnapshotState(snapshot, preferredSurface: surface)
+        syncDetailCache(with: visibleSnapshot)
+    }
+
+    @discardableResult
+    private func applySnapshotState(
+        _ nextSnapshot: MobileSnapshot,
+        preferredSurface: CompanionAssistantSurface
+    ) -> MobileSnapshot {
+        let visibleSnapshot = nextSnapshot.visibleSnapshot(for: preferredSurface)
+        selectedAssistantSurface = preferredSurface
+        snapshot = visibleSnapshot
+        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
+        return visibleSnapshot
+    }
+
+    private func preferredAssistantSurface(
+        for nextSnapshot: MobileSnapshot
+    ) -> CompanionAssistantSurface {
+        if hasUserSelectedAssistantSurface {
+            return selectedAssistantSurface
+        }
+
+        return nextSnapshot.globalSettings.assistantSurface
+    }
+
+    private func startAssistantSurfaceSaveIfNeeded() {
+        guard !isSavingAssistantSurface else {
+            return
+        }
+
+        isSavingAssistantSurface = true
+        Task { @MainActor in
+            await persistPendingAssistantSurfaces()
+        }
+    }
+
+    private func persistPendingAssistantSurfaces() async {
+        while let nextAssistantSurface = pendingAssistantSurfaceSave {
+            pendingAssistantSurfaceSave = nil
+
+            do {
+                let nextSnapshot = try await service.saveAssistantSurface(nextAssistantSurface)
+                await applySnapshot(nextSnapshot)
+            } catch {
+                guard !isCancellationError(error) else {
+                    continue
+                }
+
+                handleAssistantSurfaceSaveFailure(error)
+            }
+        }
+
+        isSavingAssistantSurface = false
+        if pendingAssistantSurfaceSave != nil {
+            startAssistantSurfaceSaveIfNeeded()
+        }
+    }
+
+    private func handleAssistantSurfaceSaveFailure(_ error: Error) {
+        let nextConnectionState = connectionState(for: error)
+        connectionState = nextConnectionState
+        errorMessage = shouldSuppressSnapshotLoadError(
+            state: nextConnectionState,
+            hasUsableSnapshot: snapshot != nil
+        ) ? nil : error.localizedDescription
+        CompanionDiagnostics.record(
+            "assistant-surface:save-failed surface=\(selectedAssistantSurface.rawValue) state=\(nextConnectionState.rawValue) error=\(error.localizedDescription)"
+        )
+    }
+
+    private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) {
+        guard let surface = snapshot?.assistantSurface(containingSessionID: sessionID) else {
+            return
+        }
+
+        selectedAssistantSurface = surface
+        applyVisibleAssistantSurface(surface)
     }
 
     private func syncSpotlightIndex(with sessions: [SessionSummary]) {

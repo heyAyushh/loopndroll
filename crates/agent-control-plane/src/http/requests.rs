@@ -43,6 +43,12 @@ pub(super) struct MobileSessionPromptRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct MobileSessionDetailQuery {
+    pub(super) assistant_surface: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct DesktopSessionBatchPromptRequest {
     pub(super) thread_ids: Vec<String>,
     pub(super) prompt: String,
