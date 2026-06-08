@@ -1,6 +1,8 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import LooperMenuBarCore
+import OSLog
 
 @MainActor
 private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -14,8 +16,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let continuationRefreshInterval: Duration = .seconds(20)
         static let activationPolicy: NSApplication.ActivationPolicy = .accessory
         static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
-        static let handoffRightNowHotkeySubMenuTitle = "Right-Now Hotkey"
-        static let handoffRightNowHotkeyDefaultsKey = "rightNowHotkeyOption"
+        static let handoffHotkeySubMenuTitle = "Handoff Hotkey"
         static let detailsMenuTitle = "Details"
         static let settingsMenuTitle = "Settings"
     }
@@ -28,7 +29,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var continuationRefreshTask: Task<Void, Never>?
     private var mobileHealth: MobileHealthResponse?
     private var devinProbe: DevinAcpBridgeProbe?
-    private var rightNowHotkeyMonitor: Any?
+    private let handoffHotkeyController = HandoffHotkeyController()
 
     override init() {
         let endpointStore = ControlPlaneEndpointStore()
@@ -43,11 +44,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(Layout.activationPolicy)
+        LooperHandoffHotkeyOption.migrateStoredPreference()
         continuationPublisher.focusAssist = handoffFocusAssist
         installStatusItem()
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
-        installRightNowHotkeyMonitor()
+        installHandoffHotkey()
         Task {
             _ = await lifecycle.registerOnLaunch()
             await refreshMenu()
@@ -60,7 +62,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         if !detachServerOnQuit {
             _ = lifecycle.unregisterBeforeQuit()
         }
-        removeRightNowHotkeyMonitor()
+        handoffHotkeyController.stop()
     }
 
     func application(
@@ -422,7 +424,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         let submenu = NSMenu(title: Layout.settingsMenuTitle)
         submenu.autoenablesItems = false
         addHandoffFocusAssistItem(to: submenu)
-        addRightNowHotkeyItem(to: submenu)
+        addHandoffHotkeyItem(to: submenu)
         addDetachServerItem(to: submenu)
         submenu.addItem(NSMenuItem.separator())
         addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: submenu)
@@ -457,24 +459,24 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
-    private func addRightNowHotkeyItem(to menu: NSMenu) {
+    private func addHandoffHotkeyItem(to menu: NSMenu) {
         let item = NSMenuItem(
-            title: "\(Layout.handoffRightNowHotkeySubMenuTitle): \(rightNowHotkeyOption.menuTitle)",
+            title: "\(Layout.handoffHotkeySubMenuTitle): \(handoffHotkeyOption.menuTitle)",
             action: nil,
             keyEquivalent: ""
         )
-        let submenu = NSMenu(title: Layout.handoffRightNowHotkeySubMenuTitle)
+        let submenu = NSMenu(title: Layout.handoffHotkeySubMenuTitle)
         submenu.autoenablesItems = false
 
-        for option in HandoffRightNowHotkeyOption.allOptions {
+        for option in LooperHandoffHotkeyOption.allOptions {
             let optionItem = NSMenuItem(
                 title: option.menuTitle,
-                action: #selector(setHandoffRightNowHotkeyAction(_:)),
+                action: #selector(setHandoffHotkeyAction(_:)),
                 keyEquivalent: ""
             )
             optionItem.target = self
             optionItem.representedObject = option.rawValue
-            optionItem.state = rightNowHotkeyOption == option ? .on : .off
+            optionItem.state = handoffHotkeyOption == option ? .on : .off
             submenu.addItem(optionItem)
         }
 
@@ -501,45 +503,27 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
     }
 
-    private var rightNowHotkeyOption: HandoffRightNowHotkeyOption {
+    private var handoffHotkeyOption: LooperHandoffHotkeyOption {
         get {
-            let rawValue = UserDefaults.standard.string(forKey: Layout.handoffRightNowHotkeyDefaultsKey)
-                ?? HandoffRightNowHotkeyOption.commandL.rawValue
-            return HandoffRightNowHotkeyOption(rawValue: rawValue) ?? .commandL
+            LooperHandoffHotkeyOption.stored()
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: Layout.handoffRightNowHotkeyDefaultsKey)
+            newValue.save()
+            handoffHotkeyController.update(option: newValue)
         }
     }
 
-    private func installRightNowHotkeyMonitor() {
-        rightNowHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: .keyDown
-        ) { [weak self] event in
-            Task { @MainActor in
-                self?.handleRightNowHotkeyEvent(event)
-            }
+    private func installHandoffHotkey() {
+        handoffHotkeyController.start(option: handoffHotkeyOption) { [weak self] in
+            self?.handleHandoffHotkey()
         }
     }
 
-    private func removeRightNowHotkeyMonitor() {
-        guard let rightNowHotkeyMonitor else {
-            return
+    private func handleHandoffHotkey() {
+        continuationPublisher.requestFocusAssistedActivation()
+        Task {
+            await refreshContinuationActivity()
         }
-        NSEvent.removeMonitor(rightNowHotkeyMonitor)
-        self.rightNowHotkeyMonitor = nil
-    }
-
-    private func handleRightNowHotkeyEvent(_ event: NSEvent) {
-        guard handoffFocusAssist == .rightNow else {
-            return
-        }
-
-        guard rightNowHotkeyOption.isMatch(event) else {
-            return
-        }
-
-        continuationPublisher.requestRightNowFocus()
     }
 
     @objc private func refreshMenuAction(_ sender: Any?) {
@@ -598,14 +582,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
     }
 
-    @objc private func setHandoffRightNowHotkeyAction(_ sender: NSMenuItem) {
+    @objc private func setHandoffHotkeyAction(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
-              let option = HandoffRightNowHotkeyOption(rawValue: rawValue)
+              let option = LooperHandoffHotkeyOption(rawValue: rawValue)
         else {
             return
         }
 
-        rightNowHotkeyOption = option
+        handoffHotkeyOption = option
         Task {
             await refreshMenu()
         }
@@ -703,81 +687,169 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 }
 
-private enum HandoffRightNowHotkeyOption: String, CaseIterable, Identifiable, Sendable {
-    case commandL
-    case commandShiftL
-    case commandOptionL
-    case controlL
-    case disabled
-
-    static let allOptions = [commandL, commandShiftL, commandOptionL, controlL, disabled]
-
-    var id: String {
-        rawValue
+@MainActor
+private final class HandoffHotkeyController {
+    private enum Layout {
+        static let loggingSubsystem = "dev.looper.app.ios"
+        static let loggingCategory = "handoff-hotkey"
+        static let hotkeySignature = FourCharacterCode.make("LHky")
+        static let hotkeyIdentifier: UInt32 = 1
+        static let handledEventCount = 1
+        static let registrationOptions: OptionBits = 0
     }
 
-    var key: String {
-        "l"
-    }
-
-    var menuTitle: String {
-        switch self {
-        case .commandL:
-            "⌘L"
-        case .commandShiftL:
-            "⌘⇧L"
-        case .commandOptionL:
-            "⌘⌥L"
-        case .controlL:
-            "⌃L"
-        case .disabled:
-            "Disabled"
+    private let logger = Logger(subsystem: Layout.loggingSubsystem, category: Layout.loggingCategory)
+    private let eventHandler: EventHandlerUPP = { _, _, userData in
+        guard let userData else {
+            return noErr
         }
-    }
 
-    var isEnabled: Bool {
-        self != .disabled
-    }
-
-    var modifierFlags: NSEvent.ModifierFlags {
-        switch self {
-        case .commandL:
-            [.command]
-        case .commandShiftL:
-            [.command, .shift]
-        case .commandOptionL:
-            [.command, .option]
-        case .controlL:
-            [.control]
-        case .disabled:
-            []
+        let controller = Unmanaged<HandoffHotkeyController>.fromOpaque(userData).takeUnretainedValue()
+        Task { @MainActor in
+            controller.invokeHandler()
         }
+        return noErr
     }
 
-    func isMatch(_ event: NSEvent) -> Bool {
-        guard isEnabled else {
+    private var eventHandlerReference: EventHandlerRef?
+    private var hotkeyReference: EventHotKeyRef?
+    private var registeredOption: LooperHandoffHotkeyOption?
+    private var onHotkey: (@MainActor () -> Void)?
+
+    func start(option: LooperHandoffHotkeyOption, onHotkey: @escaping @MainActor () -> Void) {
+        self.onHotkey = onHotkey
+        update(option: option)
+    }
+
+    func update(option: LooperHandoffHotkeyOption) {
+        unregisterCurrentHotkey()
+        registeredOption = nil
+
+        guard option.isEnabled else {
+            logger.info("handoff hotkey disabled")
+            return
+        }
+
+        guard installEventHandlerIfNeeded() else {
+            return
+        }
+
+        var hotkeyReference: EventHotKeyRef?
+        let hotkeyID = EventHotKeyID(signature: Layout.hotkeySignature, id: Layout.hotkeyIdentifier)
+        let status = RegisterEventHotKey(
+            option.carbonKeyCode,
+            option.carbonModifierFlags,
+            hotkeyID,
+            GetApplicationEventTarget(),
+            Layout.registrationOptions,
+            &hotkeyReference
+        )
+
+        guard status == noErr, let hotkeyReference else {
+            logger.error(
+                "handoff hotkey registration failed option=\(option.menuTitle, privacy: .public) status=\(status, privacy: .public)"
+            )
+            return
+        }
+
+        self.hotkeyReference = hotkeyReference
+        registeredOption = option
+        logger.info("handoff hotkey registered option=\(option.menuTitle, privacy: .public)")
+    }
+
+    func stop() {
+        unregisterCurrentHotkey()
+        removeEventHandler()
+        onHotkey = nil
+    }
+
+    private func installEventHandlerIfNeeded() -> Bool {
+        if eventHandlerReference != nil {
+            return true
+        }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let userData = Unmanaged.passUnretained(self).toOpaque()
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            eventHandler,
+            Layout.handledEventCount,
+            &eventType,
+            userData,
+            &eventHandlerReference
+        )
+
+        guard status == noErr else {
+            logger.error("handoff hotkey event handler installation failed status=\(status, privacy: .public)")
             return false
         }
 
-        return isMatch(
-            modifierFlags: Self.normalizedShortcutModifiers(event.modifierFlags),
-            key: event.charactersIgnoringModifiers?.lowercased() ?? ""
-        )
+        return true
     }
 
-    private func isMatch(modifierFlags: NSEvent.ModifierFlags, key: String) -> Bool {
-        modifierFlags == self.modifierFlags && key == self.key
+    private func unregisterCurrentHotkey() {
+        guard let hotkeyReference else {
+            return
+        }
+
+        UnregisterEventHotKey(hotkeyReference)
+        self.hotkeyReference = nil
     }
 
-    private static let shortcutSupportedModifierFlags: NSEvent.ModifierFlags = [
-        .command,
-        .control,
-        .option,
-        .shift
-    ]
+    private func removeEventHandler() {
+        guard let eventHandlerReference else {
+            return
+        }
 
-    private static func normalizedShortcutModifiers(_ modifierFlags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
-        modifierFlags.intersection(shortcutSupportedModifierFlags)
+        RemoveEventHandler(eventHandlerReference)
+        self.eventHandlerReference = nil
+    }
+
+    private func invokeHandler() {
+        logger.info("handoff hotkey pressed option=\(self.registeredOption?.menuTitle ?? "unknown", privacy: .public)")
+        onHotkey?()
+    }
+}
+
+private enum FourCharacterCode {
+    private static let expectedByteCount = 4
+    private static let bitsPerByte: UInt32 = 8
+
+    static func make(_ characters: String) -> OSType {
+        precondition(characters.utf8.count == expectedByteCount)
+        return characters.utf8.reduce(OSType(0)) { partialResult, character in
+            (partialResult << bitsPerByte) + OSType(character)
+        }
+    }
+}
+
+private extension LooperHandoffHotkeyOption {
+    var carbonKeyCode: UInt32 {
+        UInt32(kVK_ANSI_L)
+    }
+
+    var carbonModifierFlags: UInt32 {
+        switch self {
+        case .commandL:
+            Self.carbonModifierFlags(cmdKey)
+        case .commandShiftL:
+            Self.carbonModifierFlags(cmdKey, shiftKey)
+        case .commandOptionL:
+            Self.carbonModifierFlags(cmdKey, optionKey)
+        case .controlL:
+            Self.carbonModifierFlags(controlKey)
+        case .disabled:
+            0
+        }
+    }
+
+    private static func carbonModifierFlags(_ flags: Int...) -> UInt32 {
+        flags.reduce(UInt32(0)) { partialResult, flag in
+            partialResult | UInt32(flag)
+        }
     }
 }
 

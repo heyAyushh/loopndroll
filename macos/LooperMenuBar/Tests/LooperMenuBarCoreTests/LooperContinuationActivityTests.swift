@@ -38,6 +38,52 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func defaultsHandoffHotkeyToCommandL() {
+        let suiteName = "dev.looper.tests.handoff-hotkey.default"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        #expect(LooperHandoffHotkeyOption.stored(in: defaults) == .commandL)
+        #expect(LooperHandoffHotkeyOption.defaultOption.menuTitle == "⌘L")
+        #expect(LooperHandoffHotkeyOption.defaultOption.isEnabled)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
+    func migratesLegacyRightNowHotkeyPreference() {
+        let suiteName = "dev.looper.tests.handoff-hotkey.migration"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(
+            LooperHandoffHotkeyOption.commandOptionL.rawValue,
+            forKey: LooperHandoffHotkeyOption.legacyRightNowUserDefaultsKey
+        )
+
+        LooperHandoffHotkeyOption.migrateStoredPreference(in: defaults)
+
+        #expect(LooperHandoffHotkeyOption.stored(in: defaults) == .commandOptionL)
+        #expect(defaults.object(forKey: LooperHandoffHotkeyOption.legacyRightNowUserDefaultsKey) == nil)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
+    func savingHandoffHotkeyRemovesLegacyPreference() {
+        let suiteName = "dev.looper.tests.handoff-hotkey.save"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(
+            LooperHandoffHotkeyOption.controlL.rawValue,
+            forKey: LooperHandoffHotkeyOption.legacyRightNowUserDefaultsKey
+        )
+
+        LooperHandoffHotkeyOption.commandShiftL.save(in: defaults)
+
+        #expect(LooperHandoffHotkeyOption.stored(in: defaults) == .commandShiftL)
+        #expect(defaults.object(forKey: LooperHandoffHotkeyOption.legacyRightNowUserDefaultsKey) == nil)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
     func usesNewestActiveThreadAsContinuationTarget() throws {
         let snapshot = desktopSnapshot(threads: [
             thread(id: "old", title: "Old", updatedAtMs: 1),

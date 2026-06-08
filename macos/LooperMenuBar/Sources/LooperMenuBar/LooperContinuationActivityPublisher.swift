@@ -33,7 +33,7 @@ final class LooperContinuationActivityPublisher {
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
     private var currentActivityRefreshTask: Task<Void, Never>?
-    private var isRightNowFocusRequestQueued = false
+    private var isFocusAssistedActivationRequestQueued = false
 
     var focusAssist = LooperHandoffFocusAssist.defaultOption {
         didSet {
@@ -48,10 +48,9 @@ final class LooperContinuationActivityPublisher {
         self.idleTimeProvider = idleTimeProvider
     }
 
-    func requestRightNowFocus() {
-        isRightNowFocusRequestQueued = true
-        logger.debug("handoff right-now focus queued")
-        refreshCurrentActivity()
+    func requestFocusAssistedActivation() {
+        isFocusAssistedActivationRequestQueued = true
+        logger.debug("handoff focus activation queued")
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -97,7 +96,7 @@ final class LooperContinuationActivityPublisher {
         currentActivity?.invalidate()
         activityOwner.detach()
         logger.info("handoff activity invalidated")
-        isRightNowFocusRequestQueued = false
+        isFocusAssistedActivationRequestQueued = false
         currentActivityRefreshTask = nil
         currentActivity = nil
         currentDescriptor = nil
@@ -130,8 +129,12 @@ final class LooperContinuationActivityPublisher {
     }
 
     private func allowsFocusAssistedActivation() -> Bool {
+        if consumeFocusAssistedActivationRequest() {
+            return true
+        }
+
         if focusAssist == .rightNow {
-            return consumeRightNowFocusRequest()
+            return false
         }
 
         guard let idleThresholdSeconds = focusAssist.idleThresholdSeconds else {
@@ -141,9 +144,9 @@ final class LooperContinuationActivityPublisher {
         return idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds
     }
 
-    private func consumeRightNowFocusRequest() -> Bool {
-        defer { isRightNowFocusRequestQueued = false }
-        return isRightNowFocusRequestQueued
+    private func consumeFocusAssistedActivationRequest() -> Bool {
+        defer { isFocusAssistedActivationRequestQueued = false }
+        return isFocusAssistedActivationRequestQueued
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {
