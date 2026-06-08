@@ -978,6 +978,18 @@ struct InstalledPluginSummary: Codable, Hashable, Sendable {
     var source: String?
 }
 
+struct SessionGoalSummary: Codable, Hashable, Sendable {
+    var id: String
+    var title: String
+    var status: String
+    var lifecycle: String
+    var running: Bool
+    var tokenBudget: Int?
+    var tokensUsed: Int?
+    var timeUsedSeconds: Int?
+    var updatedAtMs: Int64?
+}
+
 enum SessionTaskKind: String, Codable, Sendable {
     case unknown
     case plan
@@ -1138,6 +1150,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         switch source {
         case "vscode":
             return "Codex"
+        case "claude-code":
+            return "Claude Code"
         case "devin-desktop":
             return "Devin"
         case "grok-build":
@@ -1165,6 +1179,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var canSendPrompt: Bool
     var promptDeliveryUnavailableReason: String?
     var assistantClient: AssistantClient
+    var goal: SessionGoalSummary?
     var metadata: SessionMetadata
 
     private enum CodingKeys: String, CodingKey {
@@ -1179,6 +1194,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case canSendPrompt
         case promptDeliveryUnavailableReason
         case assistantClient
+        case goal
         case metadata
     }
 
@@ -1194,6 +1210,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         canSendPrompt: Bool = true,
         promptDeliveryUnavailableReason: String? = nil,
         assistantClient: AssistantClient = .unknown,
+        goal: SessionGoalSummary? = nil,
         metadata: SessionMetadata = .empty
     ) {
         self.id = id
@@ -1207,6 +1224,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         self.canSendPrompt = canSendPrompt
         self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
         self.assistantClient = assistantClient
+        self.goal = goal
         self.metadata = metadata
     }
 
@@ -1227,6 +1245,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
             forKey: .promptDeliveryUnavailableReason
         )
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+        goal = try container.decodeIfPresent(SessionGoalSummary.self, forKey: .goal)
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
     }
 }
@@ -1268,6 +1287,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var canSendPrompt: Bool
     var promptDeliveryUnavailableReason: String?
     var assistantClient: AssistantClient
+    var goal: SessionGoalSummary?
     var metadata: SessionMetadata
     var notificationIds: [String]
     var completionCheckID: String?
@@ -1288,6 +1308,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case canSendPrompt
         case promptDeliveryUnavailableReason
         case assistantClient
+        case goal
         case metadata
         case notificationIds
         case completionCheckID
@@ -1309,6 +1330,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         canSendPrompt: Bool = true,
         promptDeliveryUnavailableReason: String? = nil,
         assistantClient: AssistantClient = .unknown,
+        goal: SessionGoalSummary? = nil,
         metadata: SessionMetadata = .empty,
         notificationIds: [String],
         completionCheckID: String?,
@@ -1328,6 +1350,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.canSendPrompt = canSendPrompt
         self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
         self.assistantClient = assistantClient
+        self.goal = goal
         self.metadata = metadata
         self.notificationIds = notificationIds
         self.completionCheckID = completionCheckID
@@ -1353,6 +1376,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
             forKey: .promptDeliveryUnavailableReason
         )
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
+        goal = try container.decodeIfPresent(SessionGoalSummary.self, forKey: .goal)
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
         notificationIds = try container.decode([String].self, forKey: .notificationIds)
         completionCheckID = try container.decodeIfPresent(String.self, forKey: .completionCheckID)

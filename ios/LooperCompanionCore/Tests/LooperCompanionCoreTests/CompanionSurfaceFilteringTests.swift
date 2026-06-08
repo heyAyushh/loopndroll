@@ -66,6 +66,15 @@ struct CompanionSurfaceFilteringTests {
         #expect(
             CompanionSurfaceFiltering.inferAssistantClient(
                 transcriptPath: "/Users/test/.codex/sessions/thread.jsonl",
+                cwd: nil,
+                source: "vscode",
+                originator: "Claude Code",
+                agentPath: nil
+            ) == "claude-code"
+        )
+        #expect(
+            CompanionSurfaceFiltering.inferAssistantClient(
+                transcriptPath: "/Users/test/.codex/sessions/thread.jsonl",
                 cwd: "/Users/test/project",
                 source: "vscode",
                 originator: "Devin - Next",
@@ -94,6 +103,26 @@ struct CompanionSurfaceFilteringTests {
                 originator: nil,
                 agentPath: nil,
                 surface: "codex"
+            )
+        )
+        #expect(
+            CompanionSurfaceFiltering.sessionMatchesSurface(
+                transcriptPath: "/Users/test/.codex/sessions/claude-thread.jsonl",
+                cwd: nil,
+                source: "vscode",
+                originator: "Claude Code",
+                agentPath: nil,
+                surface: "codex"
+            )
+        )
+        #expect(
+            !CompanionSurfaceFiltering.sessionMatchesSurface(
+                transcriptPath: "/Users/test/.codex/sessions/claude-thread.jsonl",
+                cwd: nil,
+                source: "vscode",
+                originator: "Claude Code",
+                agentPath: nil,
+                surface: "devin"
             )
         )
         #expect(

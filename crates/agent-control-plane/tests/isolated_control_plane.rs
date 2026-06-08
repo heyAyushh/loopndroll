@@ -29,6 +29,11 @@ const EXTRA_MOBILE_SNAPSHOT_THREADS: usize = 20;
 const EXTRA_THREAD_BASE_TIMESTAMP_MS: i64 = 3_000;
 const DEVIN_FIXTURE_EVENT_UPDATED_AT_MS: i64 = 1_780_801_814_955;
 const NEWER_THAN_DEVIN_THREAD_BASE_TIMESTAMP_MS: i64 = DEVIN_FIXTURE_EVENT_UPDATED_AT_MS + 1_000;
+const GOAL_FIXTURE_TOKEN_BUDGET: i64 = 1_000;
+const GOAL_FIXTURE_TOKENS_USED: i64 = 42;
+const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
+const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
+const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -336,6 +341,67 @@ status = "{status}"
     let manifest = request_json(&router, "/sync/manifest").await;
     assert_eq!(manifest["goals"][0]["status"], "achieved");
     assert_eq!(manifest["goals"][0]["lifecycle"], "achieved");
+}
+
+#[tokio::test]
+async fn codex_goal_database_marks_running_goal_on_session() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_thread_goal(
+        "thread-main",
+        "goal-main",
+        "Make Looper understand running goals",
+        "active",
+    );
+    let router = build_router(fixture.control_plane());
+
+    let goals = request_json(&router, "/goals").await;
+    let goal = goals["goals"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .find(|goal| goal["id"] == "goal-main")
+        .expect("sqlite goal");
+    assert_eq!(goal["source_kind"], "sqlite");
+    assert_eq!(goal["status"], "pursuing");
+    assert_eq!(goal["running"], true);
+    assert_eq!(goal["target_thread_id"], "thread-main");
+    assert_eq!(goal["target_known"], true);
+    assert_eq!(goal["tokens_used"], GOAL_FIXTURE_TOKENS_USED);
+
+    let snapshot = request_json(&router, "/desktop/snapshot").await;
+    let thread = snapshot["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["thread_id"] == "thread-main")
+        .expect("thread-main");
+    assert_eq!(thread["goal"]["id"], "goal-main");
+    assert_eq!(thread["goal"]["running"], true);
+
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+    let mobile_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let session = mobile_snapshot_session(&mobile_snapshot, "thread-main");
+    assert_eq!(session["goal"]["id"], "goal-main");
+    assert_eq!(session["goal"]["running"], true);
+
+    let manifest = request_json(&router, "/sync/manifest").await;
+    let sync_goal = manifest["goals"]
+        .as_array()
+        .expect("sync goals")
+        .iter()
+        .find(|goal| goal["id"] == "goal-main")
+        .expect("sync sqlite goal");
+    assert_eq!(sync_goal["running"], true);
+    assert_eq!(sync_goal["tokens_used"], GOAL_FIXTURE_TOKENS_USED);
 }
 
 #[tokio::test]
@@ -1666,6 +1732,122 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
 }
 
 #[tokio::test]
+async fn mobile_snapshot_identifies_claude_originator_on_codex_surface() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.set_thread_source("thread-main", "vscode");
+    let claude_transcript = fixture.write_transcript(
+        "thread-main-claude-originator.jsonl",
+        &[serde_json::json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "thread-main",
+                "originator": "Claude Code",
+                "source": "vscode"
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &claude_transcript);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let codex_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let claude_session = mobile_snapshot_session(&codex_snapshot, "thread-main");
+    assert_eq!(claude_session["assistantClient"], "claude-code");
+    assert_eq!(claude_session["metadata"]["source"], "vscode");
+    assert_eq!(
+        claude_session["metadata"]["sourceDisplayName"],
+        "Claude Code"
+    );
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    let devin_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert!(
+        devin_snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .all(|session| session["id"] != "thread-main")
+    );
+}
+
+#[tokio::test]
+async fn desktop_and_mobile_snapshots_include_claude_code_sessions() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_claude_session(
+        "claude-session-1",
+        "/tmp/claude-project",
+        "Build native Claude support",
+        "Claude session is visible.",
+    );
+    let router = build_router(fixture.control_plane());
+
+    let snapshot = request_json(&router, "/desktop/snapshot").await;
+    let claude_thread = snapshot["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["thread_id"] == "claude:claude-session-1")
+        .expect("claude thread");
+    assert_eq!(claude_thread["source"], "claude-code");
+    assert_eq!(claude_thread["originator"], "Claude Code");
+    assert_eq!(
+        claude_thread["capabilities"]["assistant_kind"],
+        "claude-code"
+    );
+    assert_eq!(
+        claude_thread["assistant_preview"],
+        "Claude session is visible."
+    );
+
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+    let mobile_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let claude_session = mobile_snapshot_session(&mobile_snapshot, "claude:claude-session-1");
+    assert_eq!(claude_session["assistantClient"], "claude-code");
+    assert_eq!(
+        claude_session["metadata"]["sourceDisplayName"],
+        "Claude Code"
+    );
+    assert_eq!(
+        claude_session["promptDeliveryUnavailableReason"],
+        "This assistant does not support mobile prompt delivery yet."
+    );
+}
+
+#[tokio::test]
 async fn desktop_snapshot_includes_grok_sessions() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2352,6 +2534,7 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
         "/Applications/Devin - Next.app/Contents/MacOS/Devin - Next --type=main".to_owned(),
         "/Applications/Superconductor.app/Contents/MacOS/Superconductor --host".to_owned(),
         "/Applications/Cursor.app/Contents/MacOS/Cursor --type=renderer".to_owned(),
+        "/Applications/Claude.app/Contents/MacOS/Claude --type=renderer com.anthropic.claudefordesktop".to_owned(),
         "/opt/homebrew/bin/opencode run --json".to_owned(),
         "/Users/test/.grok/bin/grok agent stdio --model grok-build".to_owned(),
     ]);
@@ -2385,6 +2568,18 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
         .expect("cursor adapter");
     assert!(
         cursor
+            .runtimes
+            .iter()
+            .any(|runtime| runtime.kind == AssistantRuntimeKind::Gui && runtime.running)
+    );
+
+    let claude = adapters
+        .iter()
+        .find(|adapter| adapter.assistant_kind == AssistantKind::ClaudeCode)
+        .expect("claude adapter");
+    assert!(claude.live_sessions);
+    assert!(
+        claude
             .runtimes
             .iter()
             .any(|runtime| runtime.kind == AssistantRuntimeKind::Gui && runtime.running)
@@ -3057,6 +3252,29 @@ trusted_hash = "sha256:user"
         .expect("write active sessions");
     }
 
+    fn write_claude_session(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        user_message: &str,
+        assistant_message: &str,
+    ) {
+        let project_dir = self
+            .temp_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-tmp-claude-project");
+        fs::create_dir_all(&project_dir).expect("claude project dir");
+        let content = format!(
+            r#"{{"type":"user","sessionId":"{session_id}","cwd":"{cwd}","timestamp":"2026-06-08T10:00:00.000Z","message":{{"role":"user","content":"{user_message}"}}}}
+{{"type":"assistant","sessionId":"{session_id}","cwd":"{cwd}","timestamp":"2026-06-08T10:00:01.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"{assistant_message}"}}]}}}}
+"#
+        );
+        fs::write(project_dir.join(format!("{session_id}.jsonl")), content)
+            .expect("write claude session");
+    }
+
     fn write_state_db(&self) {
         let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
         connection
@@ -3272,6 +3490,43 @@ create table thread_spawn_edges (
         let directory = self.codex_home.join("goals").join(id);
         fs::create_dir_all(&directory).expect("goal dir");
         fs::write(directory.join("goal.toml"), content.trim()).expect("goal toml");
+    }
+
+    fn write_thread_goal(&self, thread_id: &str, goal_id: &str, objective: &str, status: &str) {
+        let connection = Connection::open(self.codex_home.join("goals_1.sqlite")).expect("goals");
+        connection
+            .execute_batch(
+                r#"
+create table thread_goals (
+    thread_id text primary key not null,
+    goal_id text not null,
+    objective text not null,
+    status text not null,
+    token_budget integer,
+    tokens_used integer not null default 0,
+    time_used_seconds integer not null default 0,
+    created_at_ms integer not null,
+    updated_at_ms integer not null
+);
+"#,
+            )
+            .expect("create thread goals");
+        connection
+            .execute(
+                "insert into thread_goals values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    thread_id,
+                    goal_id,
+                    objective,
+                    status,
+                    GOAL_FIXTURE_TOKEN_BUDGET,
+                    GOAL_FIXTURE_TOKENS_USED,
+                    GOAL_FIXTURE_TIME_USED_SECONDS,
+                    GOAL_FIXTURE_CREATED_AT_MS,
+                    GOAL_FIXTURE_UPDATED_AT_MS
+                ],
+            )
+            .expect("insert thread goal");
     }
 
     fn write_rollout_with_compaction(&self, thread_id: &str, compacted_at: &str) {

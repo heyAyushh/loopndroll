@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -10,6 +11,9 @@ use sha2::{Digest, Sha256};
 const GOALS_DIRECTORY_NAME: &str = "goals";
 const ROOT_GOALS_FILE_NAME: &str = "GOALS.md";
 const DIRECTORY_GOAL_FILES: [&str; 4] = ["goal.toml", "goal.json", "goal.md", "README.md"];
+const GOALS_DATABASE_PREFIX: &str = "goals_";
+const SQLITE_DATABASE_SUFFIX: &str = ".sqlite";
+const THREAD_GOALS_TABLE_NAME: &str = "thread_goals";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -18,6 +22,7 @@ pub enum GoalStatus {
     Paused,
     Achieved,
     Unmet,
+    UsageLimited,
     BudgetLimited,
     Unknown,
 }
@@ -28,6 +33,7 @@ pub enum GoalSourceKind {
     Toml,
     Json,
     Markdown,
+    Sqlite,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,14 +55,31 @@ pub struct GoalSummary {
     pub title: String,
     pub status: GoalStatus,
     pub lifecycle: GoalStatus,
+    pub running: bool,
     pub priority: Option<String>,
     pub target_thread_id: Option<String>,
     pub target_known: bool,
     pub source_kind: GoalSourceKind,
     pub source_path: String,
     pub updated_at_ms: Option<i64>,
+    pub token_budget: Option<i64>,
+    pub tokens_used: Option<i64>,
+    pub time_used_seconds: Option<i64>,
     pub content_hash: String,
     pub sync_safe: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThreadGoalSummary {
+    pub id: String,
+    pub title: String,
+    pub status: GoalStatus,
+    pub lifecycle: GoalStatus,
+    pub running: bool,
+    pub token_budget: Option<i64>,
+    pub tokens_used: Option<i64>,
+    pub time_used_seconds: Option<i64>,
+    pub updated_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +99,7 @@ impl GoalDefinition {
             title: self.title.clone(),
             status: self.status.clone(),
             lifecycle: self.status.clone(),
+            running: goal_status_is_running(&self.status),
             priority: self.priority.clone(),
             target_thread_id: self.target_thread_id.clone(),
             target_known: self
@@ -86,6 +110,9 @@ impl GoalDefinition {
             source_kind: self.source_kind.clone(),
             source_path: self.source_path.display().to_string(),
             updated_at_ms: self.updated_at_ms,
+            token_budget: None,
+            tokens_used: None,
+            time_used_seconds: None,
             content_hash: self.content_hash.clone(),
             sync_safe: true,
         }
@@ -101,9 +128,45 @@ pub fn read_goals(
         let goal = read_goal_file(&path)?;
         goals.push(goal.to_summary(known_thread_ids));
     }
+    goals.extend(read_thread_goals_database(codex_home, known_thread_ids)?);
     goals.sort_by(|left, right| left.id.cmp(&right.id));
-    goals.dedup_by(|left, right| left.id == right.id);
+    goals.dedup_by(|left, right| {
+        left.id == right.id && left.target_thread_id == right.target_thread_id
+    });
     Ok(goals)
+}
+
+pub fn goal_for_thread(goals: &[GoalSummary], thread_id: &str) -> Option<ThreadGoalSummary> {
+    goals
+        .iter()
+        .filter(|goal| goal.target_thread_id.as_deref() == Some(thread_id))
+        .max_by(|left, right| {
+            left.running
+                .cmp(&right.running)
+                .then_with(|| {
+                    left.updated_at_ms
+                        .unwrap_or_default()
+                        .cmp(&right.updated_at_ms.unwrap_or_default())
+                })
+                .then_with(|| left.id.cmp(&right.id))
+        })
+        .map(ThreadGoalSummary::from)
+}
+
+impl From<&GoalSummary> for ThreadGoalSummary {
+    fn from(goal: &GoalSummary) -> Self {
+        Self {
+            id: goal.id.clone(),
+            title: goal.title.clone(),
+            status: goal.status.clone(),
+            lifecycle: goal.lifecycle.clone(),
+            running: goal.running,
+            token_budget: goal.token_budget,
+            tokens_used: goal.tokens_used,
+            time_used_seconds: goal.time_used_seconds,
+            updated_at_ms: goal.updated_at_ms,
+        }
+    }
 }
 
 fn goal_candidate_files(codex_home: &Path) -> Result<Vec<PathBuf>> {
@@ -170,6 +233,7 @@ fn read_goal_file(path: &Path) -> Result<GoalDefinition> {
             updated_at_ms,
             content_hash,
         }),
+        GoalSourceKind::Sqlite => unreachable!("SQLite goals are read from the goals database"),
     }
 }
 
@@ -220,6 +284,103 @@ fn read_json_goal(
         updated_at_ms,
         content_hash,
     })
+}
+
+fn read_thread_goals_database(
+    codex_home: &Path,
+    known_thread_ids: &BTreeSet<String>,
+) -> Result<Vec<GoalSummary>> {
+    let Some(database_path) = latest_goals_database(codex_home) else {
+        return Ok(Vec::new());
+    };
+    let connection = Connection::open(&database_path)
+        .with_context(|| format!("open Codex goals DB {}", database_path.display()))?;
+    if !table_exists(&connection, THREAD_GOALS_TABLE_NAME)? {
+        return Ok(Vec::new());
+    }
+
+    let mut statement = connection.prepare(
+        "select
+            thread_id,
+            goal_id,
+            objective,
+            status,
+            token_budget,
+            tokens_used,
+            time_used_seconds,
+            created_at_ms,
+            updated_at_ms
+         from thread_goals
+         order by updated_at_ms desc, thread_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let thread_id: String = row.get(0)?;
+        let goal_id: String = row.get(1)?;
+        let objective: String = row.get(2)?;
+        let status_text: String = row.get(3)?;
+        let token_budget: Option<i64> = row.get(4)?;
+        let tokens_used: i64 = row.get(5)?;
+        let time_used_seconds: i64 = row.get(6)?;
+        let created_at_ms: i64 = row.get(7)?;
+        let updated_at_ms: i64 = row.get(8)?;
+        let status = parse_status(Some(&status_text));
+        let content_hash = sha256_hex(
+            format!(
+                "{thread_id}\n{goal_id}\n{objective}\n{status_text}\n{token_budget:?}\n{tokens_used}\n{time_used_seconds}\n{created_at_ms}\n{updated_at_ms}"
+            )
+            .as_bytes(),
+        );
+        Ok(GoalSummary {
+            id: goal_id,
+            title: objective,
+            status: status.clone(),
+            lifecycle: status.clone(),
+            running: goal_status_is_running(&status),
+            priority: None,
+            target_thread_id: Some(thread_id.clone()),
+            target_known: known_thread_ids.contains(&thread_id),
+            source_kind: GoalSourceKind::Sqlite,
+            source_path: database_path.display().to_string(),
+            updated_at_ms: Some(updated_at_ms),
+            token_budget,
+            tokens_used: Some(tokens_used),
+            time_used_seconds: Some(time_used_seconds),
+            content_hash,
+            sync_safe: true,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn latest_goals_database(codex_home: &Path) -> Option<PathBuf> {
+    let mut candidates = std::fs::read_dir(codex_home)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| {
+                    name.starts_with(GOALS_DATABASE_PREFIX)
+                        && name.ends_with(SQLITE_DATABASE_SUFFIX)
+                })
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop()
+}
+
+fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
+    connection
+        .query_row(
+            "select name from sqlite_master where type = 'table' and name = ?1",
+            [table_name],
+            |_row| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(Into::into)
 }
 
 fn source_kind(path: &Path) -> GoalSourceKind {
@@ -284,9 +445,14 @@ fn parse_status(value: Option<&str>) -> GoalStatus {
         "paused" | "blocked" => GoalStatus::Paused,
         "achieved" | "done" | "complete" | "completed" | "closed" => GoalStatus::Achieved,
         "unmet" | "failed" => GoalStatus::Unmet,
+        "usage-limited" | "usage_limited" | "usage limited" => GoalStatus::UsageLimited,
         "budget-limited" | "budget_limited" | "budget limited" => GoalStatus::BudgetLimited,
         _ => GoalStatus::Unknown,
     }
+}
+
+fn goal_status_is_running(status: &GoalStatus) -> bool {
+    matches!(status, GoalStatus::Pursuing)
 }
 
 fn updated_at_ms(path: &Path) -> Option<i64> {

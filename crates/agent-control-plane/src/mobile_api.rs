@@ -34,6 +34,7 @@ const ARCHIVED_SESSION_STATUS: &str = "archived";
 const STOPPED_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_STOPPED;
 const WAITING_SESSION_STATUS: &str = "waiting";
 const CODEX_SOURCE_LABEL: &str = "Codex";
+const CLAUDE_SOURCE_LABEL: &str = "Claude Code";
 const DEVIN_SOURCE_LABEL: &str = "Devin";
 const GROK_BUILD_SOURCE_LABEL: &str = "Grok Build";
 
@@ -258,14 +259,19 @@ const DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON: &str =
     "This Devin Local session must be running before Looper can deliver prompts through hooks.";
 const INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "This session must be running before Looper can queue prompts.";
+const UNSUPPORTED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
+    "This assistant does not support mobile prompt delivery yet.";
 
 struct PromptDeliveryAvailability {
     can_send_prompt: bool,
     unavailable_reason: Option<&'static str>,
 }
 
-fn assistant_supports_prompt_delivery(_assistant_kind: &AssistantKind) -> bool {
-    true
+fn assistant_supports_prompt_delivery(assistant_kind: &AssistantKind) -> bool {
+    matches!(
+        assistant_kind,
+        AssistantKind::Codex | AssistantKind::DevinDesktop | AssistantKind::GrokBuild
+    )
 }
 
 fn prompt_delivery_availability(
@@ -283,7 +289,7 @@ fn prompt_delivery_availability(
     if !assistant_supports_prompt_delivery(&thread.capabilities.assistant_kind) {
         return PromptDeliveryAvailability {
             can_send_prompt: false,
-            unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+            unavailable_reason: Some(UNSUPPORTED_PROMPT_DELIVERY_UNAVAILABLE_REASON),
         };
     }
     if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
@@ -484,6 +490,7 @@ fn session_summary(
             prompt_delivery_availability.unavailable_reason
         ),
         "assistantClient": assistant_client,
+        "goal": mobile_thread_goal_summary(thread.goal.as_ref()),
         "metadata": {
             "kind": kind,
             "source": thread.source.as_deref().unwrap_or(UNKNOWN_TASK_KIND),
@@ -503,8 +510,26 @@ fn session_summary(
     })
 }
 
+fn mobile_thread_goal_summary(goal: Option<&crate::goals::ThreadGoalSummary>) -> Value {
+    goal.map(|goal| {
+        json!({
+            "id": &goal.id,
+            "title": &goal.title,
+            "status": &goal.status,
+            "lifecycle": &goal.lifecycle,
+            "running": goal.running,
+            "tokenBudget": goal.token_budget,
+            "tokensUsed": goal.tokens_used,
+            "timeUsedSeconds": goal.time_used_seconds,
+            "updatedAtMs": goal.updated_at_ms,
+        })
+    })
+    .unwrap_or(Value::Null)
+}
+
 fn source_display_name(assistant_client: &str) -> &'static str {
     match assistant_client {
+        "claude-code" => CLAUDE_SOURCE_LABEL,
         "devin" => DEVIN_SOURCE_LABEL,
         "grok-build" => GROK_BUILD_SOURCE_LABEL,
         _ => CODEX_SOURCE_LABEL,
@@ -948,6 +973,7 @@ mod tests {
             assistant_preview: None,
             runtime_status: runtime_status.map(str::to_owned),
             archived: false,
+            goal: None,
             capabilities: ThreadCapabilities {
                 thread_id: thread_id.to_owned(),
                 assistant_kind,

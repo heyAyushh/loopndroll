@@ -40,6 +40,11 @@ public enum CompanionSurfaceFiltering {
         if containsAny(originator?.lowercased() ?? "", needles: ["devin", "devin desktop", "devin next", "devin - next"]) {
             return "devin"
         }
+        if containsAny(originator?.lowercased() ?? "", needles: ["claude code", "claude desktop", "claudefordesktop", "anthropic claude"]) ||
+            containsAny(primaryHaystack, needles: ["claude-code", "claudefordesktop"])
+        {
+            return "claude-code"
+        }
         if containsAny(originator?.lowercased() ?? "", needles: ["codex desktop", "codex app"]) {
             return "codex"
         }

@@ -1,6 +1,7 @@
 pub mod assistant;
 pub mod auth;
 pub mod automations;
+pub mod claude_code;
 pub mod cli;
 pub mod codex;
 pub mod codex_resume;

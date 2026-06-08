@@ -726,6 +726,7 @@ public struct GoalSummary: Codable, Equatable, Sendable {
     public let title: String
     public let status: String
     public let lifecycle: String
+    public let running: Bool
     public let priority: String?
     public let targetThreadId: String?
     public let targetKnown: Bool
@@ -740,6 +741,7 @@ public struct GoalSummary: Codable, Equatable, Sendable {
         case title
         case status
         case lifecycle
+        case running
         case priority
         case targetThreadId = "target_thread_id"
         case targetKnown = "target_known"
@@ -748,5 +750,23 @@ public struct GoalSummary: Codable, Equatable, Sendable {
         case updatedAtMs = "updated_at_ms"
         case contentHash = "content_hash"
         case syncSafe = "sync_safe"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        status = try container.decode(String.self, forKey: .status)
+        lifecycle = try container.decode(String.self, forKey: .lifecycle)
+        running = try container.decodeIfPresent(Bool.self, forKey: .running) ??
+            (status == "pursuing" || lifecycle == "pursuing")
+        priority = try container.decodeIfPresent(String.self, forKey: .priority)
+        targetThreadId = try container.decodeIfPresent(String.self, forKey: .targetThreadId)
+        targetKnown = try container.decode(Bool.self, forKey: .targetKnown)
+        sourceKind = try container.decode(String.self, forKey: .sourceKind)
+        sourcePath = try container.decode(String.self, forKey: .sourcePath)
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
+        contentHash = try container.decode(String.self, forKey: .contentHash)
+        syncSafe = try container.decode(Bool.self, forKey: .syncSafe)
     }
 }

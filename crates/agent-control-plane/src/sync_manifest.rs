@@ -40,10 +40,14 @@ pub struct SyncGoal {
     pub title: String,
     pub status: GoalStatus,
     pub lifecycle: GoalStatus,
+    pub running: bool,
     pub priority: Option<String>,
     pub target_thread_id: Option<String>,
     pub target_known: bool,
     pub updated_at_ms: Option<i64>,
+    pub token_budget: Option<i64>,
+    pub tokens_used: Option<i64>,
+    pub time_used_seconds: Option<i64>,
     pub content_hash: String,
 }
 
@@ -133,10 +137,14 @@ impl From<&GoalSummary> for SyncGoal {
             title: goal.title.clone(),
             status: goal.status.clone(),
             lifecycle: goal.lifecycle.clone(),
+            running: goal.running,
             priority: goal.priority.clone(),
             target_thread_id: goal.target_thread_id.clone(),
             target_known: goal.target_known,
             updated_at_ms: goal.updated_at_ms,
+            token_budget: goal.token_budget,
+            tokens_used: goal.tokens_used,
+            time_used_seconds: goal.time_used_seconds,
             content_hash: goal.content_hash.clone(),
         }
     }

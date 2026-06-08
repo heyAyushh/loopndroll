@@ -144,6 +144,7 @@ pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThr
         assistant_preview: session.assistant_preview.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
+        goal: None,
         capabilities: ThreadCapabilities {
             thread_id: session.session_id.clone(),
             assistant_kind: AssistantKind::GrokBuild,

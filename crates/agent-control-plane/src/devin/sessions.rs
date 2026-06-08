@@ -172,6 +172,7 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
         assistant_preview: session.assistant_preview.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: session.archived,
+        goal: None,
         capabilities: devin_session_capabilities(session),
     }
 }

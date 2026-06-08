@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::assistant::{AssistantAdapterCapability, AssistantKind, adapter_capabilities};
 use crate::automations::{AutomationSummary, read_automations};
+use crate::claude_code::{
+    claude_session_to_desktop_thread, default_claude_home, discover_claude_sessions,
+};
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
@@ -21,7 +24,7 @@ use crate::devin::{
     install_looper_acp_agent_for_home, register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
 use crate::events::{AutomationRunRecord, EventStore};
-use crate::goals::{GoalSummary, read_goals};
+use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
     GrokHookOwner, GrokHookStatus, discover_grok_sessions, grok_session_to_desktop_thread,
     inspect_grok_hooks, register_owned_grok_hooks, unregister_owned_grok_hooks,
@@ -215,6 +218,7 @@ pub struct DesktopThread {
     pub assistant_preview: Option<String>,
     pub runtime_status: Option<String>,
     pub archived: bool,
+    pub goal: Option<ThreadGoalSummary>,
     pub capabilities: ThreadCapabilities,
 }
 
@@ -305,6 +309,26 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.is_active())
             .count();
+        let claude_sessions =
+            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+                .unwrap_or_default();
+        let mut claude_signature = claude_sessions
+            .iter()
+            .take(DESKTOP_MENU_THREAD_LIMIT)
+            .map(|session| {
+                format!(
+                    "{}:{}:{}",
+                    session.thread_id,
+                    session.updated_at_ms.unwrap_or_default(),
+                    session.running
+                )
+            })
+            .collect::<Vec<_>>();
+        claude_signature.sort();
+        let claude_active_thread_count = claude_sessions
+            .iter()
+            .filter(|session| session.running)
+            .count();
         let devin_archived_thread_count = devin_sessions
             .iter()
             .filter(|session| session.archived)
@@ -315,11 +339,15 @@ impl ControlPlane {
             .filter(|session| !session.deleted)
             .count();
         Ok(format!(
-            "threads={}:grok={}:devin={}:active={}:archived={}:overrides={}:surface={}",
+            "threads={}:grok={}:devin={}:claude={}:active={}:archived={}:overrides={}:surface={}",
             thread_signature.join("|"),
             grok_signature.join("|"),
             devin_signature.join("|"),
-            codex_active_thread_count + grok_active_thread_count + devin_active_thread_count,
+            claude_signature.join("|"),
+            codex_active_thread_count
+                + grok_active_thread_count
+                + devin_active_thread_count
+                + claude_active_thread_count,
             codex_archived_thread_count + devin_archived_thread_count,
             queued_prompt_count,
             session_state.assistant_surface
@@ -455,6 +483,13 @@ impl ControlPlane {
                 .unwrap_or_default()
                 .iter()
                 .map(grok_session_to_desktop_thread)
+                .map(|thread| desktop_thread_to_thread_record(&thread)),
+        );
+        threads.extend(
+            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+                .unwrap_or_default()
+                .iter()
+                .map(claude_session_to_desktop_thread)
                 .map(|thread| desktop_thread_to_thread_record(&thread)),
         );
         threads.sort_by(|left, right| {
@@ -630,6 +665,15 @@ impl ControlPlane {
             return Ok(grok_session_to_desktop_thread(&session).capabilities);
         }
 
+        if let Some(session) =
+            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+                .unwrap_or_default()
+                .into_iter()
+                .find(|session| session.thread_id == thread_id || session.session_id == thread_id)
+        {
+            return Ok(claude_session_to_desktop_thread(&session).capabilities);
+        }
+
         Ok(capabilities_for_state_thread(&state, thread_id))
     }
 
@@ -741,6 +785,7 @@ impl ControlPlane {
                         .and_then(|path| latest_assistant_message_for_path(Path::new(path))),
                     runtime_status: None,
                     archived: thread.archived,
+                    goal: None,
                     capabilities,
                 })
             })
@@ -756,6 +801,12 @@ impl ControlPlane {
         };
         desktop_threads.extend(
             limited_items(&grok_sessions, thread_limit).map(grok_session_to_desktop_thread),
+        );
+        let claude_sessions =
+            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+                .unwrap_or_default();
+        desktop_threads.extend(
+            limited_items(&claude_sessions, thread_limit).map(claude_session_to_desktop_thread),
         );
         let devin_sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
         desktop_threads.extend(
@@ -786,6 +837,11 @@ impl ControlPlane {
                 .map(|session| session.session_id.clone()),
         );
         known_thread_ids.extend(
+            claude_sessions
+                .iter()
+                .map(|session| session.thread_id.clone()),
+        );
+        known_thread_ids.extend(
             devin_sessions
                 .iter()
                 .map(|session| session.thread_id.clone()),
@@ -797,6 +853,7 @@ impl ControlPlane {
                 .map(|session| session.public_thread_id.clone()),
         );
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
+        attach_goals_to_desktop_threads(&mut desktop_threads, &goals);
         let automations = read_automations(&self.config.codex_home)?
             .into_iter()
             .map(|automation| automation.to_summary(&known_thread_ids))
@@ -806,6 +863,10 @@ impl ControlPlane {
         let codex_archived_thread_count =
             all_threads.len().saturating_sub(codex_active_thread_count);
         let grok_active_thread_count = grok_build.active_session_count;
+        let claude_active_thread_count = claude_sessions
+            .iter()
+            .filter(|session| session.running)
+            .count();
         let devin_active_thread_count = devin_sessions
             .iter()
             .filter(|session| session.is_active())
@@ -817,6 +878,7 @@ impl ControlPlane {
         let devin_acp_active_thread_count = devin_acp_runtime.sessions.len();
         let active_thread_count = codex_active_thread_count
             + grok_active_thread_count
+            + claude_active_thread_count
             + devin_active_thread_count
             + devin_acp_active_thread_count;
         let archived_thread_count = codex_archived_thread_count + devin_archived_thread_count;
@@ -832,6 +894,7 @@ impl ControlPlane {
             control_plane: self.status(),
             thread_count: all_threads.len()
                 + grok_build.session_count
+                + claude_sessions.len()
                 + devin_sessions.len()
                 + devin_acp_runtime.sessions.len(),
             active_thread_count,
@@ -902,6 +965,12 @@ impl ControlPlane {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|session| session.session_id),
+        );
+        thread_ids.extend(
+            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|session| session.thread_id),
         );
         Ok(thread_ids)
     }
@@ -1072,7 +1141,14 @@ fn devin_acp_runtime_session_to_desktop_thread(session: &DevinAcpRuntimeSession)
             "active".to_owned()
         }),
         archived: false,
+        goal: None,
         capabilities: devin_acp_runtime_session_capabilities(session),
+    }
+}
+
+fn attach_goals_to_desktop_threads(threads: &mut [DesktopThread], goals: &[GoalSummary]) {
+    for thread in threads {
+        thread.goal = goal_for_thread(goals, &thread.thread_id);
     }
 }
 

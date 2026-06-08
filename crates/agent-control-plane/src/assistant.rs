@@ -14,12 +14,19 @@ const GROK_BUILD_PROCESS_NEEDLES: &[&str] =
 const CODEX_CLIENT: &str = "codex";
 const DEVIN_CLIENT: &str = "devin";
 const GROK_BUILD_CLIENT: &str = "grok-build";
+const CLAUDE_CODE_CLIENT: &str = "claude-code";
 const CODEX_ORIGINATOR_NEEDLES: &[&str] = &["codex desktop", "codex app"];
 const DEVIN_ORIGINATOR_NEEDLES: &[&str] = &["devin", "devin desktop", "devin next", "devin - next"];
+const CLAUDE_ORIGINATOR_NEEDLES: &[&str] = &[
+    "claude code",
+    "claude desktop",
+    "claudefordesktop",
+    "anthropic claude",
+];
 const CODEX_SURFACE_CLIENTS: &[&str] = &[
     CODEX_CLIENT,
     "cursor",
-    "claude-code",
+    CLAUDE_CODE_CLIENT,
     "super-engineering",
     "openclaw",
 ];
@@ -200,9 +207,14 @@ pub fn discover_assistant_adapters_from_sources(
             ],
             "GUI/CLI runtime detection only; Codex sessions spawned by Cursor are attributed separately",
         ),
-        runtime_only(
-            AssistantKind::ClaudeCode,
-            vec![
+        AssistantAdapterCapability {
+            assistant_kind: AssistantKind::ClaudeCode,
+            live_sessions: true,
+            tool_inventory: false,
+            spawn_graph: false,
+            diff_summary: false,
+            auth_capabilities: true,
+            runtimes: vec![
                 detections.runtime(
                     AssistantRuntimeKind::Gui,
                     "Claude desktop",
@@ -216,8 +228,8 @@ pub fn discover_assistant_adapters_from_sources(
                     &["claude ", "claude-code"],
                 ),
             ],
-            "GUI/CLI runtime detection only; session reader not implemented in this phase",
-        ),
+            detail: "Claude Code sessions read from ~/.claude/projects; prompt delivery waits for Looper-owned Claude hooks".to_owned(),
+        },
         runtime_only(
             AssistantKind::OpenCode,
             vec![detections.runtime_by_executable(
@@ -311,6 +323,11 @@ pub fn infer_assistant_client_from_paths(
     if originator_contains_any(originator, DEVIN_ORIGINATOR_NEEDLES) {
         return DEVIN_CLIENT;
     }
+    if originator_contains_any(originator, CLAUDE_ORIGINATOR_NEEDLES)
+        || path_contains_any(&primary_haystack, &[CLAUDE_CODE_CLIENT, "claudefordesktop"])
+    {
+        return CLAUDE_CODE_CLIENT;
+    }
     if originator_contains_any(originator, CODEX_ORIGINATOR_NEEDLES) {
         return CODEX_CLIENT;
     }
@@ -338,7 +355,7 @@ pub fn infer_assistant_client_from_paths(
         &path_haystack,
         &[".claude/", "claude-code", "claudefordesktop"],
     ) {
-        return "claude-code";
+        return CLAUDE_CODE_CLIENT;
     }
     if path_contains_any(&path_haystack, &[".superconductor", "super-engineering"]) {
         return "super-engineering";
@@ -358,7 +375,7 @@ pub fn assistant_kind_from_client(client: &str) -> AssistantKind {
         "grok-build" => AssistantKind::GrokBuild,
         "devin" => AssistantKind::DevinDesktop,
         "cursor" => AssistantKind::Cursor,
-        "claude-code" => AssistantKind::ClaudeCode,
+        CLAUDE_CODE_CLIENT => AssistantKind::ClaudeCode,
         "super-engineering" => AssistantKind::Superconductor,
         "openclaw" => AssistantKind::OpenClaw,
         _ => AssistantKind::Codex,
@@ -639,6 +656,20 @@ mod tests {
     }
 
     #[test]
+    fn infers_claude_client_from_claude_originator_with_vscode_source() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.codex/sessions/thread-main.jsonl"),
+                Some("/Users/test/project"),
+                Some("vscode"),
+                Some("Claude Code"),
+                None,
+            ),
+            "claude-code"
+        );
+    }
+
+    #[test]
     fn assistant_surface_filter_hides_cross_surface_sessions() {
         assert!(session_matches_assistant_surface(
             Some("/Users/test/.grok/sessions/thread.jsonl"),
@@ -663,6 +694,22 @@ mod tests {
             Some("Codex Desktop"),
             None,
             "codex",
+        ));
+        assert!(session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/claude-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("vscode"),
+            Some("Claude Code"),
+            None,
+            "codex",
+        ));
+        assert!(!session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/claude-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("vscode"),
+            Some("Claude Code"),
+            None,
+            "devin",
         ));
         assert!(session_matches_assistant_surface(
             Some("/Users/test/.codex/sessions/devin-thread.jsonl"),

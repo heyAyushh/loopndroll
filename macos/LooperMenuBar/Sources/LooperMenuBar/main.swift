@@ -242,7 +242,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
         addDisabledItem("Devin: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: menu)
         addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: menu)
-        addDisabledItem("Goals: \(snapshot.goals.count)", to: menu)
+        addDisabledItem("Goals: \(runningGoalCount(snapshot))/\(snapshot.goals.count) running", to: menu)
         addDevinBridgeItems(snapshot.devinDesktop.acpBridge, to: menu)
     }
 
@@ -319,6 +319,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     private func coveredAutomationCount(_ snapshot: DesktopSnapshotResponse) -> Int {
         snapshot.automations.filter(\.controlPlaneCovered).count
+    }
+
+    private func runningGoalCount(_ snapshot: DesktopSnapshotResponse) -> Int {
+        snapshot.goals.filter(\.running).count
     }
 
     private func addThreadSections(_ sections: [LooperMenuSection], to menu: NSMenu) {
