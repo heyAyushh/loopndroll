@@ -54,8 +54,7 @@ const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
     "Devin Desktop metadata plus local hook delivery for Devin Local sessions.";
-const DEVIN_HOOKS_CONNECTION_ACTION_HINT: &str =
-    "Devin Local hooks in ~/.config/devin/config.json; prompts are delivered on Stop.";
+const DEVIN_HOOKS_CONNECTION_ACTION_HINT: &str = "Devin Local hooks in ~/.config/devin/config.json; running-session prompts are delivered on Stop.";
 const GROK_BUILD_CONNECTION_ACTION_HINT: &str =
     "Grok Build hooks at ~/.grok/hooks/looper.json; sessions read from ~/.grok/sessions/.";
 const GROK_BUILD_HOOKS_CONNECTION_ID: &str = "grok-build-hooks";

@@ -1291,7 +1291,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
             .any(|event| event.detail.as_deref() == Some("prompt-resumed"))
     );
 
-    record_codex_thread_active(&control_plane, "thread-main");
+    record_thread_active(&control_plane, "thread-main");
     let prompt_snapshot = request_json_body_with_options(
         &router,
         Method::POST,
@@ -1786,7 +1786,7 @@ async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
     service
         .set_session_preset("thread-main", Some("await-reply"))
         .expect("set mode");
-    record_codex_thread_active(&control_plane, "thread-main");
+    record_thread_active(&control_plane, "thread-main");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1896,7 +1896,7 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
     service
         .set_session_preset("thread-main", Some("await-reply"))
         .expect("set mode");
-    record_codex_thread_active(&control_plane, "thread-main");
+    record_thread_active(&control_plane, "thread-main");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1936,6 +1936,7 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
         .mobile_session_service()
         .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
         .expect("set Devin session mode");
+    record_thread_active(&control_plane, "devin:devin-cli:brindle-cadet");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1985,6 +1986,54 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
     assert_eq!(
         outcome.delivered_prompt_id.as_deref(),
         Some(queued_prompt_id)
+    );
+}
+
+#[tokio::test]
+async fn devin_mobile_prompt_rejects_stopped_local_devin_hook_delivery() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .mobile_session_service()
+        .set_assistant_surface("devin")
+        .expect("set Devin surface");
+    control_plane
+        .mobile_session_service()
+        .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
+        .expect("set Devin session mode");
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "prompt": "Keep going from phone."
+    }))
+    .expect("json body");
+    let response = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
+        body,
+        &[
+            (axum::http::header::AUTHORIZATION, authorization.as_str()),
+            (axum::http::header::CONTENT_TYPE, "application/json"),
+        ],
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload["message"],
+        "This Devin Local session must be running before Looper can deliver prompts through hooks."
     );
 }
 
@@ -2121,7 +2170,7 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     .await;
     assert_eq!(archived["sessions"]["thread-main"]["archived"], true);
 
-    record_codex_thread_active(&control_plane, "thread-child");
+    record_thread_active(&control_plane, "thread-child");
     let prompted = request_json_body_with_options(
         &router,
         Method::POST,
@@ -2448,7 +2497,7 @@ async fn request_json_with_method(
     request_json_with_options(router, method, path, &[], None).await
 }
 
-fn record_codex_thread_active(control_plane: &ControlPlane, thread_id: &str) {
+fn record_thread_active(control_plane: &ControlPlane, thread_id: &str) {
     control_plane
         .mobile_session_service()
         .record_hook_lifecycle(
@@ -2461,7 +2510,7 @@ fn record_codex_thread_active(control_plane: &ControlPlane, thread_id: &str) {
             },
             false,
         )
-        .expect("record active Codex lifecycle");
+        .expect("record active mobile lifecycle");
 }
 
 async fn request_json_with_options(

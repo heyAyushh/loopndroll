@@ -168,8 +168,10 @@ pub fn validate_mobile_prompt_delivery_target(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,
     thread_id: &str,
+    assistant_surface: Option<&str>,
 ) -> Result<(), MobileSessionError> {
-    prompt_delivery_action_for_target(snapshot, session_state, thread_id).map(|_| ())
+    prompt_delivery_action_for_visible_target(snapshot, session_state, thread_id, assistant_surface)
+        .map(|_| ())
 }
 
 pub fn prompt_delivery_action_for_target(
@@ -182,6 +184,27 @@ pub fn prompt_delivery_action_for_target(
         .iter()
         .find(|thread| thread.thread_id == thread_id)
         .ok_or(MobileSessionError::SessionNotFound)?;
+
+    prompt_delivery_action_for_thread(thread, session_state)
+}
+
+pub fn prompt_delivery_action_for_visible_target(
+    snapshot: &DesktopSnapshot,
+    session_state: &MobileSessionState,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+) -> Result<PromptDeliveryAction, MobileSessionError> {
+    let thread = snapshot
+        .threads
+        .iter()
+        .find(|thread| thread.thread_id == thread_id)
+        .ok_or(MobileSessionError::SessionNotFound)?;
+
+    let visible_surface = assistant_surface.unwrap_or(&session_state.assistant_surface);
+    if !thread_matches_assistant_surface(thread, visible_surface) {
+        return Err(MobileSessionError::SessionNotFound);
+    }
+
     prompt_delivery_action_for_thread(thread, session_state)
 }
 
@@ -217,7 +240,7 @@ fn prompt_delivery_action_for_thread(
         thread.runtime_status.as_deref(),
     );
     if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        return devin_prompt_delivery_action(thread);
+        return devin_prompt_delivery_action(thread, &status);
     }
 
     match status {
@@ -230,6 +253,8 @@ const ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "Archived sessions cannot receive prompts.";
 const DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "This Devin provider does not support mobile prompt delivery yet.";
+const DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON: &str =
+    "This Devin Local session must be running before Looper can deliver prompts through hooks.";
 const INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "This session must be running before Looper can queue prompts.";
 
@@ -260,13 +285,19 @@ fn prompt_delivery_availability(
             unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
         };
     }
-    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop
-        && devin_prompt_transport(thread).is_none()
-    {
-        return PromptDeliveryAvailability {
-            can_send_prompt: false,
-            unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
+        let Some((transport, _session_id)) = devin_prompt_transport(thread) else {
+            return PromptDeliveryAvailability {
+                can_send_prompt: false,
+                unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+            };
         };
+        if transport == DevinPromptTransport::DevinHook && status != ACTIVE_SESSION_STATUS {
+            return PromptDeliveryAvailability {
+                can_send_prompt: false,
+                unavailable_reason: Some(DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON),
+            };
+        }
     }
 
     let requires_active_session = !matches!(
@@ -297,6 +328,7 @@ fn devin_prompt_transport(thread: &DesktopThread) -> Option<(DevinPromptTranspor
 
 fn devin_prompt_delivery_action(
     thread: &DesktopThread,
+    status: &str,
 ) -> Result<PromptDeliveryAction, MobileSessionError> {
     let DevinThreadIdentity {
         provider_id,
@@ -315,7 +347,14 @@ fn devin_prompt_delivery_action(
                 cwd: thread.cwd.clone(),
             }))
         }
-        DevinPromptTransport::DevinHook => Ok(PromptDeliveryAction::QueueForHook),
+        DevinPromptTransport::DevinHook if status == ACTIVE_SESSION_STATUS => {
+            Ok(PromptDeliveryAction::QueueForHook)
+        }
+        DevinPromptTransport::DevinHook => {
+            Err(MobileSessionError::PromptDeliveryUnavailableReason(
+                DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON.to_owned(),
+            ))
+        }
     }
 }
 
@@ -720,11 +759,11 @@ mod tests {
     }
 
     #[test]
-    fn prompt_delivery_target_uses_devin_local_hook_transport() {
+    fn prompt_delivery_target_uses_devin_local_hook_transport_when_active() {
         let thread = test_thread(
             "devin:devin-cli:shadow-canidae",
             AssistantKind::DevinDesktop,
-            Some(MOBILE_SESSION_STATUS_STOPPED),
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
         );
         let session_state = MobileSessionState::default();
 
@@ -737,11 +776,35 @@ mod tests {
     }
 
     #[test]
-    fn prompt_delivery_target_uses_claude_acp_hook_transport() {
+    fn prompt_delivery_target_rejects_stopped_devin_hook_transport() {
+        let thread = test_thread(
+            "devin:devin-cli:shadow-canidae",
+            AssistantKind::DevinDesktop,
+            Some(MOBILE_SESSION_STATUS_STOPPED),
+        );
+        let session_state = MobileSessionState::default();
+
+        let error = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect_err("stopped Devin local sessions cannot be woken by hooks");
+        assert!(matches!(
+            error,
+            MobileSessionError::PromptDeliveryUnavailableReason(reason)
+                if reason == DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON
+        ));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON
+        );
+    }
+
+    #[test]
+    fn prompt_delivery_target_uses_claude_acp_hook_transport_when_active() {
         let thread = test_thread(
             "devin:claude-acp:bd6aa5c3-b6d1-4331-97e0-045c44652e2d",
             AssistantKind::DevinDesktop,
-            Some(MOBILE_SESSION_STATUS_STOPPED),
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
         );
         let session_state = MobileSessionState::default();
 

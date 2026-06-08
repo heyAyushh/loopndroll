@@ -18,7 +18,8 @@ use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile_api::{
-    PromptDeliveryAction, mobile_session_detail, mobile_snapshot, prompt_delivery_action_for_target,
+    PromptDeliveryAction, mobile_session_detail, mobile_snapshot,
+    prompt_delivery_action_for_target, prompt_delivery_action_for_visible_target,
 };
 use crate::mobile_auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
@@ -49,7 +50,7 @@ use self::requests::{
     DesktopTelegramChatsRequest, MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
-    MobileSessionPromptRequest,
+    MobileSessionPromptQuery, MobileSessionPromptRequest,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -865,7 +866,7 @@ async fn desktop_session_prompt(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match dispatch_session_prompt(&control_plane, &thread_id, &input.prompt) {
+    match dispatch_session_prompt(&control_plane, &thread_id, None, &input.prompt) {
         Ok(dispatch) => {
             emit_prompt_dispatch(&control_plane, &thread_id, &dispatch);
             desktop_mobile_state_response(&control_plane)
@@ -952,13 +953,22 @@ enum PromptDispatch {
 fn dispatch_session_prompt(
     control_plane: &ControlPlane,
     thread_id: &str,
+    assistant_surface: Option<&str>,
     prompt: &str,
 ) -> Result<PromptDispatch, MobileSessionError> {
     let prompt = required_prompt(prompt)?;
     let snapshot = mobile_desktop_snapshot(control_plane)
         .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
     let session_state = control_plane.mobile_session_service().state()?;
-    let action = prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?;
+    let action = match assistant_surface {
+        Some(surface) => prompt_delivery_action_for_visible_target(
+            &snapshot,
+            &session_state,
+            thread_id,
+            Some(surface),
+        )?,
+        None => prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?,
+    };
     dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)
 }
 
@@ -1303,7 +1313,7 @@ async fn mobile_session_mode(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
+    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
         return response;
     }
 
@@ -1333,7 +1343,7 @@ async fn mobile_session_archive(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
+    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
         return response;
     }
 
@@ -1365,7 +1375,7 @@ async fn mobile_session_delete(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
+    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
         return response;
     }
 
@@ -1385,15 +1395,30 @@ async fn mobile_session_prompt(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
     Path(thread_id): Path<String>,
+    Query(query): Query<MobileSessionPromptQuery>,
     Json(input): Json<MobileSessionPromptRequest>,
 ) -> impl IntoResponse {
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
+    if let Some(assistant_surface) = query.assistant_surface.as_deref() {
+        if !ASSISTANT_SURFACES.contains(&assistant_surface) {
+            return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
+        }
+    }
+    if let Some(response) = missing_mobile_session_rejection(
+        &control_plane,
+        &thread_id,
+        query.assistant_surface.as_deref(),
+    ) {
         return response;
     }
-    match dispatch_session_prompt(&control_plane, &thread_id, &input.prompt) {
+    match dispatch_session_prompt(
+        &control_plane,
+        &thread_id,
+        query.assistant_surface.as_deref(),
+        &input.prompt,
+    ) {
         Ok(dispatch) => {
             emit_prompt_dispatch(&control_plane, &thread_id, &dispatch);
             mobile_snapshot_response(&control_plane, &headers)
@@ -1410,7 +1435,7 @@ async fn mobile_session_mute(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id) {
+    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
         return response;
     }
 
@@ -1720,6 +1745,7 @@ fn mobile_snapshot_response(control_plane: &ControlPlane, headers: &HeaderMap) -
 fn missing_mobile_session_rejection(
     control_plane: &ControlPlane,
     thread_id: &str,
+    assistant_surface: Option<&str>,
 ) -> Option<Response> {
     let snapshot = match mobile_desktop_snapshot(control_plane) {
         Ok(snapshot) => snapshot,
@@ -1729,7 +1755,7 @@ fn missing_mobile_session_rejection(
         Ok(session_state) => session_state,
         Err(error) => return Some(mobile_session_error_response(error)),
     };
-    if mobile_session_is_visible(&snapshot, &session_state, thread_id) {
+    if mobile_session_is_visible(&snapshot, &session_state, thread_id, assistant_surface) {
         return None;
     }
 
@@ -1744,8 +1770,9 @@ fn mobile_session_is_visible(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,
     thread_id: &str,
+    assistant_surface: Option<&str>,
 ) -> bool {
-    mobile_session_detail(snapshot, session_state, thread_id, None).is_some()
+    mobile_session_detail(snapshot, session_state, thread_id, assistant_surface).is_some()
 }
 
 fn handoff_session_html(thread: &DesktopThread, handoff_base_url: Option<&str>) -> String {
