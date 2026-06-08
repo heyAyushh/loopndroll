@@ -12,6 +12,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let threadMenuTitleCharacterLimit = 38
         static let detachServerOnQuitKey = "detachServerOnQuit"
         static let continuationRefreshInterval: Duration = .seconds(20)
+        static let activationPolicy: NSApplication.ActivationPolicy = .accessory
+        static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
     }
 
     private let client: HTTPControlPlaneClient
@@ -35,7 +37,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(Layout.activationPolicy)
+        continuationPublisher.focusAssist = handoffFocusAssist
         installStatusItem()
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
@@ -197,6 +200,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         addActionItem("Clear Live Codex & Grok Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: menu)
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: menu)
         addDetachServerItem(to: menu)
+        addHandoffFocusAssistItem(to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -383,12 +387,47 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
+    private func addHandoffFocusAssistItem(to menu: NSMenu) {
+        let item = NSMenuItem(
+            title: "\(Layout.handoffFocusAssistMenuTitle): \(handoffFocusAssist.statusTitle)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let submenu = NSMenu(title: Layout.handoffFocusAssistMenuTitle)
+        submenu.autoenablesItems = false
+
+        for option in LooperHandoffFocusAssist.allCases {
+            let optionItem = NSMenuItem(
+                title: option.menuTitle,
+                action: #selector(setHandoffFocusAssistAction(_:)),
+                keyEquivalent: ""
+            )
+            optionItem.target = self
+            optionItem.representedObject = option.rawValue
+            optionItem.state = handoffFocusAssist == option ? .on : .off
+            submenu.addItem(optionItem)
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
     private var detachServerOnQuit: Bool {
         get {
             UserDefaults.standard.bool(forKey: Layout.detachServerOnQuitKey)
         }
         set {
             UserDefaults.standard.set(newValue, forKey: Layout.detachServerOnQuitKey)
+        }
+    }
+
+    private var handoffFocusAssist: LooperHandoffFocusAssist {
+        get {
+            LooperHandoffFocusAssist.stored()
+        }
+        set {
+            newValue.save()
+            continuationPublisher.focusAssist = newValue
         }
     }
 
@@ -430,6 +469,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     @objc private func toggleDetachServerOnQuitAction(_ sender: Any?) {
         detachServerOnQuit.toggle()
+        Task {
+            await refreshMenu()
+        }
+    }
+
+    @objc private func setHandoffFocusAssistAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let option = LooperHandoffFocusAssist(rawValue: rawValue)
+        else {
+            return
+        }
+
+        handoffFocusAssist = option
         Task {
             await refreshMenu()
         }

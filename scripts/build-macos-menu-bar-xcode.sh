@@ -28,7 +28,7 @@ command -v xcodegen >/dev/null 2>&1 || {
 }
 
 launch_installed_app() {
-  /usr/bin/open "$INSTALL_PATH"
+  /usr/bin/open -g "$INSTALL_PATH"
   for _ in $(seq 1 "$PROCESS_WAIT_ATTEMPTS"); do
     if pgrep -f "${INSTALL_PATH}/Contents/MacOS/LooperMenuBar" >/dev/null; then
       return

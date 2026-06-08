@@ -4,6 +4,31 @@ import Testing
 
 struct LooperContinuationActivityTests {
     @Test
+    func defaultsFocusAssistToFiveIdleMinutes() {
+        let expectedFiveIdleMinutesSeconds: TimeInterval = 300
+        let suiteName = "dev.looper.tests.focus-assist.default"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        #expect(LooperHandoffFocusAssist.stored(in: defaults) == .afterFiveIdleMinutes)
+        #expect(LooperHandoffFocusAssist.defaultOption.idleThresholdSeconds == expectedFiveIdleMinutesSeconds)
+        #expect(LooperHandoffFocusAssist.defaultOption.statusTitle == "After 5 min idle")
+    }
+
+    @Test
+    func storesFocusAssistPreference() {
+        let suiteName = "dev.looper.tests.focus-assist.stored"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        LooperHandoffFocusAssist.never.save(in: defaults)
+
+        #expect(LooperHandoffFocusAssist.stored(in: defaults) == .never)
+        #expect(LooperHandoffFocusAssist.never.idleThresholdSeconds == nil)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
     func usesNewestActiveThreadAsContinuationTarget() throws {
         let snapshot = desktopSnapshot(threads: [
             thread(id: "old", title: "Old", updatedAtMs: 1),

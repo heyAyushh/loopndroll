@@ -48,6 +48,76 @@ public enum LooperContinuationActivity {
     }
 }
 
+public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendable {
+    case afterFiveIdleMinutes
+    case afterFifteenIdleMinutes
+    case never
+
+    private enum Timing {
+        static let secondsPerMinute: TimeInterval = 60
+        static let fiveIdleMinutes: TimeInterval = 5
+        static let fifteenIdleMinutes: TimeInterval = 15
+    }
+
+    public static let userDefaultsKey = "handoffFocusAssist"
+    public static let defaultOption: LooperHandoffFocusAssist = .afterFiveIdleMinutes
+
+    public var id: String {
+        rawValue
+    }
+
+    public var idleThresholdSeconds: TimeInterval? {
+        switch self {
+        case .afterFiveIdleMinutes:
+            Timing.fiveIdleMinutes * Timing.secondsPerMinute
+        case .afterFifteenIdleMinutes:
+            Timing.fifteenIdleMinutes * Timing.secondsPerMinute
+        case .never:
+            nil
+        }
+    }
+
+    public var menuTitle: String {
+        switch self {
+        case .afterFiveIdleMinutes:
+            "After 5 min idle"
+        case .afterFifteenIdleMinutes:
+            "After 15 min idle"
+        case .never:
+            "Never"
+        }
+    }
+
+    public var statusTitle: String {
+        switch self {
+        case .afterFiveIdleMinutes, .afterFifteenIdleMinutes:
+            menuTitle
+        case .never:
+            "Off"
+        }
+    }
+
+    public static func stored(
+        in userDefaults: UserDefaults = .standard,
+        key: String = userDefaultsKey
+    ) -> LooperHandoffFocusAssist {
+        guard let storedValue = userDefaults.string(forKey: key),
+              let option = LooperHandoffFocusAssist(rawValue: storedValue)
+        else {
+            return defaultOption
+        }
+
+        return option
+    }
+
+    public func save(
+        in userDefaults: UserDefaults = .standard,
+        key: String = userDefaultsKey
+    ) {
+        userDefaults.set(rawValue, forKey: key)
+    }
+}
+
 public struct LooperContinuationActivityDescriptor: Equatable, Sendable {
     public let title: String
     public let targetContentIdentifier: String
