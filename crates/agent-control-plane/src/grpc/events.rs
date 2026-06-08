@@ -1,0 +1,135 @@
+use std::pin::Pin;
+use std::time::Duration;
+
+use async_stream::stream;
+use futures_core::Stream;
+use tonic::Status;
+
+use crate::control_plane::ControlPlane;
+use crate::grpc::proto;
+use crate::mobile_events::{MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_now};
+
+const EVENT_REPLAY_BATCH_SIZE: usize = 32;
+const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const EVENT_CONNECTED_NAME: &str = "connected";
+const EVENT_SNAPSHOT_REVISION_CHANGED_DETAIL: &str = "snapshot-revision-changed";
+const PROTO_EVENT_KIND_UNSPECIFIED: i32 = 0;
+const PROTO_EVENT_KIND_SESSION_CHANGED: i32 = 1;
+const PROTO_EVENT_KIND_PROMPT_QUEUED: i32 = 2;
+const PROTO_EVENT_KIND_PROMPT_DELIVERED: i32 = 3;
+const PROTO_EVENT_KIND_LIFECYCLE_CHANGED: i32 = 4;
+
+pub type MobileEventStream =
+    Pin<Box<dyn Stream<Item = Result<proto::MobileEvent, Status>> + Send + 'static>>;
+
+pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
+    let stream = stream! {
+        let mut receiver = control_plane.mobile_event_hub().subscribe();
+        let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
+        let mut last_event_ms = control_plane
+            .store()
+            .latest_mobile_event_created_at_ms()
+            .unwrap_or_default();
+
+        yield Ok(connected_event(&last_revision));
+
+        let mut poll_interval = tokio::time::interval(EVENT_POLL_INTERVAL);
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                received = receiver.recv() => {
+                    match received {
+                        Ok(event) => {
+                            last_event_ms = last_event_ms.max(
+                                control_plane.store().latest_mobile_event_created_at_ms().unwrap_or(last_event_ms)
+                            );
+                            yield Ok(proto_event_from_mobile_event(&event, ""));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = poll_interval.tick() => {
+                    if let Ok(records) = control_plane.store().mobile_events_since(last_event_ms, EVENT_REPLAY_BATCH_SIZE) {
+                        for record in records {
+                            last_event_ms = last_event_ms.max(record.created_at_ms);
+                            yield Ok(proto_event_from_record(&record));
+                        }
+                    }
+
+                    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
+                        if revision != last_revision {
+                            last_revision = revision;
+                            yield Ok(proto::MobileEvent {
+                                kind: PROTO_EVENT_KIND_SESSION_CHANGED,
+                                event_name: event_name(MobileEventKind::SessionChanged).to_owned(),
+                                thread_id: String::new(),
+                                prompt_id: String::new(),
+                                detail: EVENT_SNAPSHOT_REVISION_CHANGED_DETAIL.to_owned(),
+                                server_time: mobile_event_now(),
+                                revision: last_revision.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Box::pin(stream)
+}
+
+pub fn connected_event(revision: &str) -> proto::MobileEvent {
+    proto::MobileEvent {
+        kind: PROTO_EVENT_KIND_UNSPECIFIED,
+        event_name: EVENT_CONNECTED_NAME.to_owned(),
+        thread_id: String::new(),
+        prompt_id: String::new(),
+        detail: String::new(),
+        server_time: mobile_event_now(),
+        revision: revision.to_owned(),
+    }
+}
+
+fn proto_event_from_mobile_event(event: &MobileEvent, revision: &str) -> proto::MobileEvent {
+    proto::MobileEvent {
+        kind: proto_event_kind(event.event_type),
+        event_name: event_name(event.event_type).to_owned(),
+        thread_id: event.thread_id.clone().unwrap_or_default(),
+        prompt_id: event.prompt_id.clone().unwrap_or_default(),
+        detail: event.detail.clone().unwrap_or_default(),
+        server_time: event.server_time.clone(),
+        revision: revision.to_owned(),
+    }
+}
+
+fn proto_event_from_record(record: &MobileEventRecord) -> proto::MobileEvent {
+    proto::MobileEvent {
+        kind: proto_event_kind(record.event_type),
+        event_name: event_name(record.event_type).to_owned(),
+        thread_id: record.thread_id.clone().unwrap_or_default(),
+        prompt_id: record.prompt_id.clone().unwrap_or_default(),
+        detail: record.detail.clone().unwrap_or_default(),
+        server_time: mobile_event_now(),
+        revision: String::new(),
+    }
+}
+
+fn proto_event_kind(kind: MobileEventKind) -> i32 {
+    match kind {
+        MobileEventKind::SessionChanged => PROTO_EVENT_KIND_SESSION_CHANGED,
+        MobileEventKind::PromptQueued => PROTO_EVENT_KIND_PROMPT_QUEUED,
+        MobileEventKind::PromptDelivered => PROTO_EVENT_KIND_PROMPT_DELIVERED,
+        MobileEventKind::LifecycleChanged => PROTO_EVENT_KIND_LIFECYCLE_CHANGED,
+    }
+}
+
+fn event_name(kind: MobileEventKind) -> &'static str {
+    match kind {
+        MobileEventKind::SessionChanged => "session.changed",
+        MobileEventKind::PromptQueued => "prompt.queued",
+        MobileEventKind::PromptDelivered => "prompt.delivered",
+        MobileEventKind::LifecycleChanged => "lifecycle.changed",
+    }
+}

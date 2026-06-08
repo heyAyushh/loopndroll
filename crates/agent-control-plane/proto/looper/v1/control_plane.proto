@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package looper.v1;
+
+service LooperRealtime {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc SendSessionPrompt(SendSessionPromptRequest) returns (SendSessionPromptResponse);
+  rpc SubscribeMobileEvents(SubscribeEventsRequest) returns (stream MobileEvent);
+  rpc SubscribeDesktopEvents(SubscribeEventsRequest) returns (stream MobileEvent);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+  string service = 2;
+  string server_time = 3;
+}
+
+message SendSessionPromptRequest {
+  string thread_id = 1;
+  string prompt = 2;
+  string assistant_surface = 3;
+}
+
+message SendSessionPromptResponse {
+  bool accepted = 1;
+  string dispatch_kind = 2;
+  string prompt_id = 3;
+}
+
+message SubscribeEventsRequest {}
+
+message MobileEvent {
+  int32 kind = 1;
+  string event_name = 2;
+  string thread_id = 3;
+  string prompt_id = 4;
+  string detail = 5;
+  string server_time = 6;
+  string revision = 7;
+}

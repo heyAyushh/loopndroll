@@ -1,9 +1,15 @@
 use std::net::SocketAddr;
 use std::process::{Child, Command, Stdio};
 
+use anyhow::{Result, anyhow};
+
 pub const DEFAULT_AGENT_CONTROL_PLANE_PORT: u16 = 8765;
+pub const DEFAULT_GRPC_PORT_OFFSET: u16 = 1;
+pub const DEFAULT_GRPC_CONTROL_PLANE_PORT: u16 =
+    DEFAULT_AGENT_CONTROL_PLANE_PORT + DEFAULT_GRPC_PORT_OFFSET;
 
 const LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_LISTEN";
+const GRPC_LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_GRPC_LISTEN";
 const MOBILE_BONJOUR_INSTANCE_NAME: &str = "Looper";
 const MOBILE_BONJOUR_SERVICE_TYPE: &str = "_looper._tcp";
 const MOBILE_BONJOUR_DOMAIN: &str = "local.";
@@ -22,8 +28,10 @@ const MOBILE_BASE_URL_ENV_KEYS: &[&str] = &[
     "AGENT_CONTROL_PLANE_MOBILE_BASE_URL",
     "LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URLS",
     "LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URL",
-    "LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URLS",
-    "LOOPER_MOBILE_DEV_SERVER_PUBLIC_BASE_URL",
+];
+const MOBILE_GRPC_BASE_URL_ENV_KEYS: &[&str] = &[
+    "AGENT_CONTROL_PLANE_MOBILE_GRPC_BASE_URLS",
+    "AGENT_CONTROL_PLANE_MOBILE_GRPC_BASE_URL",
 ];
 
 pub fn advertised_mobile_base_urls(preferred_base_url: Option<&str>) -> Vec<String> {
@@ -44,9 +52,36 @@ pub fn advertised_mobile_base_urls(preferred_base_url: Option<&str>) -> Vec<Stri
 pub fn configured_control_plane_port() -> u16 {
     std::env::var(LISTEN_ENV)
         .ok()
-        .and_then(|listen| listen.rsplit_once(':').map(|(_, port)| port.to_owned()))
-        .and_then(|port| port.parse::<u16>().ok())
+        .and_then(|listen| listen.parse::<SocketAddr>().ok())
+        .map(|address| address.port())
         .unwrap_or(DEFAULT_AGENT_CONTROL_PLANE_PORT)
+}
+
+pub fn configured_grpc_control_plane_port() -> u16 {
+    std::env::var(GRPC_LISTEN_ENV)
+        .ok()
+        .and_then(|listen| listen.parse::<SocketAddr>().ok())
+        .map(|address| address.port())
+        .or_else(|| derived_grpc_port(configured_control_plane_port()))
+        .unwrap_or(DEFAULT_GRPC_CONTROL_PLANE_PORT)
+}
+
+pub fn default_grpc_listen_address(http_listen_address: SocketAddr) -> Result<SocketAddr> {
+    if let Ok(listen_address) = std::env::var(GRPC_LISTEN_ENV) {
+        return Ok(listen_address.parse::<SocketAddr>()?);
+    }
+
+    let grpc_port = derived_grpc_port(http_listen_address.port())
+        .ok_or_else(|| anyhow!("HTTP listen port is too high to derive a gRPC listen port"))?;
+    Ok(SocketAddr::new(http_listen_address.ip(), grpc_port))
+}
+
+pub fn advertised_mobile_grpc_base_urls(http_base_urls: &[String]) -> Vec<String> {
+    advertised_mobile_grpc_base_urls_from_sources(
+        http_base_urls,
+        configured_grpc_control_plane_port(),
+        explicit_mobile_grpc_base_urls(),
+    )
 }
 
 fn configured_listener_accepts_remote_connections() -> bool {
@@ -123,8 +158,28 @@ fn advertised_mobile_base_urls_from_sources(
     )
 }
 
+fn advertised_mobile_grpc_base_urls_from_sources(
+    http_base_urls: &[String],
+    grpc_port: u16,
+    explicit_urls: Vec<String>,
+) -> Vec<String> {
+    let derived_urls = http_base_urls
+        .iter()
+        .filter_map(|base_url| grpc_base_url_for_http_base_url(base_url, grpc_port));
+    unique_values(derived_urls.chain(explicit_urls).collect())
+}
+
 fn explicit_mobile_base_urls() -> Vec<String> {
     MOBILE_BASE_URL_ENV_KEYS
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .flat_map(|value| split_base_url_values(&value))
+        .filter_map(|value| normalize_base_url(&value))
+        .collect()
+}
+
+fn explicit_mobile_grpc_base_urls() -> Vec<String> {
+    MOBILE_GRPC_BASE_URL_ENV_KEYS
         .iter()
         .filter_map(|key| std::env::var(key).ok())
         .flat_map(|value| split_base_url_values(&value))
@@ -216,6 +271,18 @@ fn is_mobile_reachable_base_url(value: &str) -> bool {
 fn base_url_host(base_url: &str) -> Option<String> {
     let without_scheme = base_url.split_once("://")?.1;
     let authority = without_scheme.split('/').next()?.trim();
+    base_url_authority_host(authority)
+}
+
+fn grpc_base_url_for_http_base_url(base_url: &str, grpc_port: u16) -> Option<String> {
+    let normalized_base_url = normalize_base_url(base_url)?;
+    let (scheme, without_scheme) = normalized_base_url.split_once("://")?;
+    let authority = without_scheme.split('/').next()?.trim();
+    let host = base_url_authority_host(authority)?;
+    Some(format!("{scheme}://{host}:{grpc_port}"))
+}
+
+fn base_url_authority_host(authority: &str) -> Option<String> {
     if authority.starts_with('[') {
         return authority
             .split_once(']')
@@ -223,6 +290,10 @@ fn base_url_host(base_url: &str) -> Option<String> {
     }
 
     Some(authority.split(':').next()?.to_owned())
+}
+
+fn derived_grpc_port(http_port: u16) -> Option<u16> {
+    http_port.checked_add(DEFAULT_GRPC_PORT_OFFSET)
 }
 
 fn is_mobile_reachable_host(host: &str) -> bool {
@@ -284,6 +355,7 @@ mod tests {
     use super::*;
 
     const TEST_PORT: u16 = 8765;
+    const TEST_GRPC_PORT: u16 = 8766;
 
     #[test]
     fn advertised_urls_prefer_reachable_request_and_current_interfaces() {
@@ -329,6 +401,34 @@ mod tests {
         assert_eq!(
             listen_address_accepts_remote_connections("0.0.0.0:8765"),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn grpc_advertised_urls_reuse_mobile_hosts_with_grpc_port() {
+        let urls = vec![
+            "http://192.168.1.4:8765".to_owned(),
+            "http://127.0.0.1:8765".to_owned(),
+        ];
+
+        assert_eq!(
+            advertised_mobile_grpc_base_urls_from_sources(&urls, TEST_GRPC_PORT, Vec::new()),
+            vec![
+                "http://192.168.1.4:8766".to_owned(),
+                "http://127.0.0.1:8766".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn grpc_listen_address_uses_control_plane_port_offset() {
+        let http_address: SocketAddr = "127.0.0.1:8765".parse().expect("http address");
+
+        assert_eq!(
+            default_grpc_listen_address(http_address).expect("grpc listen"),
+            "127.0.0.1:8766"
+                .parse::<SocketAddr>()
+                .expect("grpc address")
         );
     }
 

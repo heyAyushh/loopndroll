@@ -11,7 +11,9 @@ use crate::grok_build::{
     GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
 };
 use crate::http::build_router;
-use crate::mobile_network::{BonjourAdvertisement, DEFAULT_AGENT_CONTROL_PLANE_PORT};
+use crate::mobile_network::{
+    BonjourAdvertisement, DEFAULT_AGENT_CONTROL_PLANE_PORT, default_grpc_listen_address,
+};
 use crate::mobile_session::MobileHookPayload;
 use crate::scheduler::AutomationRunner;
 
@@ -38,6 +40,9 @@ pub async fn run_server() -> Result<()> {
 
     let listener = TcpListener::bind(default_listen_address()?).await?;
     let local_address = listener.local_addr()?;
+    let grpc_listener = TcpListener::bind(default_grpc_listen_address(local_address)?).await?;
+    let grpc_local_address = grpc_listener.local_addr()?;
+    spawn_grpc_server(control_plane.clone(), grpc_listener, grpc_local_address);
     let _bonjour_advertisement = match BonjourAdvertisement::start_for_listener(local_address) {
         Ok(advertisement) => advertisement,
         Err(error) => {
@@ -52,6 +57,21 @@ pub async fn run_server() -> Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
     Ok(())
+}
+
+fn spawn_grpc_server(
+    control_plane: ControlPlane,
+    listener: TcpListener,
+    listen_address: SocketAddr,
+) {
+    tokio::spawn(async move {
+        eprintln!("looper gRPC listening on {listen_address}");
+        if let Err(error) =
+            crate::grpc::serve_with_listener(control_plane, listener, shutdown_signal()).await
+        {
+            eprintln!("looper gRPC server failed: {error}");
+        }
+    });
 }
 
 pub fn run_hook_mode() -> Result<()> {

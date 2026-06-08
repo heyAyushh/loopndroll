@@ -10,6 +10,9 @@ use agent_control_plane::auth::{
     AuthManager, CloudAuthContract, LinkedIdentityMethod, MemorySecretStore,
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
+use agent_control_plane::grpc::proto::{
+    SendSessionPromptRequest, SubscribeEventsRequest, looper_realtime_client::LooperRealtimeClient,
+};
 use agent_control_plane::http::build_router;
 use agent_control_plane::mobile_events::{
     MobileEventInput, MobileEventKind, build_mobile_event, mobile_event_sse_name,
@@ -2185,6 +2188,87 @@ async fn mobile_events_endpoint_requires_mobile_auth() {
 }
 
 #[tokio::test]
+async fn grpc_desktop_events_streams_without_mobile_auth() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let (_server, mut client) = spawn_grpc_client(control_plane).await;
+
+    let mut stream = client
+        .subscribe_desktop_events(SubscribeEventsRequest {})
+        .await
+        .expect("desktop event stream")
+        .into_inner();
+    let event = stream
+        .message()
+        .await
+        .expect("stream message")
+        .expect("connected event");
+
+    assert_eq!(event.event_name, "connected");
+}
+
+#[tokio::test]
+async fn grpc_mobile_events_endpoint_requires_mobile_auth() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let (_server, mut client) = spawn_grpc_client(control_plane).await;
+
+    let error = client
+        .subscribe_mobile_events(SubscribeEventsRequest {})
+        .await
+        .expect_err("mobile gRPC event stream should require auth");
+
+    assert_eq!(error.code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn grpc_mobile_prompt_records_prompt_resumed_event() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let service = control_plane.mobile_session_service();
+    service
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("set mode");
+    record_thread_active(&control_plane, "thread-main");
+
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut request = tonic::Request::new(SendSessionPromptRequest {
+        thread_id: "thread-main".to_owned(),
+        prompt: "Keep going from gRPC.".to_owned(),
+        assistant_surface: String::new(),
+    });
+    request.metadata_mut().insert(
+        "authorization",
+        authorization.parse().expect("authorization metadata"),
+    );
+
+    let response = client
+        .send_session_prompt(request)
+        .await
+        .expect("send session prompt")
+        .into_inner();
+
+    assert!(response.accepted);
+    assert_eq!(response.dispatch_kind, "resumed");
+
+    let events = control_plane
+        .store()
+        .mobile_events_since(0, 32)
+        .expect("mobile events");
+    assert!(events.iter().any(|event| {
+        event.thread_id.as_deref() == Some("thread-main")
+            && event.event_type == MobileEventKind::SessionChanged
+            && event.detail.as_deref() == Some("prompt-resumed")
+    }));
+}
+
+#[tokio::test]
 async fn codex_mobile_prompt_records_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2910,6 +2994,32 @@ async fn issue_mobile_authorization_header(router: &axum::Router) -> String {
         .as_str()
         .expect("pairing token");
     format!("Bearer {token_id}.{token}")
+}
+
+async fn spawn_grpc_client(
+    control_plane: ControlPlane,
+) -> (
+    tokio::task::JoinHandle<()>,
+    LooperRealtimeClient<tonic::transport::Channel>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind gRPC test listener");
+    let address = listener.local_addr().expect("gRPC listener address");
+    let server = tokio::spawn(async move {
+        agent_control_plane::grpc::serve_with_listener(
+            control_plane,
+            listener,
+            std::future::pending(),
+        )
+        .await
+        .expect("gRPC server");
+    });
+    let endpoint = format!("http://{address}");
+    let client = LooperRealtimeClient::connect(endpoint)
+        .await
+        .expect("connect gRPC client");
+    (server, client)
 }
 
 struct IsolatedCodexFixture {

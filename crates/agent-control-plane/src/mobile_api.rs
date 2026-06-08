@@ -55,6 +55,7 @@ pub fn mobile_snapshot(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,
     base_url: &str,
+    grpc_base_urls: &[String],
     synced_at: &str,
 ) -> Value {
     let surface_sessions = mobile_surface_sessions(snapshot, session_state);
@@ -64,7 +65,7 @@ pub fn mobile_snapshot(
         .unwrap_or_default();
 
     json!({
-        "host": host_summary(base_url, synced_at),
+        "host": host_summary(base_url, grpc_base_urls, synced_at),
         "globalSettings": mobile_global_settings(session_state),
         "sessions": sessions,
         "surfaceSessions": surface_sessions,
@@ -441,11 +442,13 @@ pub fn mobile_session_detail(
     Some(detail)
 }
 
-fn host_summary(base_url: &str, synced_at: &str) -> Value {
+fn host_summary(base_url: &str, grpc_base_urls: &[String], synced_at: &str) -> Value {
     json!({
         "id": HOST_ID,
         "name": HOST_NAME,
         "address": base_url,
+        "grpcAddress": grpc_base_urls.first().cloned().unwrap_or_default(),
+        "grpcAddresses": grpc_base_urls,
         "isReachable": true,
         "lastSyncedAt": synced_at,
     })
