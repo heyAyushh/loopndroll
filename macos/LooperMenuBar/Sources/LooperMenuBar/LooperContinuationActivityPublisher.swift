@@ -59,7 +59,7 @@ final class LooperContinuationActivityPublisher {
 
     func requestFocusAssistedActivation() {
         activateFocusAssist(reason: "hotkey")
-        republishCurrentActivity()
+        republishCurrentActivity(presentation: .activateApplication)
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -81,7 +81,7 @@ final class LooperContinuationActivityPublisher {
         activityOwner.publish(
             activity,
             descriptor: descriptor,
-            allowsFocusAssistedActivation: allowsFocusAssistedActivation()
+            presentation: presentationForRefresh()
         )
         markActivityCurrent(activity)
         logPublishedActivity(activity, descriptor: descriptor)
@@ -132,12 +132,12 @@ final class LooperContinuationActivityPublisher {
         if let currentDescriptor {
             configure(currentActivity, with: currentDescriptor)
         }
-        activityOwner.refreshCurrentActivity(allowsFocusAssistedActivation: allowsFocusAssistedActivation())
+        activityOwner.refreshCurrentActivity(presentation: presentationForRefresh())
         markActivityCurrent(currentActivity)
         logger.debug("handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public)")
     }
 
-    private func republishCurrentActivity() {
+    private func republishCurrentActivity(presentation: LooperContinuationPresentation) {
         guard let currentDescriptor else {
             refreshCurrentActivity()
             return
@@ -149,7 +149,7 @@ final class LooperContinuationActivityPublisher {
         activityOwner.publish(
             activity,
             descriptor: currentDescriptor,
-            allowsFocusAssistedActivation: allowsFocusAssistedActivation()
+            presentation: presentation
         )
         markActivityCurrent(activity)
         logPublishedActivity(activity, descriptor: currentDescriptor)
@@ -157,25 +157,27 @@ final class LooperContinuationActivityPublisher {
         startCurrentActivityRefreshLoop()
     }
 
-    private func allowsFocusAssistedActivation() -> Bool {
+    private func presentationForRefresh() -> LooperContinuationPresentation {
         if focusAssistedActivationLease.isActive() {
-            return true
+            return .maintainFocusAssisted
         }
 
-        if focusAssist == .rightNow {
-            return false
-        }
-
-        guard let idleThresholdSeconds = focusAssist.idleThresholdSeconds else {
-            return false
-        }
-
-        guard idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds else {
-            return false
+        guard shouldActivateForIdleFocusAssist() else {
+            return .nonActivating
         }
 
         activateFocusAssist(reason: "idle")
-        return true
+        return .activateApplication
+    }
+
+    private func shouldActivateForIdleFocusAssist() -> Bool {
+        guard focusAssist != .rightNow else {
+            return false
+        }
+        guard let idleThresholdSeconds = focusAssist.idleThresholdSeconds else {
+            return false
+        }
+        return idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds
     }
 
     private func activateFocusAssist(reason: String) {
@@ -289,6 +291,12 @@ final class LooperContinuationActivityPublisher {
 
 }
 
+private enum LooperContinuationPresentation {
+    case nonActivating
+    case maintainFocusAssisted
+    case activateApplication
+}
+
 @MainActor
 protocol LooperUserIdleTimeProviding {
     func secondsSinceLastUserInput() -> TimeInterval
@@ -367,7 +375,7 @@ private final class LooperContinuationActivityPanelOwner {
     func publish(
         _ activity: NSUserActivity,
         descriptor: LooperContinuationActivityDescriptor,
-        allowsFocusAssistedActivation: Bool
+        presentation: LooperContinuationPresentation
     ) {
         _ = panel
         viewController.descriptor = descriptor
@@ -375,11 +383,11 @@ private final class LooperContinuationActivityPanelOwner {
         viewController.view.userActivity = activity
         statusHost?.userActivity = activity
         positionPanelInScreen(panel)
-        presentPanel(allowsFocusAssistedActivation: allowsFocusAssistedActivation)
-        refreshCurrentActivity(allowsFocusAssistedActivation: allowsFocusAssistedActivation)
+        presentPanel(presentation: presentation)
+        refreshCurrentActivity(presentation: presentation)
     }
 
-    func refreshCurrentActivity(allowsFocusAssistedActivation: Bool) {
+    func refreshCurrentActivity(presentation: LooperContinuationPresentation) {
         guard let activity = viewController.userActivity else {
             return
         }
@@ -389,7 +397,7 @@ private final class LooperContinuationActivityPanelOwner {
         }
         viewController.view.userActivity = activity
         statusHost?.userActivity = activity
-        presentPanel(allowsFocusAssistedActivation: allowsFocusAssistedActivation)
+        presentPanel(presentation: presentation)
         viewController.refreshActivity(activity)
         activity.needsSave = true
         activity.becomeCurrent()
@@ -446,17 +454,19 @@ private final class LooperContinuationActivityPanelOwner {
         return String(describing: type(of: responder))
     }
 
-    private func presentPanel(allowsFocusAssistedActivation: Bool) {
-        if allowsFocusAssistedActivation {
-            enableFocusAssistedPresentation()
-            return
+    private func presentPanel(presentation: LooperContinuationPresentation) {
+        switch presentation {
+        case .activateApplication:
+            enableFocusAssistedPresentation(activatesApplication: true)
+        case .maintainFocusAssisted:
+            enableFocusAssistedPresentation(activatesApplication: false)
+        case .nonActivating:
+            restoreNonActivatingPresentation()
+            panel.orderFrontRegardless()
         }
-
-        restoreNonActivatingPresentation()
-        panel.orderFrontRegardless()
     }
 
-    private func enableFocusAssistedPresentation() {
+    private func enableFocusAssistedPresentation(activatesApplication: Bool) {
         if !isFocusAssistedPresentationActive {
             panel.allowsKeyAndMainPresentation = true
             panel.styleMask.remove(.nonactivatingPanel)
@@ -465,8 +475,10 @@ private final class LooperContinuationActivityPanelOwner {
         }
 
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        if activatesApplication {
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+        }
         panel.orderFrontRegardless()
     }
 
