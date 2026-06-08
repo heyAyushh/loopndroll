@@ -1,5 +1,6 @@
 import Foundation
 import LooperMenuBarCore
+import LooperRealtime
 import OSLog
 
 @MainActor
@@ -63,6 +64,23 @@ final class DesktopEventStreamCoordinator {
     }
 
     private func consumeStream() async throws {
+        if let realtimeClient = try? await realtimeClient() {
+            do {
+                try await realtimeClient.streamDesktopEvents { [weak self] event in
+                    await MainActor.run {
+                        self?.scheduleRefresh(reason: event.eventName)
+                    }
+                }
+                return
+            } catch {
+                logger.debug("desktop gRPC event stream failed error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        try await consumeSSEStream()
+    }
+
+    private func consumeSSEStream() async throws {
         let request = client.request(for: .desktopEvents)
         let (bytes, response) = try await session.bytes(for: request)
         try validateEventStreamResponse(response)
@@ -78,6 +96,18 @@ final class DesktopEventStreamCoordinator {
             }
             scheduleRefresh(reason: eventName)
         }
+    }
+
+    private func realtimeClient() async throws -> LooperRealtimeClient? {
+        let health = try await client.fetchMobileHealth()
+        let endpoints = health.preferredRealtimeBaseURLs.map(LooperRealtimeEndpoint.init(baseURL:))
+        guard !endpoints.isEmpty else {
+            return nil
+        }
+        return LooperRealtimeClient(
+            endpoints: endpoints,
+            credentials: LooperRealtimeCredentials(bearerToken: nil, mobileSessionHeader: nil)
+        )
     }
 
     private func scheduleRefresh(reason: String) {

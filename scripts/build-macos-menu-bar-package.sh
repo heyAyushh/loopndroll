@@ -109,6 +109,7 @@ ICON_SIZES=(16 32 128 256 512)
 PROCESS_WAIT_ATTEMPTS=10
 PROCESS_WAIT_SECONDS=0.2
 BACKUP_RETENTION_COUNT=3
+MACOS_MINIMUM_SYSTEM_VERSION="15.0"
 PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
 fail() {
@@ -194,7 +195,7 @@ plutil -insert CFBundleDisplayName -string "$APP_NAME" "$plist_path"
 plutil -insert CFBundlePackageType -string APPL "$plist_path"
 plutil -insert CFBundleShortVersionString -string "$version" "$plist_path"
 plutil -insert CFBundleVersion -string "$(git rev-list --count HEAD)" "$plist_path"
-plutil -insert LSMinimumSystemVersion -string 14.0 "$plist_path"
+plutil -insert LSMinimumSystemVersion -string "$MACOS_MINIMUM_SYSTEM_VERSION" "$plist_path"
 plutil -insert NSHighResolutionCapable -bool YES "$plist_path"
 plutil -insert NSUserActivityTypes -array "$plist_path"
 plutil -insert NSUserActivityTypes.0 -string "$CONTINUATION_ACTIVITY_TYPE" "$plist_path"

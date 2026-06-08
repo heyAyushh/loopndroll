@@ -2,7 +2,11 @@ name: LooperMenuBar
 options:
   createIntermediateGroups: true
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
+packages:
+  LooperRealtime:
+    path: ../../swift/LooperRealtime
+    group: Packages
 settings:
   base:
     SWIFT_VERSION: 6.0
@@ -11,7 +15,7 @@ targets:
   LooperMenuBarCore:
     type: library.static
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "15.0"
     sources:
       - path: Sources/LooperMenuBarCore
     settings:
@@ -23,7 +27,7 @@ targets:
   LooperMenuBar:
     type: application
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "15.0"
     sources:
       - path: Sources/LooperMenuBar
       - path: ../../ios/LooperCompanion/looper.icon/Assets/notification-orb.png
@@ -50,6 +54,7 @@ targets:
             destination: executables
     dependencies:
       - target: LooperMenuBarCore
+      - package: LooperRealtime
     preBuildScripts:
       - name: Build Rust control plane
         shell: /bin/bash
@@ -69,7 +74,7 @@ targets:
         CFBundleDisplayName: looper
         CFBundleName: looper
         CFBundleIconFile: AppIcon
-        LSMinimumSystemVersion: "14.0"
+        LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         NSUserActivityTypes:
           - dev.looper.app.continue-session

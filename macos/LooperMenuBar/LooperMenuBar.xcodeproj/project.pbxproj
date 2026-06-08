@@ -10,8 +10,11 @@
 		17C600371FFAD51B82BD7530 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDDFFC62E1D5559E52E031C /* main.swift */; };
 		1C81624F3CFDC84FE035E443 /* notification-orb.png in Resources */ = {isa = PBXBuildFile; fileRef = 3F302E4B2186B4A0767D4C3A /* notification-orb.png */; };
 		1E04E1106F21E423553218DE /* LooperThreadOpenTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */; };
+		29287F400758C02F8450BB7B /* DesktopEventStreamCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */; };
 		3D31F07BE1F94072ED79BE12 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 96F0764C78BFDF2404A48C88 /* AppIcon.icns */; };
+		3E3A1C04CCA435FAC88CFA55 /* LooperHandoffHotkeyOption.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */; };
 		5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */; };
+		67987A5496AB5602B5575587 /* LooperRealtime in Frameworks */ = {isa = PBXBuildFile; productRef = 70389F85999007457E33EA68 /* LooperRealtime */; };
 		686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */; };
 		8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */; };
 		99F7D7D81D7C784D1983B5EF /* looper-server in CopyFiles */ = {isa = PBXBuildFile; fileRef = 060F24CC3357705E8AD2E9C3 /* looper-server */; };
@@ -22,6 +25,7 @@
 		A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */; };
 		B2EAD78BECB44A3651139391 /* looper in CopyFiles */ = {isa = PBXBuildFile; fileRef = 064C6B683AB182FF0C614500 /* looper */; };
 		B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */; };
+		F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,10 +57,14 @@
 		03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperContinuationActivity.swift; sourceTree = "<group>"; };
 		060F24CC3357705E8AD2E9C3 /* looper-server */ = {isa = PBXFileReference; name = "looper-server"; path = "../../crates/agent-control-plane/target/release/looper-server"; sourceTree = "<group>"; };
 		064C6B683AB182FF0C614500 /* looper */ = {isa = PBXFileReference; name = looper; path = "../../crates/agent-control-plane/target/release/looper"; sourceTree = "<group>"; };
+		067E9A0BE745F3C5AF29DE91 /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
+		08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopEventStreamCoordinator.swift; sourceTree = "<group>"; };
 		0CDDFFC62E1D5559E52E031C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameResolver.swift; sourceTree = "<group>"; };
 		3F302E4B2186B4A0767D4C3A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
+		60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHotkeyOption.swift; sourceTree = "<group>"; };
 		7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperThreadOpenTarget.swift; sourceTree = "<group>"; };
+		81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHoldDuration.swift; sourceTree = "<group>"; };
 		85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHumanStatus.swift; sourceTree = "<group>"; };
 		8EA18D48629D32130B01944A /* LooperMenuContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperMenuContent.swift; sourceTree = "<group>"; };
 		96F0764C78BFDF2404A48C88 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
@@ -74,6 +82,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */,
+				67987A5496AB5602B5575587 /* LooperRealtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,6 +139,8 @@
 			children = (
 				EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */,
 				03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */,
+				81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */,
+				60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */,
 				85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */,
 				CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */,
 				8EA18D48629D32130B01944A /* LooperMenuContent.swift */,
@@ -150,6 +161,7 @@
 		BF4B311E09B01B2CC3802128 /* LooperMenuBar */ = {
 			isa = PBXGroup;
 			children = (
+				08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */,
 				D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */,
 				0CDDFFC62E1D5559E52E031C /* main.swift */,
 			);
@@ -172,10 +184,19 @@
 			path = looper.icon;
 			sourceTree = "<group>";
 		};
+		E2AE9D12193888B4B1FFFC32 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				067E9A0BE745F3C5AF29DE91 /* LooperRealtime */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
 		E5E603C569F5A78D68D6EA70 = {
 			isa = PBXGroup;
 			children = (
 				3B5208DBB59D54FFB27315C9 /* looper */,
+				E2AE9D12193888B4B1FFFC32 /* Packages */,
 				EEE227049A4F9C648B242015 /* Resources */,
 				566466326EC61EA28D6E267C /* Rust Binaries */,
 				2B57186361A6FBA4345BFA37 /* Sources */,
@@ -211,6 +232,7 @@
 			);
 			name = LooperMenuBar;
 			packageProductDependencies = (
+				70389F85999007457E33EA68 /* LooperRealtime */,
 			);
 			productName = LooperMenuBar;
 			productReference = E0D6C532E19E5DCEFBA880AB /* LooperMenuBar.app */;
@@ -263,6 +285,9 @@
 			);
 			mainGroup = E5E603C569F5A78D68D6EA70;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A27EF620672E0F7A6D97698D /* XCLocalSwiftPackageReference "../../swift/LooperRealtime" */,
+			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
@@ -331,6 +356,8 @@
 			files = (
 				A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */,
 				686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */,
+				F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */,
+				3E3A1C04CCA435FAC88CFA55 /* LooperHandoffHotkeyOption.swift in Sources */,
 				5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */,
 				A461015CF3FED94D759CF3BF /* LooperLifecycleCoordinator.swift in Sources */,
 				A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */,
@@ -343,6 +370,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				29287F400758C02F8450BB7B /* DesktopEventStreamCoordinator.swift in Sources */,
 				8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */,
 				17C600371FFAD51B82BD7530 /* main.swift in Sources */,
 			);
@@ -411,7 +439,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -469,7 +497,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -489,7 +517,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar.core;
 				PRODUCT_NAME = LooperMenuBarCore;
 				SDKROOT = macosx;
@@ -506,7 +534,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.menubar.core;
 				PRODUCT_NAME = LooperMenuBarCore;
 				SDKROOT = macosx;
@@ -529,7 +557,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -555,7 +583,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -597,6 +625,20 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A27EF620672E0F7A6D97698D /* XCLocalSwiftPackageReference "../../swift/LooperRealtime" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../swift/LooperRealtime;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		70389F85999007457E33EA68 /* LooperRealtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LooperRealtime;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BBBBA7FDC45A9225C979D9E6 /* Project object */;
 }

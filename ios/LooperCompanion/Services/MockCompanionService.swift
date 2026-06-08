@@ -235,6 +235,8 @@ struct MockCompanionService: CompanionService {
             ok: true,
             baseURL: mockCompanionBaseURL,
             baseURLs: [mockCompanionBaseURL],
+            grpcBaseURL: "http://127.0.0.1:8766",
+            grpcBaseURLs: ["http://127.0.0.1:8766"],
             serverTime: Date().ISO8601Format()
         )
     }

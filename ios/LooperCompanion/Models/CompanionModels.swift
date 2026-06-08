@@ -684,6 +684,8 @@ struct HostSummary: Codable, Sendable {
     var id: String
     var name: String
     var address: String
+    var grpcAddress: String
+    var grpcAddresses: [String]
     var isReachable: Bool
     var lastSyncedAt: String
 
@@ -691,6 +693,8 @@ struct HostSummary: Codable, Sendable {
         case id
         case name
         case address
+        case grpcAddress
+        case grpcAddresses
         case isReachable
         case lastSyncedAt
     }
@@ -699,12 +703,16 @@ struct HostSummary: Codable, Sendable {
         id: String,
         name: String,
         address: String,
+        grpcAddress: String = "",
+        grpcAddresses: [String] = [],
         isReachable: Bool,
         lastSyncedAt: String
     ) {
         self.id = id
         self.name = name
         self.address = address
+        self.grpcAddress = grpcAddress
+        self.grpcAddresses = grpcAddresses
         self.isReachable = isReachable
         self.lastSyncedAt = lastSyncedAt
     }
@@ -714,6 +722,8 @@ struct HostSummary: Codable, Sendable {
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? SnapshotDecodingDefault.hostID
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? SnapshotDecodingDefault.hostName
         address = try container.decodeIfPresent(String.self, forKey: .address) ?? ""
+        grpcAddress = try container.decodeIfPresent(String.self, forKey: .grpcAddress) ?? ""
+        grpcAddresses = try container.decodeIfPresent([String].self, forKey: .grpcAddresses) ?? []
         isReachable = try container.decodeIfPresent(Bool.self, forKey: .isReachable) ?? false
         lastSyncedAt = try container.decodeIfPresent(String.self, forKey: .lastSyncedAt) ?? ""
     }
@@ -723,7 +733,44 @@ struct CompanionServerHealth: Codable, Sendable {
     var ok: Bool
     var baseURL: String
     var baseURLs: [String]
+    var grpcBaseURL: String
+    var grpcBaseURLs: [String]
     var serverTime: String
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case baseURL
+        case baseURLs
+        case grpcBaseURL
+        case grpcBaseURLs
+        case serverTime
+    }
+
+    init(
+        ok: Bool,
+        baseURL: String,
+        baseURLs: [String],
+        grpcBaseURL: String = "",
+        grpcBaseURLs: [String] = [],
+        serverTime: String
+    ) {
+        self.ok = ok
+        self.baseURL = baseURL
+        self.baseURLs = baseURLs
+        self.grpcBaseURL = grpcBaseURL
+        self.grpcBaseURLs = grpcBaseURLs
+        self.serverTime = serverTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        baseURLs = try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? []
+        grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
+        grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
+        serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime) ?? ""
+    }
 }
 
 enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sendable {

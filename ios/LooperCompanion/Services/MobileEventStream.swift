@@ -1,4 +1,5 @@
 import Foundation
+import LooperRealtime
 
 enum MobileEventType: String, Decodable, Sendable {
     case sessionChanged = "session-changed"
@@ -46,6 +47,14 @@ struct MobileStreamEvent: Decodable, Sendable {
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime)
     }
+
+    init(realtimeEvent: LooperRealtimeEvent) {
+        eventType = MobileEventType(serverValue: realtimeEvent.eventName)
+        threadID = realtimeEvent.threadID
+        promptID = realtimeEvent.promptID
+        detail = realtimeEvent.detail
+        serverTime = realtimeEvent.serverTime
+    }
 }
 
 enum MobileEventStreamError: Error, Equatable {
@@ -67,6 +76,20 @@ struct MobileEventStreamClient: Sendable {
         }
 
         var lastError: Error?
+
+        if let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        ) {
+            do {
+                try await realtimeClient.streamMobileEvents { event in
+                    await onEvent(MobileStreamEvent(realtimeEvent: event))
+                }
+                return
+            } catch {
+                lastError = error
+            }
+        }
 
         for baseURL in candidateBaseURLs {
             do {

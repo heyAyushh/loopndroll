@@ -2,8 +2,14 @@ name: LooperCompanion
 options:
   createIntermediateGroups: true
 packages:
+  LooperCompanionCore:
+    path: LooperCompanionCore
+    group: Packages
   OrbCodeKit:
     path: OrbCodeKit
+    group: Packages
+  LooperRealtime:
+    path: ../swift/LooperRealtime
     group: Packages
 settings:
   base:
@@ -32,7 +38,9 @@ targets:
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
     dependencies:
+      - package: LooperCompanionCore
       - package: OrbCodeKit
+      - package: LooperRealtime
     configs:
       Debug:
         CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Debug.entitlements

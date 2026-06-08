@@ -606,6 +606,8 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     public let ok: Bool
     public let baseURL: String
     public let baseURLs: [String]
+    public let grpcBaseURL: String
+    public let grpcBaseURLs: [String]
     public let requiresAuthentication: Bool
 
     public var preferredHandoffBaseURL: URL? {
@@ -615,11 +617,48 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
             ?? URL(string: baseURL)
     }
 
+    public var preferredRealtimeBaseURLs: [URL] {
+        var seen = Set<String>()
+        return ([grpcBaseURL] + grpcBaseURLs)
+            .compactMap(URL.init(string:))
+            .filter { url in
+                !url.absoluteString.isEmpty && seen.insert(url.absoluteString).inserted
+            }
+    }
+
     enum CodingKeys: String, CodingKey {
         case ok
         case baseURL
         case baseURLs
+        case grpcBaseURL
+        case grpcBaseURLs
         case requiresAuthentication
+    }
+
+    public init(
+        ok: Bool,
+        baseURL: String,
+        baseURLs: [String],
+        grpcBaseURL: String = "",
+        grpcBaseURLs: [String] = [],
+        requiresAuthentication: Bool
+    ) {
+        self.ok = ok
+        self.baseURL = baseURL
+        self.baseURLs = baseURLs
+        self.grpcBaseURL = grpcBaseURL
+        self.grpcBaseURLs = grpcBaseURLs
+        self.requiresAuthentication = requiresAuthentication
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        baseURLs = try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? []
+        grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
+        grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
+        requiresAuthentication = try container.decodeIfPresent(Bool.self, forKey: .requiresAuthentication) ?? true
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import LooperRealtime
 
 struct HTTPCompanionService: CompanionService {
     private static let sessionPathPrefix = "/api/mobile/sessions"
@@ -68,7 +69,25 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> MobileSnapshot {
-        try await request(
+        if let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        ) {
+            do {
+                _ = try await realtimeClient.sendSessionPrompt(
+                    threadID: id,
+                    prompt: prompt,
+                    assistantSurface: assistantSurface?.rawValue
+                )
+                return try await loadSnapshot()
+            } catch {
+                CompanionDiagnostics.record(
+                    "prompt:grpc-fallback id=\(id) error=\(error.localizedDescription)"
+                )
+            }
+        }
+
+        return try await request(
             path: path(sessionPath(id: id, suffix: "prompt"), assistantSurface: assistantSurface),
             method: HTTPMethod.post,
             body: ["prompt": prompt]
