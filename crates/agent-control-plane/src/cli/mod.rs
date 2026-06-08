@@ -114,13 +114,16 @@ async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> 
         Some("bridge") | Some("acp") | Some("agents") if args.get(1).is_none() => {
             print_get("/desktop/devin/acp-bridge", format).await
         }
+        Some("install") | Some("register") => {
+            post_json("/desktop/devin/acp-bridge/install", Value::Null, format).await
+        }
         Some("probe") => run_devin_probe_command(args.get(1), format).await,
         Some("bridge") | Some("acp") | Some("agents")
             if args.get(1).map(String::as_str) == Some("probe") =>
         {
             run_devin_probe_command(args.get(2), format).await
         }
-        _ => bail!("usage: looper devin [status|show|bridge|acp|agents|probe [agent-id]]"),
+        _ => bail!("usage: looper devin [status|show|bridge|acp|agents|install|probe [agent-id]]"),
     }
 }
 

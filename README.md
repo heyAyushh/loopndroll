@@ -174,9 +174,12 @@ uses Devin Desktop as the single source for all Devin-hosted ACP agents and
 sessions, regardless of provider. Devin-spawned Codex servers are still shown as
 Codex runtime children owned by `devin-desktop`. `looper devin bridge` and
 `/desktop/devin/acp-bridge` expose sanitized Devin Desktop agent metadata,
-including the explicit `looper devin probe [agent-id]` preflight path backed by
-`POST /desktop/devin/acp-bridge/probe`. Looper never auto-executes Devin
-registry commands and does not control Devin-native stop/continue lifecycle yet.
+including `looper devin install`, which registers the Looper websocket ACP agent
+at `/acp/devin`, and `looper devin probe [agent-id]`, the non-executing preflight
+path backed by `POST /desktop/devin/acp-bridge/probe`. Looper-owned Devin ACP
+sessions appear as `devin:looper:*` and can receive mobile prompts directly over
+the active websocket. Existing Devin-owned sessions stay on their current
+transport; Looper never auto-executes arbitrary Devin registry commands.
 
 Run `looper --format table doctor` when terminal launch or packaging looks
 wrong. It reports the terminal backend, source/hooks health, and the Rust mobile

@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use async_stream::stream;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive};
@@ -12,6 +13,7 @@ use axum::{
     Json, Router,
     routing::{delete, get, post},
 };
+use futures_util::{SinkExt, StreamExt};
 
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
@@ -70,11 +72,16 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/codex/compactions", get(compactions))
         .route("/desktop/snapshot", get(desktop_snapshot))
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
+        .route("/acp/devin", get(devin_acp_websocket))
         .route("/desktop/devin", get(desktop_devin))
         .route("/desktop/devin/acp-bridge", get(desktop_devin_acp_bridge))
         .route(
             "/desktop/devin/acp-bridge/probe",
             post(desktop_devin_acp_bridge_probe),
+        )
+        .route(
+            "/desktop/devin/acp-bridge/install",
+            post(desktop_devin_acp_bridge_install),
         )
         .route("/desktop/connections", get(desktop_connections))
         .route("/desktop/pairing", get(desktop_pairing))
@@ -288,6 +295,62 @@ async fn desktop_devin_acp_bridge_probe(
     Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
 ) -> impl IntoResponse {
     Json(control_plane.devin_acp_bridge_probe_response(input.agent_id.as_deref()))
+}
+
+async fn desktop_devin_acp_bridge_install(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane.install_devin_acp_bridge_response() {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn devin_acp_websocket(
+    State(control_plane): State<ControlPlane>,
+    websocket: WebSocketUpgrade,
+) -> impl IntoResponse {
+    websocket.on_upgrade(move |socket| run_devin_acp_socket(control_plane, socket))
+}
+
+async fn run_devin_acp_socket(control_plane: ControlPlane, socket: WebSocket) {
+    let (mut socket_sender, mut socket_receiver) = socket.split();
+    let (outbound_sender, mut outbound_receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let runtime = control_plane.devin_acp_runtime().clone();
+    let connection_id = runtime.register_connection(outbound_sender.clone());
+    let writer = tokio::spawn(async move {
+        while let Some(message) = outbound_receiver.recv().await {
+            if socket_sender.send(Message::Text(message)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(message) = socket_receiver.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                for response in runtime.handle_text_message(&connection_id, &text) {
+                    if outbound_sender.send(response).is_err() {
+                        break;
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(Message::Binary(_)) | Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+            Err(_) => break,
+        }
+    }
+
+    runtime.unregister_connection(&connection_id);
+    writer.abort();
 }
 
 async fn codex_servers(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -921,6 +984,7 @@ fn queue_desktop_batch_prompt(
             dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)?;
         emit_prompt_dispatch(control_plane, thread_id, &dispatch);
         match dispatch {
+            PromptDispatch::Delivered { prompt_id } => prompt_ids.push(prompt_id),
             PromptDispatch::Queued { prompt_id } => prompt_ids.push(prompt_id),
             PromptDispatch::Resumed => resumed_thread_ids.push(thread_id.clone()),
         }
@@ -946,6 +1010,7 @@ fn unique_thread_ids(thread_ids: Vec<String>) -> Vec<String> {
 }
 
 enum PromptDispatch {
+    Delivered { prompt_id: String },
     Queued { prompt_id: String },
     Resumed,
 }
@@ -985,6 +1050,15 @@ fn dispatch_session_prompt_with_action(
                 .queue_prompt(thread_id, prompt)?;
             Ok(PromptDispatch::Queued {
                 prompt_id: prompt.id,
+            })
+        }
+        PromptDeliveryAction::SendDevinAcp { session_id } => {
+            let delivered = control_plane
+                .devin_acp_runtime()
+                .deliver_mobile_prompt(&session_id, prompt)
+                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+            Ok(PromptDispatch::Delivered {
+                prompt_id: delivered.prompt_id,
             })
         }
         PromptDeliveryAction::ResumeCodex(target) => {
@@ -1921,6 +1995,15 @@ fn emit_mobile_prompt_queued(control_plane: &ControlPlane, thread_id: &str, prom
 
 fn emit_prompt_dispatch(control_plane: &ControlPlane, thread_id: &str, dispatch: &PromptDispatch) {
     match dispatch {
+        PromptDispatch::Delivered { prompt_id } => {
+            control_plane.emit_mobile_event(MobileEventInput {
+                kind: MobileEventKind::PromptDelivered,
+                thread_id: Some(thread_id.to_owned()),
+                prompt_id: Some(prompt_id.to_owned()),
+                detail: Some("devin-acp".to_owned()),
+            });
+            emit_mobile_session_changed(control_plane, Some(thread_id), Some("prompt-delivered"));
+        }
         PromptDispatch::Queued { prompt_id } => {
             emit_mobile_prompt_queued(control_plane, thread_id, prompt_id);
         }

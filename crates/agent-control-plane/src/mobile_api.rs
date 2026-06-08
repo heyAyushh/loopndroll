@@ -46,6 +46,7 @@ pub struct PromptResumeTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptDeliveryAction {
     QueueForHook,
+    SendDevinAcp { session_id: String },
     ResumeCodex(PromptResumeTarget),
 }
 
@@ -292,11 +293,17 @@ fn prompt_delivery_availability(
                 unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
             };
         };
-        if transport == DevinPromptTransport::DevinHook && status != ACTIVE_SESSION_STATUS {
-            return PromptDeliveryAvailability {
-                can_send_prompt: false,
-                unavailable_reason: Some(DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON),
-            };
+        match transport {
+            DevinPromptTransport::DevinAcpBridge => {}
+            DevinPromptTransport::DevinHook if status != ACTIVE_SESSION_STATUS => {
+                return PromptDeliveryAvailability {
+                    can_send_prompt: false,
+                    unavailable_reason: Some(
+                        DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON,
+                    ),
+                };
+            }
+            DevinPromptTransport::CodexAppServer | DevinPromptTransport::DevinHook => {}
         }
     }
 
@@ -347,6 +354,9 @@ fn devin_prompt_delivery_action(
                 cwd: thread.cwd.clone(),
             }))
         }
+        DevinPromptTransport::DevinAcpBridge => Ok(PromptDeliveryAction::SendDevinAcp {
+            session_id: format!("acp/{provider_id}/{session_id}"),
+        }),
         DevinPromptTransport::DevinHook if status == ACTIVE_SESSION_STATUS => {
             Ok(PromptDeliveryAction::QueueForHook)
         }
@@ -811,6 +821,26 @@ mod tests {
         let action = prompt_delivery_action_for_thread(&thread, &session_state)
             .expect("Devin ACP sessions should queue via hook transport");
         assert!(matches!(action, PromptDeliveryAction::QueueForHook));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], true);
+        assert!(summary["promptDeliveryUnavailableReason"].is_null());
+    }
+
+    #[test]
+    fn prompt_delivery_target_uses_looper_acp_direct_transport() {
+        let thread = test_thread(
+            "devin:looper:session-1",
+            AssistantKind::DevinDesktop,
+            Some(MOBILE_SESSION_STATUS_STOPPED),
+        );
+        let session_state = MobileSessionState::default();
+
+        let action = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect("Looper-owned Devin ACP sessions should send directly");
+        assert!(matches!(
+            action,
+            PromptDeliveryAction::SendDevinAcp { session_id } if session_id == "acp/looper/session-1"
+        ));
         let summary = session_summary(&thread, 0, &session_state);
         assert_eq!(summary["canSendPrompt"], true);
         assert!(summary["promptDeliveryUnavailableReason"].is_null());

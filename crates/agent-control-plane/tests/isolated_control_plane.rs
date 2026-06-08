@@ -734,11 +734,15 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         acp_bridge["bridge"]["agents"][0]["control_level"],
         "agent-configured"
     );
-    assert_eq!(acp_bridge["bridge"]["actions"][0]["id"], "probe");
-    assert_eq!(
-        acp_bridge["bridge"]["actions"][0]["path"],
-        "/desktop/devin/acp-bridge/probe"
-    );
+    let acp_bridge_actions = acp_bridge["bridge"]["actions"]
+        .as_array()
+        .expect("bridge actions");
+    assert!(acp_bridge_actions.iter().any(|action| {
+        action["id"] == "install" && action["path"] == "/desktop/devin/acp-bridge/install"
+    }));
+    assert!(acp_bridge_actions.iter().any(|action| {
+        action["id"] == "probe" && action["path"] == "/desktop/devin/acp-bridge/probe"
+    }));
     assert!(
         acp_bridge["bridge"]["limitations"]
             .as_array()
@@ -766,13 +770,51 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert_eq!(acp_probe["probe"]["agent_id"], "codex");
     assert_eq!(acp_probe["probe"]["ready"], true);
     assert_eq!(acp_probe["probe"]["probe_kind"], "launch-preflight");
-    assert_eq!(
-        acp_probe["bridge"]["actions"][0]["default_agent_id"],
-        "codex"
-    );
+    let probe_action = acp_probe["bridge"]["actions"]
+        .as_array()
+        .expect("probe actions")
+        .iter()
+        .find(|action| action["id"] == "probe")
+        .expect("probe action");
+    assert_eq!(probe_action["default_agent_id"], "codex");
     let acp_probe_json = serde_json::to_string(&acp_probe).expect("acp probe json");
     assert!(!acp_probe_json.contains("must-not-leak"));
     assert!(!acp_probe_json.contains("@agentclientprotocol/codex-acp"));
+
+    let acp_install = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/devin/acp-bridge/install",
+        serde_json::Value::Null,
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(acp_install["install"]["installed_agent_id"], "looper");
+    assert_eq!(
+        acp_install["install"]["websocket_url"],
+        "ws://127.0.0.1:8765/acp/devin"
+    );
+    let devin_after_install =
+        request_json_with_options(&router, Method::GET, "/desktop/devin", &[], loopback_socket)
+            .await;
+    assert_eq!(
+        devin_after_install["status"]["installations"][1]["preferred_agent"],
+        "looper"
+    );
+    assert!(
+        devin_after_install["status"]["acp_registry"]["agents"]
+            .as_array()
+            .expect("agents")
+            .iter()
+            .any(|agent| agent["id"] == "looper"
+                && agent["launch_configured"] == true
+                && agent["launch"]["methods"]
+                    .as_array()
+                    .expect("launch methods")
+                    .iter()
+                    .any(|method| method == "websocket"))
+    );
 
     let renamed = request_json_body_with_options(
         &router,

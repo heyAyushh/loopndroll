@@ -7,17 +7,18 @@ use serde::{Deserialize, Serialize};
 use crate::assistant::{AssistantAdapterCapability, AssistantKind, adapter_capabilities};
 use crate::automations::{AutomationSummary, read_automations};
 use crate::codex::{
-    CodexServerOwner, CodexServerProcess, ControlPlaneStatus, HookOwner, StateData,
-    ThreadCapabilities, ThreadRecord, capabilities_for_state_thread, inspect_control_plane,
-    read_state,
+    CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
+    SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
+    inspect_control_plane, read_state,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
-    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
+    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpRuntime, DevinAcpRuntimeSession,
+    DevinAcpRuntimeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
     DevinInstallationStatus, build_acp_bridge_probe, devin_connection_detail,
     devin_session_capabilities, devin_session_to_desktop_thread, devin_session_to_thread_record,
     discover_devin_sessions, inspect_devin_desktop_for_home, inspect_devin_hooks,
-    register_owned_devin_hooks, unregister_owned_devin_hooks,
+    install_looper_acp_agent_for_home, register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
 use crate::events::{AutomationRunRecord, EventStore};
 use crate::goals::{GoalSummary, read_goals};
@@ -75,6 +76,7 @@ pub struct ControlPlane {
     config: ControlPlaneConfig,
     store: EventStore,
     mobile_events: MobileEventHub,
+    devin_acp_runtime: DevinAcpRuntime,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,12 +102,21 @@ pub struct DevinDesktopResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeResponse {
     pub bridge: DevinAcpBridgeStatus,
+    pub runtime: DevinAcpRuntimeStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpBridgeProbeResponse {
     pub probe: DevinAcpBridgeProbe,
     pub bridge: DevinAcpBridgeStatus,
+    pub runtime: DevinAcpRuntimeStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DevinAcpInstallResponse {
+    pub install: crate::devin::DevinAcpInstallResult,
+    pub bridge: DevinAcpBridgeStatus,
+    pub runtime: DevinAcpRuntimeStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -214,11 +225,16 @@ impl ControlPlane {
             config,
             store,
             mobile_events: MobileEventHub::new(),
+            devin_acp_runtime: DevinAcpRuntime::default(),
         }
     }
 
     pub fn mobile_event_hub(&self) -> &MobileEventHub {
         &self.mobile_events
+    }
+
+    pub fn devin_acp_runtime(&self) -> &DevinAcpRuntime {
+        &self.devin_acp_runtime
     }
 
     pub fn emit_mobile_event(&self, input: MobileEventInput) {
@@ -472,6 +488,7 @@ impl ControlPlane {
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
         DevinAcpBridgeResponse {
             bridge: inspect_devin_desktop_for_home(&self.config.home_path).acp_bridge,
+            runtime: self.devin_acp_runtime.status(),
         }
     }
 
@@ -483,7 +500,21 @@ impl ControlPlane {
         DevinAcpBridgeProbeResponse {
             probe: build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id),
             bridge: status.acp_bridge,
+            runtime: self.devin_acp_runtime.status(),
         }
+    }
+
+    pub fn install_devin_acp_bridge_response(&self) -> Result<DevinAcpInstallResponse> {
+        let install = install_looper_acp_agent_for_home(
+            &self.config.home_path,
+            &crate::runtime::default_server_base_url(),
+        )?;
+        let status = inspect_devin_desktop_for_home(&self.config.home_path);
+        Ok(DevinAcpInstallResponse {
+            install,
+            bridge: status.acp_bridge,
+            runtime: self.devin_acp_runtime.status(),
+        })
     }
 
     pub fn compactions(&self) -> Result<Vec<CompactionEvent>> {
@@ -577,6 +608,18 @@ impl ControlPlane {
             .find(|session| session.thread_id == thread_id || session.session_id == thread_id)
         {
             return Ok(devin_session_capabilities(&session));
+        }
+
+        if let Some(session) =
+            self.devin_acp_runtime
+                .status()
+                .sessions
+                .into_iter()
+                .find(|session| {
+                    session.public_thread_id == thread_id || session.session_id == thread_id
+                })
+        {
+            return Ok(devin_acp_runtime_session_capabilities(&session));
         }
 
         if let Some(session) = discover_grok_sessions(&self.config.grok_home)
@@ -718,6 +761,11 @@ impl ControlPlane {
         desktop_threads.extend(
             limited_items(&devin_sessions, thread_limit).map(devin_session_to_desktop_thread),
         );
+        let devin_acp_runtime = self.devin_acp_runtime.status();
+        desktop_threads.extend(
+            limited_items(&devin_acp_runtime.sessions, thread_limit)
+                .map(devin_acp_runtime_session_to_desktop_thread),
+        );
         desktop_threads.sort_by(|left, right| {
             right
                 .updated_at_ms
@@ -742,6 +790,12 @@ impl ControlPlane {
                 .iter()
                 .map(|session| session.thread_id.clone()),
         );
+        known_thread_ids.extend(
+            devin_acp_runtime
+                .sessions
+                .iter()
+                .map(|session| session.public_thread_id.clone()),
+        );
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
         let automations = read_automations(&self.config.codex_home)?
             .into_iter()
@@ -760,8 +814,11 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.archived)
             .count();
-        let active_thread_count =
-            codex_active_thread_count + grok_active_thread_count + devin_active_thread_count;
+        let devin_acp_active_thread_count = devin_acp_runtime.sessions.len();
+        let active_thread_count = codex_active_thread_count
+            + grok_active_thread_count
+            + devin_active_thread_count
+            + devin_acp_active_thread_count;
         let archived_thread_count = codex_archived_thread_count + devin_archived_thread_count;
         let sync_manifest = SyncManifest::metadata_only(
             &self.status(),
@@ -773,7 +830,10 @@ impl ControlPlane {
 
         Ok(DesktopSnapshot {
             control_plane: self.status(),
-            thread_count: all_threads.len() + grok_build.session_count + devin_sessions.len(),
+            thread_count: all_threads.len()
+                + grok_build.session_count
+                + devin_sessions.len()
+                + devin_acp_runtime.sessions.len(),
             active_thread_count,
             archived_thread_count,
             threads: desktop_threads,
@@ -984,6 +1044,61 @@ fn devin_hook_owner_label(owner: &DevinHookOwner) -> String {
         DevinHookOwner::LooperRust => "looper Rust".to_owned(),
         DevinHookOwner::Unknown => "Unknown owner".to_owned(),
         DevinHookOwner::None => "Not registered".to_owned(),
+    }
+}
+
+fn devin_acp_runtime_session_to_desktop_thread(session: &DevinAcpRuntimeSession) -> DesktopThread {
+    DesktopThread {
+        thread_id: session.public_thread_id.clone(),
+        title: Some("Looper ACP".to_owned()),
+        cwd: session.cwd.clone(),
+        transcript_path: None,
+        source: Some("devin-desktop".to_owned()),
+        originator: Some("Devin Next".to_owned()),
+        model: None,
+        reasoning_effort: None,
+        git_sha: None,
+        git_branch: None,
+        cli_version: None,
+        agent_nickname: Some("Looper".to_owned()),
+        agent_role: Some("looper".to_owned()),
+        agent_path: None,
+        created_at_ms: Some(session.created_at_ms),
+        updated_at_ms: Some(session.updated_at_ms),
+        assistant_preview: session.latest_assistant_message.clone(),
+        runtime_status: Some(if session.cancelled {
+            "stopped".to_owned()
+        } else {
+            "active".to_owned()
+        }),
+        archived: false,
+        capabilities: devin_acp_runtime_session_capabilities(session),
+    }
+}
+
+fn devin_acp_runtime_session_capabilities(session: &DevinAcpRuntimeSession) -> ThreadCapabilities {
+    ThreadCapabilities {
+        thread_id: session.public_thread_id.clone(),
+        assistant_kind: AssistantKind::DevinDesktop,
+        tools: Vec::new(),
+        mcp_tools: Vec::new(),
+        app_tools: Vec::new(),
+        automation_tools: Vec::new(),
+        spawn: SpawnGraph {
+            parent_thread_id: None,
+            root_thread_id: session.public_thread_id.clone(),
+            children: Vec::new(),
+            launch_kind: LaunchKind::Main,
+        },
+        diff: DiffSummary {
+            git_branch: None,
+            git_sha: None,
+            produced_file_changes: false,
+            paths: Vec::new(),
+        },
+        agent_nickname: Some("Looper".to_owned()),
+        agent_role: Some("looper".to_owned()),
+        agent_path: None,
     }
 }
 

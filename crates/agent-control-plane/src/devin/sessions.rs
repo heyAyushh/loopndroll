@@ -11,7 +11,10 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use super::{DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH, DEVIN_STABLE_APP_SUPPORT_RELATIVE_PATH};
+use super::{
+    DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH, DEVIN_STABLE_APP_SUPPORT_RELATIVE_PATH,
+    LOOPER_ACP_AGENT_ID,
+};
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities, ThreadRecord};
 use crate::control_plane::DesktopThread;
@@ -69,6 +72,7 @@ pub struct DevinThreadIdentity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DevinPromptTransport {
     CodexAppServer,
+    DevinAcpBridge,
     DevinHook,
 }
 
@@ -453,6 +457,7 @@ fn non_empty_identity_segment(value: &str) -> Option<String> {
 
 pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPromptTransport> {
     match provider_id.trim() {
+        LOOPER_ACP_AGENT_ID => Some(DevinPromptTransport::DevinAcpBridge),
         "codex" | "codex-acp" => Some(DevinPromptTransport::CodexAppServer),
         DEVIN_LOCAL_PROVIDER_ID => Some(DevinPromptTransport::DevinHook),
         provider_id if provider_id.ends_with(DEVIN_ACP_PROVIDER_SUFFIX) => {

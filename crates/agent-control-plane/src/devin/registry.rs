@@ -20,6 +20,7 @@ const ACP_LAUNCH_METADATA_KEYS: &[&str] = &[
     "runtime",
     "stdio",
     "transport",
+    "websocket",
 ];
 const ACP_LAUNCH_METHOD_KEYS: &[&str] = &[
     "command",
@@ -32,6 +33,7 @@ const ACP_LAUNCH_METHOD_KEYS: &[&str] = &[
     "runtime",
     "stdio",
     "transport",
+    "websocket",
 ];
 const ACP_LAUNCH_FALLBACK_METHOD: &str = "configured";
 

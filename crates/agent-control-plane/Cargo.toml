@@ -23,7 +23,7 @@ path = "src/bin/looper-server.rs"
 [dependencies]
 anyhow = "1.0.100"
 async-stream = "0.3.6"
-axum = "0.7.9"
+axum = { version = "0.7.9", features = ["ws"] }
 base64 = "0.22.1"
 crossterm = "0.28.1"
 futures-core = "0.3.32"

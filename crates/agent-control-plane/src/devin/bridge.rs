@@ -10,6 +10,10 @@ const ACP_BRIDGE_PROBE_ACTION_ID: &str = "probe";
 const ACP_BRIDGE_PROBE_ACTION_LABEL: &str = "Probe Devin agent";
 const ACP_BRIDGE_PROBE_METHOD: &str = "POST";
 const ACP_BRIDGE_PROBE_PATH: &str = "/desktop/devin/acp-bridge/probe";
+const ACP_BRIDGE_INSTALL_ACTION_ID: &str = "install";
+const ACP_BRIDGE_INSTALL_ACTION_LABEL: &str = "Install Looper ACP agent";
+const ACP_BRIDGE_INSTALL_METHOD: &str = "POST";
+const ACP_BRIDGE_INSTALL_PATH: &str = "/desktop/devin/acp-bridge/install";
 const ACP_METHODS: &[&str] = &[
     "initialize",
     "session/new",
@@ -188,16 +192,25 @@ fn bridge_control_level(agents: &[DevinAcpBridgeAgent]) -> DevinAcpControlLevel 
 }
 
 fn bridge_actions(agents: &[DevinAcpBridgeAgent]) -> Vec<DevinAcpBridgeAction> {
-    default_probe_agent_id(agents)
-        .map(|default_agent_id| DevinAcpBridgeAction {
-            id: ACP_BRIDGE_PROBE_ACTION_ID.to_owned(),
-            label: ACP_BRIDGE_PROBE_ACTION_LABEL.to_owned(),
-            method: ACP_BRIDGE_PROBE_METHOD.to_owned(),
-            path: ACP_BRIDGE_PROBE_PATH.to_owned(),
-            default_agent_id: Some(default_agent_id),
-        })
-        .into_iter()
-        .collect()
+    let mut actions = vec![DevinAcpBridgeAction {
+        id: ACP_BRIDGE_INSTALL_ACTION_ID.to_owned(),
+        label: ACP_BRIDGE_INSTALL_ACTION_LABEL.to_owned(),
+        method: ACP_BRIDGE_INSTALL_METHOD.to_owned(),
+        path: ACP_BRIDGE_INSTALL_PATH.to_owned(),
+        default_agent_id: None,
+    }];
+    actions.extend(
+        default_probe_agent_id(agents)
+            .map(|default_agent_id| DevinAcpBridgeAction {
+                id: ACP_BRIDGE_PROBE_ACTION_ID.to_owned(),
+                label: ACP_BRIDGE_PROBE_ACTION_LABEL.to_owned(),
+                method: ACP_BRIDGE_PROBE_METHOD.to_owned(),
+                path: ACP_BRIDGE_PROBE_PATH.to_owned(),
+                default_agent_id: Some(default_agent_id),
+            })
+            .into_iter(),
+    );
+    actions
 }
 
 fn default_probe_agent_id(agents: &[DevinAcpBridgeAgent]) -> Option<String> {
@@ -448,8 +461,18 @@ mod tests {
         assert!(status.agents[0].supports_prompt);
         assert!(status.agents[0].supports_sessions);
         assert!(!status.agents[0].supports_cancel);
-        assert_eq!(status.actions[0].id, ACP_BRIDGE_PROBE_ACTION_ID);
-        assert_eq!(status.actions[0].default_agent_id.as_deref(), Some("codex"));
+        assert!(
+            status
+                .actions
+                .iter()
+                .any(|action| action.id == ACP_BRIDGE_INSTALL_ACTION_ID)
+        );
+        let probe = status
+            .actions
+            .iter()
+            .find(|action| action.id == ACP_BRIDGE_PROBE_ACTION_ID)
+            .expect("probe action");
+        assert_eq!(probe.default_agent_id.as_deref(), Some("codex"));
         assert!(
             status
                 .limitations
