@@ -30,6 +30,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var mobileHealth: MobileHealthResponse?
     private var devinProbe: DevinAcpBridgeProbe?
     private let handoffHotkeyController = HandoffHotkeyController()
+    private lazy var desktopEventStream = DesktopEventStreamCoordinator(client: client) { [weak self] in
+        await self?.refreshMenu()
+    }
 
     override init() {
         let endpointStore = ControlPlaneEndpointStore()
@@ -50,6 +53,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
         installHandoffHotkey()
+        desktopEventStream.start()
         Task {
             _ = await lifecycle.registerOnLaunch()
             await refreshMenu()
@@ -58,6 +62,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     func applicationWillTerminate(_ notification: Notification) {
         continuationRefreshTask?.cancel()
+        desktopEventStream.stop()
         continuationPublisher.invalidate()
         if !detachServerOnQuit {
             _ = lifecycle.unregisterBeforeQuit()

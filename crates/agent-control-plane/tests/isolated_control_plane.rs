@@ -34,6 +34,7 @@ const GOAL_FIXTURE_TOKENS_USED: i64 = 42;
 const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
 const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
 const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
+const SSE_CONNECTED_EVENT_TIMEOUT_SECONDS: u64 = 5;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -2019,6 +2020,57 @@ fn mobile_event_payload_matches_ios_contract() {
 }
 
 #[tokio::test]
+async fn desktop_events_sse_streams_without_mobile_auth() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let router = build_router(fixture.control_plane());
+
+    let request = axum::http::Request::builder()
+        .method(Method::GET)
+        .uri("/desktop/events")
+        .header(axum::http::header::ACCEPT, "text/event-stream")
+        .body(Body::empty())
+        .expect("request");
+    let response = router.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(content_type.contains("text/event-stream"));
+
+    let mut body = response.into_body();
+    let mut buffer = String::new();
+    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(
+        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
+    ));
+    tokio::pin!(connected_deadline);
+
+    loop {
+        tokio::select! {
+            frame = body.frame() => {
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Ok(chunk) = frame.into_data() {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            if buffer.contains("event: connected") {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(error)) => panic!("sse frame error: {error}"),
+                    None => panic!("sse stream ended early: {buffer}"),
+                }
+            }
+            _ = &mut connected_deadline => {
+                panic!("timed out waiting for desktop SSE connection. buffer={buffer}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2049,7 +2101,9 @@ async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
 
     let mut body = response.into_body();
     let mut buffer = String::new();
-    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(
+        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
+    ));
     tokio::pin!(connected_deadline);
 
     loop {
@@ -2085,7 +2139,9 @@ async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
     )
     .await;
 
-    let resumed_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    let resumed_deadline = tokio::time::sleep(std::time::Duration::from_secs(
+        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
+    ));
     tokio::pin!(resumed_deadline);
 
     loop {

@@ -72,6 +72,7 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/codex/servers", get(codex_servers))
         .route("/codex/compactions", get(compactions))
         .route("/desktop/snapshot", get(desktop_snapshot))
+        .route("/desktop/events", get(desktop_events))
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
         .route("/acp/devin", get(devin_acp_websocket))
         .route("/desktop/devin", get(desktop_devin))
@@ -388,6 +389,12 @@ async fn desktop_snapshot(
         )
             .into_response(),
     }
+}
+
+async fn desktop_events(
+    State(control_plane): State<ControlPlane>,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
+    local_desktop_events_stream(control_plane)
 }
 
 async fn handoff_session_page(
@@ -1285,6 +1292,12 @@ async fn mobile_events_handler(
         return mobile_authorization_error_response(error);
     }
 
+    local_desktop_events_stream(control_plane).into_response()
+}
+
+fn local_desktop_events_stream(
+    control_plane: ControlPlane,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
     let mut receiver = control_plane.mobile_event_hub().subscribe();
     let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
     let mut last_event_ms = control_plane
@@ -1342,9 +1355,7 @@ async fn mobile_events_handler(
         }
     };
 
-    Sse::new(stream)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn mobile_session_detail_handler(

@@ -1,8 +1,16 @@
 import Foundation
 
 public enum LooperLifecycleDefaults {
+    private enum Time {
+        static let secondsPerMinute: TimeInterval = 60
+        static let minutesPerHour: TimeInterval = 60
+        static let hoursPerDay: TimeInterval = 24
+    }
+
     public static let requestTimeoutSeconds: TimeInterval = 2
     public static let desktopSnapshotRequestTimeoutSeconds: TimeInterval = 6
+    public static let desktopEventStreamRequestTimeoutSeconds: TimeInterval =
+        Time.hoursPerDay * Time.minutesPerHour * Time.secondsPerMinute
     public static let quitCleanupTimeoutSeconds: TimeInterval = 2
 }
 
@@ -13,6 +21,7 @@ public enum ControlPlaneEndpoint: Equatable {
     case mobileHealth
     case controlPlaneStatus
     case desktopSnapshot
+    case desktopEvents
     case devinAcpBridgeProbe
 
     public var path: String {
@@ -29,6 +38,8 @@ public enum ControlPlaneEndpoint: Equatable {
             "/status/control-plane"
         case .desktopSnapshot:
             "/desktop/snapshot"
+        case .desktopEvents:
+            "/desktop/events"
         case .devinAcpBridgeProbe:
             "/desktop/devin/acp-bridge/probe"
         }
@@ -38,7 +49,7 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe:
             "POST"
-        case .controlPlaneStatus, .desktopSnapshot, .mobileHealth:
+        case .controlPlaneStatus, .desktopSnapshot, .desktopEvents, .mobileHealth:
             "GET"
         }
     }
@@ -47,7 +58,7 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .desktopSnapshot:
             [URLQueryItem(name: "profile", value: "menu")]
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
+        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus, .desktopEvents,
              .devinAcpBridgeProbe:
             []
         }
@@ -57,6 +68,8 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .desktopSnapshot:
             LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
+        case .desktopEvents:
+            LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
         case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
              .devinAcpBridgeProbe:
             LooperLifecycleDefaults.requestTimeoutSeconds

@@ -84,14 +84,21 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .controlPlaneStatus).url?.path == "/status/control-plane")
         #expect(client.request(for: .desktopSnapshot).url?.path == "/desktop/snapshot")
         #expect(client.request(for: .desktopSnapshot).url?.query == "profile=menu")
+        #expect(client.request(for: .desktopEvents).url?.path == "/desktop/events")
+        #expect(client.request(for: .desktopEvents).url?.query == nil)
         #expect(client.request(for: .registerHooks).httpMethod == "POST")
         #expect(client.request(for: .shutdown).httpMethod == "POST")
         #expect(client.request(for: .mobileHealth).httpMethod == "GET")
         #expect(client.request(for: .desktopSnapshot).httpMethod == "GET")
+        #expect(client.request(for: .desktopEvents).httpMethod == "GET")
         #expect(client.request(for: .mobileHealth).timeoutInterval == LooperLifecycleDefaults.requestTimeoutSeconds)
         #expect(
             client.request(for: .desktopSnapshot).timeoutInterval
                 == LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
+        )
+        #expect(
+            client.request(for: .desktopEvents).timeoutInterval
+                == LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
         )
     }
 
