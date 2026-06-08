@@ -5,6 +5,7 @@ use anyhow::Result;
 use tokio::net::TcpListener;
 
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::devin::{is_devin_hook_invocation, parse_devin_hook_payload};
 use crate::grok_build::{
     GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
 };
@@ -55,7 +56,13 @@ pub async fn run_server() -> Result<()> {
 pub fn run_hook_mode() -> Result<()> {
     let mut input = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-    let payload = parse_hook_payload(&input).unwrap_or(MobileHookPayload {
+    let devin_hook = is_devin_hook_invocation();
+    let payload = if devin_hook {
+        parse_devin_hook_payload(&input)
+    } else {
+        parse_hook_payload(&input)
+    }
+    .unwrap_or(MobileHookPayload {
         hook_event_name: String::new(),
         session_id: None,
         turn_id: None,
@@ -128,7 +135,6 @@ pub fn default_control_plane() -> Result<ControlPlane> {
     Ok(ControlPlane::new(ControlPlaneConfig {
         codex_home: default_codex_home(),
         codex_executable: None,
-        devin_executable: None,
         grok_home: crate::grok_build::default_grok_home(&home_path),
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),

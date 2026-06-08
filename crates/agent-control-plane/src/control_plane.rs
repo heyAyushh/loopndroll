@@ -13,10 +13,11 @@ use crate::codex::{
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
-    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinDesktopStatus, DevinInstallationStatus,
-    build_acp_bridge_probe, devin_connection_detail, devin_session_capabilities,
-    devin_session_to_desktop_thread, devin_session_to_thread_record, discover_devin_sessions,
-    inspect_devin_desktop_for_home,
+    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
+    DevinInstallationStatus, build_acp_bridge_probe, devin_connection_detail,
+    devin_session_capabilities, devin_session_to_desktop_thread, devin_session_to_thread_record,
+    discover_devin_sessions, inspect_devin_desktop_for_home, inspect_devin_hooks,
+    register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
 use crate::events::{AutomationRunRecord, EventStore};
 use crate::goals::{GoalSummary, read_goals};
@@ -42,6 +43,8 @@ const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
 const DEVIN_CONNECTION_KIND: &str = "devin";
+const DEVIN_HOOKS_CONNECTION_ID: &str = "devin-hooks";
+const DEVIN_HOOKS_CONNECTION_LABEL: &str = "Devin hooks";
 const GROK_BUILD_CONNECTION_KIND: &str = "grok-build";
 const GROK_BUILD_CONNECTION_ID: &str = "grok-build-cli";
 const GROK_BUILD_CONNECTION_LABEL: &str = "Grok Build CLI";
@@ -50,7 +53,9 @@ const GROK_BUILD_SESSION_RUNTIME_LABEL: &str = "Grok Build session";
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
-    "Devin Desktop agent metadata with explicit probe support; lifecycle control is not automatic.";
+    "Devin Desktop metadata plus local hook delivery for Devin Local sessions.";
+const DEVIN_HOOKS_CONNECTION_ACTION_HINT: &str =
+    "Devin Local hooks in ~/.config/devin/config.json; prompts are delivered on Stop.";
 const GROK_BUILD_CONNECTION_ACTION_HINT: &str =
     "Grok Build hooks at ~/.grok/hooks/looper.json; sessions read from ~/.grok/sessions/.";
 const GROK_BUILD_HOOKS_CONNECTION_ID: &str = "grok-build-hooks";
@@ -60,7 +65,6 @@ const GROK_BUILD_HOOKS_CONNECTION_LABEL: &str = "Grok Build hooks";
 pub struct ControlPlaneConfig {
     pub codex_home: PathBuf,
     pub codex_executable: Option<String>,
-    pub devin_executable: Option<String>,
     pub grok_home: PathBuf,
     pub store_path: PathBuf,
     pub hook_command: Option<String>,
@@ -315,10 +319,6 @@ impl ControlPlane {
         self.config.codex_executable.as_deref()
     }
 
-    pub fn devin_executable(&self) -> Option<&str> {
-        self.config.devin_executable.as_deref()
-    }
-
     pub fn grok_home(&self) -> &PathBuf {
         &self.config.grok_home
     }
@@ -369,12 +369,15 @@ impl ControlPlane {
 
     fn devin_desktop_connections(&self) -> Vec<ManagedConnection> {
         let status = inspect_devin_desktop_for_home(&self.config.home_path);
-        status
+        let hook_status = inspect_devin_hooks(&self.config.home_path);
+        let mut connections = status
             .installations
             .iter()
             .filter(|installation| devin_installation_should_render(installation))
             .map(|installation| devin_desktop_connection(installation, &status))
-            .collect()
+            .collect::<Vec<_>>();
+        connections.push(devin_hook_connection(&hook_status));
+        connections
     }
 
     fn grok_build_connections(&self) -> Vec<ManagedConnection> {
@@ -496,6 +499,7 @@ impl ControlPlane {
 
     pub fn unregister_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
+            + unregister_owned_devin_hooks(&self.config.home_path)?
             + unregister_owned_grok_hooks(&self.config.grok_home)?;
         let settings = self.store.set_hooks_auto_registration(false)?;
         Ok(HookMutationResponse {
@@ -514,12 +518,17 @@ impl ControlPlane {
             .as_deref()
             .unwrap_or("agent-control-plane --hook --managed-by looper");
         let codex_change = register_owned_hooks(&self.config.codex_home, hook_command)?;
+        let devin_change = register_owned_devin_hooks(&self.config.home_path, hook_command)?;
         let grok_change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
         let settings = self.store.set_hooks_auto_registration(true)?;
         Ok(HookMutationResponse {
             action: "register-hooks".to_owned(),
-            removed_handlers: codex_change.removed_handlers + grok_change.removed_handlers,
-            installed_handlers: codex_change.installed_handlers + grok_change.installed_handlers,
+            removed_handlers: codex_change.removed_handlers
+                + devin_change.removed_handlers
+                + grok_change.removed_handlers,
+            installed_handlers: codex_change.installed_handlers
+                + devin_change.installed_handlers
+                + grok_change.installed_handlers,
             hooks_auto_registration: settings.hooks_auto_registration,
             status: self.status(),
         })
@@ -527,6 +536,7 @@ impl ControlPlane {
 
     pub fn unregister_live_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
+            + unregister_owned_devin_hooks(&self.config.home_path)?
             + unregister_owned_grok_hooks(&self.config.grok_home)?;
         let settings = self.store.service_settings()?;
         Ok(HookMutationResponse {
@@ -953,6 +963,31 @@ fn grok_hook_owner_label(owner: &GrokHookOwner) -> String {
     }
 }
 
+fn devin_hook_connection(status: &DevinHookStatus) -> ManagedConnection {
+    ManagedConnection {
+        id: DEVIN_HOOKS_CONNECTION_ID.to_owned(),
+        kind: DEVIN_CONNECTION_KIND.to_owned(),
+        label: DEVIN_HOOKS_CONNECTION_LABEL.to_owned(),
+        status: status.health.clone(),
+        subtitle: Some(devin_hook_owner_label(&status.owner)),
+        detail: status.active_command.clone(),
+        created_at: None,
+        last_used_at: None,
+        revoked_at: None,
+        can_rename: false,
+        can_revoke: false,
+        action_hint: Some(DEVIN_HOOKS_CONNECTION_ACTION_HINT.to_owned()),
+    }
+}
+
+fn devin_hook_owner_label(owner: &DevinHookOwner) -> String {
+    match owner {
+        DevinHookOwner::LooperRust => "looper Rust".to_owned(),
+        DevinHookOwner::Unknown => "Unknown owner".to_owned(),
+        DevinHookOwner::None => "Not registered".to_owned(),
+    }
+}
+
 fn devin_desktop_connection(
     installation: &DevinInstallationStatus,
     status: &DevinDesktopStatus,
@@ -1200,12 +1235,11 @@ mod tests {
     }
 
     #[test]
-    fn grok_build_managed_connections_always_include_hooks_row() {
+    fn managed_connections_always_include_assistant_hook_rows() {
         let fixture_dir = tempfile::tempdir().expect("tempdir");
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
-            devin_executable: None,
             grok_home: fixture_dir.path().join(".grok"),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
@@ -1220,6 +1254,11 @@ mod tests {
             connections
                 .iter()
                 .any(|connection| connection.id == GROK_BUILD_HOOKS_CONNECTION_ID)
+        );
+        assert!(
+            connections
+                .iter()
+                .any(|connection| connection.id == DEVIN_HOOKS_CONNECTION_ID)
         );
     }
 }

@@ -44,18 +44,9 @@ pub struct PromptResumeTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DevinResumeTarget {
-    pub thread_id: String,
-    pub transport: DevinPromptTransport,
-    pub session_id: String,
-    pub cwd: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptDeliveryAction {
     QueueForHook,
     ResumeCodex(PromptResumeTarget),
-    ResumeDevin(DevinResumeTarget),
 }
 
 pub fn mobile_snapshot(
@@ -217,20 +208,19 @@ fn prompt_delivery_action_for_thread(
             cwd: thread.cwd.clone(),
         }));
     }
-    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        return devin_resume_target(thread)
-            .map(PromptDeliveryAction::ResumeDevin)
-            .ok_or(MobileSessionError::PromptDeliveryUnavailable);
-    }
-
     let effective_mode = effective_preset(session_override, session_state);
     let lifecycle = session_state.lifecycle.get(&thread.thread_id);
-    match session_status(
+    let status = session_status(
         is_archived,
         effective_mode,
         lifecycle,
         thread.runtime_status.as_deref(),
-    ) {
+    );
+    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
+        return devin_prompt_delivery_action(thread, status);
+    }
+
+    match status {
         ACTIVE_SESSION_STATUS => Ok(PromptDeliveryAction::QueueForHook),
         _ => Err(MobileSessionError::PromptDeliveryUnavailable),
     }
@@ -269,12 +259,26 @@ fn prompt_delivery_availability(
             unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
         };
     }
-    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop
-        && devin_resume_target(thread).is_none()
-    {
-        return PromptDeliveryAvailability {
-            can_send_prompt: false,
-            unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
+        return match devin_prompt_transport(thread) {
+            Some((DevinPromptTransport::CodexAppServer, _)) => PromptDeliveryAvailability {
+                can_send_prompt: true,
+                unavailable_reason: None,
+            },
+            Some((DevinPromptTransport::DevinLocalHooks, _)) if status == ACTIVE_SESSION_STATUS => {
+                PromptDeliveryAvailability {
+                    can_send_prompt: true,
+                    unavailable_reason: None,
+                }
+            }
+            Some((DevinPromptTransport::DevinLocalHooks, _)) => PromptDeliveryAvailability {
+                can_send_prompt: false,
+                unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+            },
+            None => PromptDeliveryAvailability {
+                can_send_prompt: false,
+                unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
+            },
         };
     }
 
@@ -295,18 +299,33 @@ fn prompt_delivery_availability(
     }
 }
 
-fn devin_resume_target(thread: &DesktopThread) -> Option<DevinResumeTarget> {
+fn devin_prompt_transport(thread: &DesktopThread) -> Option<(DevinPromptTransport, String)> {
     let DevinThreadIdentity {
         provider_id,
         session_id,
     } = devin_thread_identity_from_public_thread_id(&thread.thread_id)?;
     let transport = devin_prompt_transport_for_provider(&provider_id)?;
-    Some(DevinResumeTarget {
-        thread_id: thread.thread_id.clone(),
-        transport,
-        session_id,
-        cwd: thread.cwd.clone(),
-    })
+    Some((transport, session_id))
+}
+
+fn devin_prompt_delivery_action(
+    thread: &DesktopThread,
+    status: &str,
+) -> Result<PromptDeliveryAction, MobileSessionError> {
+    let (transport, session_id) =
+        devin_prompt_transport(thread).ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
+    match transport {
+        DevinPromptTransport::CodexAppServer => {
+            Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget {
+                thread_id: session_id,
+                cwd: thread.cwd.clone(),
+            }))
+        }
+        DevinPromptTransport::DevinLocalHooks if status == ACTIVE_SESSION_STATUS => {
+            Ok(PromptDeliveryAction::QueueForHook)
+        }
+        DevinPromptTransport::DevinLocalHooks => Err(MobileSessionError::PromptDeliveryUnavailable),
+    }
 }
 
 pub fn mobile_session_detail(
@@ -710,7 +729,25 @@ mod tests {
     }
 
     #[test]
-    fn prompt_delivery_target_resumes_devin_sessions() {
+    fn prompt_delivery_target_queues_devin_local_sessions_for_hooks() {
+        let thread = test_thread(
+            "devin:devin-cli:shadow-canidae",
+            AssistantKind::DevinDesktop,
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
+        );
+        let session_state = MobileSessionState::default();
+
+        assert!(matches!(
+            prompt_delivery_action_for_thread(&thread, &session_state),
+            Ok(PromptDeliveryAction::QueueForHook)
+        ));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], true);
+        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
+    }
+
+    #[test]
+    fn prompt_delivery_target_rejects_stopped_devin_local_sessions() {
         let thread = test_thread(
             "devin:devin-cli:shadow-canidae",
             AssistantKind::DevinDesktop,
@@ -720,18 +757,14 @@ mod tests {
 
         assert!(matches!(
             prompt_delivery_action_for_thread(&thread, &session_state),
-            Ok(PromptDeliveryAction::ResumeDevin(DevinResumeTarget {
-                thread_id,
-                transport,
-                session_id,
-                ..
-            })) if thread_id == "devin:devin-cli:shadow-canidae"
-                && transport == DevinPromptTransport::DevinCli
-                && session_id == "shadow-canidae"
+            Err(MobileSessionError::PromptDeliveryUnavailable)
         ));
         let summary = session_summary(&thread, 0, &session_state);
-        assert_eq!(summary["canSendPrompt"], true);
-        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        );
     }
 
     #[test]

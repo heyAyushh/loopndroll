@@ -29,8 +29,6 @@ const EXTRA_MOBILE_SNAPSHOT_THREADS: usize = 20;
 const EXTRA_THREAD_BASE_TIMESTAMP_MS: i64 = 3_000;
 const DEVIN_FIXTURE_EVENT_UPDATED_AT_MS: i64 = 1_780_801_814_955;
 const NEWER_THAN_DEVIN_THREAD_BASE_TIMESTAMP_MS: i64 = DEVIN_FIXTURE_EVENT_UPDATED_AT_MS + 1_000;
-const STUB_WAIT_ATTEMPTS: usize = 100;
-const STUB_WAIT_INTERVAL_MS: u64 = 50;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -501,7 +499,7 @@ async fn register_hooks_installs_owned_rust_handlers() {
     let response = request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(response["action"], "register-hooks");
     assert_eq!(response["removed_handlers"], 0);
-    assert_eq!(response["installed_handlers"], 6);
+    assert_eq!(response["installed_handlers"], 9);
     assert_eq!(response["hooks_auto_registration"], true);
     assert_eq!(response["status"]["hooks"]["enabled"], true);
     assert_eq!(response["status"]["hooks"]["owner"], "looper-rust");
@@ -519,6 +517,14 @@ async fn register_hooks_installs_owned_rust_handlers() {
     assert!(grok_hooks_json.contains("SessionStart"));
     assert!(grok_hooks_json.contains("Stop"));
     assert!(grok_hooks_json.contains("UserPromptSubmit"));
+
+    let devin_config_json =
+        fs::read_to_string(fixture.temp_dir.path().join(".config/devin/config.json"))
+            .expect("devin config");
+    assert!(devin_config_json.contains("LOOPER_DEVIN_HOOK=1"));
+    assert!(devin_config_json.contains("SessionStart"));
+    assert!(devin_config_json.contains("Stop"));
+    assert!(devin_config_json.contains("UserPromptSubmit"));
 
     let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
     assert!(config_toml.contains("[features]"));
@@ -546,7 +552,7 @@ async fn live_unregister_preserves_auto_registration_for_next_launch() {
     let register_response =
         request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(register_response["hooks_auto_registration"], true);
-    assert_eq!(register_response["installed_handlers"], 6);
+    assert_eq!(register_response["installed_handlers"], 9);
     assert_eq!(register_response["status"]["hooks"]["owner"], "looper-rust");
 }
 
@@ -1917,19 +1923,23 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
 }
 
 #[tokio::test]
-async fn devin_mobile_prompt_resumes_native_session() {
+async fn devin_mobile_prompt_queues_for_local_hooks() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    fixture.write_devin_next_session();
+    fixture.write_active_devin_next_session();
     let control_plane = fixture.control_plane();
     control_plane
         .mobile_session_service()
         .set_assistant_surface("devin")
         .expect("set Devin surface");
+    control_plane
+        .mobile_session_service()
+        .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
+        .expect("set Devin session mode");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
-    let _snapshot = request_json_body_with_options(
+    let response = request_json_body_with_options(
         &router,
         Method::POST,
         "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
@@ -1940,13 +1950,8 @@ async fn devin_mobile_prompt_resumes_native_session() {
     .await;
 
     assert_eq!(
-        fixture.devin_resume_args(),
-        vec![
-            "--resume".to_owned(),
-            "brindle-cadet".to_owned(),
-            "-p".to_owned(),
-            "Keep going from phone.".to_owned(),
-        ]
+        mobile_snapshot_session(&response, "devin:devin-cli:brindle-cadet")["id"],
+        "devin:devin-cli:brindle-cadet"
     );
 
     let events = control_plane
@@ -1958,8 +1963,21 @@ async fn devin_mobile_prompt_resumes_native_session() {
             .iter()
             .any(|event| event.event_type == MobileEventKind::SessionChanged
                 && event.thread_id.as_deref() == Some("devin:devin-cli:brindle-cadet")
-                && event.detail.as_deref() == Some("prompt-resumed"))
+                && event.detail.as_deref() == Some("prompt-queued"))
     );
+    let outcome = control_plane
+        .mobile_session_service()
+        .hook_outcome_for_payload(&MobileHookPayload {
+            hook_event_name: "Stop".to_owned(),
+            session_id: Some("devin:devin-cli:brindle-cadet".to_owned()),
+            turn_id: None,
+            cwd: Some("/tmp/project".to_owned()),
+            last_assistant_message: None,
+        })
+        .expect("Devin hook outcome");
+    let decision = outcome.decision.expect("queued prompt decision");
+    assert_eq!(decision.decision, "block");
+    assert_eq!(decision.reason, "Keep going from phone.");
 }
 
 #[tokio::test]
@@ -2585,51 +2603,10 @@ done
         executable
     }
 
-    fn devin_resume_stub(&self) -> std::path::PathBuf {
-        let executable = self.temp_dir.path().join("devin-resume-stub");
-        if executable.is_file() {
-            return executable;
-        }
-        let args_path = self.devin_resume_args_path();
-        fs::write(
-            &executable,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
-                args_path.display()
-            ),
-        )
-        .expect("write devin resume stub");
-        let mut permissions = fs::metadata(&executable)
-            .expect("devin resume stub metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).expect("chmod devin resume stub");
-        executable
-    }
-
-    fn devin_resume_args_path(&self) -> std::path::PathBuf {
-        self.temp_dir.path().join("devin-resume-args.txt")
-    }
-
-    fn devin_resume_args(&self) -> Vec<String> {
-        let args_path = self.devin_resume_args_path();
-        for _ in 0..STUB_WAIT_ATTEMPTS {
-            if let Ok(args) = fs::read_to_string(&args_path) {
-                return args.lines().map(str::to_owned).collect();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(STUB_WAIT_INTERVAL_MS));
-        }
-        panic!(
-            "timed out waiting for devin args at {}",
-            args_path.display()
-        );
-    }
-
     fn control_plane(&self) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(self.codex_resume_stub().display().to_string()),
-            devin_executable: Some(self.devin_resume_stub().display().to_string()),
             grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),

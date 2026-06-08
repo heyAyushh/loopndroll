@@ -15,10 +15,6 @@ use axum::{
 
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
-use crate::devin::{
-    DevinContinueRequest, DevinPromptTransport,
-    spawn_session_continue as spawn_devin_session_continue,
-};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile_api::{
@@ -989,33 +985,6 @@ fn dispatch_session_prompt_with_action(
                 codex_executable: control_plane.codex_executable().map(str::to_owned),
             })
             .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
-            Ok(PromptDispatch::Resumed)
-        }
-        PromptDeliveryAction::ResumeDevin(target) => {
-            match target.transport {
-                DevinPromptTransport::Codex => {
-                    spawn_thread_resume(&CodexResumeRequest {
-                        thread_id: target.session_id,
-                        prompt: prompt.to_owned(),
-                        cwd: target.cwd,
-                        codex_executable: control_plane.codex_executable().map(str::to_owned),
-                    })
-                    .map_err(|error| {
-                        MobileSessionError::PromptResumeUnavailable(error.to_string())
-                    })?;
-                }
-                DevinPromptTransport::DevinCli => {
-                    spawn_devin_session_continue(&DevinContinueRequest {
-                        session_id: target.session_id,
-                        prompt: prompt.to_owned(),
-                        cwd: target.cwd,
-                        devin_executable: control_plane.devin_executable().map(str::to_owned),
-                    })
-                    .map_err(|error| {
-                        MobileSessionError::PromptResumeUnavailable(error.to_string())
-                    })?;
-                }
-            }
             Ok(PromptDispatch::Resumed)
         }
     }

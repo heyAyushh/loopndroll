@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod bridge;
-mod continuation;
+mod hooks;
 mod installations;
 mod registry;
 mod sessions;
@@ -14,8 +14,10 @@ pub use self::bridge::{
     DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlLevel,
     DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
 };
-pub use self::continuation::{
-    DevinContinueRequest, resolve_devin_executable, spawn_session_continue,
+pub use self::hooks::{
+    DevinHookOwner, DevinHookRegistrationChange, DevinHookStatus, inspect_devin_hooks,
+    is_devin_hook_invocation, parse_devin_hook_payload, register_owned_devin_hooks,
+    unregister_owned_devin_hooks,
 };
 pub use self::installations::DevinInstallationStatus;
 pub use self::registry::{DevinAcpAgent, DevinAcpLaunchMetadata, DevinAcpRegistryStatus};
