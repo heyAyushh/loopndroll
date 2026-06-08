@@ -262,7 +262,11 @@ struct MockCompanionService: CompanionService {
         await store.delete(id: id)
     }
 
-    func sendSessionPrompt(id: String, prompt: String) async throws -> MobileSnapshot {
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
         await store.sendPrompt(id: id, prompt: prompt)
     }
 

@@ -63,9 +63,13 @@ struct HTTPCompanionService: CompanionService {
         try await request(path: sessionPath(id: id), method: HTTPMethod.delete)
     }
 
-    func sendSessionPrompt(id: String, prompt: String) async throws -> MobileSnapshot {
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
         try await request(
-            path: sessionPath(id: id, suffix: "prompt"),
+            path: path(sessionPath(id: id, suffix: "prompt"), assistantSurface: assistantSurface),
             method: HTTPMethod.post,
             body: ["prompt": prompt]
         )

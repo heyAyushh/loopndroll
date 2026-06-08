@@ -146,6 +146,7 @@ enum LooperContinuationActivity {
             .removingPercentEncoding?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+            .flatMap(normalizedSessionID(from:))
     }
 
     static func baseURL(from url: URL) -> URL? {
@@ -170,6 +171,7 @@ enum LooperContinuationActivity {
         (activity.userInfo?[UserInfoKey.sessionID] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+            .flatMap(normalizedSessionID(from:))
     }
 
     private static func sessionIDFromSpotlightActivity(_ activity: NSUserActivity) -> String? {
@@ -180,6 +182,7 @@ enum LooperContinuationActivity {
         return (activity.userInfo?[CSSearchableItemActivityIdentifier] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+            .flatMap(normalizedSessionID(from:))
     }
 
     private static func sessionIDFromTargetContentIdentifier(_ activity: NSUserActivity) -> String? {
@@ -193,6 +196,7 @@ enum LooperContinuationActivity {
         return String(identifier.dropFirst(TargetContentIdentifier.sessionPrefix.count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+            .flatMap(normalizedSessionID(from:))
     }
 
     private static func sessionIDFromWebpageURL(_ activity: NSUserActivity) -> String? {
@@ -216,10 +220,12 @@ enum LooperContinuationActivity {
             return nil
         }
 
-        return url.pathComponents.filter { $0 != "/" }.last?
+        return handoffSessionPathComponents(from: url.pathComponents.filter { $0 != "/" })?
+            .joined(separator: "/")
             .removingPercentEncoding?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
+            .flatMap(normalizedSessionID(from:))
     }
 
     private static func baseURLFromHandoffWebpageURL(_ url: URL) -> URL? {
@@ -236,15 +242,83 @@ enum LooperContinuationActivity {
     }
 
     private static func isHandoffSessionWebpageURL(_ url: URL) -> Bool {
-        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        return handoffSessionPathComponents(
+            from: url.pathComponents.filter { $0 != "/" }
+        ) != nil
+    }
+
+    private static func handoffSessionPathComponents(
+        from pathComponents: [String]
+    ) -> [String]? {
         guard pathComponents.count >= HandoffWebPath.minimumComponentCount else {
-            return false
+            return nil
         }
 
-        return pathComponents[pathComponents.count - HandoffWebPath.sessionComponentOffset]
-            == HandoffWebPath.sessionsComponent &&
-            pathComponents[pathComponents.count - HandoffWebPath.handoffComponentOffset]
-            == HandoffWebPath.handoffComponent
+        guard let handoffIndex = pathComponents.lastIndex(of: HandoffWebPath.handoffComponent),
+              pathComponents.count > handoffIndex + HandoffWebPath.sessionsComponentOffset
+        else {
+            return nil
+        }
+
+        let sessionsIndex = handoffIndex + 1
+        guard sessionsIndex < pathComponents.count,
+              pathComponents[sessionsIndex] == HandoffWebPath.sessionsComponent
+        else {
+            return nil
+        }
+
+        let startIndex = sessionsIndex + 1
+        let sessionPathComponents = Array(pathComponents[startIndex...]).filter { !$0.isEmpty }
+        return sessionPathComponents.isEmpty ? nil : sessionPathComponents
+    }
+
+    private static func normalizedSessionID(from rawSessionID: String) -> String? {
+        guard let decodedSessionID = rawSessionID.removingPercentEncoding?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        else {
+            return nil
+        }
+
+        if let normalizedDevinSessionID = normalizedLegacyDevinSessionID(from: decodedSessionID) {
+            return normalizedDevinSessionID
+        }
+
+        return decodedSessionID
+    }
+
+    private static func normalizedLegacyDevinSessionID(
+        from rawSessionID: String
+    ) -> String? {
+        guard rawSessionID.hasPrefix(LegacySessionID.devinPrefix) else {
+            return nil
+        }
+
+        let providerAndSessionID = String(rawSessionID.dropFirst(LegacySessionID.devinPrefix.count))
+        let chunks = providerAndSessionID.split(
+            separator: LegacySessionID.sessionPathSeparator,
+            omittingEmptySubsequences: true
+        )
+        guard chunks.count >= 2,
+              let providerID = chunks.first?.description.nilIfEmpty
+        else {
+            return nil
+        }
+
+        let legacySessionID = chunks
+            .dropFirst()
+            .joined(separator: String(LegacySessionID.sessionPathSeparator))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty?
+            .replacingOccurrences(
+                of: String(LegacySessionID.sessionPathSeparator),
+                with: LegacySessionID.sessionCanonicalSeparator
+            )
+
+        guard let canonicalSessionID = legacySessionID else {
+            return nil
+        }
+        return "\(LegacySessionID.publicPrefix)\(providerID)\(LegacySessionID.providerSeparator)\(canonicalSessionID)"
     }
 
     private static func normalizedString(_ value: String) -> String? {
@@ -255,8 +329,15 @@ enum LooperContinuationActivity {
         static let handoffComponent = "handoff"
         static let sessionsComponent = "sessions"
         static let minimumComponentCount = 3
-        static let sessionComponentOffset = 2
-        static let handoffComponentOffset = 3
+        static let sessionsComponentOffset = 2
+    }
+
+    private enum LegacySessionID {
+        static let devinPrefix = "acp/"
+        static let publicPrefix = "devin:"
+        static let providerSeparator = ":"
+        static let sessionPathSeparator: Character = "/"
+        static let sessionCanonicalSeparator = ":"
     }
 }
 

@@ -294,7 +294,8 @@ final class CompanionAppModel {
             await refresh()
             if let threadID = event.threadID,
                detailBySessionID[threadID] != nil {
-                await refreshSessionDetail(id: threadID)
+                let sessionSurface = snapshot?.assistantSurface(containingSessionID: threadID)
+                await refreshSessionDetail(id: threadID, assistantSurface: sessionSurface)
             }
         }
     }
@@ -574,9 +575,9 @@ final class CompanionAppModel {
         if snapshot == nil || snapshot?.session(withID: sessionID) == nil {
             await loadSnapshot()
         }
-        selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+        let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
 
-        await refreshSessionDetail(id: sessionID)
+        await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
     }
 
     private func adoptHandoffBaseURLIfAvailable(from activity: NSUserActivity) {
@@ -634,7 +635,10 @@ final class CompanionAppModel {
         await refreshSessionDetail(id: id)
     }
 
-    func refreshSessionDetail(id: String) async {
+    func refreshSessionDetail(
+        id: String,
+        assistantSurface: CompanionAssistantSurface? = nil
+    ) async {
         guard !loadingSessionDetailIDs.contains(id) else {
             return
         }
@@ -644,14 +648,52 @@ final class CompanionAppModel {
             loadingSessionDetailIDs.remove(id)
         }
 
-        do {
-            detailBySessionID[id] = try await service.loadSessionDetail(
-                id: id,
-                surface: selectedAssistantSurface
-            )
-        } catch {
-            errorMessage = error.localizedDescription
+        var lastError: Error?
+        for surface in detailQuerySurfaces(for: id, preferredSurface: assistantSurface) {
+            do {
+                detailBySessionID[id] = try await service.loadSessionDetail(
+                    id: id,
+                    surface: Optional(surface)
+                )
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+                CompanionDiagnostics.record(
+                    "session-detail:load-failed id=\(id) surface=\(surface.rawValue) error=\(error.localizedDescription)"
+                )
+            }
         }
+
+        if let lastError {
+            errorMessage = lastError.localizedDescription
+        }
+    }
+
+    private func detailQuerySurfaces(
+        for sessionID: String,
+        preferredSurface: CompanionAssistantSurface?
+    ) -> [CompanionAssistantSurface] {
+        var surfaces: [CompanionAssistantSurface] = []
+        if let preferredSurface {
+            surfaces.append(preferredSurface)
+        } else if let detectedSurface = snapshot?.assistantSurface(containingSessionID: sessionID) {
+            surfaces.append(detectedSurface)
+        }
+
+        if !selectedAssistantSurfaceIn(surfaces) {
+            surfaces.append(selectedAssistantSurface)
+        }
+
+        surfaces.append(contentsOf: CompanionAssistantSurface.allCases.filter { surface in
+            !surfaces.contains(surface)
+        })
+
+        return surfaces
+    }
+
+    private func selectedAssistantSurfaceIn(_ surfaces: [CompanionAssistantSurface]) -> Bool {
+        surfaces.contains(selectedAssistantSurface)
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
@@ -686,6 +728,9 @@ final class CompanionAppModel {
 
     @discardableResult
     func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
+        let targetSurface = snapshot?.assistantSurface(containingSessionID: sessionID)
+            ?? selectedAssistantSurface
+
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else {
             errorMessage = "Prompt is required."
@@ -694,11 +739,15 @@ final class CompanionAppModel {
         }
 
         let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.sendSessionPrompt(id: sessionID, prompt: trimmedPrompt)
+            try await service.sendSessionPrompt(
+                id: sessionID,
+                prompt: trimmedPrompt,
+                assistantSurface: targetSurface
+            )
         }
 
         if didMutate, detailBySessionID[sessionID] != nil {
-            await refreshSessionDetail(id: sessionID)
+            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
         }
 
         return didMutate
@@ -724,9 +773,9 @@ final class CompanionAppModel {
             if snapshot == nil || snapshot?.session(withID: sessionID) == nil {
                 await loadSnapshot()
             }
-            selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+            let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
             pendingOpenSessionID = sessionID
-            await refreshSessionDetail(id: sessionID)
+            await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
         case .continueChat:
             if snapshot == nil {
                 await loadSnapshot()
@@ -978,13 +1027,18 @@ final class CompanionAppModel {
         )
     }
 
-    private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) {
+    private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) -> CompanionAssistantSurface? {
         guard let surface = snapshot?.assistantSurface(containingSessionID: sessionID) else {
-            return
+            CompanionDiagnostics.record("continuation:surface-miss sessionID=\(sessionID)")
+            return nil
         }
 
         selectedAssistantSurface = surface
         applyVisibleAssistantSurface(surface)
+        CompanionDiagnostics.record(
+            "continuation:surface-match sessionID=\(sessionID) surface=\(surface.rawValue)"
+        )
+        return surface
     }
 
     private func syncSpotlightIndex(with sessions: [SessionSummary]) {

@@ -576,7 +576,11 @@ struct UnconfiguredCompanionService: CompanionService {
         throw error
     }
     func deleteSession(id _: String) async throws -> MobileSnapshot { throw error }
-    func sendSessionPrompt(id _: String, prompt _: String) async throws -> MobileSnapshot {
+    func sendSessionPrompt(
+        id _: String,
+        prompt _: String,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
         throw error
     }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
