@@ -457,18 +457,17 @@ private final class LooperContinuationActivityPanelOwner {
     }
 
     private func enableFocusAssistedPresentation() {
-        guard !isFocusAssistedPresentationActive else {
-            panel.orderFrontRegardless()
-            return
+        if !isFocusAssistedPresentationActive {
+            panel.allowsKeyAndMainPresentation = true
+            panel.styleMask.remove(.nonactivatingPanel)
+            NSApp.setActivationPolicy(.regular)
+            isFocusAssistedPresentationActive = true
         }
 
-        panel.allowsKeyAndMainPresentation = true
-        panel.styleMask.remove(.nonactivatingPanel)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
-        isFocusAssistedPresentationActive = true
     }
 
     private func restoreNonActivatingPresentation() {
