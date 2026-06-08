@@ -13,6 +13,10 @@ struct AssistantClientGlyph: View {
             CodexLogoMark()
                 .frame(width: Self.size, height: Self.size)
                 .accessibilityLabel(client.displayTitle)
+        } else if client == .claudeCode {
+            ClaudeLogoMark()
+                .frame(width: Self.size, height: Self.size)
+                .accessibilityLabel(client.displayTitle)
         } else if let surface = CompanionAssistantSurface(assistantClient: client) {
             AssistantSurfaceLogoMark(surface: surface)
                 .frame(width: Self.size, height: Self.size)
@@ -168,6 +172,28 @@ private struct DevinLogoMark: View {
     }
 }
 
+private struct ClaudeLogoMark: View {
+    var body: some View {
+        ClaudeLogoShape()
+            .fill(ClaudeLogoPalette.mark)
+            .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct ClaudeLogoShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let frame = ClaudeLogoGeometry.frame(in: rect)
+        var path = Path()
+
+        ClaudeLogoGeometry.arms.forEach { arm in
+            path.addPath(arm.path(in: frame))
+        }
+        path.addEllipse(in: ClaudeLogoGeometry.centerMass(in: frame))
+
+        return path
+    }
+}
+
 private enum AssistantSurfaceLogoPalette {
     static let codexGradient = [
         Color(red: 0.05, green: 0.12, blue: 0.10),
@@ -191,6 +217,97 @@ private enum DevinLogoAsset {
 private enum DevinLogoPalette {
     static let darkModeTint = Color.white
     static let lightModeTint = Color.black
+}
+
+private enum ClaudeLogoPalette {
+    static let mark = Color(red: 0.85, green: 0.45, blue: 0.32)
+}
+
+private enum ClaudeLogoGeometry {
+    static let designSize: CGFloat = 1_600
+
+    static let arms: [ClaudeLogoArm] = [
+        ClaudeLogoArm(end: CGPoint(x: 20, y: 790), width: 142),
+        ClaudeLogoArm(end: CGPoint(x: 150, y: 360), width: 142),
+        ClaudeLogoArm(end: CGPoint(x: 430, y: 40), width: 150),
+        ClaudeLogoArm(end: CGPoint(x: 950, y: 36), width: 132),
+        ClaudeLogoArm(end: CGPoint(x: 1_300, y: 240), width: 152),
+        ClaudeLogoArm(end: CGPoint(x: 1_580, y: 690), width: 124),
+        ClaudeLogoArm(end: CGPoint(x: 1_535, y: 970), width: 124),
+        ClaudeLogoArm(end: CGPoint(x: 1_420, y: 1_325), width: 110),
+        ClaudeLogoArm(end: CGPoint(x: 1_180, y: 1_480), width: 126),
+        ClaudeLogoArm(end: CGPoint(x: 780, y: 1_580), width: 124),
+        ClaudeLogoArm(end: CGPoint(x: 400, y: 1_450), width: 134),
+        ClaudeLogoArm(end: CGPoint(x: 180, y: 1_210), width: 126)
+    ]
+
+    private static let center = CGPoint(x: 780, y: 850)
+    private static let centerMassWidth: CGFloat = 400
+    private static let centerMassHeight: CGFloat = 310
+
+    static func frame(in rect: CGRect) -> CGRect {
+        let side = min(rect.width, rect.height)
+        return CGRect(
+            x: rect.midX - side / 2,
+            y: rect.midY - side / 2,
+            width: side,
+            height: side
+        )
+    }
+
+    static func point(_ point: CGPoint, in frame: CGRect) -> CGPoint {
+        CGPoint(
+            x: frame.minX + point.x / designSize * frame.width,
+            y: frame.minY + point.y / designSize * frame.height
+        )
+    }
+
+    static func length(_ value: CGFloat, in frame: CGRect) -> CGFloat {
+        value / designSize * frame.width
+    }
+
+    static func centerPoint(in frame: CGRect) -> CGPoint {
+        point(center, in: frame)
+    }
+
+    static func centerMass(in frame: CGRect) -> CGRect {
+        let centerPoint = centerPoint(in: frame)
+        return CGRect(
+            x: centerPoint.x - length(centerMassWidth, in: frame) / 2,
+            y: centerPoint.y - length(centerMassHeight, in: frame) / 2,
+            width: length(centerMassWidth, in: frame),
+            height: length(centerMassHeight, in: frame)
+        )
+    }
+}
+
+private struct ClaudeLogoArm {
+    let end: CGPoint
+    let width: CGFloat
+
+    func path(in frame: CGRect) -> Path {
+        let start = ClaudeLogoGeometry.centerPoint(in: frame)
+        let end = ClaudeLogoGeometry.point(end, in: frame)
+        let halfWidth = ClaudeLogoGeometry.length(width, in: frame) / 2
+        let direction = CGVector(dx: end.x - start.x, dy: end.y - start.y)
+        let length = hypot(direction.dx, direction.dy)
+        guard length > 0 else {
+            return Path()
+        }
+
+        let normal = CGVector(
+            dx: -direction.dy / length * halfWidth,
+            dy: direction.dx / length * halfWidth
+        )
+
+        var path = Path()
+        path.move(to: CGPoint(x: start.x + normal.dx, y: start.y + normal.dy))
+        path.addLine(to: CGPoint(x: end.x + normal.dx, y: end.y + normal.dy))
+        path.addLine(to: CGPoint(x: end.x - normal.dx, y: end.y - normal.dy))
+        path.addLine(to: CGPoint(x: start.x - normal.dx, y: start.y - normal.dy))
+        path.closeSubpath()
+        return path
+    }
 }
 
 private enum GrokLogoMetrics {
