@@ -33,11 +33,20 @@ final class LooperContinuationActivityPublisher {
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
     private var currentActivityRefreshTask: Task<Void, Never>?
-    private var isFocusAssistedActivationRequestQueued = false
+    private var focusAssistedActivationLease = LooperHandoffActivationLease()
 
     var focusAssist = LooperHandoffFocusAssist.defaultOption {
         didSet {
             guard focusAssist != oldValue else {
+                return
+            }
+            refreshCurrentActivity()
+        }
+    }
+
+    var focusAssistHoldDuration = LooperHandoffHoldDuration.defaultOption {
+        didSet {
+            guard focusAssistHoldDuration != oldValue else {
                 return
             }
             refreshCurrentActivity()
@@ -49,8 +58,7 @@ final class LooperContinuationActivityPublisher {
     }
 
     func requestFocusAssistedActivation() {
-        isFocusAssistedActivationRequestQueued = true
-        logger.debug("handoff focus activation queued")
+        activateFocusAssist(reason: "hotkey")
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -96,7 +104,7 @@ final class LooperContinuationActivityPublisher {
         currentActivity?.invalidate()
         activityOwner.detach()
         logger.info("handoff activity invalidated")
-        isFocusAssistedActivationRequestQueued = false
+        focusAssistedActivationLease.invalidate()
         currentActivityRefreshTask = nil
         currentActivity = nil
         currentDescriptor = nil
@@ -129,7 +137,7 @@ final class LooperContinuationActivityPublisher {
     }
 
     private func allowsFocusAssistedActivation() -> Bool {
-        if consumeFocusAssistedActivationRequest() {
+        if focusAssistedActivationLease.isActive() {
             return true
         }
 
@@ -141,12 +149,22 @@ final class LooperContinuationActivityPublisher {
             return false
         }
 
-        return idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds
+        guard idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds else {
+            return false
+        }
+
+        activateFocusAssist(reason: "idle")
+        return true
     }
 
-    private func consumeFocusAssistedActivationRequest() -> Bool {
-        defer { isFocusAssistedActivationRequestQueued = false }
-        return isFocusAssistedActivationRequestQueued
+    private func activateFocusAssist(reason: String) {
+        focusAssistedActivationLease.activate(holdDuration: focusAssistHoldDuration)
+        logger.debug(
+            """
+            handoff focus activation leased reason=\(reason, privacy: .public) \
+            hold=\(self.focusAssistHoldDuration.menuTitle, privacy: .public)
+            """
+        )
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {

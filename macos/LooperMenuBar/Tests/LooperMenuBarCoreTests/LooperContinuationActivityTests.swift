@@ -84,6 +84,57 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func defaultsHandoffHoldToTwoMinutes() {
+        let expectedTwoMinuteSeconds: TimeInterval = 120
+        let suiteName = "dev.looper.tests.handoff-hold.default"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        #expect(LooperHandoffHoldDuration.stored(in: defaults) == .twoMinutes)
+        #expect(LooperHandoffHoldDuration.defaultOption.durationSeconds == expectedTwoMinuteSeconds)
+        #expect(LooperHandoffHoldDuration.defaultOption.menuTitle == "2 min")
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
+    func storesHandoffHoldPreference() {
+        let suiteName = "dev.looper.tests.handoff-hold.stored"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        LooperHandoffHoldDuration.fiveMinutes.save(in: defaults)
+
+        #expect(LooperHandoffHoldDuration.stored(in: defaults) == .fiveMinutes)
+        #expect(LooperHandoffHoldDuration.fiveMinutes.menuTitle == "5 min")
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
+    func handoffActivationLeaseStaysActiveUntilHoldExpires() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        var lease = LooperHandoffActivationLease()
+
+        lease.activate(now: start, holdDuration: .oneMinute)
+        let isActiveBeforeExpiration = lease.isActive(now: start.addingTimeInterval(59))
+        let isActiveAtExpiration = lease.isActive(now: start.addingTimeInterval(60))
+
+        #expect(isActiveBeforeExpiration)
+        #expect(!isActiveAtExpiration)
+    }
+
+    @Test
+    func handoffActivationLeaseKeepsLongerExpiration() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        var lease = LooperHandoffActivationLease()
+
+        lease.activate(now: start, holdDuration: .fiveMinutes)
+        lease.activate(now: start, holdDuration: .oneMinute)
+        let isActiveBeforeLongerExpiration = lease.isActive(now: start.addingTimeInterval(299))
+
+        #expect(isActiveBeforeLongerExpiration)
+    }
+
+    @Test
     func usesNewestActiveThreadAsContinuationTarget() throws {
         let snapshot = desktopSnapshot(threads: [
             thread(id: "old", title: "Old", updatedAtMs: 1),

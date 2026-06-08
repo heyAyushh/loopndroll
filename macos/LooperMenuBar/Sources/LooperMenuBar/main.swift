@@ -17,6 +17,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let activationPolicy: NSApplication.ActivationPolicy = .accessory
         static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
         static let handoffHotkeySubMenuTitle = "Handoff Hotkey"
+        static let handoffHoldSubMenuTitle = "Handoff Hold"
         static let detailsMenuTitle = "Details"
         static let settingsMenuTitle = "Settings"
     }
@@ -49,6 +50,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         NSApp.setActivationPolicy(Layout.activationPolicy)
         LooperHandoffHotkeyOption.migrateStoredPreference()
         continuationPublisher.focusAssist = handoffFocusAssist
+        continuationPublisher.focusAssistHoldDuration = handoffHoldDuration
         installStatusItem()
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
@@ -430,6 +432,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         submenu.autoenablesItems = false
         addHandoffFocusAssistItem(to: submenu)
         addHandoffHotkeyItem(to: submenu)
+        addHandoffHoldItem(to: submenu)
         addDetachServerItem(to: submenu)
         submenu.addItem(NSMenuItem.separator())
         addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: submenu)
@@ -489,6 +492,31 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
+    private func addHandoffHoldItem(to menu: NSMenu) {
+        let item = NSMenuItem(
+            title: "\(Layout.handoffHoldSubMenuTitle): \(handoffHoldDuration.menuTitle)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let submenu = NSMenu(title: Layout.handoffHoldSubMenuTitle)
+        submenu.autoenablesItems = false
+
+        for option in LooperHandoffHoldDuration.allOptions {
+            let optionItem = NSMenuItem(
+                title: option.menuTitle,
+                action: #selector(setHandoffHoldDurationAction(_:)),
+                keyEquivalent: ""
+            )
+            optionItem.target = self
+            optionItem.representedObject = option.rawValue
+            optionItem.state = handoffHoldDuration == option ? .on : .off
+            submenu.addItem(optionItem)
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
     private var detachServerOnQuit: Bool {
         get {
             UserDefaults.standard.bool(forKey: Layout.detachServerOnQuitKey)
@@ -505,6 +533,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         set {
             newValue.save()
             continuationPublisher.focusAssist = newValue
+        }
+    }
+
+    private var handoffHoldDuration: LooperHandoffHoldDuration {
+        get {
+            LooperHandoffHoldDuration.stored()
+        }
+        set {
+            newValue.save()
+            continuationPublisher.focusAssistHoldDuration = newValue
         }
     }
 
@@ -595,6 +633,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
 
         handoffHotkeyOption = option
+        Task {
+            await refreshMenu()
+        }
+    }
+
+    @objc private func setHandoffHoldDurationAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let option = LooperHandoffHoldDuration(rawValue: rawValue)
+        else {
+            return
+        }
+
+        handoffHoldDuration = option
         Task {
             await refreshMenu()
         }
