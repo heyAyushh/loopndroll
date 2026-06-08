@@ -7,10 +7,9 @@ import OSLog
 @MainActor
 final class LooperContinuationActivityPublisher {
     fileprivate enum UtilityPanelLayout {
-        static let contentSize = NSSize(width: 1, height: 1)
-        static let screenInset: CGFloat = 1
-        static let backgroundAlpha: CGFloat = 0.02
-        static let cornerRadius: CGFloat = 0
+        static let contentSize = NSSize(width: 360, height: 88)
+        static let screenInset: CGFloat = 16
+        static let cornerRadius: CGFloat = 12
     }
 
     private enum ActivityRefresh {
@@ -321,7 +320,7 @@ private final class LooperContinuationActivityPanelOwner {
     private let viewController = LooperContinuationActivityPanelViewController()
     private var isFocusAssistedPresentationActive = false
     private lazy var panel: LooperContinuationActivityUtilityPanel = {
-        // Handoff needs a live AppKit responder owner; this panel provides one without taking focus.
+        // Handoff needs a live AppKit responder owner. The panel becomes visible only for explicit activation.
         let panel = LooperContinuationActivityUtilityPanel(
             contentRect: NSRect(origin: .zero, size: LooperContinuationActivityPublisher.UtilityPanelLayout.contentSize),
             styleMask: [.titled, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
@@ -462,7 +461,7 @@ private final class LooperContinuationActivityPanelOwner {
             enableFocusAssistedPresentation(activatesApplication: false)
         case .nonActivating:
             restoreNonActivatingPresentation()
-            panel.orderFrontRegardless()
+            panel.orderOut(nil)
         }
     }
 
@@ -478,14 +477,18 @@ private final class LooperContinuationActivityPanelOwner {
         if activatesApplication {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
+        } else if NSApp.isActive {
+            panel.orderFrontRegardless()
+        } else {
+            panel.orderOut(nil)
         }
-        panel.orderFrontRegardless()
     }
 
     private func restoreNonActivatingPresentation() {
         panel.allowsKeyAndMainPresentation = false
         panel.styleMask.insert(.nonactivatingPanel)
         NSApp.setActivationPolicy(.accessory)
+        panel.orderOut(nil)
         isFocusAssistedPresentationActive = false
     }
 }
@@ -506,22 +509,31 @@ private final class LooperContinuationActivityUtilityPanel: NSPanel {
 private final class LooperContinuationActivityPanelViewController: NSViewController {
     enum Content {
         static let windowTitle = "looper Handoff Activity"
+        static let statusText = "Ready for Handoff"
+        static let fallbackTitle = "looper"
+        static let fallbackSubtitle = "Continue on iPhone"
     }
 
     var descriptor: LooperContinuationActivityDescriptor?
+    private let titleLabel = NSTextField(labelWithString: Content.fallbackTitle)
+    private let subtitleLabel = NSTextField(labelWithString: Content.fallbackSubtitle)
 
     override func loadView() {
-        view = NSView(
+        let visualEffectView = NSVisualEffectView(
             frame: NSRect(
                 origin: .zero,
                 size: LooperContinuationActivityPublisher.UtilityPanelLayout.contentSize
             )
         )
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor
-            .withAlphaComponent(LooperContinuationActivityPublisher.UtilityPanelLayout.backgroundAlpha)
-            .cgColor
-        view.layer?.cornerRadius = LooperContinuationActivityPublisher.UtilityPanelLayout.cornerRadius
+        visualEffectView.material = .popover
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.state = .active
+        visualEffectView.wantsLayer = true
+        visualEffectView.layer?.cornerRadius = LooperContinuationActivityPublisher.UtilityPanelLayout.cornerRadius
+        visualEffectView.layer?.masksToBounds = true
+        view = visualEffectView
+        configureLabels()
+        layoutLabels(in: visualEffectView)
     }
 
     override func updateUserActivityState(_ activity: NSUserActivity) {
@@ -554,11 +566,51 @@ private final class LooperContinuationActivityPanelViewController: NSViewControl
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
+        refreshLabels(with: descriptor)
+    }
+
+    private func configureLabels() {
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        subtitleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.maximumNumberOfLines = 1
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func layoutLabels(in visualEffectView: NSVisualEffectView) {
+        visualEffectView.addSubview(titleLabel)
+        visualEffectView.addSubview(subtitleLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor, constant: -16),
+            titleLabel.topAnchor.constraint(equalTo: visualEffectView.topAnchor, constant: 20),
+            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+        ])
+    }
+
+    private func refreshLabels(with descriptor: LooperContinuationActivityDescriptor?) {
+        titleLabel.stringValue = descriptor?.title.nilIfEmpty ?? Content.fallbackTitle
+        let subtitle = [
+            Content.statusText,
+            descriptor?.userInfo[LooperContinuationActivity.UserInfoKey.sessionSubtitle]?.nilIfEmpty,
+        ]
+        .compactMap { $0 }
+        .joined(separator: " - ")
+        subtitleLabel.stringValue = subtitle.nilIfEmpty ?? Content.fallbackSubtitle
     }
 }
 
 private extension String {
     var nilIfEmpty: String? {
-        isEmpty ? nil : self
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }
