@@ -14,6 +14,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let continuationRefreshInterval: Duration = .seconds(20)
         static let activationPolicy: NSApplication.ActivationPolicy = .accessory
         static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
+        static let detailsMenuTitle = "Details"
+        static let settingsMenuTitle = "Settings"
     }
 
     private let client: HTTPControlPlaneClient
@@ -181,33 +183,39 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.delegate = self
         addDisabledItem(Layout.appDisplayName, to: menu)
         menu.addItem(NSMenuItem.separator())
+        addDetailsItem(snapshot: snapshot, error: error, to: menu)
 
         if let snapshot {
-            addSnapshotStatus(snapshot, to: menu)
-        } else if error != nil {
-            addDisabledItem("Status: Unavailable", to: menu)
-            addDisabledItem("Rust service unavailable", to: menu)
-            addDisabledItem("Lifecycle: \(LooperHumanStatus.unavailable(detachOnQuit: detachServerOnQuit).lifecycle)", to: menu)
-        } else {
-            addDisabledItem("Status: Starting", to: menu)
-            addDisabledItem("Starting local service...", to: menu)
-            addDisabledItem("Lifecycle: \(LooperHumanStatus.starting(detachOnQuit: detachServerOnQuit).lifecycle)", to: menu)
+            addSnapshotThreadSections(snapshot, to: menu)
         }
 
         menu.addItem(NSMenuItem.separator())
         addActionItem("Refresh", action: #selector(refreshMenuAction(_:)), keyEquivalent: "r", to: menu)
-        addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: menu)
-        addActionItem("Clear Live Codex & Grok Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: menu)
-        addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: menu)
-        addDetachServerItem(to: menu)
-        addHandoffFocusAssistItem(to: menu)
+        addSettingsItem(to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
     }
 
-    private func addSnapshotStatus(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
+    private func addDetailsItem(snapshot: DesktopSnapshotResponse?, error: Error?, to menu: NSMenu) {
+        let item = NSMenuItem(title: Layout.detailsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.detailsMenuTitle)
+        submenu.autoenablesItems = false
+
+        if let snapshot {
+            addSnapshotDetails(snapshot, to: submenu)
+        } else if error != nil {
+            addUnavailableDetails(to: submenu)
+        } else {
+            addStartingDetails(to: submenu)
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addSnapshotDetails(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
         let status = LooperHumanStatus.from(
             snapshot: snapshot,
             mobileHealth: mobileHealth,
@@ -231,14 +239,27 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: menu)
         addDisabledItem("Goals: \(snapshot.goals.count)", to: menu)
         addDevinBridgeItems(snapshot.devinDesktop.acpBridge, to: menu)
+    }
 
+    private func addSnapshotThreadSections(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
         let sections = LooperMenuContent.buildThreadSections(from: snapshot.threads)
         guard !sections.isEmpty else {
             return
         }
 
-        menu.addItem(NSMenuItem.separator())
         addThreadSections(sections, to: menu)
+    }
+
+    private func addUnavailableDetails(to menu: NSMenu) {
+        addDisabledItem("Status: Unavailable", to: menu)
+        addDisabledItem("Rust service unavailable", to: menu)
+        addDisabledItem("Lifecycle: \(LooperHumanStatus.unavailable(detachOnQuit: detachServerOnQuit).lifecycle)", to: menu)
+    }
+
+    private func addStartingDetails(to menu: NSMenu) {
+        addDisabledItem("Status: Starting", to: menu)
+        addDisabledItem("Starting local service...", to: menu)
+        addDisabledItem("Lifecycle: \(LooperHumanStatus.starting(detachOnQuit: detachServerOnQuit).lifecycle)", to: menu)
     }
 
     private func mobileStatusTitle() -> String {
@@ -384,6 +405,20 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         )
         item.target = self
         item.state = detachServerOnQuit ? .on : .off
+        menu.addItem(item)
+    }
+
+    private func addSettingsItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: Layout.settingsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.settingsMenuTitle)
+        submenu.autoenablesItems = false
+        addHandoffFocusAssistItem(to: submenu)
+        addDetachServerItem(to: submenu)
+        submenu.addItem(NSMenuItem.separator())
+        addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: submenu)
+        addActionItem("Clear Live Codex & Grok Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: submenu)
+        addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: submenu)
+        item.submenu = submenu
         menu.addItem(item)
     }
 
