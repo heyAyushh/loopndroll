@@ -15,6 +15,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use crate::claude_code::inspect_claude_hooks;
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
 use crate::grok_build::inspect_grok_hooks;
@@ -243,12 +244,14 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
 async fn health(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     let status = control_plane.status();
     let grok_hooks = inspect_grok_hooks(control_plane.grok_home());
+    let claude_hooks = inspect_claude_hooks(&control_plane.claude_home());
     Json(serde_json::json!({
         "service": "looper",
         "ok": status.source.health == "healthy",
         "source": status.source,
         "hooks": status.hooks,
         "grok_hooks": grok_hooks,
+        "claude_hooks": claude_hooks,
     }))
 }
 

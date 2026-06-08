@@ -228,7 +228,7 @@ pub fn discover_assistant_adapters_from_sources(
                     &["claude ", "claude-code"],
                 ),
             ],
-            detail: "Claude Code sessions read from ~/.claude/projects; prompt delivery waits for Looper-owned Claude hooks".to_owned(),
+            detail: "Claude Code sessions read from ~/.claude/projects; prompts delivered through Looper-owned Claude hooks".to_owned(),
         },
         runtime_only(
             AssistantKind::OpenCode,

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tokio::net::TcpListener;
 
+use crate::claude_code::{is_claude_hook_invocation, parse_claude_hook_payload};
 use crate::control_plane::{ControlPlane, ControlPlaneConfig};
 use crate::devin::{is_devin_hook_invocation, parse_devin_hook_payload};
 use crate::grok_build::{
@@ -57,8 +58,11 @@ pub fn run_hook_mode() -> Result<()> {
     let mut input = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
     let devin_hook = is_devin_hook_invocation();
+    let claude_hook = is_claude_hook_invocation();
     let payload = if devin_hook {
         parse_devin_hook_payload(&input)
+    } else if claude_hook {
+        parse_claude_hook_payload(&input)
     } else {
         parse_hook_payload(&input)
     }

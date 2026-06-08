@@ -13,6 +13,14 @@ use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities};
 use crate::control_plane::DesktopThread;
 use crate::mobile_session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
+mod hooks;
+
+pub use hooks::{
+    ClaudeHookOwner, ClaudeHookRegistrationChange, ClaudeHookStatus, inspect_claude_hooks,
+    is_claude_hook_invocation, parse_claude_hook_payload, register_owned_claude_hooks,
+    unregister_owned_claude_hooks,
+};
+
 const CLAUDE_PROJECTS_DIR: &str = "projects";
 const CLAUDE_THREAD_PREFIX: &str = "claude:";
 const CLAUDE_SOURCE: &str = "claude-code";

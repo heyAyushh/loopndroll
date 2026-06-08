@@ -565,7 +565,7 @@ async fn register_hooks_installs_owned_rust_handlers() {
     let response = request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(response["action"], "register-hooks");
     assert_eq!(response["removed_handlers"], 0);
-    assert_eq!(response["installed_handlers"], 9);
+    assert_eq!(response["installed_handlers"], 12);
     assert_eq!(response["hooks_auto_registration"], true);
     assert_eq!(response["status"]["hooks"]["enabled"], true);
     assert_eq!(response["status"]["hooks"]["owner"], "looper-rust");
@@ -591,6 +591,14 @@ async fn register_hooks_installs_owned_rust_handlers() {
     assert!(devin_config_json.contains("SessionStart"));
     assert!(devin_config_json.contains("Stop"));
     assert!(devin_config_json.contains("UserPromptSubmit"));
+
+    let claude_settings_json =
+        fs::read_to_string(fixture.temp_dir.path().join(".claude/settings.json"))
+            .expect("claude settings");
+    assert!(claude_settings_json.contains("LOOPER_CLAUDE_HOOK=1"));
+    assert!(claude_settings_json.contains("SessionStart"));
+    assert!(claude_settings_json.contains("Stop"));
+    assert!(claude_settings_json.contains("UserPromptSubmit"));
 
     let config_toml = fs::read_to_string(fixture.codex_home.join("config.toml")).expect("config");
     assert!(config_toml.contains("[features]"));
@@ -618,7 +626,7 @@ async fn live_unregister_preserves_auto_registration_for_next_launch() {
     let register_response =
         request_json_with_method(&router, Method::POST, "/hooks/register").await;
     assert_eq!(register_response["hooks_auto_registration"], true);
-    assert_eq!(register_response["installed_handlers"], 9);
+    assert_eq!(register_response["installed_handlers"], 12);
     assert_eq!(register_response["status"]["hooks"]["owner"], "looper-rust");
 }
 
@@ -754,6 +762,15 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
             .iter()
             .any(|connection| connection["id"] == "grok-build-hooks"),
         "expected grok-build-hooks connection"
+    );
+    assert!(
+        connections["connections"]
+            .as_array()
+            .expect("connections")
+            .iter()
+            .any(|connection| connection["id"] == "claude-code-hooks"
+                && connection["kind"] == "claude-code"),
+        "expected claude-code-hooks connection"
     );
     for connection in grok_connections {
         assert!(
@@ -1843,7 +1860,7 @@ async fn desktop_and_mobile_snapshots_include_claude_code_sessions() {
     );
     assert_eq!(
         claude_session["promptDeliveryUnavailableReason"],
-        "This assistant does not support mobile prompt delivery yet."
+        "This session must be running before Looper can queue prompts."
     );
 }
 

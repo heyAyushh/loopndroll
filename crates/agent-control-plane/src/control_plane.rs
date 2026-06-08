@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::assistant::{AssistantAdapterCapability, AssistantKind, adapter_capabilities};
 use crate::automations::{AutomationSummary, read_automations};
 use crate::claude_code::{
-    claude_session_to_desktop_thread, default_claude_home, discover_claude_sessions,
+    ClaudeHookOwner, ClaudeHookStatus, claude_session_to_desktop_thread, default_claude_home,
+    discover_claude_sessions, inspect_claude_hooks, register_owned_claude_hooks,
+    unregister_owned_claude_hooks,
 };
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
@@ -54,6 +56,11 @@ const GROK_BUILD_CONNECTION_ID: &str = "grok-build-cli";
 const GROK_BUILD_CONNECTION_LABEL: &str = "Grok Build CLI";
 const GROK_BUILD_CLI_RUNTIME_LABEL: &str = "Grok Build CLI";
 const GROK_BUILD_SESSION_RUNTIME_LABEL: &str = "Grok Build session";
+const CLAUDE_CODE_CONNECTION_KIND: &str = "claude-code";
+const CLAUDE_CODE_HOOKS_CONNECTION_ID: &str = "claude-code-hooks";
+const CLAUDE_CODE_HOOKS_CONNECTION_LABEL: &str = "Claude Code hooks";
+const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
+    "Claude Code hooks in ~/.claude/settings.json; running-session prompts are delivered on Stop.";
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -366,6 +373,10 @@ impl ControlPlane {
         &self.config.grok_home
     }
 
+    pub fn claude_home(&self) -> PathBuf {
+        default_claude_home(&self.config.home_path)
+    }
+
     pub fn store(&self) -> &EventStore {
         &self.store
     }
@@ -430,6 +441,12 @@ impl ControlPlane {
         connections
     }
 
+    fn claude_code_connections(&self) -> Vec<ManagedConnection> {
+        vec![claude_hook_connection(&inspect_claude_hooks(
+            &self.claude_home(),
+        ))]
+    }
+
     pub fn status(&self) -> ControlPlaneStatus {
         inspect_control_plane(&self.config.codex_home)
     }
@@ -445,6 +462,7 @@ impl ControlPlane {
         let mut connections = self.mobile_connections()?;
         connections.extend(self.devin_desktop_connections());
         connections.extend(self.grok_build_connections());
+        connections.extend(self.claude_code_connections());
         connections.push(hook_connection(&status));
         connections.extend(status.codex_servers.iter().map(codex_server_connection));
         Ok(ManagedConnectionsResponse { connections })
@@ -565,7 +583,8 @@ impl ControlPlane {
     pub fn unregister_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
             + unregister_owned_devin_hooks(&self.config.home_path)?
-            + unregister_owned_grok_hooks(&self.config.grok_home)?;
+            + unregister_owned_grok_hooks(&self.config.grok_home)?
+            + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.set_hooks_auto_registration(false)?;
         Ok(HookMutationResponse {
             action: "unregister-hooks".to_owned(),
@@ -585,15 +604,18 @@ impl ControlPlane {
         let codex_change = register_owned_hooks(&self.config.codex_home, hook_command)?;
         let devin_change = register_owned_devin_hooks(&self.config.home_path, hook_command)?;
         let grok_change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
+        let claude_change = register_owned_claude_hooks(&self.claude_home(), hook_command)?;
         let settings = self.store.set_hooks_auto_registration(true)?;
         Ok(HookMutationResponse {
             action: "register-hooks".to_owned(),
             removed_handlers: codex_change.removed_handlers
                 + devin_change.removed_handlers
-                + grok_change.removed_handlers,
+                + grok_change.removed_handlers
+                + claude_change.removed_handlers,
             installed_handlers: codex_change.installed_handlers
                 + devin_change.installed_handlers
-                + grok_change.installed_handlers,
+                + grok_change.installed_handlers
+                + claude_change.installed_handlers,
             hooks_auto_registration: settings.hooks_auto_registration,
             status: self.status(),
         })
@@ -602,7 +624,8 @@ impl ControlPlane {
     pub fn unregister_live_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
             + unregister_owned_devin_hooks(&self.config.home_path)?
-            + unregister_owned_grok_hooks(&self.config.grok_home)?;
+            + unregister_owned_grok_hooks(&self.config.grok_home)?
+            + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.service_settings()?;
         Ok(HookMutationResponse {
             action: "unregister-live-hooks".to_owned(),
@@ -706,7 +729,7 @@ impl ControlPlane {
         let state = read_state(&self.config.codex_home)?;
         let threads = state.threads.clone();
         let capabilities = self.capabilities_by_thread(&state)?;
-        let known_thread_ids = known_thread_ids(&threads);
+        let known_thread_ids = self.known_desktop_thread_ids()?;
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
         let automations = read_automations(&self.config.codex_home)?
             .into_iter()
@@ -1091,6 +1114,31 @@ fn grok_hook_owner_label(owner: &GrokHookOwner) -> String {
     }
 }
 
+fn claude_hook_connection(status: &ClaudeHookStatus) -> ManagedConnection {
+    ManagedConnection {
+        id: CLAUDE_CODE_HOOKS_CONNECTION_ID.to_owned(),
+        kind: CLAUDE_CODE_CONNECTION_KIND.to_owned(),
+        label: CLAUDE_CODE_HOOKS_CONNECTION_LABEL.to_owned(),
+        status: status.health.clone(),
+        subtitle: Some(claude_hook_owner_label(&status.owner)),
+        detail: status.active_command.clone(),
+        created_at: None,
+        last_used_at: None,
+        revoked_at: None,
+        can_rename: false,
+        can_revoke: false,
+        action_hint: Some(CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT.to_owned()),
+    }
+}
+
+fn claude_hook_owner_label(owner: &ClaudeHookOwner) -> String {
+    match owner {
+        ClaudeHookOwner::LooperRust => "looper Rust".to_owned(),
+        ClaudeHookOwner::Unknown => "Unknown owner".to_owned(),
+        ClaudeHookOwner::None => "Not registered".to_owned(),
+    }
+}
+
 fn devin_hook_connection(status: &DevinHookStatus) -> ManagedConnection {
     ManagedConnection {
         id: DEVIN_HOOKS_CONNECTION_ID.to_owned(),
@@ -1449,6 +1497,11 @@ mod tests {
             connections
                 .iter()
                 .any(|connection| connection.id == DEVIN_HOOKS_CONNECTION_ID)
+        );
+        assert!(
+            connections
+                .iter()
+                .any(|connection| connection.id == CLAUDE_CODE_HOOKS_CONNECTION_ID)
         );
     }
 }

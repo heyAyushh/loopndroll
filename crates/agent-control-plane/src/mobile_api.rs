@@ -247,7 +247,9 @@ fn prompt_delivery_action_for_thread(
 
     match status {
         ACTIVE_SESSION_STATUS => Ok(PromptDeliveryAction::QueueForHook),
-        _ => Err(MobileSessionError::PromptDeliveryUnavailable),
+        _ => Err(MobileSessionError::PromptDeliveryUnavailableReason(
+            INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON.to_owned(),
+        )),
     }
 }
 
@@ -270,7 +272,10 @@ struct PromptDeliveryAvailability {
 fn assistant_supports_prompt_delivery(assistant_kind: &AssistantKind) -> bool {
     matches!(
         assistant_kind,
-        AssistantKind::Codex | AssistantKind::DevinDesktop | AssistantKind::GrokBuild
+        AssistantKind::Codex
+            | AssistantKind::DevinDesktop
+            | AssistantKind::GrokBuild
+            | AssistantKind::ClaudeCode
     )
 }
 
@@ -910,6 +915,47 @@ mod tests {
             error,
             MobileSessionError::PromptDeliveryUnavailable
         ));
+    }
+
+    #[test]
+    fn prompt_delivery_target_uses_claude_hook_transport_when_active() {
+        let thread = test_thread(
+            "claude:session-1",
+            AssistantKind::ClaudeCode,
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
+        );
+        let session_state = MobileSessionState::default();
+
+        let action = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect("active Claude Code sessions should queue via hook transport");
+        assert!(matches!(action, PromptDeliveryAction::QueueForHook));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], true);
+        assert!(summary["promptDeliveryUnavailableReason"].is_null());
+    }
+
+    #[test]
+    fn prompt_delivery_target_rejects_stopped_claude_hook_transport() {
+        let thread = test_thread(
+            "claude:session-1",
+            AssistantKind::ClaudeCode,
+            Some(MOBILE_SESSION_STATUS_STOPPED),
+        );
+        let session_state = MobileSessionState::default();
+
+        let error = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect_err("stopped Claude Code sessions cannot be woken by hooks");
+        assert!(matches!(
+            error,
+            MobileSessionError::PromptDeliveryUnavailableReason(reason)
+                if reason == INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        ));
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        );
     }
 
     #[test]

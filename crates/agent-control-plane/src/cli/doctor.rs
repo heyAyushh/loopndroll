@@ -83,18 +83,24 @@ fn doctor_control_plane_health_check(health: &Value) -> Value {
     let source_health = health_text(health, &["source", "health"]);
     let hook_health = health_text(health, &["hooks", "health"]);
     let grok_hook_health = health_text(health, &["grok_hooks", "health"]);
+    let claude_hook_health = health_text(health, &["claude_hooks", "health"]);
     let grok_hooks_ok = grok_hook_health
+        .as_deref()
+        .is_none_or(|health| health == HEALTHY_STATUS_VALUE || health == "missing");
+    let claude_hooks_ok = claude_hook_health
         .as_deref()
         .is_none_or(|health| health == HEALTHY_STATUS_VALUE || health == "missing");
     let is_healthy = health.get("ok").and_then(Value::as_bool) == Some(true)
         && source_health.as_deref() == Some(HEALTHY_STATUS_VALUE)
         && hook_health.as_deref() == Some(HEALTHY_STATUS_VALUE)
-        && grok_hooks_ok;
+        && grok_hooks_ok
+        && claude_hooks_ok;
     let detail = format!(
-        "source={} hooks={} grok_hooks={}",
+        "source={} hooks={} grok_hooks={} claude_hooks={}",
         source_health.unwrap_or_else(|| "missing".to_owned()),
         hook_health.unwrap_or_else(|| "missing".to_owned()),
-        grok_hook_health.unwrap_or_else(|| "missing".to_owned())
+        grok_hook_health.unwrap_or_else(|| "missing".to_owned()),
+        claude_hook_health.unwrap_or_else(|| "missing".to_owned())
     );
     doctor_check(
         DOCTOR_CHECK_SERVER,
@@ -182,6 +188,7 @@ mod tests {
             "source": { "health": "healthy" },
             "hooks": { "health": "healthy" },
             "grok_hooks": { "health": "missing" },
+            "claude_hooks": { "health": "missing" },
         });
         let check = doctor_control_plane_health_check(&health);
         assert_eq!(check["ok"], true);
@@ -195,6 +202,21 @@ mod tests {
             "source": { "health": "healthy" },
             "hooks": { "health": "healthy" },
             "grok_hooks": { "health": "configured" },
+            "claude_hooks": { "health": "healthy" },
+        });
+        let check = doctor_control_plane_health_check(&health);
+        assert_eq!(check["ok"], false);
+        assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
+    }
+
+    #[test]
+    fn doctor_control_plane_health_rejects_foreign_claude_hooks() {
+        let health = serde_json::json!({
+            "ok": true,
+            "source": { "health": "healthy" },
+            "hooks": { "health": "healthy" },
+            "grok_hooks": { "health": "healthy" },
+            "claude_hooks": { "health": "configured" },
         });
         let check = doctor_control_plane_health_check(&health);
         assert_eq!(check["ok"], false);
