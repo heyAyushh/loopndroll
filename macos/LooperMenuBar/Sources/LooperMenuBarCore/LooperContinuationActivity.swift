@@ -49,12 +49,19 @@ public enum LooperContinuationActivity {
 }
 
 public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendable {
+    case afterThirtyIdleSeconds
+    case afterOneIdleMinute
+    case afterTwoIdleMinutes
     case afterFiveIdleMinutes
     case afterFifteenIdleMinutes
+    case rightNow
     case never
 
     private enum Timing {
         static let secondsPerMinute: TimeInterval = 60
+        static let thirtyIdleSeconds: TimeInterval = 30
+        static let oneIdleMinute: TimeInterval = 1
+        static let twoIdleMinutes: TimeInterval = 2
         static let fiveIdleMinutes: TimeInterval = 5
         static let fifteenIdleMinutes: TimeInterval = 15
     }
@@ -68,21 +75,35 @@ public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendab
 
     public var idleThresholdSeconds: TimeInterval? {
         switch self {
+        case .afterThirtyIdleSeconds:
+            Timing.thirtyIdleSeconds
+        case .afterOneIdleMinute:
+            Timing.oneIdleMinute * Timing.secondsPerMinute
+        case .afterTwoIdleMinutes:
+            Timing.twoIdleMinutes * Timing.secondsPerMinute
         case .afterFiveIdleMinutes:
             Timing.fiveIdleMinutes * Timing.secondsPerMinute
         case .afterFifteenIdleMinutes:
             Timing.fifteenIdleMinutes * Timing.secondsPerMinute
-        case .never:
+        case .rightNow, .never:
             nil
         }
     }
 
     public var menuTitle: String {
         switch self {
+        case .afterThirtyIdleSeconds:
+            "After 30s idle"
+        case .afterOneIdleMinute:
+            "After 1 min idle"
+        case .afterTwoIdleMinutes:
+            "After 2 min idle"
         case .afterFiveIdleMinutes:
             "After 5 min idle"
         case .afterFifteenIdleMinutes:
             "After 15 min idle"
+        case .rightNow:
+            "Right now"
         case .never:
             "Never"
         }
@@ -90,7 +111,8 @@ public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendab
 
     public var statusTitle: String {
         switch self {
-        case .afterFiveIdleMinutes, .afterFifteenIdleMinutes:
+        case .rightNow, .afterThirtyIdleSeconds, .afterOneIdleMinute, .afterTwoIdleMinutes,
+             .afterFiveIdleMinutes, .afterFifteenIdleMinutes:
             menuTitle
         case .never:
             "Off"

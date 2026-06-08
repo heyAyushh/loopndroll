@@ -14,6 +14,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let continuationRefreshInterval: Duration = .seconds(20)
         static let activationPolicy: NSApplication.ActivationPolicy = .accessory
         static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
+        static let handoffRightNowHotkeySubMenuTitle = "Right-Now Hotkey"
+        static let handoffRightNowHotkeyDefaultsKey = "rightNowHotkeyOption"
         static let detailsMenuTitle = "Details"
         static let settingsMenuTitle = "Settings"
     }
@@ -26,6 +28,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var continuationRefreshTask: Task<Void, Never>?
     private var mobileHealth: MobileHealthResponse?
     private var devinProbe: DevinAcpBridgeProbe?
+    private var rightNowHotkeyMonitor: Any?
 
     override init() {
         let endpointStore = ControlPlaneEndpointStore()
@@ -44,6 +47,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         installStatusItem()
         continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
         startContinuationRefreshLoop()
+        installRightNowHotkeyMonitor()
         Task {
             _ = await lifecycle.registerOnLaunch()
             await refreshMenu()
@@ -56,6 +60,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         if !detachServerOnQuit {
             _ = lifecycle.unregisterBeforeQuit()
         }
+        removeRightNowHotkeyMonitor()
     }
 
     func application(
@@ -413,6 +418,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         let submenu = NSMenu(title: Layout.settingsMenuTitle)
         submenu.autoenablesItems = false
         addHandoffFocusAssistItem(to: submenu)
+        addRightNowHotkeyItem(to: submenu)
         addDetachServerItem(to: submenu)
         submenu.addItem(NSMenuItem.separator())
         addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: submenu)
@@ -447,6 +453,31 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
+    private func addRightNowHotkeyItem(to menu: NSMenu) {
+        let item = NSMenuItem(
+            title: "\(Layout.handoffRightNowHotkeySubMenuTitle): \(rightNowHotkeyOption.menuTitle)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let submenu = NSMenu(title: Layout.handoffRightNowHotkeySubMenuTitle)
+        submenu.autoenablesItems = false
+
+        for option in HandoffRightNowHotkeyOption.allOptions {
+            let optionItem = NSMenuItem(
+                title: option.menuTitle,
+                action: #selector(setHandoffRightNowHotkeyAction(_:)),
+                keyEquivalent: ""
+            )
+            optionItem.target = self
+            optionItem.representedObject = option.rawValue
+            optionItem.state = rightNowHotkeyOption == option ? .on : .off
+            submenu.addItem(optionItem)
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
     private var detachServerOnQuit: Bool {
         get {
             UserDefaults.standard.bool(forKey: Layout.detachServerOnQuitKey)
@@ -464,6 +495,47 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             newValue.save()
             continuationPublisher.focusAssist = newValue
         }
+    }
+
+    private var rightNowHotkeyOption: HandoffRightNowHotkeyOption {
+        get {
+            let rawValue = UserDefaults.standard.string(forKey: Layout.handoffRightNowHotkeyDefaultsKey)
+                ?? HandoffRightNowHotkeyOption.commandL.rawValue
+            return HandoffRightNowHotkeyOption(rawValue: rawValue) ?? .commandL
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: Layout.handoffRightNowHotkeyDefaultsKey)
+        }
+    }
+
+    private func installRightNowHotkeyMonitor() {
+        rightNowHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak self] event in
+            Task { @MainActor in
+                self?.handleRightNowHotkeyEvent(event)
+            }
+        }
+    }
+
+    private func removeRightNowHotkeyMonitor() {
+        guard let rightNowHotkeyMonitor else {
+            return
+        }
+        NSEvent.removeMonitor(rightNowHotkeyMonitor)
+        self.rightNowHotkeyMonitor = nil
+    }
+
+    private func handleRightNowHotkeyEvent(_ event: NSEvent) {
+        guard handoffFocusAssist == .rightNow else {
+            return
+        }
+
+        guard rightNowHotkeyOption.isMatch(event) else {
+            return
+        }
+
+        continuationPublisher.requestRightNowFocus()
     }
 
     @objc private func refreshMenuAction(_ sender: Any?) {
@@ -517,6 +589,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
 
         handoffFocusAssist = option
+        Task {
+            await refreshMenu()
+        }
+    }
+
+    @objc private func setHandoffRightNowHotkeyAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let option = HandoffRightNowHotkeyOption(rawValue: rawValue)
+        else {
+            return
+        }
+
+        rightNowHotkeyOption = option
         Task {
             await refreshMenu()
         }
@@ -611,6 +696,84 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     private enum FallbackResource {
         static let statusIconResourceName = "notification-orb"
+    }
+}
+
+private enum HandoffRightNowHotkeyOption: String, CaseIterable, Identifiable, Sendable {
+    case commandL
+    case commandShiftL
+    case commandOptionL
+    case controlL
+    case disabled
+
+    static let allOptions = [commandL, commandShiftL, commandOptionL, controlL, disabled]
+
+    var id: String {
+        rawValue
+    }
+
+    var key: String {
+        "l"
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .commandL:
+            "⌘L"
+        case .commandShiftL:
+            "⌘⇧L"
+        case .commandOptionL:
+            "⌘⌥L"
+        case .controlL:
+            "⌃L"
+        case .disabled:
+            "Disabled"
+        }
+    }
+
+    var isEnabled: Bool {
+        self != .disabled
+    }
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        switch self {
+        case .commandL:
+            [.command]
+        case .commandShiftL:
+            [.command, .shift]
+        case .commandOptionL:
+            [.command, .option]
+        case .controlL:
+            [.control]
+        case .disabled:
+            []
+        }
+    }
+
+    func isMatch(_ event: NSEvent) -> Bool {
+        guard isEnabled else {
+            return false
+        }
+
+        return isMatch(
+            modifierFlags: Self.normalizedShortcutModifiers(event.modifierFlags),
+            key: event.charactersIgnoringModifiers?.lowercased() ?? ""
+        )
+    }
+
+    private func isMatch(modifierFlags: NSEvent.ModifierFlags, key: String) -> Bool {
+        modifierFlags == self.modifierFlags && key == self.key
+    }
+
+    private static let shortcutSupportedModifierFlags: NSEvent.ModifierFlags = [
+        .command,
+        .control,
+        .option,
+        .shift
+    ]
+
+    private static func normalizedShortcutModifiers(_ modifierFlags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        modifierFlags.intersection(shortcutSupportedModifierFlags)
     }
 }
 

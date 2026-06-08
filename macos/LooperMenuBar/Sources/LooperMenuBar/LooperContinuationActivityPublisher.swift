@@ -33,6 +33,7 @@ final class LooperContinuationActivityPublisher {
     private var currentActivity: NSUserActivity?
     private var currentDescriptor: LooperContinuationActivityDescriptor?
     private var currentActivityRefreshTask: Task<Void, Never>?
+    private var isRightNowFocusRequestQueued = false
 
     var focusAssist = LooperHandoffFocusAssist.defaultOption {
         didSet {
@@ -45,6 +46,12 @@ final class LooperContinuationActivityPublisher {
 
     init(idleTimeProvider: LooperUserIdleTimeProviding = QuartzLooperUserIdleTimeProvider()) {
         self.idleTimeProvider = idleTimeProvider
+    }
+
+    func requestRightNowFocus() {
+        isRightNowFocusRequestQueued = true
+        logger.debug("handoff right-now focus queued")
+        refreshCurrentActivity()
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -90,6 +97,7 @@ final class LooperContinuationActivityPublisher {
         currentActivity?.invalidate()
         activityOwner.detach()
         logger.info("handoff activity invalidated")
+        isRightNowFocusRequestQueued = false
         currentActivityRefreshTask = nil
         currentActivity = nil
         currentDescriptor = nil
@@ -122,11 +130,20 @@ final class LooperContinuationActivityPublisher {
     }
 
     private func allowsFocusAssistedActivation() -> Bool {
+        if focusAssist == .rightNow {
+            return consumeRightNowFocusRequest()
+        }
+
         guard let idleThresholdSeconds = focusAssist.idleThresholdSeconds else {
             return false
         }
 
         return idleTimeProvider.secondsSinceLastUserInput() >= idleThresholdSeconds
+    }
+
+    private func consumeRightNowFocusRequest() -> Bool {
+        defer { isRightNowFocusRequestQueued = false }
+        return isRightNowFocusRequestQueued
     }
 
     private func markActivityCurrent(_ activity: NSUserActivity) {

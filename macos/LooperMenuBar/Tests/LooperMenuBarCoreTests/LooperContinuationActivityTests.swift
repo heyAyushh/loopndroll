@@ -16,6 +16,15 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func supportsShorterRightNowFocusOptions() {
+        #expect(LooperHandoffFocusAssist.afterThirtyIdleSeconds.idleThresholdSeconds == 30)
+        #expect(LooperHandoffFocusAssist.afterOneIdleMinute.idleThresholdSeconds == 60)
+        #expect(LooperHandoffFocusAssist.afterTwoIdleMinutes.idleThresholdSeconds == 120)
+        #expect(LooperHandoffFocusAssist.rightNow.menuTitle == "Right now")
+        #expect(LooperHandoffFocusAssist.rightNow.idleThresholdSeconds == nil)
+    }
+
+    @Test
     func storesFocusAssistPreference() {
         let suiteName = "dev.looper.tests.focus-assist.stored"
         let defaults = UserDefaults(suiteName: suiteName)!
