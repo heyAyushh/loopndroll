@@ -453,6 +453,7 @@ pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPro
     match provider_id.trim() {
         "codex" | "codex-acp" => Some(DevinPromptTransport::CodexAppServer),
         "devin-cli" => Some(DevinPromptTransport::DevinLocalHooks),
+        provider_id if provider_id.ends_with("-acp") => Some(DevinPromptTransport::DevinLocalHooks),
         _ => None,
     }
 }
@@ -642,7 +643,10 @@ mod tests {
             devin_prompt_transport_for_provider("devin-cli"),
             Some(DevinPromptTransport::DevinLocalHooks)
         );
-        assert_eq!(devin_prompt_transport_for_provider("claude-acp"), None);
+        assert_eq!(
+            devin_prompt_transport_for_provider("claude-acp"),
+            Some(DevinPromptTransport::DevinLocalHooks)
+        );
         assert_eq!(devin_prompt_transport_for_provider("devin-cloud"), None);
     }
 

@@ -1926,7 +1926,7 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
 async fn devin_mobile_prompt_queues_for_local_hooks() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    fixture.write_active_devin_next_session();
+    fixture.write_devin_next_session();
     let control_plane = fixture.control_plane();
     control_plane
         .mobile_session_service()

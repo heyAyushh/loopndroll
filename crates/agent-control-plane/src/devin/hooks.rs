@@ -10,7 +10,7 @@ use crate::mobile_session::MobileHookPayload;
 
 const DEVIN_CONFIG_RELATIVE_PATH: &str = ".config/devin/config.json";
 const DEVIN_LOCAL_PROVIDER_ID: &str = "devin-cli";
-const DEVIN_ACP_SESSION_PREFIX: &str = "acp/devin-cli/";
+const DEVIN_ACP_SESSION_PREFIX: &str = "acp/";
 const LOOPER_DEVIN_HOOK_ENV: &str = "LOOPER_DEVIN_HOOK";
 const LOOPER_DEVIN_HOOK_VALUE: &str = "1";
 const SESSION_HOOK_TIMEOUT_SECONDS: u64 = 30;
@@ -161,11 +161,18 @@ fn public_thread_id_for_devin_session(session_id: &str) -> String {
     if session_id.starts_with("devin:") {
         return session_id.to_owned();
     }
-    let local_session_id = session_id
-        .strip_prefix(DEVIN_ACP_SESSION_PREFIX)
-        .unwrap_or(session_id)
-        .replace('/', ":");
-    format!("devin:{DEVIN_LOCAL_PROVIDER_ID}:{local_session_id}")
+    if let Some(local_session_id) = session_id.strip_prefix(DEVIN_ACP_SESSION_PREFIX)
+        && let Some((provider_id, provider_session_id)) = local_session_id.split_once('/')
+    {
+        return format!(
+            "devin:{provider_id}:{}",
+            provider_session_id.replace('/', ":")
+        );
+    }
+    format!(
+        "devin:{DEVIN_LOCAL_PROVIDER_ID}:{}",
+        session_id.replace('/', ":")
+    )
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -442,5 +449,18 @@ mod tests {
             Some("devin:devin-cli:shadow-canidae")
         );
         assert_eq!(payload.cwd.as_deref(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn parses_devin_acp_provider_payload_into_public_thread_id() {
+        let payload = parse_devin_hook_payload(
+            r#"{"hook_event_name":"stop","session_id":"acp/claude-acp/bd6aa5c3-b6d1-4331-97e0-045c44652e2d"}"#,
+        )
+        .expect("parse");
+
+        assert_eq!(
+            payload.session_id.as_deref(),
+            Some("devin:claude-acp:bd6aa5c3-b6d1-4331-97e0-045c44652e2d")
+        );
     }
 }

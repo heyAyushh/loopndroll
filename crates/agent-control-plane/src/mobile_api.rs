@@ -217,7 +217,7 @@ fn prompt_delivery_action_for_thread(
         thread.runtime_status.as_deref(),
     );
     if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        return devin_prompt_delivery_action(thread, status);
+        return devin_prompt_delivery_action(thread);
     }
 
     match status {
@@ -259,26 +259,12 @@ fn prompt_delivery_availability(
             unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
         };
     }
-    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        return match devin_prompt_transport(thread) {
-            Some((DevinPromptTransport::CodexAppServer, _)) => PromptDeliveryAvailability {
-                can_send_prompt: true,
-                unavailable_reason: None,
-            },
-            Some((DevinPromptTransport::DevinLocalHooks, _)) if status == ACTIVE_SESSION_STATUS => {
-                PromptDeliveryAvailability {
-                    can_send_prompt: true,
-                    unavailable_reason: None,
-                }
-            }
-            Some((DevinPromptTransport::DevinLocalHooks, _)) => PromptDeliveryAvailability {
-                can_send_prompt: false,
-                unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-            },
-            None => PromptDeliveryAvailability {
-                can_send_prompt: false,
-                unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-            },
+    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop
+        && devin_prompt_transport(thread).is_none()
+    {
+        return PromptDeliveryAvailability {
+            can_send_prompt: false,
+            unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
         };
     }
 
@@ -310,7 +296,6 @@ fn devin_prompt_transport(thread: &DesktopThread) -> Option<(DevinPromptTranspor
 
 fn devin_prompt_delivery_action(
     thread: &DesktopThread,
-    status: &str,
 ) -> Result<PromptDeliveryAction, MobileSessionError> {
     let (transport, session_id) =
         devin_prompt_transport(thread).ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
@@ -321,10 +306,7 @@ fn devin_prompt_delivery_action(
                 cwd: thread.cwd.clone(),
             }))
         }
-        DevinPromptTransport::DevinLocalHooks if status == ACTIVE_SESSION_STATUS => {
-            Ok(PromptDeliveryAction::QueueForHook)
-        }
-        DevinPromptTransport::DevinLocalHooks => Err(MobileSessionError::PromptDeliveryUnavailable),
+        DevinPromptTransport::DevinLocalHooks => Ok(PromptDeliveryAction::QueueForHook),
     }
 }
 
@@ -733,7 +715,7 @@ mod tests {
         let thread = test_thread(
             "devin:devin-cli:shadow-canidae",
             AssistantKind::DevinDesktop,
-            Some(MOBILE_SESSION_STATUS_ACTIVE),
+            Some(MOBILE_SESSION_STATUS_STOPPED),
         );
         let session_state = MobileSessionState::default();
 
@@ -747,9 +729,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_delivery_target_rejects_stopped_devin_local_sessions() {
+    fn prompt_delivery_target_queues_claude_devin_sessions_for_hooks() {
         let thread = test_thread(
-            "devin:devin-cli:shadow-canidae",
+            "devin:claude-acp:bd6aa5c3-b6d1-4331-97e0-045c44652e2d",
             AssistantKind::DevinDesktop,
             Some(MOBILE_SESSION_STATUS_STOPPED),
         );
@@ -757,14 +739,11 @@ mod tests {
 
         assert!(matches!(
             prompt_delivery_action_for_thread(&thread, &session_state),
-            Err(MobileSessionError::PromptDeliveryUnavailable)
+            Ok(PromptDeliveryAction::QueueForHook)
         ));
         let summary = session_summary(&thread, 0, &session_state);
-        assert_eq!(summary["canSendPrompt"], false);
-        assert_eq!(
-            summary["promptDeliveryUnavailableReason"],
-            INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
-        );
+        assert_eq!(summary["canSendPrompt"], true);
+        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
     }
 
     #[test]
@@ -787,7 +766,7 @@ mod tests {
     #[test]
     fn unsupported_devin_providers_remain_read_only() {
         let thread = test_thread(
-            "devin:claude-acp:session-1",
+            "devin:devin-cloud:session-1",
             AssistantKind::DevinDesktop,
             Some(MOBILE_SESSION_STATUS_STOPPED),
         );
