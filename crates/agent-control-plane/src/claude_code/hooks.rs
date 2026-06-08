@@ -91,14 +91,13 @@ pub fn unregister_owned_claude_hooks(claude_home: &Path) -> Result<usize> {
 
 pub fn inspect_claude_hooks(claude_home: &Path) -> ClaudeHookStatus {
     let settings_path = default_claude_settings_path(claude_home);
-    let (registered_events, active_command) = match read_hooks_json(&settings_path) {
+    let inspection = match read_hooks_json(&settings_path) {
         Ok(value) => value,
-        Err(_) => (Vec::new(), None),
+        Err(_) => ClaudeHooksInspection::default(),
     };
-    let owner = classify_hook_owner(active_command.as_deref());
-    let health = if registered_events.is_empty() {
+    let health = if inspection.registered_events.is_empty() {
         "missing"
-    } else if matches!(owner, ClaudeHookOwner::LooperRust) {
+    } else if matches!(inspection.owner, ClaudeHookOwner::LooperRust) {
         "healthy"
     } else {
         "configured"
@@ -106,9 +105,9 @@ pub fn inspect_claude_hooks(claude_home: &Path) -> ClaudeHookStatus {
     .to_owned();
 
     ClaudeHookStatus {
-        registered_events,
-        active_command,
-        owner,
+        registered_events: inspection.registered_events,
+        active_command: inspection.active_command,
+        owner: inspection.owner,
         health,
         settings_path: settings_path
             .exists()
@@ -215,17 +214,48 @@ fn ensure_hooks_object(document: &mut Value) -> &mut Value {
     document.get_mut("hooks").expect("hooks object")
 }
 
-fn read_hooks_json(path: &Path) -> Result<(Vec<String>, Option<String>)> {
+#[derive(Default)]
+struct ClaudeHooksInspection {
+    registered_events: Vec<String>,
+    active_command: Option<String>,
+    owner: ClaudeHookOwner,
+}
+
+impl Default for ClaudeHookOwner {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+fn read_hooks_json(path: &Path) -> Result<ClaudeHooksInspection> {
     let value: Value = serde_json::from_slice(&fs::read(path)?)?;
     let Some(object) = value.get("hooks").and_then(Value::as_object) else {
-        return Ok((Vec::new(), None));
+        return Ok(ClaudeHooksInspection::default());
     };
     let registered_events = object.keys().cloned().collect::<Vec<_>>();
-    let active_command = object
+    let owned_command = object
+        .iter()
+        .filter(|(event_name, _)| owned_event_names().contains(&event_name.as_str()))
+        .find_map(|(_, event_value)| first_owned_hook_command(event_value))
+        .map(str::to_owned);
+    let fallback_command = object
         .values()
         .find_map(first_hook_command)
         .map(str::to_owned);
-    Ok((registered_events, active_command))
+    let active_command = owned_command.or(fallback_command);
+    let owner = if owned_event_names()
+        .iter()
+        .all(|event_name| object.get(*event_name).is_some_and(event_has_owned_hook))
+    {
+        ClaudeHookOwner::LooperRust
+    } else {
+        classify_hook_owner(active_command.as_deref())
+    };
+    Ok(ClaudeHooksInspection {
+        registered_events,
+        active_command,
+        owner,
+    })
 }
 
 fn first_hook_command(value: &Value) -> Option<&str> {
@@ -236,6 +266,22 @@ fn first_hook_command(value: &Value) -> Option<&str> {
         return first_hook_command(hooks);
     }
     value.as_array()?.iter().find_map(first_hook_command)
+}
+
+fn first_owned_hook_command(value: &Value) -> Option<&str> {
+    if let Some(command) = hook_command(value)
+        && is_owned_hook_command(command)
+    {
+        return Some(command);
+    }
+    if let Some(hooks) = value.get("hooks") {
+        return first_owned_hook_command(hooks);
+    }
+    value.as_array()?.iter().find_map(first_owned_hook_command)
+}
+
+fn event_has_owned_hook(value: &Value) -> bool {
+    first_owned_hook_command(value).is_some()
 }
 
 fn classify_hook_owner(command: Option<&str>) -> ClaudeHookOwner {
@@ -408,6 +454,43 @@ mod tests {
         assert!(settings.contains("SessionStart"));
         assert!(settings.contains("Stop"));
         assert!(settings.contains("UserPromptSubmit"));
+    }
+
+    #[test]
+    fn inspect_prefers_owned_session_hooks_over_foreign_user_hooks() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings_path = default_claude_settings_path(temp_dir.path());
+        fs::write(
+            &settings_path,
+            serde_json::to_string_pretty(&json!({
+                "hooks": {
+                    "PreToolUse": [
+                        {"hooks": [{"type": "command", "command": "rtk hook claude"}]}
+                    ],
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "LOOPER_CLAUDE_HOOK=1 agent-control-plane --hook --managed-by looper"}]}
+                    ],
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": "LOOPER_CLAUDE_HOOK=1 agent-control-plane --hook --managed-by looper"}]}
+                    ],
+                    "UserPromptSubmit": [
+                        {"hooks": [{"type": "command", "command": "LOOPER_CLAUDE_HOOK=1 agent-control-plane --hook --managed-by looper"}]}
+                    ]
+                }
+            }))
+            .expect("json"),
+        )
+        .expect("write");
+
+        let status = inspect_claude_hooks(temp_dir.path());
+
+        assert_eq!(status.health, "healthy");
+        assert_eq!(status.owner, ClaudeHookOwner::LooperRust);
+        assert_eq!(
+            status.active_command.as_deref(),
+            Some("LOOPER_CLAUDE_HOOK=1 agent-control-plane --hook --managed-by looper")
+        );
+        assert!(status.registered_events.contains(&"PreToolUse".to_owned()));
     }
 
     #[test]
