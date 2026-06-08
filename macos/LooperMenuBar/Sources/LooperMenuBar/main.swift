@@ -188,7 +188,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.delegate = self
         addDisabledItem(Layout.appDisplayName, to: menu)
         menu.addItem(NSMenuItem.separator())
-        addDetailsItem(snapshot: snapshot, error: error, to: menu)
 
         if let snapshot {
             addSnapshotThreadSections(snapshot, to: menu)
@@ -196,6 +195,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         menu.addItem(NSMenuItem.separator())
         addActionItem("Refresh", action: #selector(refreshMenuAction(_:)), keyEquivalent: "r", to: menu)
+        addDetailsItem(snapshot: snapshot, error: error, to: menu)
         addSettingsItem(to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
         menu.addItem(NSMenuItem.separator())
