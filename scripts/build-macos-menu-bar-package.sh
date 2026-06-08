@@ -76,14 +76,13 @@ process.stdout.write(entitlements["com.apple.application-identifier"] || entitle
 ' 2>/dev/null || true
 }
 
-write_macos_entitlements() {
-  local output_path="$1"
-  plutil -create xml1 "$output_path"
-  "$PLIST_BUDDY" -c "Add :com.apple.application-identifier string ${MACOS_APPLICATION_IDENTIFIER}" "$output_path"
-  "$PLIST_BUDDY" -c "Add :com.apple.developer.team-identifier string ${CODE_SIGN_TEAM_ID}" "$output_path"
-  if [[ "$CODE_SIGN_IDENTITY" == Apple\ Development:* ]]; then
-    "$PLIST_BUDDY" -c "Add :com.apple.security.get-task-allow bool true" "$output_path"
-  fi
+extract_macos_profile_entitlements() {
+  local provisioning_profile="$1"
+  local output_path="$2"
+
+  # Keep signing entitlements tied to the embedded profile; wildcard profiles are valid.
+  security cms -D -i "$provisioning_profile" |
+    plutil -extract Entitlements xml1 -o "$output_path" -
 }
 
 APP_NAME="looper"
@@ -110,7 +109,6 @@ PROCESS_WAIT_ATTEMPTS=10
 PROCESS_WAIT_SECONDS=0.2
 BACKUP_RETENTION_COUNT=3
 MACOS_MINIMUM_SYSTEM_VERSION="15.0"
-PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
 fail() {
   printf 'error: %s\n' "$1" >&2
@@ -140,7 +138,6 @@ require_command security
 require_command sips
 require_command swift
 require_file "$ICON_SOURCE"
-require_file "$PLIST_BUDDY"
 
 PROVISIONING_PROFILE="$(resolve_macos_provisioning_profile)"
 
@@ -209,7 +206,7 @@ if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" != "0" ]]; th
   else
     require_file "$PROVISIONING_PROFILE"
     cp "$PROVISIONING_PROFILE" "$embedded_profile_path"
-    write_macos_entitlements "$entitlements_path"
+    extract_macos_profile_entitlements "$PROVISIONING_PROFILE" "$entitlements_path"
     codesign_entitlements_args=(--entitlements "$entitlements_path")
   fi
 fi
