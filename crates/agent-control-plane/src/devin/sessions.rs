@@ -33,6 +33,8 @@ const METADATA_CACHE_KEY: &str = "windsurf.acp.metadataCache";
 const EVENT_LOG_INDEX_KEY: &str = "windsurf.acp.eventLog.index";
 const CREATED_AT_META_KEY: &str = "cognition.ai/createdAt";
 const IS_ARCHIVED_META_KEY: &str = "cognition.ai/isArchived";
+const DEVIN_LOCAL_PROVIDER_ID: &str = "devin-cli";
+const DEVIN_ACP_PROVIDER_SUFFIX: &str = "-acp";
 const SESSION_UPDATE_KEY: &str = "sessionUpdate";
 const AGENT_MESSAGE_CHUNK_UPDATE: &str = "agent_message_chunk";
 const TEXT_CONTENT_TYPE: &str = "text";
@@ -67,6 +69,7 @@ pub struct DevinThreadIdentity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DevinPromptTransport {
     CodexAppServer,
+    DevinHook,
 }
 
 #[derive(Clone, Copy)]
@@ -451,6 +454,10 @@ fn non_empty_identity_segment(value: &str) -> Option<String> {
 pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPromptTransport> {
     match provider_id.trim() {
         "codex" | "codex-acp" => Some(DevinPromptTransport::CodexAppServer),
+        DEVIN_LOCAL_PROVIDER_ID => Some(DevinPromptTransport::DevinHook),
+        provider_id if provider_id.ends_with(DEVIN_ACP_PROVIDER_SUFFIX) => {
+            Some(DevinPromptTransport::DevinHook)
+        }
         _ => None,
     }
 }
@@ -636,8 +643,14 @@ mod tests {
             devin_prompt_transport_for_provider("codex-acp"),
             Some(DevinPromptTransport::CodexAppServer)
         );
-        assert_eq!(devin_prompt_transport_for_provider("devin-cli"), None);
-        assert_eq!(devin_prompt_transport_for_provider("claude-acp"), None);
+        assert_eq!(
+            devin_prompt_transport_for_provider("devin-cli"),
+            Some(DevinPromptTransport::DevinHook)
+        );
+        assert_eq!(
+            devin_prompt_transport_for_provider("claude-acp"),
+            Some(DevinPromptTransport::DevinHook)
+        );
         assert_eq!(devin_prompt_transport_for_provider("devin-cloud"), None);
     }
 
