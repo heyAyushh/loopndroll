@@ -59,7 +59,7 @@ final class LooperContinuationActivityPublisher {
 
     func requestFocusAssistedActivation() {
         activateFocusAssist(reason: "hotkey")
-        refreshCurrentActivity()
+        republishCurrentActivity()
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -135,6 +135,26 @@ final class LooperContinuationActivityPublisher {
         activityOwner.refreshCurrentActivity(allowsFocusAssistedActivation: allowsFocusAssistedActivation())
         markActivityCurrent(currentActivity)
         logger.debug("handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public)")
+    }
+
+    private func republishCurrentActivity() {
+        guard let currentDescriptor else {
+            refreshCurrentActivity()
+            return
+        }
+
+        currentActivity?.invalidate()
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        configure(activity, with: currentDescriptor)
+        activityOwner.publish(
+            activity,
+            descriptor: currentDescriptor,
+            allowsFocusAssistedActivation: allowsFocusAssistedActivation()
+        )
+        markActivityCurrent(activity)
+        logPublishedActivity(activity, descriptor: currentDescriptor)
+        currentActivity = activity
+        startCurrentActivityRefreshLoop()
     }
 
     private func allowsFocusAssistedActivation() -> Bool {
