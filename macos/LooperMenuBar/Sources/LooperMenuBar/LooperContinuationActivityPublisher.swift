@@ -59,6 +59,7 @@ final class LooperContinuationActivityPublisher {
 
     func requestFocusAssistedActivation() {
         activateFocusAssist(reason: "hotkey")
+        refreshCurrentActivity()
     }
 
     func attachHost(_ host: NSResponder?) {

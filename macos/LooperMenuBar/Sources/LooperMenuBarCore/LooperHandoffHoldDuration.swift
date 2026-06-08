@@ -17,7 +17,7 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
     }
 
     public static let userDefaultsKey = "handoffHoldDuration"
-    public static let defaultOption: LooperHandoffHoldDuration = .twoMinutes
+    public static let defaultOption: LooperHandoffHoldDuration = .tenMinutes
     public static let allOptions: [LooperHandoffHoldDuration] = [
         .thirtySeconds,
         .oneMinute,

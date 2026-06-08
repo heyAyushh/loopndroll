@@ -84,15 +84,15 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
-    func defaultsHandoffHoldToTwoMinutes() {
-        let expectedTwoMinuteSeconds: TimeInterval = 120
+    func defaultsHandoffHoldToTenMinutes() {
+        let expectedTenMinuteSeconds: TimeInterval = 600
         let suiteName = "dev.looper.tests.handoff-hold.default"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
 
-        #expect(LooperHandoffHoldDuration.stored(in: defaults) == .twoMinutes)
-        #expect(LooperHandoffHoldDuration.defaultOption.durationSeconds == expectedTwoMinuteSeconds)
-        #expect(LooperHandoffHoldDuration.defaultOption.menuTitle == "2 min")
+        #expect(LooperHandoffHoldDuration.stored(in: defaults) == .tenMinutes)
+        #expect(LooperHandoffHoldDuration.defaultOption.durationSeconds == expectedTenMinuteSeconds)
+        #expect(LooperHandoffHoldDuration.defaultOption.menuTitle == "10 min")
         defaults.removePersistentDomain(forName: suiteName)
     }
 
