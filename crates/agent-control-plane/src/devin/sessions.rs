@@ -67,7 +67,6 @@ pub struct DevinThreadIdentity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DevinPromptTransport {
     CodexAppServer,
-    DevinLocalHooks,
 }
 
 #[derive(Clone, Copy)]
@@ -452,8 +451,6 @@ fn non_empty_identity_segment(value: &str) -> Option<String> {
 pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPromptTransport> {
     match provider_id.trim() {
         "codex" | "codex-acp" => Some(DevinPromptTransport::CodexAppServer),
-        "devin-cli" => Some(DevinPromptTransport::DevinLocalHooks),
-        provider_id if provider_id.ends_with("-acp") => Some(DevinPromptTransport::DevinLocalHooks),
         _ => None,
     }
 }
@@ -639,14 +636,8 @@ mod tests {
             devin_prompt_transport_for_provider("codex-acp"),
             Some(DevinPromptTransport::CodexAppServer)
         );
-        assert_eq!(
-            devin_prompt_transport_for_provider("devin-cli"),
-            Some(DevinPromptTransport::DevinLocalHooks)
-        );
-        assert_eq!(
-            devin_prompt_transport_for_provider("claude-acp"),
-            Some(DevinPromptTransport::DevinLocalHooks)
-        );
+        assert_eq!(devin_prompt_transport_for_provider("devin-cli"), None);
+        assert_eq!(devin_prompt_transport_for_provider("claude-acp"), None);
         assert_eq!(devin_prompt_transport_for_provider("devin-cloud"), None);
     }
 

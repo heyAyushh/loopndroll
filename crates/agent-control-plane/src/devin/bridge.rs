@@ -24,7 +24,7 @@ const ACP_METHODS: &[&str] = &[
 ];
 const AUTO_EXECUTION_LIMITATION: &str =
     "Looper reads Devin Desktop state and never auto-executes registry commands.";
-const DEVIN_TRANSPORT_LIMITATION: &str = "Prompt delivery uses Looper-owned CLI resume; stop-hook lifecycle still depends on the agent runtime.";
+const DEVIN_TRANSPORT_LIMITATION: &str = "Existing Devin Desktop-owned sessions are read-only for prompt delivery until Looper owns ACP authentication or a Devin-side bridge is installed.";
 const MISSING_LAUNCH_METADATA_LIMITATION: &str =
     "No configured launchable enabled ACP agent was found.";
 const LAUNCH_PREFLIGHT_PROBE_KIND: &str = "launch-preflight";

@@ -173,6 +173,8 @@ pub enum MobileSessionError {
     SessionArchived,
     #[error("session cannot receive prompts right now")]
     PromptDeliveryUnavailable,
+    #[error("{0}")]
+    PromptDeliveryUnavailableReason(String),
     #[error("desktop session state unavailable: {0}")]
     PromptSnapshotUnavailable(String),
     #[error("prompt resume failed: {0}")]

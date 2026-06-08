@@ -78,7 +78,8 @@ pub(super) fn mobile_session_error_response(error: MobileSessionError) -> Respon
         | MobileSessionError::InvalidNotificationChannel
         | MobileSessionError::MissingNotificationConfig
         | MobileSessionError::InvalidCompletionCheck => StatusCode::BAD_REQUEST,
-        MobileSessionError::PromptDeliveryUnavailable => StatusCode::CONFLICT,
+        MobileSessionError::PromptDeliveryUnavailable
+        | MobileSessionError::PromptDeliveryUnavailableReason(_) => StatusCode::CONFLICT,
         MobileSessionError::NotificationNotFound | MobileSessionError::CompletionCheckNotFound => {
             StatusCode::NOT_FOUND
         }

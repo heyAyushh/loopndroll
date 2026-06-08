@@ -1923,7 +1923,7 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
 }
 
 #[tokio::test]
-async fn devin_mobile_prompt_queues_for_local_hooks() {
+async fn devin_mobile_prompt_rejects_desktop_owned_session_without_transport() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_session();
@@ -1939,32 +1939,42 @@ async fn devin_mobile_prompt_queues_for_local_hooks() {
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
-    let response = request_json_body_with_options(
+    let response = request_with_body_options(
         &router,
         Method::POST,
         "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
-        serde_json::json!({ "prompt": "Keep going from phone." }),
-        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        serde_json::to_vec(&serde_json::json!({ "prompt": "Keep going from phone." }))
+            .expect("json body"),
+        &[
+            (axum::http::header::AUTHORIZATION, authorization.as_str()),
+            (axum::http::header::CONTENT_TYPE, "application/json"),
+        ],
         None,
     )
     .await;
-
-    assert_eq!(
-        mobile_snapshot_session(&response, "devin:devin-cli:brindle-cadet")["id"],
-        "devin:devin-cli:brindle-cadet"
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let error: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert!(
+        error["message"]
+            .as_str()
+            .expect("message")
+            .contains("prompt delivery")
     );
 
     let events = control_plane
         .store()
         .mobile_events_since(0, 10)
         .expect("mobile events");
-    assert!(
-        events
-            .iter()
-            .any(|event| event.event_type == MobileEventKind::SessionChanged
-                && event.thread_id.as_deref() == Some("devin:devin-cli:brindle-cadet")
-                && event.detail.as_deref() == Some("prompt-queued"))
-    );
+    assert!(events.iter().all(|event| {
+        event.thread_id.as_deref() != Some("devin:devin-cli:brindle-cadet")
+            || event.event_type != MobileEventKind::PromptQueued
+    }));
     let outcome = control_plane
         .mobile_session_service()
         .hook_outcome_for_payload(&MobileHookPayload {
@@ -1975,9 +1985,8 @@ async fn devin_mobile_prompt_queues_for_local_hooks() {
             last_assistant_message: None,
         })
         .expect("Devin hook outcome");
-    let decision = outcome.decision.expect("queued prompt decision");
-    assert_eq!(decision.decision, "block");
-    assert_eq!(decision.reason, "Keep going from phone.");
+    assert!(outcome.decision.is_none());
+    assert!(outcome.delivered_prompt_id.is_none());
 }
 
 #[tokio::test]

@@ -228,7 +228,7 @@ fn prompt_delivery_action_for_thread(
 
 const ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "Archived sessions cannot receive prompts.";
-const DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str = "This Devin Desktop provider is visible, but Looper does not have a prompt transport for it yet.";
+const DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str = "This Devin Desktop-owned local session is visible, but prompt delivery needs a Looper-owned ACP credential flow or a Devin-side bridge.";
 const INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
     "This session must be running before Looper can queue prompts.";
 
@@ -297,8 +297,16 @@ fn devin_prompt_transport(thread: &DesktopThread) -> Option<(DevinPromptTranspor
 fn devin_prompt_delivery_action(
     thread: &DesktopThread,
 ) -> Result<PromptDeliveryAction, MobileSessionError> {
-    let (transport, session_id) =
-        devin_prompt_transport(thread).ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
+    let DevinThreadIdentity {
+        provider_id,
+        session_id,
+    } = devin_thread_identity_from_public_thread_id(&thread.thread_id)
+        .ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
+    let transport = devin_prompt_transport_for_provider(&provider_id).ok_or_else(|| {
+        MobileSessionError::PromptDeliveryUnavailableReason(
+            DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON.to_owned(),
+        )
+    })?;
     match transport {
         DevinPromptTransport::CodexAppServer => {
             Ok(PromptDeliveryAction::ResumeCodex(PromptResumeTarget {
@@ -306,7 +314,6 @@ fn devin_prompt_delivery_action(
                 cwd: thread.cwd.clone(),
             }))
         }
-        DevinPromptTransport::DevinLocalHooks => Ok(PromptDeliveryAction::QueueForHook),
     }
 }
 
@@ -711,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_delivery_target_queues_devin_local_sessions_for_hooks() {
+    fn prompt_delivery_target_rejects_devin_local_sessions_without_owned_transport() {
         let thread = test_thread(
             "devin:devin-cli:shadow-canidae",
             AssistantKind::DevinDesktop,
@@ -719,17 +726,23 @@ mod tests {
         );
         let session_state = MobileSessionState::default();
 
+        let error = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect_err("Devin Desktop-owned session needs an explicit prompt transport");
         assert!(matches!(
-            prompt_delivery_action_for_thread(&thread, &session_state),
-            Ok(PromptDeliveryAction::QueueForHook)
+            error,
+            MobileSessionError::PromptDeliveryUnavailableReason(reason)
+                if reason == DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON
         ));
         let summary = session_summary(&thread, 0, &session_state);
-        assert_eq!(summary["canSendPrompt"], true);
-        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        );
     }
 
     #[test]
-    fn prompt_delivery_target_queues_claude_devin_sessions_for_hooks() {
+    fn prompt_delivery_target_rejects_claude_devin_sessions_without_owned_transport() {
         let thread = test_thread(
             "devin:claude-acp:bd6aa5c3-b6d1-4331-97e0-045c44652e2d",
             AssistantKind::DevinDesktop,
@@ -737,13 +750,19 @@ mod tests {
         );
         let session_state = MobileSessionState::default();
 
+        let error = prompt_delivery_action_for_thread(&thread, &session_state)
+            .expect_err("Devin Desktop-owned ACP session needs an explicit prompt transport");
         assert!(matches!(
-            prompt_delivery_action_for_thread(&thread, &session_state),
-            Ok(PromptDeliveryAction::QueueForHook)
+            error,
+            MobileSessionError::PromptDeliveryUnavailableReason(reason)
+                if reason == DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON
         ));
         let summary = session_summary(&thread, 0, &session_state);
-        assert_eq!(summary["canSendPrompt"], true);
-        assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
+        assert_eq!(summary["canSendPrompt"], false);
+        assert_eq!(
+            summary["promptDeliveryUnavailableReason"],
+            DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        );
     }
 
     #[test]
@@ -776,7 +795,8 @@ mod tests {
             .expect_err("unsupported Devin provider");
         assert!(matches!(
             error,
-            MobileSessionError::PromptDeliveryUnavailable
+            MobileSessionError::PromptDeliveryUnavailableReason(reason)
+                if reason == DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON
         ));
         let summary = session_summary(&thread, 0, &session_state);
         assert_eq!(summary["canSendPrompt"], false);
