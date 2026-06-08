@@ -86,6 +86,10 @@ pub fn adapter_capabilities() -> Vec<AssistantAdapterCapability> {
     discover_assistant_adapters()
 }
 
+pub fn static_adapter_capabilities() -> Vec<AssistantAdapterCapability> {
+    discover_assistant_adapters_from_sources(&[], &BTreeMap::new())
+}
+
 pub fn discover_assistant_adapters() -> Vec<AssistantAdapterCapability> {
     let process_commands = current_process_commands();
     let cli_paths = current_cli_paths(&[

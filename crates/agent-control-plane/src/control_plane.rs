@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::assistant::{AssistantAdapterCapability, AssistantKind, adapter_capabilities};
+use crate::assistant::{
+    AssistantAdapterCapability, AssistantKind, adapter_capabilities, static_adapter_capabilities,
+};
 use crate::automations::{AutomationSummary, read_automations};
 use crate::claude_code::{
-    ClaudeHookOwner, ClaudeHookStatus, claude_session_to_desktop_thread, default_claude_home,
-    discover_claude_sessions, inspect_claude_hooks, register_owned_claude_hooks,
-    unregister_owned_claude_hooks,
+    ClaudeHookOwner, ClaudeHookStatus, ClaudeSessionRecord, claude_session_to_desktop_thread,
+    default_claude_home, discover_claude_sessions, discover_recent_claude_sessions,
+    inspect_claude_hooks, register_owned_claude_hooks, unregister_owned_claude_hooks,
 };
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
@@ -316,9 +318,11 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.is_active())
             .count();
-        let claude_sessions =
-            discover_claude_sessions(&default_claude_home(&self.config.home_path))
-                .unwrap_or_default();
+        let claude_sessions = discover_recent_claude_sessions(
+            &default_claude_home(&self.config.home_path),
+            DESKTOP_MENU_THREAD_LIMIT,
+        )
+        .unwrap_or_default();
         let mut claude_signature = claude_sessions
             .iter()
             .take(DESKTOP_MENU_THREAD_LIMIT)
@@ -774,6 +778,12 @@ impl ControlPlane {
         compaction_limit: usize,
         compaction_file_scan_limit: usize,
     ) -> Result<DesktopSnapshot> {
+        let bounded_snapshot = thread_limit.is_some();
+        let control_plane_status = if bounded_snapshot {
+            bounded_control_plane_status(self.status())
+        } else {
+            self.status()
+        };
         let state = read_state(&self.config.codex_home)?;
         let all_threads = state.threads.clone();
         let snapshot_codex_threads = codex_threads_for_snapshot(&all_threads, thread_limit);
@@ -825,9 +835,7 @@ impl ControlPlane {
         desktop_threads.extend(
             limited_items(&grok_sessions, thread_limit).map(grok_session_to_desktop_thread),
         );
-        let claude_sessions =
-            discover_claude_sessions(&default_claude_home(&self.config.home_path))
-                .unwrap_or_default();
+        let claude_sessions = self.claude_sessions_for_snapshot(thread_limit);
         desktop_threads.extend(
             limited_items(&claude_sessions, thread_limit).map(claude_session_to_desktop_thread),
         );
@@ -848,11 +856,15 @@ impl ControlPlane {
         });
         let visible_codex_threads = snapshot_codex_threads;
 
-        let compactions = read_recent_compaction_events(
-            &self.config.codex_home,
-            compaction_limit,
-            compaction_file_scan_limit,
-        )?;
+        let compactions = if bounded_snapshot {
+            Vec::new()
+        } else {
+            read_recent_compaction_events(
+                &self.config.codex_home,
+                compaction_limit,
+                compaction_file_scan_limit,
+            )?
+        };
         let mut known_thread_ids = known_thread_ids(&all_threads);
         known_thread_ids.extend(
             grok_sessions
@@ -877,6 +889,9 @@ impl ControlPlane {
         );
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
         attach_goals_to_desktop_threads(&mut desktop_threads, &goals);
+        if bounded_snapshot {
+            thin_desktop_threads_for_bounded_snapshot(&mut desktop_threads);
+        }
         let automations = read_automations(&self.config.codex_home)?
             .into_iter()
             .map(|automation| automation.to_summary(&known_thread_ids))
@@ -905,16 +920,25 @@ impl ControlPlane {
             + devin_active_thread_count
             + devin_acp_active_thread_count;
         let archived_thread_count = codex_archived_thread_count + devin_archived_thread_count;
-        let sync_manifest = SyncManifest::metadata_only(
-            &self.status(),
-            &goals,
-            &automations,
-            &visible_codex_threads,
-            &capabilities,
-        )?;
+        let sync_manifest = if bounded_snapshot {
+            SyncManifest::metadata_only(&control_plane_status, &[], &[], &[], &BTreeMap::new())?
+        } else {
+            SyncManifest::metadata_only(
+                &control_plane_status,
+                &goals,
+                &automations,
+                &visible_codex_threads,
+                &capabilities,
+            )?
+        };
+
+        let assistant_adapters = match thread_limit {
+            Some(_) => static_adapter_capabilities(),
+            None => adapter_capabilities(),
+        };
 
         Ok(DesktopSnapshot {
-            control_plane: self.status(),
+            control_plane: control_plane_status,
             thread_count: all_threads.len()
                 + grok_build.session_count
                 + claude_sessions.len()
@@ -924,10 +948,14 @@ impl ControlPlane {
             archived_thread_count,
             threads: desktop_threads,
             automations,
-            automation_runs: self.store.automation_runs()?,
+            automation_runs: if bounded_snapshot {
+                Vec::new()
+            } else {
+                self.store.automation_runs()?
+            },
             goals,
             sync_manifest,
-            assistant_adapters: adapter_capabilities(),
+            assistant_adapters,
             devin_desktop: inspect_devin_desktop_for_home(&self.config.home_path),
             grok_build,
             compactions,
@@ -972,6 +1000,18 @@ impl ControlPlane {
                 )
             })
             .collect()
+    }
+
+    fn claude_sessions_for_snapshot(
+        &self,
+        thread_limit: Option<usize>,
+    ) -> Vec<ClaudeSessionRecord> {
+        let claude_home = default_claude_home(&self.config.home_path);
+        match thread_limit {
+            Some(limit) => discover_recent_claude_sessions(&claude_home, limit),
+            None => discover_claude_sessions(&claude_home),
+        }
+        .unwrap_or_default()
     }
 
     fn known_desktop_thread_ids(&self) -> Result<BTreeSet<String>> {
@@ -1289,6 +1329,26 @@ fn known_thread_ids(threads: &[ThreadRecord]) -> BTreeSet<String> {
         .iter()
         .map(|thread| thread.thread_id.clone())
         .collect()
+}
+
+fn bounded_control_plane_status(mut status: ControlPlaneStatus) -> ControlPlaneStatus {
+    status.app_server = None;
+    for server in &mut status.codex_servers {
+        server.command.clear();
+        server.parent_processes.clear();
+    }
+    status
+}
+
+fn thin_desktop_threads_for_bounded_snapshot(threads: &mut [DesktopThread]) {
+    for thread in threads {
+        thread.capabilities.tools.clear();
+        thread.capabilities.mcp_tools.clear();
+        thread.capabilities.app_tools.clear();
+        thread.capabilities.automation_tools.clear();
+        thread.capabilities.spawn.children.clear();
+        thread.capabilities.diff.paths.clear();
+    }
 }
 
 fn codex_threads_for_snapshot(
