@@ -12,6 +12,8 @@
 		0A72C7E22AABFE981A697D61 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D6DADF770C736556DE619E8 /* HapticManager.swift */; };
 		0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */; };
 		0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */; };
+		0F51A1110000000000000001 /* LooperSiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F51A1110000000000000003 /* LooperSiriIntents.swift */; };
+		0F51A1110000000000000002 /* LooperSiriSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */; };
 		20A4F5E4BBBC0282AF2AEEBD /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */; };
 		293C8235B895D87F362AFB95 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78346AF56F5D457B05954C0B /* SettingsScreen.swift */; };
 		2D482EE05EA391F40E13CF7B /* PinballDebugOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */; };
@@ -73,6 +75,8 @@
 /* Begin PBXFileReference section */
 		02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsCategories.swift; sourceTree = "<group>"; };
 		0D3020C638B40E714B24B381 /* MobileEventStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEventStream.swift; sourceTree = "<group>"; };
+		0F51A1110000000000000003 /* LooperSiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriIntents.swift; sourceTree = "<group>"; };
+		0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriSessionSupport.swift; sourceTree = "<group>"; };
 		1425D9C9F419BAA476E8430F /* UIBodySynchronizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIBodySynchronizer.swift; sourceTree = "<group>"; };
 		150B19C23F529638DF99E573 /* CompanionConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConfiguration.swift; sourceTree = "<group>"; };
 		155542B6D3718553CC20717F /* LooperCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LooperCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -174,6 +178,15 @@
 				66B602FC6F0126FEDA7623BA /* OrbCodeKit */,
 			);
 			name = Packages;
+			sourceTree = "<group>";
+		};
+		2BB1A1110000000000000001 /* AppIntents */ = {
+			isa = PBXGroup;
+			children = (
+				0F51A1110000000000000003 /* LooperSiriIntents.swift */,
+				0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */,
+			);
+			path = AppIntents;
 			sourceTree = "<group>";
 		};
 		2E2CDC964788013933505897 /* Maze */ = {
@@ -317,6 +330,7 @@
 				87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */,
 				2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */,
 				914286F132B908555009B4A7 /* App */,
+				2BB1A1110000000000000001 /* AppIntents */,
 				A1A5ECF52C54A9331160D605 /* Extensions */,
 				76FC1DE5699F0B77C3661A2A /* Models */,
 				A301FC12935AB470C07D61B3 /* Preview Content */,
@@ -492,6 +506,8 @@
 				98B40F9B225EEFDE1AFFE537 /* RemotePushRegistrar.swift in Sources */,
 				83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */,
 				A6CE50C55BF7F4B3E91803C0 /* SKNode+Debug.swift in Sources */,
+				0F51A1110000000000000001 /* LooperSiriIntents.swift in Sources */,
+				0F51A1110000000000000002 /* LooperSiriSessionSupport.swift in Sources */,
 				698E7359AA9B92B96EAC79B7 /* SessionDetailScreen.swift in Sources */,
 				913D972992CF173197037276 /* SessionRow.swift in Sources */,
 				762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */,
