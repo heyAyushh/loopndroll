@@ -74,17 +74,40 @@ fn spawn_grpc_server(
     });
 }
 
-pub fn run_hook_mode() -> Result<()> {
+pub async fn run_hook_mode() -> Result<()> {
     let mut input = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-    let devin_hook = is_devin_hook_invocation();
-    let claude_hook = is_claude_hook_invocation();
-    let payload = if devin_hook {
-        parse_devin_hook_payload(&input)
-    } else if claude_hook {
-        parse_claude_hook_payload(&input)
+    run_hook_mode_with_input(
+        &input,
+        HookInvocationContext::from_environment(),
+        default_control_plane()?,
+    )
+    .await
+}
+
+struct HookInvocationContext {
+    devin_hook: bool,
+    claude_hook: bool,
+    grok_hook: bool,
+}
+
+impl HookInvocationContext {
+    fn from_environment() -> Self {
+        Self {
+            devin_hook: is_devin_hook_invocation(),
+            claude_hook: is_claude_hook_invocation(),
+            grok_hook: is_grok_hook_invocation(),
+        }
+    }
+}
+
+fn parse_hook_mode_payload(input: &str, context: &HookInvocationContext) -> MobileHookPayload {
+    if context.devin_hook {
+        parse_devin_hook_payload(input)
+    } else if context.claude_hook {
+        parse_claude_hook_payload(input)
     } else {
-        parse_hook_payload(&input)
+        parse_hook_payload(input)
     }
     .unwrap_or(MobileHookPayload {
         hook_event_name: String::new(),
@@ -92,9 +115,15 @@ pub fn run_hook_mode() -> Result<()> {
         turn_id: None,
         cwd: None,
         last_assistant_message: None,
-    });
-    let grok_hook = is_grok_hook_invocation();
-    let control_plane = default_control_plane()?;
+    })
+}
+
+async fn run_hook_mode_with_input(
+    input: &str,
+    context: HookInvocationContext,
+    control_plane: ControlPlane,
+) -> Result<()> {
+    let payload = parse_hook_mode_payload(input, &context);
     let service = control_plane.mobile_session_service();
     let outcome = service.hook_outcome_for_payload(&payload)?;
     service.record_hook_lifecycle(&payload, outcome.decision.is_some())?;
@@ -123,19 +152,14 @@ pub fn run_hook_mode() -> Result<()> {
         }
     }
     if outcome.decision.is_none() && payload.hook_event_name == STOP_HOOK_EVENT {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(async {
-            if let Err(error) =
-                crate::hook_notifications::send_stop_notifications(&control_plane, &payload).await
-            {
-                eprintln!("stop notification delivery failed: {error}");
-            }
-        });
+        if let Err(error) =
+            crate::hook_notifications::send_stop_notifications(&control_plane, &payload).await
+        {
+            eprintln!("stop notification delivery failed: {error}");
+        }
     }
     if let Some(decision) = outcome.decision {
-        if grok_hook && decision.decision == "block" {
+        if context.grok_hook && decision.decision == "block" {
             if let Some(session_id) = payload.session_id.as_deref() {
                 if let Err(error) = spawn_session_continue(&GrokContinueRequest {
                     session_id: session_id.to_owned(),
@@ -332,6 +356,35 @@ fn spawn_telegram_bridge(control_plane: ControlPlane) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_HOOK_COMMAND: &str = "agent-control-plane --hook --managed-by looper";
+    const TEST_STOP_HOOK_INPUT: &str = r#"{
+        "hook_event_name": "Stop",
+        "session_id": "thread-main",
+        "last_assistant_message": "done"
+    }"#;
+
+    #[tokio::test]
+    async fn stop_hook_mode_runs_inside_existing_runtime() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let control_plane = ControlPlane::new(ControlPlaneConfig {
+            codex_home: temp_dir.path().join(".codex"),
+            codex_executable: None,
+            grok_home: temp_dir.path().join(".grok"),
+            store_path: temp_dir.path().join("control-plane.sqlite"),
+            hook_command: Some(TEST_HOOK_COMMAND.to_owned()),
+            home_path: temp_dir.path().to_path_buf(),
+        });
+        let context = HookInvocationContext {
+            devin_hook: false,
+            claude_hook: false,
+            grok_hook: false,
+        };
+
+        run_hook_mode_with_input(TEST_STOP_HOOK_INPUT, context, control_plane)
+            .await
+            .expect("run stop hook mode inside tokio runtime");
+    }
 
     #[test]
     fn listen_wildcard_maps_to_loopback_client_url() {
