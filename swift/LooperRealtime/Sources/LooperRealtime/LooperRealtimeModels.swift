@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LooperRealtimeEndpoint: Equatable, Sendable {
+public struct LooperRealtimeEndpoint: Equatable, Hashable, Sendable {
     public let baseURL: URL
 
     public init(baseURL: URL) {

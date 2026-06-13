@@ -1,4 +1,5 @@
 import Foundation
+import LooperCompanionCore
 import Observation
 import UIKit
 import UserNotifications
@@ -10,6 +11,7 @@ private enum LaunchArgument {
 private enum CachedSnapshotRestoreReason {
     static let appLaunch = "app-launch"
     static let bundledConnectionChange = "bundled-connection-change"
+    static let handoffConnectionChange = "handoff-connection-change"
     static let loadFailure = "load-failure"
 }
 
@@ -45,9 +47,14 @@ final class CompanionAppModel {
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private var mobileEventStreamTask: Task<Void, Never>?
+    @ObservationIgnored private var eventStreamRevision = 0
+    @ObservationIgnored private var snapshotLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var nextSnapshotLoadID = 0
+    @ObservationIgnored private var activeSnapshotLoadID = 0
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
     @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
     @ObservationIgnored private var isSavingAssistantSurface = false
+    @ObservationIgnored private var connectionRevision = 0
 
     init(
         environment: CompanionEnvironment,
@@ -218,7 +225,10 @@ final class CompanionAppModel {
     func prepareForActiveState() async {
         if CompanionConfiguration.activateBundledConnectionIfNeeded() {
             CompanionDiagnostics.lifecycle.info("Bundled connection changed during active-state preparation")
-            resetSnapshotStateForConnectionChange()
+            _ = resetConnectionStateForStoredConnection(
+                clearsSnapshotCache: false,
+                cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.bundledConnectionChange
+            )
         }
 
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
@@ -243,6 +253,7 @@ final class CompanionAppModel {
     }
 
     func stopMobileEventStream() {
+        eventStreamRevision += 1
         mobileEventStreamTask?.cancel()
         mobileEventStreamTask = nil
     }
@@ -253,15 +264,27 @@ final class CompanionAppModel {
         }
 
         let eventStreamClient = service.makeMobileEventStreamClient()
+        eventStreamRevision += 1
+        let streamRevision = eventStreamRevision
+        let streamConnectionRevision = connectionRevision
         mobileEventStreamTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else {
                     return
                 }
+                guard streamRevision == self.eventStreamRevision,
+                      streamConnectionRevision == self.connectionRevision
+                else {
+                    return
+                }
 
                 do {
                     try await eventStreamClient.streamEvents { event in
-                        await self.handleMobileStreamEvent(event)
+                        await self.handleMobileStreamEvent(
+                            event,
+                            streamRevision: streamRevision,
+                            streamConnectionRevision: streamConnectionRevision
+                        )
                     }
                 } catch {
                     guard !Task.isCancelled else {
@@ -275,7 +298,10 @@ final class CompanionAppModel {
                     }
                 }
 
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled,
+                      streamRevision == self.eventStreamRevision,
+                      streamConnectionRevision == self.connectionRevision
+                else {
                     return
                 }
 
@@ -284,7 +310,18 @@ final class CompanionAppModel {
         }
     }
 
-    private func handleMobileStreamEvent(_ event: MobileStreamEvent) async {
+    private func handleMobileStreamEvent(
+        _ event: MobileStreamEvent,
+        streamRevision: Int,
+        streamConnectionRevision: Int
+    ) async {
+        guard streamRevision == eventStreamRevision,
+              streamConnectionRevision == connectionRevision
+        else {
+            CompanionDiagnostics.record("events:stale-skip")
+            return
+        }
+
         CompanionDiagnostics.record(
             "events:received type=\(event.eventType.rawValue) thread=\(event.threadID ?? "none")"
         )
@@ -292,6 +329,12 @@ final class CompanionAppModel {
         switch event.eventType {
         case .sessionChanged, .promptQueued, .promptDelivered, .lifecycleChanged:
             await refresh()
+            guard streamRevision == eventStreamRevision,
+                  streamConnectionRevision == connectionRevision
+            else {
+                CompanionDiagnostics.record("events:stale-detail-skip")
+                return
+            }
             if let threadID = event.threadID,
                detailBySessionID[threadID] != nil {
                 let sessionSurface = snapshot?.assistantSurface(containingSessionID: threadID)
@@ -339,29 +382,77 @@ final class CompanionAppModel {
     }
 
     private func reloadConnection() async {
+        let shouldRestartEventStream = resetConnectionStateForStoredConnection(
+            clearsSnapshotCache: true,
+            cachedSnapshotRestoreReason: nil
+        )
+        await loadSnapshot(allowsConcurrentConnectionReload: true)
+        if shouldRestartEventStream {
+            startMobileEventStreamIfNeeded()
+        }
+    }
+
+    @discardableResult
+    private func resetConnectionStateForStoredConnection(
+        clearsSnapshotCache: Bool,
+        cachedSnapshotRestoreReason: String?
+    ) -> Bool {
+        let shouldRestartEventStream = mobileEventStreamTask != nil
+        connectionRevision += 1
+        cancelSnapshotLoad()
         stopMobileEventStream()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
-        snapshot = nil
-        sessionSections = .empty
         selectedAssistantSurface = .defaultSurface
         hasUserSelectedAssistantSurface = false
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
         serverHealth = nil
         detailBySessionID = [:]
+        pendingOpenSessionID = nil
         errorMessage = nil
-        CompanionSnapshotCache.clear()
-        await loadSnapshot()
+
+        if clearsSnapshotCache {
+            CompanionSnapshotCache.clear()
+        }
+
+        resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
+        return shouldRestartEventStream
     }
 
-    private func resetSnapshotStateForConnectionChange() {
+    private func resetSnapshotState(cachedSnapshotRestoreReason: String?) {
         serverHealth = nil
         detailBySessionID = [:]
         errorMessage = nil
-        if !restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.bundledConnectionChange) {
-            snapshot = nil
-            sessionSections = .empty
+        if let cachedSnapshotRestoreReason,
+           restoreCachedSnapshotIfAvailable(reason: cachedSnapshotRestoreReason) {
+            return
+        }
+
+        snapshot = nil
+        sessionSections = .empty
+    }
+
+    private func cancelSnapshotLoad() {
+        snapshotLoadTask?.cancel()
+        snapshotLoadTask = nil
+        isLoading = false
+    }
+
+    private func nextSnapshotLoadIdentifier() -> Int {
+        nextSnapshotLoadID += 1
+        activeSnapshotLoadID = nextSnapshotLoadID
+        return nextSnapshotLoadID
+    }
+
+    private func finishSnapshotLoad(id: Int, loadRevision: Int) {
+        guard id == activeSnapshotLoadID else {
+            return
+        }
+
+        snapshotLoadTask = nil
+        if loadRevision == connectionRevision {
+            isLoading = false
         }
     }
 
@@ -456,25 +547,66 @@ final class CompanionAppModel {
         }
     }
 
-    func loadSnapshot() async {
-        guard !isLoading else {
+    func loadSnapshot(allowsConcurrentConnectionReload: Bool = false) async {
+        guard !isLoading || allowsConcurrentConnectionReload else {
             CompanionDiagnostics.lifecycle.info("Snapshot load skipped because another load is active")
             return
         }
 
+        snapshotLoadTask?.cancel()
+        let loadRevision = connectionRevision
+        let loadID = nextSnapshotLoadIdentifier()
         isLoading = true
-        defer {
-            isLoading = false
-        }
         errorMessage = nil
 
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await self.performSnapshotLoad(loadRevision: loadRevision, loadID: loadID)
+        }
+        snapshotLoadTask = task
+
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func performSnapshotLoad(loadRevision: Int, loadID: Int) async {
+        defer {
+            finishSnapshotLoad(id: loadID, loadRevision: loadRevision)
+        }
+
         do {
+            try Task.checkCancellation()
             CompanionDiagnostics.lifecycle.info(
                 "Snapshot load starting baseURL=\(self.configuredBaseURL, privacy: .public)"
             )
             CompanionDiagnostics.record("snapshot:load-start baseURL=\(configuredBaseURL)")
-            serverHealth = try? await service.loadServerHealth()
+            do {
+                let resolvedHealth = try await service.resolveServerHealth()
+                guard loadRevision == connectionRevision else {
+                    CompanionDiagnostics.record("snapshot:load-stale-health-skip")
+                    return
+                }
+                let health = resolvedHealth.health
+                serverHealth = health
+                adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
+            } catch {
+                guard !isCancellationError(error) else {
+                    throw error
+                }
+            }
+
+            try Task.checkCancellation()
             let nextSnapshot = try await service.loadSnapshot()
+            guard loadRevision == connectionRevision else {
+                CompanionDiagnostics.record("snapshot:load-stale-skip")
+                return
+            }
             CompanionDiagnostics.lifecycle.info(
                 "Snapshot load succeeded sessions=\(nextSnapshot.sessions.count, privacy: .public)"
             )
@@ -484,6 +616,10 @@ final class CompanionAppModel {
             guard !isCancellationError(error) else {
                 CompanionDiagnostics.lifecycle.info("Snapshot load cancelled")
                 CompanionDiagnostics.record("snapshot:load-cancelled")
+                return
+            }
+            guard loadRevision == connectionRevision else {
+                CompanionDiagnostics.record("snapshot:load-stale-error-skip error=\(error.localizedDescription)")
                 return
             }
 
@@ -510,6 +646,40 @@ final class CompanionAppModel {
 
     func refresh() async {
         await loadSnapshot()
+    }
+
+    private func adoptServerHealthBaseURLsIfNeeded(_ resolvedHealth: ResolvedCompanionServerHealth) {
+        let health = resolvedHealth.health
+        let discoveredBaseURLs = CompanionConfiguration.normalizedBaseURLsForUserInput(
+            ([health.baseURL] + health.baseURLs).joined(separator: "\n")
+        )
+        guard resolvedHealth.reachedBaseURL != nil || !discoveredBaseURLs.isEmpty else {
+            return
+        }
+
+        let currentConnection = CompanionConfiguration.resolvedConnection()
+        let nextBaseURLs = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: resolvedHealth.reachedBaseURL,
+            advertised: discoveredBaseURLs,
+            existing: currentConnection.baseURLs
+        )
+        guard nextBaseURLs.map(\.absoluteString) != currentConnection.baseURLs.map(\.absoluteString) else {
+            return
+        }
+
+        CompanionConfiguration.storeConnection(
+            CompanionConnection(
+                baseURLs: nextBaseURLs,
+                bearerToken: currentConnection.bearerToken
+            ),
+            mobileSessionPolicy: .preserveIfBearerTokenUnchanged
+        )
+        configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
+        service = CompanionEnvironment.live().service
+        restartMobileEventStreamIfActive()
+        CompanionDiagnostics.record(
+            "health:base-urls-adopted count=\(nextBaseURLs.count) primary=\(configuredBaseURL)"
+        )
     }
 
     func continueFromMacActivity(_ activity: NSUserActivity) async {
@@ -598,7 +768,11 @@ final class CompanionAppModel {
 
     private func adoptHandoffBaseURL(_ handoffBaseURL: URL) {
         let currentConnection = CompanionConfiguration.resolvedConnection()
-        let nextBaseURLs = uniqueBaseURLs(primary: handoffBaseURL, existing: currentConnection.baseURLs)
+        let nextBaseURLs = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: handoffBaseURL,
+            advertised: [],
+            existing: currentConnection.baseURLs
+        )
         guard nextBaseURLs.map(\.absoluteString) != currentConnection.baseURLs.map(\.absoluteString) else {
             CompanionDiagnostics.record("handoff:base-url-unchanged baseURL=\(handoffBaseURL.absoluteString)")
             return
@@ -611,20 +785,26 @@ final class CompanionAppModel {
             ),
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
-        configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        service = CompanionEnvironment.live().service
-        resetSnapshotStateForConnectionChange()
+        let shouldRestartEventStream = resetConnectionStateForStoredConnection(
+            clearsSnapshotCache: false,
+            cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.handoffConnectionChange
+        )
+        if shouldRestartEventStream {
+            startMobileEventStreamIfNeeded()
+        }
         CompanionDiagnostics.lifecycle.info(
             "Handoff adopted baseURL=\(handoffBaseURL.absoluteString, privacy: .public)"
         )
         CompanionDiagnostics.record("handoff:base-url-adopted baseURL=\(handoffBaseURL.absoluteString)")
     }
 
-    private func uniqueBaseURLs(primary: URL, existing: [URL]) -> [URL] {
-        var seen = Set<String>()
-        return ([primary] + existing).filter { url in
-            seen.insert(url.absoluteString).inserted
+    private func restartMobileEventStreamIfActive() {
+        guard mobileEventStreamTask != nil else {
+            return
         }
+
+        stopMobileEventStream()
+        startMobileEventStreamIfNeeded()
     }
 
     func loadSessionDetail(id: String) async {
@@ -643,6 +823,7 @@ final class CompanionAppModel {
             return
         }
 
+        let detailLoadRevision = connectionRevision
         loadingSessionDetailIDs.insert(id)
         defer {
             loadingSessionDetailIDs.remove(id)
@@ -651,13 +832,24 @@ final class CompanionAppModel {
         var lastError: Error?
         for surface in detailQuerySurfaces(for: id, preferredSurface: assistantSurface) {
             do {
-                detailBySessionID[id] = try await service.loadSessionDetail(
+                let detail = try await service.loadSessionDetail(
                     id: id,
                     surface: Optional(surface)
                 )
+                guard detailLoadRevision == connectionRevision else {
+                    CompanionDiagnostics.record("session-detail:stale-skip id=\(id)")
+                    return
+                }
+
+                detailBySessionID[id] = detail
                 lastError = nil
                 break
             } catch {
+                guard detailLoadRevision == connectionRevision else {
+                    CompanionDiagnostics.record("session-detail:stale-error-skip id=\(id)")
+                    return
+                }
+
                 lastError = error
                 CompanionDiagnostics.record(
                     "session-detail:load-failed id=\(id) surface=\(surface.rawValue) error=\(error.localizedDescription)"
@@ -845,13 +1037,24 @@ final class CompanionAppModel {
 
     @discardableResult
     private func mutateSnapshot(_ operation: () async throws -> MobileSnapshot) async -> Bool {
+        let mutationRevision = connectionRevision
         errorMessage = nil
 
         do {
             let nextSnapshot = try await operation()
+            guard mutationRevision == connectionRevision else {
+                CompanionDiagnostics.record("snapshot:mutation-stale-skip")
+                return false
+            }
+
             await applySnapshot(nextSnapshot)
             return true
         } catch {
+            guard mutationRevision == connectionRevision else {
+                CompanionDiagnostics.record("snapshot:mutation-stale-error-skip error=\(error.localizedDescription)")
+                return false
+            }
+
             connectionState = connectionState(for: error)
             errorMessage = error.localizedDescription
             Haptics.error()

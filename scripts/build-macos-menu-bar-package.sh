@@ -101,6 +101,7 @@ MENU_BAR_EXECUTABLE="LooperMenuBar"
 LOOPER_EXECUTABLE="looper"
 CLI_EXECUTABLE="looper-cli"
 SERVER_EXECUTABLE="looper-server"
+HANDOFF_MARK_ICON_NAME="notification-orb.png"
 STATUS_ICON_NAME="looper-status-icon.png"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
 STATUS_ICON_SIZE=64
@@ -173,6 +174,7 @@ chmod 755 \
   "${macos_dir}/${CLI_EXECUTABLE}" \
   "${macos_dir}/${SERVER_EXECUTABLE}"
 
+cp "$ICON_SOURCE" "${resources_dir}/${HANDOFF_MARK_ICON_NAME}"
 sips -z "$STATUS_ICON_SIZE" "$STATUS_ICON_SIZE" "$ICON_SOURCE" --out "${resources_dir}/${STATUS_ICON_NAME}" >/dev/null
 for size in "${ICON_SIZES[@]}"; do
   sips -z "$size" "$size" "$ICON_SOURCE" --out "${iconset}/icon_${size}x${size}.png" >/dev/null

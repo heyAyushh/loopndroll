@@ -13,4 +13,14 @@ struct LooperRealtimeModelsTests {
         #expect(realtimeEndpoint.port == 8766)
         #expect(realtimeEndpoint.usesTLS)
     }
+
+    @Test
+    func endpointIsStablePoolKey() throws {
+        let firstURL = try #require(URL(string: "http://127.0.0.1:8766"))
+        let secondURL = try #require(URL(string: "http://127.0.0.1:8766"))
+        let firstEndpoint = LooperRealtimeEndpoint(baseURL: firstURL)
+        let secondEndpoint = LooperRealtimeEndpoint(baseURL: secondURL)
+
+        #expect(Set([firstEndpoint, secondEndpoint]).count == 1)
+    }
 }

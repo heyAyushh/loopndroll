@@ -1,5 +1,33 @@
 import Foundation
 
+public enum HookRepairTarget: String, CaseIterable, Equatable, Sendable {
+    case codex
+    case grok = "grok-build"
+    case claude = "claude-code"
+
+    public var pathComponent: String {
+        switch self {
+        case .codex:
+            "codex"
+        case .grok:
+            "grok"
+        case .claude:
+            "claude"
+        }
+    }
+
+    public var displayTitle: String {
+        switch self {
+        case .codex:
+            "Codex"
+        case .grok:
+            "Grok Build"
+        case .claude:
+            "Claude Code"
+        }
+    }
+}
+
 public enum LooperLifecycleDefaults {
     private enum Time {
         static let secondsPerMinute: TimeInterval = 60
@@ -16,20 +44,27 @@ public enum LooperLifecycleDefaults {
 
 public enum ControlPlaneEndpoint: Equatable {
     case registerHooks
+    case registerTargetHooks(HookRepairTarget)
     case unregisterLiveHooks
+    case unregisterLiveTargetHooks(HookRepairTarget)
     case shutdown
     case mobileHealth
     case controlPlaneStatus
     case desktopSnapshot
     case desktopEvents
     case devinAcpBridgeProbe
+    case devinAcpBridgeInstall
 
     public var path: String {
         switch self {
         case .registerHooks:
             "/hooks/register"
+        case let .registerTargetHooks(target):
+            "/hooks/\(target.pathComponent)/register"
         case .unregisterLiveHooks:
             "/hooks/unregister-live"
+        case let .unregisterLiveTargetHooks(target):
+            "/hooks/\(target.pathComponent)/unregister-live"
         case .shutdown:
             "/desktop/shutdown"
         case .mobileHealth:
@@ -42,12 +77,15 @@ public enum ControlPlaneEndpoint: Equatable {
             "/desktop/events"
         case .devinAcpBridgeProbe:
             "/desktop/devin/acp-bridge/probe"
+        case .devinAcpBridgeInstall:
+            "/desktop/devin/acp-bridge/install"
         }
     }
 
     public var method: String {
         switch self {
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .devinAcpBridgeProbe:
+        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
+             .devinAcpBridgeProbe, .devinAcpBridgeInstall:
             "POST"
         case .controlPlaneStatus, .desktopSnapshot, .desktopEvents, .mobileHealth:
             "GET"
@@ -58,8 +96,8 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .desktopSnapshot:
             [URLQueryItem(name: "profile", value: "menu")]
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus, .desktopEvents,
-             .devinAcpBridgeProbe:
+        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
+             .mobileHealth, .controlPlaneStatus, .desktopEvents, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
             []
         }
     }
@@ -70,8 +108,8 @@ public enum ControlPlaneEndpoint: Equatable {
             LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
         case .desktopEvents:
             LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
-        case .registerHooks, .unregisterLiveHooks, .shutdown, .mobileHealth, .controlPlaneStatus,
-             .devinAcpBridgeProbe:
+        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
+             .mobileHealth, .controlPlaneStatus, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
             LooperLifecycleDefaults.requestTimeoutSeconds
         }
     }
@@ -142,6 +180,11 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try validate(response)
     }
 
+    public func registerHooks(target: HookRepairTarget) async throws {
+        let (_, response) = try await session.data(for: request(for: .registerTargetHooks(target)))
+        try validate(response)
+    }
+
     public func fetchControlPlaneStatus() async throws -> ControlPlaneStatusResponse {
         try await fetchJSON(ControlPlaneStatusResponse.self, from: .controlPlaneStatus)
     }
@@ -162,10 +205,25 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         )
     }
 
+    public func installDevinAcpBridge() async throws -> DevinAcpInstallResponse {
+        try await postJSON(
+            DevinAcpInstallResponse.self,
+            to: .devinAcpBridgeInstall,
+            body: EmptyRequest()
+        )
+    }
+
     public func unregisterLiveHooks(
         timeout: TimeInterval = LooperLifecycleDefaults.requestTimeoutSeconds
     ) throws {
         try runBlockingRequest(for: .unregisterLiveHooks, timeout: timeout)
+    }
+
+    public func unregisterLiveHooks(
+        target: HookRepairTarget,
+        timeout: TimeInterval = LooperLifecycleDefaults.requestTimeoutSeconds
+    ) throws {
+        try runBlockingRequest(for: .unregisterLiveTargetHooks(target), timeout: timeout)
     }
 
     public func shutdownServer(
@@ -237,6 +295,8 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try resultBox.result?.get()
     }
 }
+
+private struct EmptyRequest: Encodable {}
 
 private final class BlockingRequestResultBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -580,6 +640,29 @@ public struct DevinAcpBridgeProbeResponse: Codable, Equatable, Sendable {
     public let bridge: DevinAcpBridgeStatus
 }
 
+public struct DevinAcpInstallResponse: Codable, Equatable, Sendable {
+    public let install: DevinAcpInstallResult
+    public let bridge: DevinAcpBridgeStatus
+}
+
+public struct DevinAcpInstallResult: Codable, Equatable, Sendable {
+    public let installedAgentId: String
+    public let registryPath: String
+    public let settingsPath: String
+    public let websocketURL: String
+    public let acpEnabled: Bool
+    public let preferredAgent: String
+
+    enum CodingKeys: String, CodingKey {
+        case installedAgentId = "installed_agent_id"
+        case registryPath = "registry_path"
+        case settingsPath = "settings_path"
+        case websocketURL = "websocket_url"
+        case acpEnabled = "acp_enabled"
+        case preferredAgent = "preferred_agent"
+    }
+}
+
 public struct DevinAcpBridgeProbe: Codable, Equatable, Sendable {
     public let ok: Bool
     public let status: String
@@ -611,10 +694,18 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     public let requiresAuthentication: Bool
 
     public var preferredHandoffBaseURL: URL? {
+        preferredReachableHandoffBaseURL
+            ?? URL(string: baseURL)
+    }
+
+    public var preferredReachableHandoffBaseURL: URL? {
         baseURLs
             .compactMap(URL.init(string:))
             .first(where: { !$0.isLoopbackHost })
-            ?? URL(string: baseURL)
+    }
+
+    public var supportsNativeHandoff: Bool {
+        ok && requiresAuthentication && preferredReachableHandoffBaseURL != nil
     }
 
     public var preferredRealtimeBaseURLs: [URL] {

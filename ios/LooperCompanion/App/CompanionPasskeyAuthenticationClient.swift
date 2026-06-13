@@ -1,4 +1,5 @@
 import Foundation
+import LooperCompanionCore
 
 struct CompanionPasskeyChallenge: Decodable, Sendable {
     let challengeId: String

@@ -1,7 +1,15 @@
 import Foundation
+import LooperCompanionCore
 import LooperRealtime
 
+private struct HTTPCompanionResponseData: Sendable {
+    let data: Data
+    let baseURL: URL
+}
+
 struct HTTPCompanionService: CompanionService {
+    private static let healthPath = "/api/mobile/health"
+    private static let snapshotPath = "/api/mobile/snapshot"
     private static let sessionPathPrefix = "/api/mobile/sessions"
     private static let pathSeparator = "/"
     private static let assistantSurfaceQueryItemName = "assistantSurface"
@@ -27,11 +35,20 @@ struct HTTPCompanionService: CompanionService {
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
-        try await request(path: "/api/mobile/health", method: HTTPMethod.get)
+        try await resolveServerHealth().health
+    }
+
+    func resolveServerHealth() async throws -> ResolvedCompanionServerHealth {
+        let responseData = try await healthResponseDataWithConfiguredOrDiscoveredURLs()
+        let health = try JSONDecoder().decode(CompanionServerHealth.self, from: responseData.data)
+        return ResolvedCompanionServerHealth(
+            health: health,
+            reachedBaseURL: responseData.baseURL
+        )
     }
 
     func loadSnapshot() async throws -> MobileSnapshot {
-        try await request(path: "/api/mobile/snapshot", method: HTTPMethod.get)
+        try await request(path: Self.snapshotPath, method: HTTPMethod.get)
     }
 
     func loadSessionDetail(
@@ -74,6 +91,9 @@ struct HTTPCompanionService: CompanionService {
             bearerToken: bearerToken
         ) {
             do {
+                defer {
+                    realtimeClient.disconnect()
+                }
                 _ = try await realtimeClient.sendSessionPrompt(
                     threadID: id,
                     prompt: prompt,
@@ -162,53 +182,87 @@ struct HTTPCompanionService: CompanionService {
         method: HTTPMethod,
         body: [String: Any]? = nil
     ) async throws -> Response {
-        let responseData: Data
+        let responseData = try await responseDataWithConfiguredURLs(path: path, method: method, body: body)
+        let decoder = JSONDecoder()
+        return try decoder.decode(Response.self, from: responseData.data)
+    }
 
-        do {
-            responseData = try await responseDataWithConfiguredURLs(
-                path: path,
-                method: method,
-                body: body
-            )
-        } catch {
-            let discoveredBaseURLs = await LocalCompanionServiceDiscovery.discoverBaseURLs()
-            guard !discoveredBaseURLs.isEmpty else {
-                throw error
-            }
-
-            responseData = try await responseDataWithResolvedURLs(
-                baseURLs + discoveredBaseURLs,
-                path: path,
-                method: method,
-                body: body
-            )
+    private func healthResponseDataWithConfiguredOrDiscoveredURLs() async throws -> HTTPCompanionResponseData {
+        let discoveredBaseURLsTask = Task { @MainActor in
+            await LocalCompanionServiceDiscovery.discoverBaseURLs()
         }
 
-        let decoder = JSONDecoder()
-        return try decoder.decode(Response.self, from: responseData)
+        return try await withTaskCancellationHandler {
+            do {
+                let responseData = try await responseDataWithConfiguredURLs(
+                    path: Self.healthPath,
+                    method: .get,
+                    includesAuthentication: false
+                )
+                discoveredBaseURLsTask.cancel()
+                _ = await discoveredBaseURLsTask.value
+                return responseData
+            } catch {
+                if isCancellationError(error) {
+                    discoveredBaseURLsTask.cancel()
+                    _ = await discoveredBaseURLsTask.value
+                    throw error
+                }
+
+                let discoveredBaseURLs = await discoveredBaseURLsTask.value
+                try Task.checkCancellation()
+                guard !discoveredBaseURLs.isEmpty else {
+                    throw error
+                }
+
+                return try await responseDataWithResolvedURLs(
+                    CompanionBaseURLSelection.mergedCandidateBaseURLs(
+                        configured: baseURLs,
+                        discovered: discoveredBaseURLs
+                    ),
+                    path: Self.healthPath,
+                    method: .get,
+                    includesAuthentication: false
+                )
+            }
+        } onCancel: {
+            discoveredBaseURLsTask.cancel()
+        }
     }
 
     private func responseDataWithConfiguredURLs(
         path: String,
         method: HTTPMethod,
-        body: [String: Any]? = nil
-    ) async throws -> Data {
-        try await responseDataWithResolvedURLs(baseURLs, path: path, method: method, body: body)
+        body: [String: Any]? = nil,
+        includesAuthentication: Bool = true
+    ) async throws -> HTTPCompanionResponseData {
+        try await responseDataWithResolvedURLs(
+            baseURLs,
+            path: path,
+            method: method,
+            body: body,
+            includesAuthentication: includesAuthentication
+        )
     }
 
     private func responseDataWithResolvedURLs(
         _ resolvedBaseURLs: [URL],
         path: String,
         method: HTTPMethod,
-        body: [String: Any]? = nil
-    ) async throws -> Data {
+        body: [String: Any]? = nil,
+        includesAuthentication: Bool = true
+    ) async throws -> HTTPCompanionResponseData {
         let candidateBaseURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(resolvedBaseURLs)
         guard !candidateBaseURLs.isEmpty else {
             throw HTTPCompanionServiceError.invalidResponse
         }
 
         if method == .get {
-            return try await firstSuccessfulGetData(baseURLs: candidateBaseURLs, path: path)
+            return try await firstSuccessfulGetData(
+                baseURLs: candidateBaseURLs,
+                path: path,
+                includesAuthentication: includesAuthentication
+            )
         }
 
         var lastError: Error?
@@ -219,7 +273,8 @@ struct HTTPCompanionService: CompanionService {
                     baseURL: baseURL,
                     path: path,
                     method: method,
-                    body: body
+                    body: body,
+                    includesAuthentication: includesAuthentication
                 )
             } catch {
                 lastError = error
@@ -233,18 +288,20 @@ struct HTTPCompanionService: CompanionService {
         baseURL: URL,
         path: String,
         method: HTTPMethod,
-        body: [String: Any]? = nil
-    ) async throws -> Data {
+        body: [String: Any]? = nil,
+        includesAuthentication: Bool = true
+    ) async throws -> HTTPCompanionResponseData {
         var request = URLRequest(url: try requestURL(baseURL: baseURL, path: path))
         request.httpMethod = method.rawValue
         request.timeoutInterval = HTTPRequestTimeout.interval(path: path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let hasBearerToken = bearerToken != nil
-        let hasPasskeySession = CompanionMobileSessionStore.loadValidHeaderValue() != nil
-        if let bearerToken {
+        let passkeySession = includesAuthentication ? CompanionMobileSessionStore.loadValidHeaderValue() : nil
+        let hasBearerToken = includesAuthentication && bearerToken != nil
+        let hasPasskeySession = passkeySession != nil
+        if includesAuthentication, let bearerToken {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
-        if let passkeySession = CompanionMobileSessionStore.loadValidHeaderValue() {
+        if let passkeySession {
             request.setValue(passkeySession, forHTTPHeaderField: MobileAPIAuthenticationHeader.passkeySession)
         }
 
@@ -306,7 +363,7 @@ struct HTTPCompanionService: CompanionService {
         CompanionDiagnostics.record(
             "http:success path=\(path) status=\(httpResponse.statusCode) bytes=\(data.count)"
         )
-        return data
+        return HTTPCompanionResponseData(data: data, baseURL: baseURL)
     }
 
     private func sessionPath(id: String, suffix: String? = nil) throws -> String {
@@ -373,14 +430,19 @@ struct HTTPCompanionService: CompanionService {
         return trimmedSuffix
     }
 
-    private func firstSuccessfulGetData(baseURLs: [URL], path: String) async throws -> Data {
-        try await withThrowingTaskGroup(of: Data.self) { group in
+    private func firstSuccessfulGetData(
+        baseURLs: [URL],
+        path: String,
+        includesAuthentication: Bool
+    ) async throws -> HTTPCompanionResponseData {
+        try await withThrowingTaskGroup(of: HTTPCompanionResponseData.self) { group in
             for baseURL in baseURLs {
                 group.addTask {
                     try await responseData(
                         baseURL: baseURL,
                         path: path,
-                        method: HTTPMethod.get
+                        method: HTTPMethod.get,
+                        includesAuthentication: includesAuthentication
                     )
                 }
             }
@@ -399,6 +461,15 @@ struct HTTPCompanionService: CompanionService {
             throw lastError ?? HTTPCompanionServiceError.invalidResponse
         }
     }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
 }
 
 private enum LocalCompanionServiceDiscovery {
@@ -406,33 +477,47 @@ private enum LocalCompanionServiceDiscovery {
     static let domain = "local."
     static let timeoutSeconds: TimeInterval = 8
 
+    @MainActor
     static func discoverBaseURLs() async -> [URL] {
         await BonjourServiceResolver().discoverBaseURLs()
     }
 }
 
-private final class BonjourServiceResolver: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
+// NetService callbacks are driven from the run loop that starts discovery; cancellation also hops
+// back to the main actor before touching resolver state.
+private final class BonjourServiceResolver: NSObject, NetServiceBrowserDelegate, NetServiceDelegate, @unchecked Sendable {
     private var browser: NetServiceBrowser?
     private var continuation: CheckedContinuation<[URL], Never>?
     private var resolvedBaseURLs: [URL] = []
     private var services: [NetService] = []
 
     func discoverBaseURLs() async -> [URL] {
-        await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            let browser = NetServiceBrowser()
-            self.browser = browser
-            browser.delegate = self
-            browser.searchForServices(
-                ofType: LocalCompanionServiceDiscovery.serviceType,
-                inDomain: LocalCompanionServiceDiscovery.domain
-            )
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: [])
+                    return
+                }
 
-            perform(
-                #selector(finishAfterTimeout),
-                with: nil,
-                afterDelay: LocalCompanionServiceDiscovery.timeoutSeconds
-            )
+                self.continuation = continuation
+                let browser = NetServiceBrowser()
+                self.browser = browser
+                browser.delegate = self
+                browser.searchForServices(
+                    ofType: LocalCompanionServiceDiscovery.serviceType,
+                    inDomain: LocalCompanionServiceDiscovery.domain
+                )
+
+                perform(
+                    #selector(finishAfterTimeout),
+                    with: nil,
+                    afterDelay: LocalCompanionServiceDiscovery.timeoutSeconds
+                )
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finish()
+            }
         }
     }
 

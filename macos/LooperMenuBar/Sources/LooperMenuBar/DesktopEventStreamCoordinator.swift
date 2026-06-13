@@ -66,6 +66,9 @@ final class DesktopEventStreamCoordinator {
     private func consumeStream() async throws {
         if let realtimeClient = try? await realtimeClient() {
             do {
+                defer {
+                    realtimeClient.disconnect()
+                }
                 try await realtimeClient.streamDesktopEvents { [weak self] event in
                     await MainActor.run {
                         self?.scheduleRefresh(reason: event.eventName)

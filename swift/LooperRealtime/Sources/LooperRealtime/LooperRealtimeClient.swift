@@ -1,14 +1,24 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
+import Synchronization
 
-public struct LooperRealtimeClient: Sendable {
+public final class LooperRealtimeClient: Sendable {
     private let endpoints: [LooperRealtimeEndpoint]
     private let credentials: LooperRealtimeCredentials
+    private let connections = LooperRealtimeConnectionPool()
 
     public init(endpoints: [LooperRealtimeEndpoint], credentials: LooperRealtimeCredentials) {
         self.endpoints = endpoints
         self.credentials = credentials
+    }
+
+    deinit {
+        disconnect()
+    }
+
+    public func disconnect() {
+        connections.disconnectAll()
     }
 
     public func streamMobileEvents(
@@ -66,6 +76,7 @@ public struct LooperRealtimeClient: Sendable {
             do {
                 return try await withService(endpoint: endpoint, operation)
             } catch {
+                connections.disconnect(endpoint: endpoint)
                 lastError = error
             }
         }
@@ -84,15 +95,74 @@ public struct LooperRealtimeClient: Sendable {
             throw LooperRealtimeError.invalidEndpoint
         }
 
-        let transport = try HTTP2ClientTransport.TransportServices(
-            target: .dns(host: host, port: port),
-            transportSecurity: endpoint.usesTLS ? .tls : .plaintext
-        )
+        let client = try connections.client(for: endpoint, host: host, port: port)
+        let service = Looper_V1_LooperRealtime.Client(wrapping: client)
+        return try await operation(service, credentials.metadata)
+    }
+}
 
-        return try await withGRPCClient(transport: transport) { grpcClient in
-            let service = Looper_V1_LooperRealtime.Client(wrapping: grpcClient)
-            return try await operation(service, credentials.metadata)
+private final class LooperRealtimeConnectionPool: Sendable {
+    private typealias TransportServices = HTTP2ClientTransport.TransportServices
+    private typealias ManagedClient = GRPCClient<TransportServices>
+
+    private let state = Mutex<[LooperRealtimeEndpoint: LooperRealtimeConnection]>([:])
+
+    func client(
+        for endpoint: LooperRealtimeEndpoint,
+        host: String,
+        port: Int
+    ) throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
+        try state.withLock { state in
+            if let connection = state[endpoint] {
+                return connection.client
+            }
+
+            let transport = try TransportServices(
+                target: .dns(host: host, port: port),
+                transportSecurity: endpoint.usesTLS ? .tls : .plaintext
+            )
+            let client = ManagedClient(transport: transport)
+            let connectionTask = Task {
+                try await client.runConnections()
+            }
+            state[endpoint] = LooperRealtimeConnection(
+                client: client,
+                connectionTask: connectionTask
+            )
+            return client
         }
+    }
+
+    func disconnect(endpoint: LooperRealtimeEndpoint) {
+        guard let connection = state.withLock({ state in
+            state.removeValue(forKey: endpoint)
+        }) else {
+            return
+        }
+
+        connection.shutdown()
+    }
+
+    func disconnectAll() {
+        let connections = state.withLock { state in
+            let connections = Array(state.values)
+            state.removeAll(keepingCapacity: true)
+            return connections
+        }
+
+        for connection in connections {
+            connection.shutdown()
+        }
+    }
+}
+
+private struct LooperRealtimeConnection: Sendable {
+    let client: GRPCClient<HTTP2ClientTransport.TransportServices>
+    let connectionTask: Task<Void, any Error>
+
+    func shutdown() {
+        client.beginGracefulShutdown()
+        connectionTask.cancel()
     }
 }
 

@@ -1,6 +1,7 @@
 import Foundation
 
 public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Sendable {
+    case off
     case thirtySeconds
     case oneMinute
     case twoMinutes
@@ -9,6 +10,7 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
 
     private enum Timing {
         static let secondsPerMinute: TimeInterval = 60
+        static let offAutoHideSeconds: TimeInterval = 3
         static let thirtySeconds: TimeInterval = 30
         static let oneMinute: TimeInterval = 1
         static let twoMinutes: TimeInterval = 2
@@ -19,6 +21,7 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
     public static let userDefaultsKey = "handoffHoldDuration"
     public static let defaultOption: LooperHandoffHoldDuration = .tenMinutes
     public static let allOptions: [LooperHandoffHoldDuration] = [
+        .off,
         .thirtySeconds,
         .oneMinute,
         .twoMinutes,
@@ -32,6 +35,8 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
 
     public var durationSeconds: TimeInterval {
         switch self {
+        case .off:
+            Timing.offAutoHideSeconds
         case .thirtySeconds:
             Timing.thirtySeconds
         case .oneMinute:
@@ -47,6 +52,8 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
 
     public var menuTitle: String {
         switch self {
+        case .off:
+            "Off"
         case .thirtySeconds:
             "30 sec"
         case .oneMinute:
@@ -58,6 +65,10 @@ public enum LooperHandoffHoldDuration: String, CaseIterable, Identifiable, Senda
         case .tenMinutes:
             "10 min"
         }
+    }
+
+    public var holdsHandoffAfterPresentation: Bool {
+        self != .off
     }
 
     public static func stored(
@@ -95,6 +106,13 @@ public struct LooperHandoffActivationLease: Sendable {
         activate(now: now, durationSeconds: holdDuration.durationSeconds)
     }
 
+    public mutating func replace(
+        now: Date = Date(),
+        holdDuration: LooperHandoffHoldDuration
+    ) {
+        replace(now: now, durationSeconds: holdDuration.durationSeconds)
+    }
+
     public mutating func activate(
         now: Date = Date(),
         durationSeconds: TimeInterval
@@ -110,6 +128,18 @@ public struct LooperHandoffActivationLease: Sendable {
         }
 
         expiresAt = nextExpiration
+    }
+
+    public mutating func replace(
+        now: Date = Date(),
+        durationSeconds: TimeInterval
+    ) {
+        guard durationSeconds > .zero else {
+            invalidate()
+            return
+        }
+
+        expiresAt = now.addingTimeInterval(durationSeconds)
     }
 
     public mutating func isActive(now: Date = Date()) -> Bool {

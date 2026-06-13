@@ -15,7 +15,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 
 use crate::claude_code::inspect_claude_hooks;
-use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
+use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread, HookMutationTarget};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
@@ -168,8 +168,13 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/sync/manifest", get(sync_manifest))
         .route("/hooks/clear", post(unregister_hooks))
         .route("/hooks/register", post(register_hooks))
+        .route("/hooks/:target/register", post(register_target_hooks))
         .route("/hooks/unregister", post(unregister_hooks))
         .route("/hooks/unregister-live", post(unregister_live_hooks))
+        .route(
+            "/hooks/:target/unregister-live",
+            post(unregister_live_target_hooks),
+        )
         .route("/integrations/hook/contract", get(hook_contract))
         .route("/integrations/hook/contract.toml", get(hook_contract_toml))
         .route("/api/mobile/health", get(mobile_health))
@@ -1050,6 +1055,23 @@ async fn register_hooks(State(control_plane): State<ControlPlane>) -> impl IntoR
     }
 }
 
+async fn register_target_hooks(
+    State(control_plane): State<ControlPlane>,
+    Path(target): Path<String>,
+) -> impl IntoResponse {
+    let Some(target) = HookMutationTarget::parse(&target) else {
+        return unknown_hook_target_response();
+    };
+    match control_plane.register_hooks_for_target(target) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn unregister_live_hooks(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     match control_plane.unregister_live_hooks() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -1059,6 +1081,33 @@ async fn unregister_live_hooks(State(control_plane): State<ControlPlane>) -> imp
         )
             .into_response(),
     }
+}
+
+async fn unregister_live_target_hooks(
+    State(control_plane): State<ControlPlane>,
+    Path(target): Path<String>,
+) -> impl IntoResponse {
+    let Some(target) = HookMutationTarget::parse(&target) else {
+        return unknown_hook_target_response();
+    };
+    match control_plane.unregister_live_hooks_for_target(target) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn unknown_hook_target_response() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "hook target must be codex, grok, or claude"
+        })),
+    )
+        .into_response()
 }
 
 async fn hook_contract() -> impl IntoResponse {

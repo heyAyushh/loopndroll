@@ -90,6 +90,10 @@ public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendab
         }
     }
 
+    public var activatesWithoutIdleDelay: Bool {
+        self == .rightNow
+    }
+
     public var menuTitle: String {
         switch self {
         case .afterThirtyIdleSeconds:
@@ -208,13 +212,9 @@ public enum LooperContinuationActivityBuilder {
     }
 
     private static func continuationThread(from threads: [DesktopThreadSummary]) -> DesktopThreadSummary? {
-        let activeCodexThreads = threads.filter { !$0.archived && isCodexThread($0) }
-        let codexThreads = threads.filter(isCodexThread)
         let activeThreads = threads.filter { !$0.archived }
 
-        return newestThread(from: activeCodexThreads)
-            ?? newestThread(from: codexThreads)
-            ?? newestThread(from: activeThreads)
+        return newestThread(from: activeThreads)
             ?? newestThread(from: threads)
     }
 
@@ -226,15 +226,6 @@ public enum LooperContinuationActivityBuilder {
 
     private static func timestamp(for thread: DesktopThreadSummary) -> Int64 {
         thread.updatedAtMs ?? Int64.min
-    }
-
-    private static func isCodexThread(_ thread: DesktopThreadSummary) -> Bool {
-        !LooperThreadOpenTarget.isExternalAssistantSession(
-            threadId: thread.threadId,
-            transcriptPath: thread.transcriptPath,
-            workingDirectory: thread.cwd,
-            agentPath: thread.capabilities.agentPath
-        )
     }
 
     private static func titleText(for thread: DesktopThreadSummary) -> String {

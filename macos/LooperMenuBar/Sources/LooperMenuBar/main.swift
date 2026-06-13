@@ -115,11 +115,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private func refreshMenu() async {
         do {
             let snapshot = try await client.fetchDesktopSnapshot()
-            mobileHealth = try? await client.fetchMobileHealth()
+            updateMobileHealth(try? await client.fetchMobileHealth())
             publishContinuationActivity(from: snapshot)
             replaceMenu(snapshot: snapshot, error: nil)
         } catch {
-            mobileHealth = nil
+            updateMobileHealth(nil)
             continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
             replaceMenu(snapshot: nil, error: error)
         }
@@ -138,9 +138,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private func refreshContinuationActivity() async {
         do {
             let snapshot = try await client.fetchDesktopSnapshot()
-            mobileHealth = try? await client.fetchMobileHealth()
+            updateMobileHealth(try? await client.fetchMobileHealth())
             publishContinuationActivity(from: snapshot)
         } catch {
+            updateMobileHealth(nil)
             continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
         }
     }
@@ -149,9 +150,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         continuationPublisher.publish(
             LooperContinuationActivityBuilder.descriptor(
                 from: snapshot,
-                handoffBaseURL: mobileHealth?.preferredHandoffBaseURL
+                handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL
             )
         )
+    }
+
+    private func updateMobileHealth(_ health: MobileHealthResponse?) {
+        mobileHealth = health
+        continuationPublisher.isHandoffSupported = health?.supportsNativeHandoff == true
     }
 
     private func openContinuationActivity(_ activity: NSUserActivity) async {
@@ -435,16 +441,58 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         addHandoffHoldItem(to: submenu)
         addDetachServerItem(to: submenu)
         submenu.addItem(NSMenuItem.separator())
-        addActionItem("Repair Codex & Grok Hooks", action: #selector(repairHooksAction(_:)), keyEquivalent: "", to: submenu)
-        addActionItem("Clear Live Codex & Grok Hooks", action: #selector(clearLiveHooksAction(_:)), keyEquivalent: "", to: submenu)
+        addRepairHooksItem(to: submenu)
+        addClearLiveHooksItem(to: submenu)
+        addDevinAcpBridgeSettingsItem(to: submenu)
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: submenu)
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addRepairHooksItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Repair Hooks", action: nil, keyEquivalent: "")
+        item.submenu = hookTargetMenu(title: "Repair Hooks", action: #selector(repairHooksAction(_:)))
+        menu.addItem(item)
+    }
+
+    private func addClearLiveHooksItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Clear Live Hooks", action: nil, keyEquivalent: "")
+        item.submenu = hookTargetMenu(title: "Clear Live Hooks", action: #selector(clearLiveHooksAction(_:)))
+        menu.addItem(item)
+    }
+
+    private func hookTargetMenu(title: String, action: Selector) -> NSMenu {
+        let submenu = NSMenu(title: title)
+        submenu.autoenablesItems = false
+        addActionItem("All Hook Sources", action: action, keyEquivalent: "", to: submenu)
+        submenu.addItem(NSMenuItem.separator())
+        for target in HookRepairTarget.allCases {
+            let item = NSMenuItem(title: target.displayTitle, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = target
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    private func addDevinAcpBridgeSettingsItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Devin ACP Bridge", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Devin ACP Bridge")
+        submenu.autoenablesItems = false
+        addActionItem(
+            "Install or Repair Bridge",
+            action: #selector(installDevinAcpBridgeAction(_:)),
+            keyEquivalent: "",
+            to: submenu
+        )
+        addActionItem("Probe Devin Agent", action: #selector(probeDevinAcpAction(_:)), keyEquivalent: "", to: submenu)
         item.submenu = submenu
         menu.addItem(item)
     }
 
     private func addHandoffFocusAssistItem(to menu: NSMenu) {
         let item = NSMenuItem(
-            title: "\(Layout.handoffFocusAssistMenuTitle): \(handoffFocusAssist.statusTitle)",
+            title: Layout.handoffFocusAssistMenuTitle,
             action: nil,
             keyEquivalent: ""
         )
@@ -469,7 +517,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     private func addHandoffHotkeyItem(to menu: NSMenu) {
         let item = NSMenuItem(
-            title: "\(Layout.handoffHotkeySubMenuTitle): \(handoffHotkeyOption.menuTitle)",
+            title: Layout.handoffHotkeySubMenuTitle,
             action: nil,
             keyEquivalent: ""
         )
@@ -494,7 +542,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     private func addHandoffHoldItem(to menu: NSMenu) {
         let item = NSMenuItem(
-            title: "\(Layout.handoffHoldSubMenuTitle): \(handoffHoldDuration.menuTitle)",
+            title: Layout.handoffHoldSubMenuTitle,
             action: nil,
             keyEquivalent: ""
         )
@@ -563,9 +611,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     private func handleHandoffHotkey() {
-        continuationPublisher.requestFocusAssistedActivation()
+        guard !continuationPublisher.requestFocusAssistedActivation() else {
+            Task {
+                await refreshContinuationActivity()
+            }
+            return
+        }
+
         Task {
             await refreshContinuationActivity()
+            continuationPublisher.requestFocusAssistedActivation()
         }
     }
 
@@ -576,9 +631,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     @objc private func repairHooksAction(_ sender: Any?) {
+        let target = (sender as? NSMenuItem)?.representedObject as? HookRepairTarget
         Task {
             do {
-                try await client.registerHooks()
+                if let target {
+                    try await client.registerHooks(target: target)
+                } else {
+                    try await client.registerHooks()
+                }
             } catch {
                 replaceMenu(snapshot: nil, error: error)
                 return
@@ -588,9 +648,30 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     @objc private func clearLiveHooksAction(_ sender: Any?) {
+        let target = (sender as? NSMenuItem)?.representedObject as? HookRepairTarget
         Task {
             do {
-                try client.unregisterLiveHooks(timeout: LooperLifecycleDefaults.requestTimeoutSeconds)
+                if let target {
+                    try client.unregisterLiveHooks(
+                        target: target,
+                        timeout: LooperLifecycleDefaults.requestTimeoutSeconds
+                    )
+                } else {
+                    try client.unregisterLiveHooks(timeout: LooperLifecycleDefaults.requestTimeoutSeconds)
+                }
+            } catch {
+                replaceMenu(snapshot: nil, error: error)
+                return
+            }
+            await refreshMenu()
+        }
+    }
+
+    @objc private func installDevinAcpBridgeAction(_ sender: Any?) {
+        Task {
+            do {
+                _ = try await client.installDevinAcpBridge()
+                devinProbe = nil
             } catch {
                 replaceMenu(snapshot: nil, error: error)
                 return

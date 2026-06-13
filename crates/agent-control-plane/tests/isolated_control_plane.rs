@@ -612,6 +612,51 @@ async fn register_hooks_installs_owned_rust_handlers() {
 }
 
 #[tokio::test]
+async fn targeted_hook_register_and_clear_only_touch_selected_source() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_config_toml_with_model_block();
+    let router = build_router(fixture.control_plane());
+
+    let response = request_json_with_method(&router, Method::POST, "/hooks/grok/register").await;
+    assert_eq!(response["action"], "register-grok-build-hooks");
+    assert_eq!(response["removed_handlers"], 0);
+    assert_eq!(response["installed_handlers"], 3);
+    assert_eq!(response["hooks_auto_registration"], true);
+
+    let grok_hooks_path = fixture.grok_home().join("hooks/looper.json");
+    let grok_hooks_json = fs::read_to_string(&grok_hooks_path).expect("grok hooks");
+    assert!(grok_hooks_json.contains("agent-control-plane --hook --managed-by looper"));
+    assert!(!fixture.codex_home.join("hooks.json").exists());
+    assert!(
+        !fixture
+            .temp_dir
+            .path()
+            .join(".claude/settings.json")
+            .exists()
+    );
+
+    let clear_response =
+        request_json_with_method(&router, Method::POST, "/hooks/grok/unregister-live").await;
+    assert_eq!(clear_response["action"], "unregister-live-grok-build-hooks");
+    assert_eq!(clear_response["removed_handlers"], 3);
+    assert_eq!(clear_response["installed_handlers"], 0);
+    assert_eq!(clear_response["hooks_auto_registration"], true);
+
+    let cleared_grok_hooks_json = fs::read_to_string(grok_hooks_path).expect("cleared grok hooks");
+    assert!(!cleared_grok_hooks_json.contains("agent-control-plane"));
+}
+
+#[tokio::test]
+async fn unknown_hook_target_is_rejected() {
+    let fixture = IsolatedCodexFixture::new();
+    let router = build_router(fixture.control_plane());
+
+    let response =
+        request_with_options(&router, Method::POST, "/hooks/devin/register", &[], None).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn live_unregister_preserves_auto_registration_for_next_launch() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_config_toml(true);

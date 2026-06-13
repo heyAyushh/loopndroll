@@ -1,7 +1,9 @@
 import AppIntents
 import CoreSpotlight
 import Foundation
+#if canImport(FoundationModels)
 import FoundationModels
+#endif
 
 private enum LooperSiriConstants {
     static let suggestedSessionLimit = 12
@@ -279,11 +281,15 @@ struct LooperFoundationSessionSummarizer: Sendable {
     func summarize(_ detail: SessionDetail) async -> String {
         let fallbackSummary = fallbackSummary(for: detail)
 
-        guard #available(iOS 26.0, *) else {
+        #if canImport(FoundationModels)
+        guard #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) else {
             return fallbackSummary
         }
 
         return await summarizeWithFoundationModel(detail, fallbackSummary: fallbackSummary)
+        #else
+        return fallbackSummary
+        #endif
     }
 
     private func fallbackSummary(for detail: SessionDetail) -> String {
@@ -297,8 +303,33 @@ struct LooperFoundationSessionSummarizer: Sendable {
         return String(trimmedSource.prefix(LooperSiriConstants.fallbackSummaryPreviewLimit))
     }
 
-    @available(iOS 26.0, *)
-    private func summarizeWithFoundationModel(
+    private func prompt(for detail: SessionDetail) -> String {
+        let content = [
+            "Title: \(detail.title)",
+            "Reference: \(detail.ref)",
+            "Status: \(detail.status.label)",
+            "Assistant: \(detail.assistantClient.displayTitle)",
+            "Project: \(detail.metadata.sourceDisplayName)",
+            "Goal: \(detail.goal?.title ?? "")",
+            "Latest assistant message: \(detail.latestAssistantMessage ?? detail.assistantPreview ?? "")"
+        ]
+            .joined(separator: "\n")
+            .prefix(LooperSiriConstants.modelSummaryInputLimit)
+
+        return """
+        Summarize this Looper session for Siri in two short sentences.
+
+        \(LooperSiriConstants.untrustedContentStartDelimiter)
+        \(content)
+        \(LooperSiriConstants.untrustedContentEndDelimiter)
+        """
+    }
+}
+
+#if canImport(FoundationModels)
+private extension LooperFoundationSessionSummarizer {
+    @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+    func summarizeWithFoundationModel(
         _ detail: SessionDetail,
         fallbackSummary: String
     ) async -> String {
@@ -328,29 +359,8 @@ struct LooperFoundationSessionSummarizer: Sendable {
             return fallbackSummary
         }
     }
-
-    private func prompt(for detail: SessionDetail) -> String {
-        let content = [
-            "Title: \(detail.title)",
-            "Reference: \(detail.ref)",
-            "Status: \(detail.status.label)",
-            "Assistant: \(detail.assistantClient.displayTitle)",
-            "Project: \(detail.metadata.sourceDisplayName)",
-            "Goal: \(detail.goal?.title ?? "")",
-            "Latest assistant message: \(detail.latestAssistantMessage ?? detail.assistantPreview ?? "")"
-        ]
-            .joined(separator: "\n")
-            .prefix(LooperSiriConstants.modelSummaryInputLimit)
-
-        return """
-        Summarize this Looper session for Siri in two short sentences.
-
-        \(LooperSiriConstants.untrustedContentStartDelimiter)
-        \(content)
-        \(LooperSiriConstants.untrustedContentEndDelimiter)
-        """
-    }
 }
+#endif
 
 private extension String {
     var nilIfEmpty: String? {

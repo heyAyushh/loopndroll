@@ -78,7 +78,19 @@ struct HTTPControlPlaneClientTests {
         let client = HTTPControlPlaneClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
 
         #expect(client.request(for: .registerHooks).url?.path == "/hooks/register")
+        #expect(client.request(for: .registerTargetHooks(.codex)).url?.path == "/hooks/codex/register")
+        #expect(client.request(for: .registerTargetHooks(.grok)).url?.path == "/hooks/grok/register")
+        #expect(client.request(for: .registerTargetHooks(.claude)).url?.path == "/hooks/claude/register")
         #expect(client.request(for: .unregisterLiveHooks).url?.path == "/hooks/unregister-live")
+        #expect(
+            client.request(for: .unregisterLiveTargetHooks(.codex)).url?.path == "/hooks/codex/unregister-live"
+        )
+        #expect(
+            client.request(for: .unregisterLiveTargetHooks(.grok)).url?.path == "/hooks/grok/unregister-live"
+        )
+        #expect(
+            client.request(for: .unregisterLiveTargetHooks(.claude)).url?.path == "/hooks/claude/unregister-live"
+        )
         #expect(client.request(for: .shutdown).url?.path == "/desktop/shutdown")
         #expect(client.request(for: .mobileHealth).url?.path == "/api/mobile/health")
         #expect(client.request(for: .controlPlaneStatus).url?.path == "/status/control-plane")
@@ -86,7 +98,11 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .desktopSnapshot).url?.query == "profile=menu")
         #expect(client.request(for: .desktopEvents).url?.path == "/desktop/events")
         #expect(client.request(for: .desktopEvents).url?.query == nil)
+        #expect(client.request(for: .devinAcpBridgeInstall).url?.path == "/desktop/devin/acp-bridge/install")
         #expect(client.request(for: .registerHooks).httpMethod == "POST")
+        #expect(client.request(for: .registerTargetHooks(.codex)).httpMethod == "POST")
+        #expect(client.request(for: .unregisterLiveTargetHooks(.codex)).httpMethod == "POST")
+        #expect(client.request(for: .devinAcpBridgeInstall).httpMethod == "POST")
         #expect(client.request(for: .shutdown).httpMethod == "POST")
         #expect(client.request(for: .mobileHealth).httpMethod == "GET")
         #expect(client.request(for: .desktopSnapshot).httpMethod == "GET")

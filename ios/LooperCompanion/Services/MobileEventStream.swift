@@ -1,4 +1,5 @@
 import Foundation
+import LooperCompanionCore
 import LooperRealtime
 
 enum MobileEventType: String, Decodable, Sendable {
@@ -82,6 +83,9 @@ struct MobileEventStreamClient: Sendable {
             bearerToken: bearerToken
         ) {
             do {
+                defer {
+                    realtimeClient.disconnect()
+                }
                 try await realtimeClient.streamMobileEvents { event in
                     await onEvent(MobileStreamEvent(realtimeEvent: event))
                 }

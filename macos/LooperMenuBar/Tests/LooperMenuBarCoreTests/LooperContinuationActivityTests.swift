@@ -22,6 +22,8 @@ struct LooperContinuationActivityTests {
         #expect(LooperHandoffFocusAssist.afterTwoIdleMinutes.idleThresholdSeconds == 120)
         #expect(LooperHandoffFocusAssist.rightNow.menuTitle == "Right now")
         #expect(LooperHandoffFocusAssist.rightNow.idleThresholdSeconds == nil)
+        #expect(LooperHandoffFocusAssist.rightNow.activatesWithoutIdleDelay)
+        #expect(!LooperHandoffFocusAssist.never.activatesWithoutIdleDelay)
     }
 
     @Test
@@ -97,6 +99,35 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func handoffHoldOffUsesBriefAutoHideLease() {
+        let expectedOffAutoHideSeconds: TimeInterval = 3
+
+        #expect(LooperHandoffHoldDuration.off.durationSeconds == expectedOffAutoHideSeconds)
+        #expect(LooperHandoffHoldDuration.off.menuTitle == "Off")
+        #expect(!LooperHandoffHoldDuration.off.holdsHandoffAfterPresentation)
+    }
+
+    @Test
+    func mobileHealthSupportsNativeHandoffOnlyWithReachableURL() {
+        let reachableHealth = MobileHealthResponse(
+            ok: true,
+            baseURL: "http://192.168.1.4:8765",
+            baseURLs: ["http://192.168.1.4:8765", "http://127.0.0.1:8765"],
+            requiresAuthentication: true
+        )
+        let loopbackOnlyHealth = MobileHealthResponse(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: ["http://127.0.0.1:8765"],
+            requiresAuthentication: true
+        )
+
+        #expect(reachableHealth.supportsNativeHandoff)
+        #expect(reachableHealth.preferredReachableHandoffBaseURL?.host == "192.168.1.4")
+        #expect(!loopbackOnlyHealth.supportsNativeHandoff)
+    }
+
+    @Test
     func storesHandoffHoldPreference() {
         let suiteName = "dev.looper.tests.handoff-hold.stored"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -107,6 +138,20 @@ struct LooperContinuationActivityTests {
         #expect(LooperHandoffHoldDuration.stored(in: defaults) == .fiveMinutes)
         #expect(LooperHandoffHoldDuration.fiveMinutes.menuTitle == "5 min")
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
+    func handoffActivationLeaseCanReplaceLongerExpiration() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        var lease = LooperHandoffActivationLease()
+
+        lease.activate(now: start, holdDuration: .fiveMinutes)
+        lease.replace(now: start, holdDuration: .off)
+        let isActiveAfterOffAutoHide = lease.isActive(
+            now: start.addingTimeInterval(LooperHandoffHoldDuration.off.durationSeconds)
+        )
+
+        #expect(!isActiveAfterOffAutoHide)
     }
 
     @Test
@@ -157,7 +202,7 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
-    func prefersCodexThreadOverNewerExternalSession() throws {
+    func prefersNewestActiveThreadAcrossAssistants() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
             thread(id: "codex-main", title: "Codex", updatedAtMs: 1),
             thread(
@@ -168,8 +213,8 @@ struct LooperContinuationActivityTests {
             ),
         ]))
 
-        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "codex-main")
-        #expect(descriptor.targetContentIdentifier == "looper.session.codex-main")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "devin:devin-cli:brindle-cadet")
+        #expect(descriptor.targetContentIdentifier == "looper.session.devin:devin-cli:brindle-cadet")
     }
 
     @Test

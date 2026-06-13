@@ -1,4 +1,5 @@
 import Foundation
+import LooperCompanionCore
 import LooperRealtime
 
 enum RealtimeCompanionClientFactory {

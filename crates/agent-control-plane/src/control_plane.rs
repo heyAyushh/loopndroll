@@ -73,6 +73,32 @@ const GROK_BUILD_CONNECTION_ACTION_HINT: &str =
 const GROK_BUILD_HOOKS_CONNECTION_ID: &str = "grok-build-hooks";
 const GROK_BUILD_HOOKS_CONNECTION_LABEL: &str = "Grok Build hooks";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HookMutationTarget {
+    Codex,
+    GrokBuild,
+    ClaudeCode,
+}
+
+impl HookMutationTarget {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "codex" => Some(Self::Codex),
+            "grok" | "grok-build" => Some(Self::GrokBuild),
+            "claude" | "claude-code" => Some(Self::ClaudeCode),
+            _ => None,
+        }
+    }
+
+    fn action_slug(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::GrokBuild => "grok-build",
+            Self::ClaudeCode => "claude-code",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ControlPlaneConfig {
     pub codex_home: PathBuf,
@@ -625,6 +651,39 @@ impl ControlPlane {
         })
     }
 
+    pub fn register_hooks_for_target(
+        &self,
+        target: HookMutationTarget,
+    ) -> Result<HookMutationResponse> {
+        let hook_command = self
+            .config
+            .hook_command
+            .as_deref()
+            .unwrap_or("agent-control-plane --hook --managed-by looper");
+        let (removed_handlers, installed_handlers) = match target {
+            HookMutationTarget::Codex => {
+                let change = register_owned_hooks(&self.config.codex_home, hook_command)?;
+                (change.removed_handlers, change.installed_handlers)
+            }
+            HookMutationTarget::GrokBuild => {
+                let change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
+                (change.removed_handlers, change.installed_handlers)
+            }
+            HookMutationTarget::ClaudeCode => {
+                let change = register_owned_claude_hooks(&self.claude_home(), hook_command)?;
+                (change.removed_handlers, change.installed_handlers)
+            }
+        };
+        let settings = self.store.set_hooks_auto_registration(true)?;
+        Ok(HookMutationResponse {
+            action: format!("register-{}-hooks", target.action_slug()),
+            removed_handlers,
+            installed_handlers,
+            hooks_auto_registration: settings.hooks_auto_registration,
+            status: self.status(),
+        })
+    }
+
     pub fn unregister_live_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
             + unregister_owned_devin_hooks(&self.config.home_path)?
@@ -633,6 +692,25 @@ impl ControlPlane {
         let settings = self.store.service_settings()?;
         Ok(HookMutationResponse {
             action: "unregister-live-hooks".to_owned(),
+            removed_handlers,
+            installed_handlers: 0,
+            hooks_auto_registration: settings.hooks_auto_registration,
+            status: self.status(),
+        })
+    }
+
+    pub fn unregister_live_hooks_for_target(
+        &self,
+        target: HookMutationTarget,
+    ) -> Result<HookMutationResponse> {
+        let removed_handlers = match target {
+            HookMutationTarget::Codex => unregister_owned_hooks(&self.config.codex_home)?,
+            HookMutationTarget::GrokBuild => unregister_owned_grok_hooks(&self.config.grok_home)?,
+            HookMutationTarget::ClaudeCode => unregister_owned_claude_hooks(&self.claude_home())?,
+        };
+        let settings = self.store.service_settings()?;
+        Ok(HookMutationResponse {
+            action: format!("unregister-live-{}-hooks", target.action_slug()),
             removed_handlers,
             installed_handlers: 0,
             hooks_auto_registration: settings.hooks_auto_registration,

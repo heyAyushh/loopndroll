@@ -1,6 +1,6 @@
 import Foundation
 
-enum CompanionBaseURLFiltering {
+public enum CompanionBaseURLFiltering {
     private static let httpScheme = "http"
     private static let httpsScheme = "https"
     private static let localHostnameSuffix = ".local"
@@ -13,6 +13,8 @@ enum CompanionBaseURLFiltering {
     private static let privateOneNineTwoSecondOctet = 168
     private static let linkLocalFirstOctet = 169
     private static let linkLocalSecondOctet = 254
+    private static let carrierGradeNatFirstOctet = 100
+    private static let carrierGradeNatSecondOctetRange = 64...127
     private static let loopbackHosts: Set<String> = [
         "127.0.0.1",
         "0:0:0:0:0:0:0:1",
@@ -20,10 +22,10 @@ enum CompanionBaseURLFiltering {
         "localhost",
     ]
 
-    static func uniqueAttemptableBaseURLs(_ baseURLs: [URL]) -> [URL] {
+    public static func uniqueAttemptableBaseURLs(_ baseURLs: [URL]) -> [URL] {
         var seen = Set<String>()
         let uniqueBaseURLs = baseURLs.filter { baseURL in
-            shouldAttempt(baseURL) && seen.insert(baseURL.absoluteString).inserted
+            shouldAttempt(baseURL) && seen.insert(CompanionBaseURLIdentity.key(for: baseURL)).inserted
         }
         return prioritizedBaseURLs(uniqueBaseURLs)
     }
@@ -66,32 +68,40 @@ enum CompanionBaseURLFiltering {
         return host.hasSuffix(localHostnameSuffix) || isLocalHTTPHost(host)
     }
 
-    private static func isLoopback(_ baseURL: URL) -> Bool {
-        guard let host = baseURL.host?.lowercased() else {
-            return false
-        }
-
-        return loopbackHosts.contains(host)
-    }
-
     private static func isLocalHTTPHost(_ host: String) -> Bool {
         guard let octets = ipv4Octets(from: host) else {
             return false
         }
 
-        return octets[0] == privateTenFirstOctet ||
-            (
-                octets[0] == privateOneSevenTwoFirstOctet &&
-                    privateOneSevenTwoSecondOctetRange.contains(octets[1])
-            ) ||
-            (
-                octets[0] == privateOneNineTwoFirstOctet &&
-                    octets[1] == privateOneNineTwoSecondOctet
-            ) ||
-            (
-                octets[0] == linkLocalFirstOctet &&
-                    octets[1] == linkLocalSecondOctet
-            )
+        return isPrivateTenAddress(octets) ||
+            isPrivateOneSevenTwoAddress(octets) ||
+            isPrivateOneNineTwoAddress(octets) ||
+            isLinkLocalAddress(octets) ||
+            isCarrierGradeNatAddress(octets)
+    }
+
+    private static func isPrivateTenAddress(_ octets: [Int]) -> Bool {
+        octets[0] == privateTenFirstOctet
+    }
+
+    private static func isPrivateOneSevenTwoAddress(_ octets: [Int]) -> Bool {
+        octets[0] == privateOneSevenTwoFirstOctet &&
+            privateOneSevenTwoSecondOctetRange.contains(octets[1])
+    }
+
+    private static func isPrivateOneNineTwoAddress(_ octets: [Int]) -> Bool {
+        octets[0] == privateOneNineTwoFirstOctet &&
+            octets[1] == privateOneNineTwoSecondOctet
+    }
+
+    private static func isLinkLocalAddress(_ octets: [Int]) -> Bool {
+        octets[0] == linkLocalFirstOctet &&
+            octets[1] == linkLocalSecondOctet
+    }
+
+    private static func isCarrierGradeNatAddress(_ octets: [Int]) -> Bool {
+        octets[0] == carrierGradeNatFirstOctet &&
+            carrierGradeNatSecondOctetRange.contains(octets[1])
     }
 
     private static func ipv4Octets(from host: String) -> [Int]? {
