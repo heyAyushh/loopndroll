@@ -207,13 +207,23 @@ struct RootTabView: View {
     }
 
     private var refreshTaskID: String {
-        "\(authenticator.isUnlocked)"
+        "\(authenticator.isUnlocked)-\(scenePhase == .active)"
     }
 
     private func refreshForActiveSceneIfNeeded() async {
         guard authenticator.isUnlocked else {
             CompanionDiagnostics.lifecycle.info("Root refresh skipped because app is locked")
             CompanionDiagnostics.record("root:refresh-skip locked")
+            return
+        }
+
+        guard scenePhase == .active else {
+            CompanionDiagnostics.lifecycle.info(
+                "Root refresh skipped because scenePhase=\(String(describing: scenePhase), privacy: .public)"
+            )
+            CompanionDiagnostics.record(
+                "root:refresh-skip scenePhase=\(String(describing: scenePhase))"
+            )
             return
         }
 

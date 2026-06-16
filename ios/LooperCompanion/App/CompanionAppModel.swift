@@ -62,6 +62,8 @@ final class CompanionAppModel {
     @ObservationIgnored private var isSavingAssistantSurface = false
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
+    @ObservationIgnored private let spotlightSyncWorker = SpotlightIndexSyncWorker()
+    @ObservationIgnored private var didClearSpotlightIndexForCachedSnapshotThisLaunch = false
 
     init(
         environment: CompanionEnvironment,
@@ -1266,7 +1268,7 @@ final class CompanionAppModel {
         )
         lastUpdatedAt = Date()
         syncDetailCache(with: visibleSnapshot)
-        syncSpotlightIndex(with: visibleSnapshot.sessionsAcrossSurfaces)
+        clearSpotlightIndexForCachedSnapshot()
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1445,22 +1447,35 @@ final class CompanionAppModel {
         spotlightRecordsBySessionID = nextRecords
         hasRebuiltSpotlightIndexThisLaunch = true
         let spotlightIndexer = spotlightIndexer
+        let spotlightSyncWorker = spotlightSyncWorker
 
         Task.detached(priority: .utility) {
-            do {
-                if shouldRebuildIndex {
-                    try await spotlightIndexer.deleteAllSessions()
-                } else if !removedIDs.isEmpty {
-                    try await spotlightIndexer.deleteSessions(withIDs: removedSearchableIDs)
-                }
+            await spotlightSyncWorker.syncSessions(
+                indexer: spotlightIndexer,
+                rebuildsIndex: shouldRebuildIndex,
+                removedSearchableIDs: removedSearchableIDs,
+                changedSessions: changedSessions,
+                indexableSessions: indexableSessions
+            )
+        }
+    }
 
-                let sessionsToIndex = shouldRebuildIndex ? indexableSessions : changedSessions
-                if !sessionsToIndex.isEmpty {
-                    try await spotlightIndexer.indexSessions(sessionsToIndex)
-                }
-            } catch {
-                print("Failed to index sessions to Spotlight: \(error)")
-            }
+    private func clearSpotlightIndexForCachedSnapshot() {
+        guard !didClearSpotlightIndexForCachedSnapshotThisLaunch ||
+            hasRebuiltSpotlightIndexThisLaunch ||
+            !spotlightRecordsBySessionID.isEmpty
+        else {
+            return
+        }
+
+        didClearSpotlightIndexForCachedSnapshotThisLaunch = true
+        spotlightRecordsBySessionID = [:]
+        hasRebuiltSpotlightIndexThisLaunch = false
+        let spotlightIndexer = spotlightIndexer
+        let spotlightSyncWorker = spotlightSyncWorker
+
+        Task.detached(priority: .utility) {
+            await spotlightSyncWorker.clearSessions(indexer: spotlightIndexer)
         }
     }
 
@@ -1582,6 +1597,39 @@ final class CompanionAppModel {
             isRegisteringRemotePush = false
             remotePushFailureMessage = error.localizedDescription
             Haptics.error()
+        }
+    }
+}
+
+private actor SpotlightIndexSyncWorker {
+    func clearSessions(indexer: SessionSpotlightIndexer) async {
+        do {
+            try await indexer.deleteAllSessions()
+        } catch {
+            print("Failed to clear cached sessions from Spotlight: \(error)")
+        }
+    }
+
+    func syncSessions(
+        indexer: SessionSpotlightIndexer,
+        rebuildsIndex: Bool,
+        removedSearchableIDs: [String],
+        changedSessions: [SessionSummary],
+        indexableSessions: [SessionSummary]
+    ) async {
+        do {
+            if rebuildsIndex {
+                try await indexer.deleteAllSessions()
+            } else if !removedSearchableIDs.isEmpty {
+                try await indexer.deleteSessions(withIDs: removedSearchableIDs)
+            }
+
+            let sessionsToIndex = rebuildsIndex ? indexableSessions : changedSessions
+            if !sessionsToIndex.isEmpty {
+                try await indexer.indexSessions(sessionsToIndex)
+            }
+        } catch {
+            print("Failed to index sessions to Spotlight: \(error)")
         }
     }
 }
