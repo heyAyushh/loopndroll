@@ -68,6 +68,7 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/goal", get(goals))
         .route("/goals", get(goals))
         .route("/assistant-adapters", get(assistant_adapters))
+        .route("/desktop/acp-targets", get(desktop_acp_targets))
         .route("/codex/servers", get(codex_servers))
         .route("/codex/compactions", get(compactions))
         .route("/desktop/snapshot", get(desktop_snapshot))
@@ -75,6 +76,7 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
         .route("/acp/devin", get(devin_acp_websocket))
         .route("/desktop/devin", get(desktop_devin))
+        .route("/desktop/zed", get(desktop_zed))
         .route("/desktop/devin/acp-bridge", get(desktop_devin_acp_bridge))
         .route(
             "/desktop/devin/acp-bridge/probe",
@@ -290,8 +292,16 @@ async fn assistant_adapters(State(control_plane): State<ControlPlane>) -> impl I
     Json(control_plane.assistant_adapters_response())
 }
 
+async fn desktop_acp_targets(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+    Json(control_plane.acp_targets_response())
+}
+
 async fn desktop_devin(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     Json(control_plane.devin_desktop_response())
+}
+
+async fn desktop_zed(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+    Json(control_plane.zed_response())
 }
 
 async fn desktop_devin_acp_bridge(State(control_plane): State<ControlPlane>) -> impl IntoResponse {

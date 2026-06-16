@@ -68,6 +68,48 @@ struct LooperMenuContentTests {
         #expect(target.projectURL?.path == "/Users/test/project")
     }
 
+    @Test
+    func summarizesAcpTargetReadiness() {
+        #expect(LooperMenuContent.acpTargetStatusTitle(from: []) == "None")
+        #expect(LooperMenuContent.acpTargetStatusTitle(from: [
+            acpTarget(id: "zed:looper", ready: true),
+        ]) == "1 ready")
+        #expect(LooperMenuContent.acpTargetStatusTitle(from: [
+            acpTarget(id: "zed:looper", ready: true),
+            acpTarget(id: "devin:codex", clientName: "Devin Desktop", ready: false),
+        ]) == "1/2 ready")
+    }
+
+    @Test
+    func buildsAcpTargetRowsWithoutLaunchValues() throws {
+        let rows = LooperMenuContent.buildAcpTargetRows(from: [
+            acpTarget(
+                id: "zed:looper",
+                clientName: "Zed",
+                agentId: "looper",
+                name: "looper",
+                methods: ["command"],
+                ready: true,
+                detail: "Zed External Agent target is configured; Looper did not execute its command."
+            ),
+            acpTarget(
+                id: "zed:configured-only",
+                clientName: "Zed",
+                agentId: "configured-only",
+                name: "   ",
+                methods: [],
+                ready: false,
+                detail: "Zed External Agent target lacks command or transport metadata."
+            ),
+        ])
+
+        #expect(rows[0].title == "Zed: looper")
+        #expect(rows[0].subtitle == "Ready - command")
+        #expect(rows[0].detail == "Zed External Agent target is configured; Looper did not execute its command.")
+        #expect(rows[1].title == "Zed: configured-only")
+        #expect(rows[1].subtitle == "Blocked - no launch metadata")
+    }
+
     private func thread(
         id: String,
         title: String?,
@@ -101,6 +143,36 @@ struct LooperMenuContentTests {
                 agentRole: nil,
                 agentPath: nil
             )
+        )
+    }
+
+    private func acpTarget(
+        id: String,
+        clientName: String = "Zed",
+        agentId: String = "looper",
+        name: String = "looper",
+        methods: [String] = ["command"],
+        ready: Bool,
+        detail: String = "Configured"
+    ) -> AcpTargetSummary {
+        AcpTargetSummary(
+            id: id,
+            client: clientName.lowercased(),
+            clientName: clientName,
+            agentId: agentId,
+            name: name,
+            source: "zed-agent-servers",
+            sourcePath: "/Users/test/.zed/settings.json",
+            enabled: true,
+            preferred: false,
+            launchConfigured: !methods.isEmpty,
+            launch: AcpLaunchMetadataSummary(
+                configured: !methods.isEmpty,
+                methods: methods
+            ),
+            ready: ready,
+            status: ready ? "ready" : "blocked",
+            detail: detail
         )
     }
 }

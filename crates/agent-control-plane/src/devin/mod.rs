@@ -5,6 +5,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::acp_targets::AcpTarget;
+
 mod acp;
 mod bridge;
 mod hooks;
@@ -62,6 +64,14 @@ const DEVIN_SETTINGS_ENABLED_AGENTS_KEY: &str = "devin.acp.enabledAgents";
 const DEVIN_SETTINGS_PREFERRED_AGENT_KEY: &str = "devin.acp.preferredAgent";
 const LOOPER_ACP_AGENT_DESCRIPTION: &str =
     "Local Looper bridge for Devin Desktop sessions, Handoff, and mobile prompt delivery.";
+const DEVIN_ACP_TARGET_CLIENT_ID: &str = "devin";
+const DEVIN_ACP_TARGET_CLIENT_NAME: &str = "Devin Desktop";
+const DEVIN_ACP_TARGET_READY_DETAIL: &str =
+    "Devin Desktop ACP agent is enabled with sanitized launch metadata.";
+const DEVIN_ACP_TARGET_BLOCKED_DETAIL: &str =
+    "Devin Desktop ACP agent is visible but not launch-ready.";
+const ACP_TARGET_READY_STATUS: &str = "ready";
+const ACP_TARGET_BLOCKED_STATUS: &str = "blocked";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinDesktopStatus {
@@ -175,6 +185,54 @@ pub fn devin_connection_detail(
         installation.enabled_agents.len(),
         status.acp_registry.agents.len()
     )
+}
+
+pub fn devin_acp_targets(status: &DevinDesktopStatus) -> Vec<AcpTarget> {
+    status
+        .acp_registry
+        .agents
+        .iter()
+        .map(|agent| {
+            let bridge_agent = status
+                .acp_bridge
+                .agents
+                .iter()
+                .find(|bridge_agent| bridge_agent.id == agent.id);
+            let ready = bridge_agent
+                .map(|bridge_agent| {
+                    bridge_agent.control_level == DevinAcpControlLevel::AgentConfigured
+                })
+                .unwrap_or(false);
+            AcpTarget {
+                id: format!("{DEVIN_ACP_TARGET_CLIENT_ID}:{}", agent.id),
+                client: DEVIN_ACP_TARGET_CLIENT_ID.to_owned(),
+                client_name: DEVIN_ACP_TARGET_CLIENT_NAME.to_owned(),
+                agent_id: agent.id.clone(),
+                name: agent.name.clone(),
+                source: "devin-acp-registry".to_owned(),
+                source_path: Some(status.acp_registry.path.clone()),
+                enabled: bridge_agent
+                    .map(|bridge_agent| bridge_agent.enabled)
+                    .unwrap_or(false),
+                preferred: bridge_agent
+                    .map(|bridge_agent| bridge_agent.preferred)
+                    .unwrap_or(false),
+                launch_configured: agent.launch_configured,
+                launch: agent.launch.clone(),
+                ready,
+                status: if ready {
+                    ACP_TARGET_READY_STATUS.to_owned()
+                } else {
+                    ACP_TARGET_BLOCKED_STATUS.to_owned()
+                },
+                detail: if ready {
+                    DEVIN_ACP_TARGET_READY_DETAIL.to_owned()
+                } else {
+                    DEVIN_ACP_TARGET_BLOCKED_DETAIL.to_owned()
+                },
+            }
+        })
+        .collect()
 }
 
 pub(super) fn read_json_object(path: &Path) -> Option<Value> {

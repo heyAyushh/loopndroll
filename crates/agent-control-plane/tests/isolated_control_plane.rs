@@ -739,6 +739,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     fixture.write_hooks_json("agent-control-plane --hook --managed-by looper");
     fixture.write_config_toml(true);
     fixture.write_devin_next_settings();
+    fixture.write_zed_settings();
     let control_plane = fixture.control_plane();
     let pairing_token = control_plane
         .mobile_auth_service()
@@ -821,6 +822,16 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
                 && connection["kind"] == "claude-code"),
         "expected claude-code-hooks connection"
     );
+    assert!(
+        connections["connections"]
+            .as_array()
+            .expect("connections")
+            .iter()
+            .any(|connection| connection["id"] == "zed-acp"
+                && connection["kind"] == "zed"
+                && (connection["status"] == "configured" || connection["status"] == "connected")),
+        "expected zed-acp connection"
+    );
     for connection in grok_connections {
         assert!(
             connection["status"] == "connected"
@@ -852,6 +863,13 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     let devin_json = serde_json::to_string(&devin).expect("devin json");
     assert!(!devin_json.contains("must-not-leak"));
     assert!(!devin_json.contains("@agentclientprotocol/codex-acp"));
+
+    let zed =
+        request_json_with_options(&router, Method::GET, "/desktop/zed", &[], loopback_socket).await;
+    assert_eq!(zed["status"]["acp_target_count"], 1);
+    assert_eq!(zed["status"]["acp_targets"][0]["id"], "looper");
+    let zed_json = serde_json::to_string(&zed).expect("zed json");
+    assert!(!zed_json.contains("zed-secret-token"));
 
     let acp_bridge = request_json_with_options(
         &router,
@@ -888,6 +906,41 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     let acp_bridge_json = serde_json::to_string(&acp_bridge).expect("acp bridge json");
     assert!(!acp_bridge_json.contains("must-not-leak"));
     assert!(!acp_bridge_json.contains("@agentclientprotocol/codex-acp"));
+
+    let acp_targets = request_json_with_options(
+        &router,
+        Method::GET,
+        "/desktop/acp-targets",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    let acp_targets_json = serde_json::to_string(&acp_targets).expect("acp targets json");
+    assert!(
+        acp_targets["targets"]
+            .as_array()
+            .expect("acp targets")
+            .iter()
+            .any(|target| target["id"] == "devin:codex"
+                && target["client"] == "devin"
+                && target["ready"] == true)
+    );
+    assert!(
+        acp_targets["targets"]
+            .as_array()
+            .expect("acp targets")
+            .iter()
+            .any(|target| target["id"] == "zed:looper"
+                && target["client"] == "zed"
+                && target["ready"] == true
+                && target["launch"]["methods"]
+                    .as_array()
+                    .expect("launch methods")
+                    .iter()
+                    .any(|method| method == "command"))
+    );
+    assert!(!acp_targets_json.contains("zed-secret-token"));
+    assert!(!acp_targets_json.contains("@agentclientprotocol/codex-acp"));
 
     let acp_probe = request_json_body_with_options(
         &router,
@@ -2737,6 +2790,7 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
         "/Applications/Superconductor.app/Contents/MacOS/Superconductor --host".to_owned(),
         "/Applications/Cursor.app/Contents/MacOS/Cursor --type=renderer".to_owned(),
         "/Applications/Claude.app/Contents/MacOS/Claude --type=renderer com.anthropic.claudefordesktop".to_owned(),
+        "/Applications/Zed.app/Contents/MacOS/zed --foreground".to_owned(),
         "/opt/homebrew/bin/opencode run --json".to_owned(),
         "/Users/test/.grok/bin/grok agent stdio --model grok-build".to_owned(),
     ]);
@@ -2808,6 +2862,16 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
             .iter()
             .any(|runtime| runtime.label == "Grok Build session" && runtime.running)
     );
+
+    let zed = adapters
+        .iter()
+        .find(|adapter| adapter.assistant_kind == AssistantKind::Zed)
+        .expect("zed adapter");
+    assert!(
+        zed.runtimes
+            .iter()
+            .any(|runtime| runtime.kind == AssistantRuntimeKind::Gui && runtime.running)
+    );
 }
 
 #[test]
@@ -2826,6 +2890,7 @@ fn assistant_adapters_separate_cli_installed_from_running() {
         "/Users/test/.opencode/bin/opencode".to_owned(),
     );
     cli_paths.insert("grok".to_owned(), "/Users/test/.grok/bin/grok".to_owned());
+    cli_paths.insert("zed".to_owned(), "/usr/local/bin/zed".to_owned());
 
     let adapters = discover_assistant_adapters_from_sources(
         &[
@@ -2882,6 +2947,18 @@ fn assistant_adapters_separate_cli_installed_from_running() {
         .expect("grok cli");
     assert!(grok_cli.installed);
     assert!(!grok_cli.running);
+
+    let zed = adapters
+        .iter()
+        .find(|adapter| adapter.assistant_kind == AssistantKind::Zed)
+        .expect("zed adapter");
+    let zed_cli = zed
+        .runtimes
+        .iter()
+        .find(|runtime| runtime.label == "Zed CLI")
+        .expect("zed cli");
+    assert!(zed_cli.installed);
+    assert!(!zed_cli.running);
 }
 
 fn mobile_snapshot_session<'a>(
@@ -3183,6 +3260,29 @@ done
             .to_string(),
         )
         .expect("write devin registry");
+    }
+
+    fn write_zed_settings(&self) {
+        let settings_path = self.temp_dir.path().join(".zed/settings.json");
+        fs::create_dir_all(settings_path.parent().expect("zed settings parent"))
+            .expect("create zed settings parent");
+        fs::write(
+            settings_path,
+            serde_json::json!({
+                "agent_servers": {
+                    "looper": {
+                        "type": "custom",
+                        "command": "looper",
+                        "args": ["acp", "stdio"],
+                        "env": {
+                            "TOKEN": "zed-secret-token"
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write zed settings");
     }
 
     fn write_devin_next_session(&self) {

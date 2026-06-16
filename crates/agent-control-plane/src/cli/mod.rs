@@ -56,6 +56,7 @@ pub async fn run() -> Result<()> {
         "detach" => run_detach_command(format).await,
         "hooks" => run_hooks_command(&args, format).await,
         "connections" => run_connections_command(&args, format).await,
+        "acp" => run_acp_command(&args, format).await,
         "devin" => run_devin_command(&args, format).await,
         "pairing" => run_pairing_command(&args, format).await,
         "settings" => run_settings_command(&args, format).await,
@@ -84,6 +85,7 @@ fn command_requires_server(command: &str) -> bool {
             | "detach"
             | "hooks"
             | "connections"
+            | "acp"
             | "devin"
             | "pairing"
             | "settings"
@@ -104,6 +106,15 @@ fn run_menubar_command(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => bail!("usage: looper menubar launch"),
+    }
+}
+
+async fn run_acp_command(args: &[String], format: OutputFormat) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("targets") | Some("target") | Some("list") | None => {
+            print_get("/desktop/acp-targets", format).await
+        }
+        _ => bail!("usage: looper acp [targets]"),
     }
 }
 
@@ -640,7 +651,7 @@ fn thread_updated_at_ms(thread: &Value) -> Option<i64> {
 fn print_usage() {
     let _ = writeln!(
         std::io::stderr(),
-        "usage: looper [--json|--table|--format table] [serve|status|snapshot|shutdown|attach|send|wait|detach|hooks|connections|devin|pairing|settings|sessions|notifications|checks|push|doctor|menubar|version]\n       looper              # attach inline, starting looper-server if needed"
+        "usage: looper [--json|--table|--format table] [serve|status|snapshot|shutdown|attach|send|wait|detach|hooks|connections|acp|devin|pairing|settings|sessions|notifications|checks|push|doctor|menubar|version]\n       looper              # attach inline, starting looper-server if needed"
     );
 }
 

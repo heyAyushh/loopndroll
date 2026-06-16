@@ -440,6 +440,47 @@ struct HTTPControlPlaneClientTests {
                   "detail": "CLI runtime detection only"
                 }
               ],
+              "acp_targets": [
+                {
+                  "id": "zed:looper",
+                  "client": "zed",
+                  "client_name": "Zed",
+                  "agent_id": "looper",
+                  "name": "looper",
+                  "source": "zed-agent-servers",
+                  "source_path": "/Users/test/.zed/settings.json",
+                  "enabled": true,
+                  "preferred": false,
+                  "launch_configured": true,
+                  "launch": {
+                    "configured": true,
+                    "methods": ["command"]
+                  },
+                  "ready": true,
+                  "status": "ready",
+                  "detail": "Zed External Agent target is configured; Looper did not execute its command."
+                }
+              ],
+              "zed": {
+                "settings_path": "/Users/test/.zed/settings.json",
+                "settings_exists": true,
+                "running": true,
+                "installed": true,
+                "summary": "Zed is running with 1 configured ACP External Agent target",
+                "acp_target_count": 1,
+                "acp_targets": [
+                  {
+                    "id": "looper",
+                    "name": "looper",
+                    "target_type": "custom",
+                    "launch_configured": true,
+                    "launch": {
+                      "configured": true,
+                      "methods": ["command"]
+                    }
+                  }
+                ]
+              },
               "compactions": [
                 {
                   "event_id": "event-1",
@@ -467,6 +508,10 @@ struct HTTPControlPlaneClientTests {
         #expect(snapshot.compactions[0].eventType == "codex.context_compacted")
         #expect(snapshot.grokBuildStatusTitle == "CLI running")
         #expect(snapshot.grokBuildAdapter?.assistantKind == "grok-build")
+        #expect(snapshot.zedStatusTitle == "Zed is running with 1 configured ACP External Agent target")
+        #expect(snapshot.acpTargets[0].id == "zed:looper")
+        #expect(snapshot.acpTargets[0].launch.methods == ["command"])
+        #expect(snapshot.zed.acpTargets[0].targetType == "custom")
     }
 
     @Test("decodes desktop snapshot without assistant adapters")
@@ -517,6 +562,8 @@ struct HTTPControlPlaneClientTests {
         let snapshot = try JSONDecoder().decode(DesktopSnapshotResponse.self, from: data)
 
         #expect(snapshot.assistantAdapters.isEmpty)
+        #expect(snapshot.acpTargets.isEmpty)
+        #expect(snapshot.zedStatusTitle == "Unavailable")
         #expect(snapshot.grokBuildStatusTitle == "Unavailable")
     }
 }

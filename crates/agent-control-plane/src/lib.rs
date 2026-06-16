@@ -1,3 +1,4 @@
+pub mod acp_targets;
 pub mod assistant;
 pub mod auth;
 pub mod automations;
@@ -31,3 +32,4 @@ pub mod telegram;
 pub mod telegram_bridge;
 pub mod transcript_preview;
 pub mod tui;
+pub mod zed;

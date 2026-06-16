@@ -20,6 +20,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let handoffHoldSubMenuTitle = "Handoff Hold"
         static let detailsMenuTitle = "Details"
         static let settingsMenuTitle = "Settings"
+        static let acpTargetsMenuTitle = "ACP Targets"
     }
 
     private let client: HTTPControlPlaneClient
@@ -256,9 +257,15 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             )
         }
         addDisabledItem("Devin: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: menu)
+        addDisabledItem("Zed: \(snapshot.zedStatusTitle)", to: menu)
+        addDisabledItem(
+            "ACP targets: \(LooperMenuContent.acpTargetStatusTitle(from: snapshot.acpTargets))",
+            to: menu
+        )
         addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: menu)
         addDisabledItem("Goals: \(runningGoalCount(snapshot))/\(snapshot.goals.count) running", to: menu)
         addDevinBridgeItems(snapshot.devinDesktop.acpBridge, to: menu)
+        addAcpTargetsItem(snapshot.acpTargets, to: menu)
     }
 
     private func addSnapshotThreadSections(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
@@ -330,6 +337,36 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         probeItem.representedObject = bridge.defaultProbeAgent?.id
         probeItem.isEnabled = bridge.defaultProbeAgent != nil
         menu.addItem(probeItem)
+    }
+
+    private func addAcpTargetsItem(_ targets: [AcpTargetSummary], to menu: NSMenu) {
+        guard !targets.isEmpty else {
+            return
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        let item = NSMenuItem(title: Layout.acpTargetsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.acpTargetsMenuTitle)
+        submenu.autoenablesItems = false
+        addDisabledItem("Targets: \(LooperMenuContent.acpTargetStatusTitle(from: targets))", to: submenu)
+        submenu.addItem(NSMenuItem.separator())
+
+        for row in LooperMenuContent.buildAcpTargetRows(from: targets) {
+            submenu.addItem(makeAcpTargetItem(row))
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func makeAcpTargetItem(_ row: LooperAcpTargetRow) -> NSMenuItem {
+        let item = NSMenuItem(title: row.title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        setSubtitle(row.subtitle, on: item)
+        if !row.detail.isEmpty {
+            item.toolTip = row.detail
+        }
+        return item
     }
 
     private func coveredAutomationCount(_ snapshot: DesktopSnapshotResponse) -> Int {

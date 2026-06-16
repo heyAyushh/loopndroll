@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+use crate::acp_targets::AcpTarget;
 use crate::assistant::{
     AssistantAdapterCapability, AssistantKind, adapter_capabilities, static_adapter_capabilities,
 };
@@ -22,7 +23,7 @@ use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_com
 use crate::devin::{
     DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpRuntime, DevinAcpRuntimeSession,
     DevinAcpRuntimeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
-    DevinInstallationStatus, build_acp_bridge_probe, devin_connection_detail,
+    DevinInstallationStatus, build_acp_bridge_probe, devin_acp_targets, devin_connection_detail,
     devin_session_capabilities, devin_session_to_desktop_thread, devin_session_to_thread_record,
     discover_devin_sessions, inspect_devin_desktop_for_home, inspect_devin_hooks,
     install_looper_acp_agent_for_home, register_owned_devin_hooks, unregister_owned_devin_hooks,
@@ -41,6 +42,7 @@ use crate::mobile_session::MobileSessionService;
 use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
 use crate::transcript_preview::latest_assistant_message_for_path;
+use crate::zed::{ZED_CLIENT_ID, ZedStatus, inspect_zed_for_home, zed_acp_targets};
 
 const DESKTOP_COMPACTION_LIMIT: usize = 50;
 const DESKTOP_COMPACTION_FILE_SCAN_LIMIT: usize = 250;
@@ -63,6 +65,9 @@ const CLAUDE_CODE_HOOKS_CONNECTION_ID: &str = "claude-code-hooks";
 const CLAUDE_CODE_HOOKS_CONNECTION_LABEL: &str = "Claude Code hooks";
 const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
     "Claude Code hooks in ~/.claude/settings.json; running-session prompts are delivered on Stop.";
+const ZED_ACP_CONNECTION_ID: &str = "zed-acp";
+const ZED_ACP_CONNECTION_LABEL: &str = "Zed ACP";
+const ZED_ACP_CONNECTION_ACTION_HINT: &str = "Zed External Agents are configured in ~/.zed/settings.json agent_servers; Looper reads settings only.";
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -133,8 +138,18 @@ pub struct AssistantAdaptersResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AcpTargetsResponse {
+    pub targets: Vec<AcpTarget>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinDesktopResponse {
     pub status: DevinDesktopStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ZedResponse {
+    pub status: ZedStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -220,7 +235,9 @@ pub struct DesktopSnapshot {
     pub goals: Vec<GoalSummary>,
     pub sync_manifest: SyncManifest,
     pub assistant_adapters: Vec<AssistantAdapterCapability>,
+    pub acp_targets: Vec<AcpTarget>,
     pub devin_desktop: DevinDesktopStatus,
+    pub zed: ZedStatus,
     pub grok_build: GrokBuildStatus,
     pub compactions: Vec<CompactionEvent>,
 }
@@ -477,6 +494,14 @@ impl ControlPlane {
         ))]
     }
 
+    fn zed_connections(&self) -> Vec<ManagedConnection> {
+        let status = inspect_zed_for_home(&self.config.home_path);
+        if !zed_connection_should_render(&status) {
+            return Vec::new();
+        }
+        vec![zed_acp_connection(&status)]
+    }
+
     pub fn status(&self) -> ControlPlaneStatus {
         inspect_control_plane(&self.config.codex_home)
     }
@@ -493,6 +518,7 @@ impl ControlPlane {
         connections.extend(self.devin_desktop_connections());
         connections.extend(self.grok_build_connections());
         connections.extend(self.claude_code_connections());
+        connections.extend(self.zed_connections());
         connections.push(hook_connection(&status));
         connections.extend(status.codex_servers.iter().map(codex_server_connection));
         Ok(ManagedConnectionsResponse { connections })
@@ -562,10 +588,31 @@ impl ControlPlane {
         }
     }
 
+    pub fn acp_targets_response(&self) -> AcpTargetsResponse {
+        AcpTargetsResponse {
+            targets: self.acp_targets(),
+        }
+    }
+
     pub fn devin_desktop_response(&self) -> DevinDesktopResponse {
         DevinDesktopResponse {
             status: inspect_devin_desktop_for_home(&self.config.home_path),
         }
+    }
+
+    pub fn zed_response(&self) -> ZedResponse {
+        ZedResponse {
+            status: inspect_zed_for_home(&self.config.home_path),
+        }
+    }
+
+    fn acp_targets(&self) -> Vec<AcpTarget> {
+        let devin_status = inspect_devin_desktop_for_home(&self.config.home_path);
+        let zed_status = inspect_zed_for_home(&self.config.home_path);
+        let mut targets = devin_acp_targets(&devin_status);
+        targets.extend(zed_acp_targets(&zed_status));
+        targets.sort_by(|left, right| left.id.cmp(&right.id));
+        targets
     }
 
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
@@ -1014,6 +1061,11 @@ impl ControlPlane {
             Some(_) => static_adapter_capabilities(),
             None => adapter_capabilities(),
         };
+        let devin_desktop = inspect_devin_desktop_for_home(&self.config.home_path);
+        let zed = inspect_zed_for_home(&self.config.home_path);
+        let mut acp_targets = devin_acp_targets(&devin_desktop);
+        acp_targets.extend(zed_acp_targets(&zed));
+        acp_targets.sort_by(|left, right| left.id.cmp(&right.id));
 
         Ok(DesktopSnapshot {
             control_plane: control_plane_status,
@@ -1034,7 +1086,9 @@ impl ControlPlane {
             goals,
             sync_manifest,
             assistant_adapters,
-            devin_desktop: inspect_devin_desktop_for_home(&self.config.home_path),
+            acp_targets,
+            devin_desktop,
+            zed,
             grok_build,
             compactions,
         })
@@ -1254,6 +1308,44 @@ fn claude_hook_owner_label(owner: &ClaudeHookOwner) -> String {
         ClaudeHookOwner::LooperRust => "looper Rust".to_owned(),
         ClaudeHookOwner::Unknown => "Unknown owner".to_owned(),
         ClaudeHookOwner::None => "Not registered".to_owned(),
+    }
+}
+
+fn zed_connection_should_render(status: &ZedStatus) -> bool {
+    status.installed || status.running || status.settings_exists || !status.acp_targets.is_empty()
+}
+
+fn zed_acp_connection(status: &ZedStatus) -> ManagedConnection {
+    let connection_status = if status.running {
+        "connected"
+    } else if !status.acp_targets.is_empty() {
+        "configured"
+    } else if status.installed {
+        "installed"
+    } else {
+        "missing"
+    };
+    ManagedConnection {
+        id: ZED_ACP_CONNECTION_ID.to_owned(),
+        kind: ZED_CLIENT_ID.to_owned(),
+        label: ZED_ACP_CONNECTION_LABEL.to_owned(),
+        status: connection_status.to_owned(),
+        subtitle: Some(format!(
+            "{} ACP target{}",
+            status.acp_target_count,
+            if status.acp_target_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )),
+        detail: Some(status.summary.clone()),
+        created_at: None,
+        last_used_at: None,
+        revoked_at: None,
+        can_rename: false,
+        can_revoke: false,
+        action_hint: Some(ZED_ACP_CONNECTION_ACTION_HINT.to_owned()),
     }
 }
 

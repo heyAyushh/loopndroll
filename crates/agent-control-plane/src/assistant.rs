@@ -9,8 +9,15 @@ const CURSOR_BUNDLE_ID: &str = "com.todesktop.230313mzl4w4u92";
 const DEFAULT_CLAUDE_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
 const DEVIN_DESKTOP_CLI: &str = "devin-desktop-next";
 const GROK_BUILD_CLI: &str = "grok";
+const ZED_CLI: &str = "zed";
 const GROK_BUILD_PROCESS_NEEDLES: &[&str] =
     &["/.grok/", ".grok/sessions", "grok agent", "grok-build"];
+const ZED_PROCESS_NEEDLES: &[&str] = &[
+    "/applications/zed.app/",
+    "zed.app/contents/macos/zed",
+    "com.zed.dev",
+    "zed --foreground",
+];
 const CODEX_CLIENT: &str = "codex";
 const DEVIN_CLIENT: &str = "devin";
 const GROK_BUILD_CLIENT: &str = "grok-build";
@@ -49,6 +56,7 @@ pub enum AssistantKind {
     Poke,
     #[serde(rename = "grok-build")]
     GrokBuild,
+    Zed,
     Unknown,
 }
 
@@ -105,6 +113,7 @@ pub fn discover_assistant_adapters() -> Vec<AssistantAdapterCapability> {
         "hermes",
         "poke",
         GROK_BUILD_CLI,
+        ZED_CLI,
     ]);
     discover_assistant_adapters_from_sources(&process_commands, &cli_paths)
 }
@@ -298,6 +307,19 @@ pub fn discover_assistant_adapters_from_sources(
             detail: "Grok hooks at ~/.grok/hooks/looper.json; sessions read from ~/.grok/sessions/"
                 .to_owned(),
         },
+        runtime_only(
+            AssistantKind::Zed,
+            vec![
+                detections.runtime(AssistantRuntimeKind::Gui, "Zed app", None, ZED_PROCESS_NEEDLES),
+                detections.runtime_by_executable(
+                    AssistantRuntimeKind::Cli,
+                    "Zed CLI",
+                    None,
+                    &[ZED_CLI],
+                ),
+            ],
+            "Zed ACP External Agent targets read from ~/.zed/settings.json agent_servers",
+        ),
     ]
 }
 
@@ -382,6 +404,7 @@ pub fn assistant_kind_from_client(client: &str) -> AssistantKind {
         CLAUDE_CODE_CLIENT => AssistantKind::ClaudeCode,
         "super-engineering" => AssistantKind::Superconductor,
         "openclaw" => AssistantKind::OpenClaw,
+        "zed" => AssistantKind::Zed,
         _ => AssistantKind::Codex,
     }
 }

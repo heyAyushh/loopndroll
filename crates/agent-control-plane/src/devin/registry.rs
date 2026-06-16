@@ -1,41 +1,11 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::read_json_object;
+use crate::acp_targets::{AcpLaunchMetadata, inspect_launch_metadata};
 
-const ACP_LAUNCH_METADATA_KEYS: &[&str] = &[
-    "args",
-    "argv",
-    "command",
-    "command_line",
-    "commandLine",
-    "distribution",
-    "entrypoint",
-    "executable",
-    "launch",
-    "path",
-    "runtime",
-    "stdio",
-    "transport",
-    "websocket",
-];
-const ACP_LAUNCH_METHOD_KEYS: &[&str] = &[
-    "command",
-    "command_line",
-    "commandLine",
-    "entrypoint",
-    "executable",
-    "npx",
-    "node",
-    "runtime",
-    "stdio",
-    "transport",
-    "websocket",
-];
-const ACP_LAUNCH_FALLBACK_METHOD: &str = "configured";
+use super::read_json_object;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevinAcpRegistryStatus {
@@ -52,14 +22,10 @@ pub struct DevinAcpAgent {
     pub version: Option<String>,
     pub description: Option<String>,
     pub launch_configured: bool,
-    pub launch: DevinAcpLaunchMetadata,
+    pub launch: AcpLaunchMetadata,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DevinAcpLaunchMetadata {
-    pub configured: bool,
-    pub methods: Vec<String>,
-}
+pub type DevinAcpLaunchMetadata = AcpLaunchMetadata;
 
 pub(super) fn inspect_acp_registry(path: &Path) -> DevinAcpRegistryStatus {
     let document = read_json_object(path);
@@ -98,66 +64,6 @@ fn parse_acp_agent(agent: &Value) -> Option<DevinAcpAgent> {
         launch_configured: launch.configured,
         launch,
     })
-}
-
-fn inspect_launch_metadata(value: &Value) -> DevinAcpLaunchMetadata {
-    let mut methods = BTreeSet::new();
-    let configured = collect_launch_metadata(value, &mut methods);
-    if configured && methods.is_empty() {
-        methods.insert(ACP_LAUNCH_FALLBACK_METHOD.to_owned());
-    }
-    DevinAcpLaunchMetadata {
-        configured,
-        methods: methods.into_iter().collect(),
-    }
-}
-
-fn collect_launch_metadata(value: &Value, methods: &mut BTreeSet<String>) -> bool {
-    match value {
-        Value::Object(object) => {
-            let mut configured = false;
-            for (key, value) in object {
-                if is_launch_metadata_key(key) && !value.is_null() {
-                    configured = true;
-                }
-                if is_launch_method_key(key) && !value.is_null() {
-                    methods.insert(sanitized_launch_method(key));
-                }
-                configured |= collect_launch_metadata(value, methods);
-            }
-            configured
-        }
-        Value::Array(values) => {
-            let mut configured = false;
-            for value in values {
-                configured |= collect_launch_metadata(value, methods);
-            }
-            configured
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
-    }
-}
-
-fn is_launch_metadata_key(key: &str) -> bool {
-    ACP_LAUNCH_METADATA_KEYS
-        .iter()
-        .any(|launch_key| *launch_key == key)
-}
-
-fn is_launch_method_key(key: &str) -> bool {
-    ACP_LAUNCH_METHOD_KEYS
-        .iter()
-        .any(|launch_key| *launch_key == key)
-}
-
-fn sanitized_launch_method(key: &str) -> String {
-    key.chars()
-        .map(|character| match character {
-            '_' => '-',
-            character if character.is_ascii_uppercase() => character.to_ascii_lowercase(),
-            character => character,
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -428,6 +428,91 @@ public struct AssistantRuntimeSummary: Codable, Equatable, Sendable {
     public let executable: String?
 }
 
+public struct AcpLaunchMetadataSummary: Codable, Equatable, Sendable {
+    public let configured: Bool
+    public let methods: [String]
+}
+
+public struct AcpTargetSummary: Codable, Equatable, Sendable {
+    public let id: String
+    public let client: String
+    public let clientName: String
+    public let agentId: String
+    public let name: String
+    public let source: String
+    public let sourcePath: String?
+    public let enabled: Bool
+    public let preferred: Bool
+    public let launchConfigured: Bool
+    public let launch: AcpLaunchMetadataSummary
+    public let ready: Bool
+    public let status: String
+    public let detail: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case client
+        case clientName = "client_name"
+        case agentId = "agent_id"
+        case name
+        case source
+        case sourcePath = "source_path"
+        case enabled
+        case preferred
+        case launchConfigured = "launch_configured"
+        case launch
+        case ready
+        case status
+        case detail
+    }
+}
+
+public struct ZedStatus: Codable, Equatable, Sendable {
+    public static let unavailable = ZedStatus(
+        settingsPath: "",
+        settingsExists: false,
+        running: false,
+        installed: false,
+        summary: "Unavailable",
+        acpTargetCount: 0,
+        acpTargets: []
+    )
+
+    public let settingsPath: String
+    public let settingsExists: Bool
+    public let running: Bool
+    public let installed: Bool
+    public let summary: String
+    public let acpTargetCount: Int
+    public let acpTargets: [ZedAcpTargetSummary]
+
+    enum CodingKeys: String, CodingKey {
+        case settingsPath = "settings_path"
+        case settingsExists = "settings_exists"
+        case running
+        case installed
+        case summary
+        case acpTargetCount = "acp_target_count"
+        case acpTargets = "acp_targets"
+    }
+}
+
+public struct ZedAcpTargetSummary: Codable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let targetType: String?
+    public let launchConfigured: Bool
+    public let launch: AcpLaunchMetadataSummary
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case targetType = "target_type"
+        case launchConfigured = "launch_configured"
+        case launch
+    }
+}
+
 public struct GrokBuildStatus: Codable, Equatable, Sendable {
     public let hooks: GrokBuildHookStatus
     public let sessionCount: Int
@@ -464,6 +549,8 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     public let goals: [GoalSummary]
     public let compactions: [CompactionEventSummary]
     public let assistantAdapters: [AssistantAdapterCapability]
+    public let acpTargets: [AcpTargetSummary]
+    public let zed: ZedStatus
 
     public var grokBuildAdapter: AssistantAdapterCapability? {
         assistantAdapters.first { $0.assistantKind == "grok-build" }
@@ -493,6 +580,10 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         grokBuild?.hooks.health.capitalized ?? "Unavailable"
     }
 
+    public var zedStatusTitle: String {
+        zed.summary
+    }
+
     enum CodingKeys: String, CodingKey {
         case controlPlane = "control_plane"
         case devinDesktop = "devin_desktop"
@@ -505,6 +596,8 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         case goals
         case compactions
         case assistantAdapters = "assistant_adapters"
+        case acpTargets = "acp_targets"
+        case zed
     }
 
     public init(
@@ -518,7 +611,9 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         automations: [DesktopAutomationSummary],
         goals: [GoalSummary],
         compactions: [CompactionEventSummary],
-        assistantAdapters: [AssistantAdapterCapability] = []
+        assistantAdapters: [AssistantAdapterCapability] = [],
+        acpTargets: [AcpTargetSummary] = [],
+        zed: ZedStatus = .unavailable
     ) {
         self.controlPlane = controlPlane
         self.devinDesktop = devinDesktop
@@ -531,6 +626,8 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         self.goals = goals
         self.compactions = compactions
         self.assistantAdapters = assistantAdapters
+        self.acpTargets = acpTargets
+        self.zed = zed
     }
 
     public init(from decoder: Decoder) throws {
@@ -549,7 +646,9 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
             assistantAdapters: try container.decodeIfPresent(
                 [AssistantAdapterCapability].self,
                 forKey: .assistantAdapters
-            ) ?? []
+            ) ?? [],
+            acpTargets: try container.decodeIfPresent([AcpTargetSummary].self, forKey: .acpTargets) ?? [],
+            zed: try container.decodeIfPresent(ZedStatus.self, forKey: .zed) ?? .unavailable
         )
     }
 }

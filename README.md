@@ -180,6 +180,9 @@ path backed by `POST /desktop/devin/acp-bridge/probe`. Looper-owned Devin ACP
 sessions appear as `devin:looper:*` and can receive mobile prompts directly over
 the active websocket. Existing Devin-owned sessions stay on their current
 transport; Looper never auto-executes arbitrary Devin registry commands.
+`looper acp targets` and `/desktop/acp-targets` expose the combined sanitized
+ACP target inventory for supported ACP clients, including Devin registry agents
+and Zed External Agent entries from `~/.zed/settings.json` `agent_servers`.
 
 Run `looper --format table doctor` when terminal launch or packaging looks
 wrong. It reports the terminal backend, source/hooks health, and the Rust mobile

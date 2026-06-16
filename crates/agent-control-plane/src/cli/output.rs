@@ -55,6 +55,21 @@ fn print_table(value: &Value) -> Result<()> {
         );
         return Ok(());
     }
+    if let Some(targets) = value.get("targets").and_then(Value::as_array) {
+        print_rows(
+            "id\tclient\tstatus\tready\tlaunch_configured\tname",
+            targets,
+            &[
+                "id",
+                "client",
+                "status",
+                "ready",
+                "launch_configured",
+                "name",
+            ],
+        );
+        return Ok(());
+    }
     if let Some(bridge) = value.get("bridge") {
         if let Some(agents) = bridge.get("agents").and_then(Value::as_array) {
             println!(
