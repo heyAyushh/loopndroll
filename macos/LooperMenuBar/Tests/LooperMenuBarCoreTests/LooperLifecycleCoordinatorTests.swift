@@ -96,9 +96,22 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .controlPlaneStatus).url?.path == "/status/control-plane")
         #expect(client.request(for: .desktopSnapshot).url?.path == "/desktop/snapshot")
         #expect(client.request(for: .desktopSnapshot).url?.query == "profile=menu")
+        #expect(client.request(for: .desktopConnections).url?.path == "/desktop/connections")
         #expect(client.request(for: .desktopEvents).url?.path == "/desktop/events")
         #expect(client.request(for: .desktopEvents).url?.query == nil)
+        #expect(client.request(for: .acpClientHosts).url?.path == "/desktop/acp-client-hosts")
+        #expect(client.request(for: .acpClientHost("devin")).url?.path == "/desktop/acp-client-hosts/devin")
+        #expect(
+            client.request(for: .acpClientHostProbe("devin")).url?.path == "/desktop/acp-client-hosts/devin/probe"
+        )
+        #expect(
+            client.request(for: .acpClientHostInstall("devin")).url?.path == "/desktop/acp-client-hosts/devin/install"
+        )
         #expect(client.request(for: .devinAcpBridgeInstall).url?.path == "/desktop/devin/acp-bridge/install")
+        #expect(client.request(for: .acpClientHosts).httpMethod == "GET")
+        #expect(client.request(for: .acpClientHost("devin")).httpMethod == "GET")
+        #expect(client.request(for: .acpClientHostProbe("devin")).httpMethod == "POST")
+        #expect(client.request(for: .acpClientHostInstall("devin")).httpMethod == "POST")
         #expect(client.request(for: .registerHooks).httpMethod == "POST")
         #expect(client.request(for: .registerTargetHooks(.codex)).httpMethod == "POST")
         #expect(client.request(for: .unregisterLiveTargetHooks(.codex)).httpMethod == "POST")
@@ -106,6 +119,7 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .shutdown).httpMethod == "POST")
         #expect(client.request(for: .mobileHealth).httpMethod == "GET")
         #expect(client.request(for: .desktopSnapshot).httpMethod == "GET")
+        #expect(client.request(for: .desktopConnections).httpMethod == "GET")
         #expect(client.request(for: .desktopEvents).httpMethod == "GET")
         #expect(client.request(for: .mobileHealth).timeoutInterval == LooperLifecycleDefaults.requestTimeoutSeconds)
         #expect(
@@ -203,8 +217,24 @@ struct HTTPControlPlaneClientTests {
               "baseURL": "http://192.168.1.4:8765",
               "baseURLs": [
                 "http://192.168.1.4:8765",
+                "http://100.119.200.69:8765",
                 "http://127.0.0.1:8765"
               ],
+              "tailscale": {
+                "available": true,
+                "running": true,
+                "backendState": "Running",
+                "baseURL": "http://100.119.200.69:8765",
+                "dnsName": "ayushs-macbook-pro.tail62d9a8.ts.net",
+                "ipAddresses": [
+                  "100.119.200.69",
+                  "fd7a:115c:a1e0::9634:c845"
+                ],
+                "magicDNSEnabled": true,
+                "magicDNSSuffix": "tail62d9a8.ts.net",
+                "source": "cli",
+                "tailnetName": "heyayushh.github"
+              },
               "requiresAuthentication": true
             }
             """.utf8
@@ -213,7 +243,10 @@ struct HTTPControlPlaneClientTests {
         let health = try JSONDecoder().decode(MobileHealthResponse.self, from: data)
 
         #expect(health.ok)
-        #expect(health.preferredHandoffBaseURL?.absoluteString == "http://192.168.1.4:8765")
+        #expect(health.preferredHandoffBaseURL?.absoluteString == "http://100.119.200.69:8765")
+        #expect(health.routeSummaryTitle == "Tailscale: 100.119.200.69")
+        #expect(health.tailscale?.statusTitle == "Running")
+        #expect(health.tailscale?.routeDetailTitle.contains("ayushs-macbook-pro.tail62d9a8.ts.net") == true)
         #expect(health.requiresAuthentication)
     }
 
@@ -566,6 +599,170 @@ struct HTTPControlPlaneClientTests {
         #expect(snapshot.zedStatusTitle == "Unavailable")
         #expect(snapshot.grokBuildStatusTitle == "Unavailable")
     }
+
+    @Test("decodes generic ACP client hosts")
+    func decodesGenericAcpClientHosts() throws {
+        let data = Data(
+            """
+            {
+              "hosts": [
+                {
+                  "id": "devin",
+                  "label": "Devin Desktop",
+                  "running": true,
+                  "installed": true,
+                  "registry": {
+                    "path": "/Users/test/.devin-next/acp/registry.json",
+                    "exists": true,
+                    "version": "1.0.0",
+                    "agent_count": 2
+                  },
+                  "agents": [
+                    {
+                      "id": "looper",
+                      "name": "Looper",
+                      "version": "1.1.5",
+                      "description": "Local Looper bridge",
+                      "enabled": true,
+                      "preferred": true,
+                      "launch_configured": true,
+                      "control_level": "agent-configured",
+                      "supports_sessions": true,
+                      "supports_prompt": true,
+                      "supports_cancel": false,
+                      "source": "devin-acp-registry"
+                    }
+                  ],
+                  "sessions": [
+                    {
+                      "thread_id": "devin:codex-acp:session",
+                      "session_id": "acp/codex-acp/session",
+                      "provider_id": "codex-acp",
+                      "title": "Build Looper",
+                      "cwd": "/Users/test/looper",
+                      "status": "idle",
+                      "archived": false,
+                      "updated_at_ms": 1000
+                    }
+                  ],
+                  "actions": [
+                    {
+                      "id": "probe",
+                      "label": "Probe Devin agent",
+                      "method": "POST",
+                      "path": "/desktop/acp-client-hosts/devin/probe",
+                      "default_agent_id": "looper"
+                    }
+                  ],
+                  "limitations": [
+                    "Read-only until the host adapter owns authentication."
+                  ],
+                  "runtime": {
+                    "connected": false,
+                    "connection_count": 0,
+                    "session_count": 0
+                  }
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let response = try JSONDecoder().decode(AcpClientHostsResponse.self, from: data)
+        let host = try #require(response.hosts.first)
+
+        #expect(host.id == "devin")
+        #expect(host.label == "Devin Desktop")
+        #expect(host.registry.agentCount == 2)
+        #expect(host.enabledAgentCount == 1)
+        #expect(host.preferredAgent?.id == "looper")
+        #expect(host.defaultProbeAgent?.id == "looper")
+        #expect(host.sessions[0].providerID == "codex-acp")
+        #expect(host.runtime?.connected == false)
+    }
+
+    @Test("agent detail rows come from generic connections with adapter fallback")
+    func agentDetailRowsComeFromGenericConnectionsWithAdapterFallback() {
+        let snapshot = DesktopSnapshotResponse(
+            controlPlane: ControlPlaneStatusResponse(
+                hooks: HookStatusSummary(
+                    enabled: true,
+                    registeredEvents: [],
+                    activeCommand: nil,
+                    owner: "looper-rust",
+                    health: "healthy",
+                    issues: [],
+                    recentFailuresCount: 0
+                ),
+                codexServers: [],
+                source: SourceStatusSummary(
+                    codexHome: "/tmp/codex",
+                    stateDb: nil,
+                    logsDb: nil,
+                    sessionsRoot: "/tmp/codex/sessions",
+                    health: "healthy",
+                    degradedReason: nil
+                )
+            ),
+            devinDesktop: DevinDesktopStatus(acpBridge: emptyDevinBridge()),
+            threadCount: 0,
+            activeThreadCount: 0,
+            archivedThreadCount: 0,
+            threads: [],
+            automations: [],
+            goals: [],
+            compactions: [],
+            assistantAdapters: [
+                AssistantAdapterCapability(
+                    assistantKind: "claude-code",
+                    liveSessions: true,
+                    authCapabilities: true,
+                    runtimes: [],
+                    detail: "Claude Code sessions read from ~/.claude/projects"
+                ),
+                AssistantAdapterCapability(
+                    assistantKind: "cursor",
+                    runtimes: [],
+                    detail: "Runtime detection only"
+                )
+            ]
+        )
+        let connections = DesktopConnectionsResponse(
+            connections: [
+                DesktopConnectionSummary(
+                    id: "phone",
+                    kind: "mobile",
+                    label: "iPhone",
+                    status: "paired",
+                    subtitle: nil,
+                    detail: "not an agent row"
+                ),
+                DesktopConnectionSummary(
+                    id: "claude-code-hooks",
+                    kind: "claude-code",
+                    label: "Claude Code hooks",
+                    status: "healthy",
+                    subtitle: nil,
+                    detail: "LOOPER_CLAUDE_HOOK=1"
+                ),
+                DesktopConnectionSummary(
+                    id: "codex-server",
+                    kind: "codex",
+                    label: "Codex app",
+                    status: "connected",
+                    subtitle: nil,
+                    detail: "app-server"
+                )
+            ]
+        )
+
+        let connectionRows = snapshot.agentDetailMenuRows(connections: connections)
+        #expect(connectionRows.map(\.title) == ["Claude Code hooks: Healthy", "Codex app: Connected"])
+
+        let fallbackRows = snapshot.agentDetailMenuRows(connections: nil)
+        #expect(fallbackRows.map(\.title) == ["Claude Code: sessions"])
+        #expect(!fallbackRows.contains { $0.title.contains("Cursor") })
+    }
 }
 
 private enum RecordingCall: Equatable {
@@ -685,6 +882,10 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
             compactions: [],
             assistantAdapters: []
         )
+    }
+
+    func fetchDesktopConnections() async throws -> DesktopConnectionsResponse {
+        DesktopConnectionsResponse(connections: [])
     }
 
     func fetchMobileHealth() async throws -> MobileHealthResponse {

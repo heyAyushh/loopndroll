@@ -16,13 +16,13 @@ mod sessions;
 
 pub use self::acp::{
     DevinAcpDeliveredPrompt, DevinAcpRuntime, DevinAcpRuntimeSession, DevinAcpRuntimeStatus,
-    LOOPER_ACP_AGENT_ID, LOOPER_ACP_AGENT_NAME, LOOPER_ACP_ROUTE,
+    LEGACY_LOOPER_ACP_ROUTE, LOOPER_ACP_AGENT_ID, LOOPER_ACP_AGENT_NAME, LOOPER_ACP_ROUTE,
     acp_session_id_for_public_thread_id, public_thread_id_for_acp_session,
     websocket_url_for_base_url,
 };
 pub use self::bridge::{
-    DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlLevel,
-    DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
+    DevinAcpBridgeAction, DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus,
+    DevinAcpControlLevel, DevinAcpProbeStatus, build_acp_bridge_probe, build_acp_bridge_status,
 };
 pub use self::hooks::{
     DevinHookOwner, DevinHookRegistrationChange, DevinHookStatus, inspect_devin_hooks,
@@ -494,7 +494,10 @@ mod tests {
             .expect("install looper acp");
 
         assert_eq!(result.installed_agent_id, LOOPER_ACP_AGENT_ID);
-        assert_eq!(result.websocket_url, "ws://127.0.0.1:8765/acp/devin");
+        assert_eq!(
+            result.websocket_url,
+            "ws://127.0.0.1:8765/acp/client-hosts/devin"
+        );
         let registry = read_json_object(&registry_path).expect("registry");
         let agents = registry["agents"].as_array().expect("agents");
         assert_eq!(agents.len(), 2);
@@ -504,7 +507,7 @@ mod tests {
             .expect("looper agent");
         assert_eq!(
             looper["distribution"]["websocket"]["url"],
-            "ws://127.0.0.1:8765/acp/devin"
+            "ws://127.0.0.1:8765/acp/client-hosts/devin"
         );
         assert!(
             !serde_json::to_string(looper)

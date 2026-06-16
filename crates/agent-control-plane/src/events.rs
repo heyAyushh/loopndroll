@@ -36,6 +36,21 @@ pub struct SyncManifestSnapshotRecord {
     pub body_json: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MobileEventCursor {
+    pub created_at_ms: i64,
+    pub event_id: String,
+}
+
+impl From<&MobileEventRecord> for MobileEventCursor {
+    fn from(record: &MobileEventRecord) -> Self {
+        Self {
+            created_at_ms: record.created_at_ms,
+            event_id: record.event_id.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EventStore {
     path: PathBuf,
@@ -96,6 +111,8 @@ create table if not exists mobile_event_log (
 
 create index if not exists mobile_event_log_created_at_ms
   on mobile_event_log(created_at_ms desc);
+create index if not exists mobile_event_log_replay_cursor
+  on mobile_event_log(created_at_ms asc, event_id asc);
 "#,
         )?;
         Ok(())
@@ -141,7 +158,7 @@ create index if not exists mobile_event_log_created_at_ms
             "select event_id, event_type, thread_id, prompt_id, detail, created_at_ms
              from mobile_event_log
              where created_at_ms > ?1
-             order by created_at_ms asc
+             order by created_at_ms asc, event_id asc
              limit ?2",
         )?;
         let rows = statement.query_map(params![since_created_at_ms, limit as i64], |row| {
@@ -158,12 +175,46 @@ create index if not exists mobile_event_log_created_at_ms
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn mobile_events_after(
+        &self,
+        cursor: &MobileEventCursor,
+        limit: usize,
+    ) -> Result<Vec<MobileEventRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        let mut statement = connection.prepare(
+            "select event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+             from mobile_event_log
+             where created_at_ms > ?1
+                or (created_at_ms = ?1 and event_id > ?2)
+             order by created_at_ms asc, event_id asc
+             limit ?3",
+        )?;
+        let rows = statement.query_map(
+            params![cursor.created_at_ms, cursor.event_id, limit as i64],
+            |row| {
+                let event_type = parse_mobile_event_kind(&row.get::<_, String>(1)?);
+                Ok(MobileEventRecord {
+                    event_id: row.get(0)?,
+                    event_type,
+                    thread_id: row.get(2)?,
+                    prompt_id: row.get(3)?,
+                    detail: row.get(4)?,
+                    created_at_ms: row.get(5)?,
+                })
+            },
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn record_automation_run(
         &self,
         automation_id: &str,
         target_thread_id: Option<&str>,
         scheduled_at_ms: i64,
         fired_at_ms: i64,
+        delivery_mode: &str,
+        result: &str,
         detail: Option<&str>,
     ) -> Result<Option<AutomationRunRecord>> {
         self.initialize()?;
@@ -185,8 +236,8 @@ create index if not exists mobile_event_log_created_at_ms
             target_thread_id: target_thread_id.map(str::to_owned),
             scheduled_at_ms,
             fired_at_ms,
-            delivery_mode: "local-resume-request".to_owned(),
-            result: "queued".to_owned(),
+            delivery_mode: delivery_mode.to_owned(),
+            result: result.to_owned(),
             detail: detail.map(str::to_owned),
         };
         connection.execute(
@@ -230,6 +281,47 @@ create index if not exists mobile_event_log_created_at_ms
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_automation_run_result(
+        &self,
+        run_id: &str,
+        delivery_mode: &str,
+        result: &str,
+        detail: Option<&str>,
+    ) -> Result<AutomationRunRecord> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        connection.execute(
+            "update automation_runs
+             set delivery_mode = ?2,
+                 result = ?3,
+                 detail = ?4
+             where run_id = ?1",
+            params![run_id, delivery_mode, result, detail],
+        )?;
+        connection
+            .query_row(
+                "select run_id, automation_id, target_thread_id, scheduled_at_ms, fired_at_ms,
+                        delivery_mode, result, detail
+                 from automation_runs
+                 where run_id = ?1
+                 limit 1",
+                [run_id],
+                |row| {
+                    Ok(AutomationRunRecord {
+                        run_id: row.get(0)?,
+                        automation_id: row.get(1)?,
+                        target_thread_id: row.get(2)?,
+                        scheduled_at_ms: row.get(3)?,
+                        fired_at_ms: row.get(4)?,
+                        delivery_mode: row.get(5)?,
+                        result: row.get(6)?,
+                        detail: row.get(7)?,
+                    })
+                },
+            )
+            .map_err(Into::into)
     }
 
     pub fn service_settings(&self) -> Result<ServiceSettingsRecord> {
@@ -298,6 +390,28 @@ create index if not exists mobile_event_log_created_at_ms
             .map_err(Into::into)
     }
 
+    pub fn latest_mobile_event_cursor(&self) -> Result<MobileEventCursor> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        connection
+            .query_row(
+                "select event_id, created_at_ms
+                 from mobile_event_log
+                 order by created_at_ms desc, event_id desc
+                 limit 1",
+                [],
+                |row| {
+                    Ok(MobileEventCursor {
+                        event_id: row.get(0)?,
+                        created_at_ms: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map(|row| row.unwrap_or_default())
+            .map_err(Into::into)
+    }
+
     pub fn latest_sync_manifest_snapshot(&self) -> Result<Option<SyncManifestSnapshotRecord>> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -328,5 +442,58 @@ fn parse_mobile_event_kind(value: &str) -> MobileEventKind {
         "prompt.delivered" => MobileEventKind::PromptDelivered,
         "lifecycle.changed" => MobileEventKind::LifecycleChanged,
         _ => MobileEventKind::SessionChanged,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventStore, MobileEventCursor};
+    use crate::mobile_events::MobileEventKind;
+    use rusqlite::{Connection, params};
+    use tempfile::tempdir;
+
+    #[test]
+    fn mobile_events_after_replays_same_millisecond_records_by_event_id() {
+        let tempdir = tempdir().expect("tempdir");
+        let store = EventStore::new(tempdir.path().join("events.sqlite"));
+        store.initialize().expect("initialize");
+        let connection = Connection::open(store.path()).expect("open events");
+        for event_id in ["event-a", "event-b", "event-c"] {
+            connection
+                .execute(
+                    "insert into mobile_event_log (
+                        event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+                    ) values (?1, 'session.changed', null, null, null, ?2)",
+                    params![event_id, 42_i64],
+                )
+                .expect("insert event");
+        }
+        connection
+            .execute(
+                "insert into mobile_event_log (
+                    event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+                ) values ('event-d', 'prompt.queued', null, 'prompt-id', null, 43)",
+                [],
+            )
+            .expect("insert later event");
+
+        let records = store
+            .mobile_events_after(
+                &MobileEventCursor {
+                    created_at_ms: 42,
+                    event_id: "event-a".to_owned(),
+                },
+                10,
+            )
+            .expect("events after cursor");
+
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["event-b", "event-c", "event-d"]
+        );
+        assert_eq!(records[2].event_type, MobileEventKind::PromptQueued);
     }
 }

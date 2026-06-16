@@ -1,4 +1,5 @@
 import SwiftUI
+import LooperCompanionCore
 
 struct SettingsScreen: View {
     let model: CompanionAppModel
@@ -6,11 +7,14 @@ struct SettingsScreen: View {
     var initialSearchTarget: SettingsSearchTarget? = nil
     var embedsInNavigationStack = true
 
+    @Environment(\.openURL) private var openURL
     @State private var connectionCodeErrorMessage: String?
     @State private var draftConnectionCode = ""
     @AppStorage(QuickActionSettings.storageKey) private var storedQuickActions =
         QuickActionSettings.defaultStorageValue
     @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
+    @AppStorage(CompanionConfiguration.connectionRoutePreferenceKey) private var connectionRoutePreferenceRawValue =
+        CompanionConnectionRoutePreference.defaultPreference.rawValue
     @AppStorage(OnboardingState.completionStorageKey) private var hasCompletedOnboarding = false
     @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = false
     @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
@@ -39,6 +43,21 @@ struct SettingsScreen: View {
 
     private var release: CompanionRelease {
         CompanionConfiguration.currentRelease()
+    }
+
+    private var connectionRoutePreference: Binding<CompanionConnectionRoutePreference> {
+        Binding(
+            get: {
+                CompanionConnectionRoutePreference(rawValue: connectionRoutePreferenceRawValue) ??
+                    .defaultPreference
+            },
+            set: { nextPreference in
+                connectionRoutePreferenceRawValue = nextPreference.rawValue
+                Task {
+                    await model.setConnectionRoutePreference(nextPreference)
+                }
+            }
+        )
     }
 
     private var isPromptDirty: Bool {
@@ -109,6 +128,14 @@ struct SettingsScreen: View {
             LabeledContent("Status", value: model.connectionState.label)
             LabeledContent("Linked Mac", value: model.snapshot?.host.name ?? "Not Connected")
 
+            Picker("Route", selection: connectionRoutePreference) {
+                ForEach(CompanionConnectionRoutePreference.allCases) { preference in
+                    Text(preference.settingsLabel)
+                        .tag(preference)
+                }
+            }
+            .pickerStyle(.segmented)
+
             Toggle(
                 isOn: Binding(
                     get: { localNetworkAccess.status.isToggleOn },
@@ -134,6 +161,8 @@ struct SettingsScreen: View {
                     localNetworkAccess.openAppSettings()
                 }
             }
+
+            tailscaleRows
 
             TextField("Enter device code", text: $draftConnectionCode)
                 .textInputAutocapitalization(.never)
@@ -181,6 +210,34 @@ struct SettingsScreen: View {
             OrbScannerScreen { orbID in
                 try await connectUsingOrbID(orbID)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var tailscaleRows: some View {
+        let tailscale = model.serverHealth?.tailscale
+
+        LabeledContent("Tailscale", value: tailscale?.statusLabel ?? "Unknown")
+
+        if let detailLabel = tailscale?.detailLabel, !detailLabel.isEmpty {
+            Text(detailLabel)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+
+        if let magicDNSSuffix = tailscale?.magicDNSSuffix {
+            LabeledContent("Tailnet", value: magicDNSSuffix)
+        }
+
+        if let baseURL = tailscale?.baseURL {
+            LabeledContent("Tailnet URL", value: baseURL)
+        }
+
+        Button {
+            openTailscaleDownload()
+        } label: {
+            Label("Open Tailscale", systemImage: "arrow.up.forward.app")
         }
     }
 
@@ -349,6 +406,14 @@ struct SettingsScreen: View {
         }
     }
 
+    private func openTailscaleDownload() {
+        guard let appStoreURL = URL(string: TailscaleAppLink.appStoreURLString) else {
+            return
+        }
+
+        openURL(appStoreURL)
+    }
+
     private func connectUsingDeviceCode() {
         guard !isConnecting else {
             return
@@ -429,6 +494,24 @@ struct SettingsScreen: View {
 private enum SettingsInput: Hashable {
     case connectionCode
     case continuePrompt
+}
+
+private enum TailscaleAppLink {
+    // Tailscale reserves its app scheme for Tailnet Lock signing links, not generic launch.
+    static let appStoreURLString = "https://apps.apple.com/app/tailscale/id1470499037"
+}
+
+private extension CompanionConnectionRoutePreference {
+    var settingsLabel: String {
+        switch self {
+        case .remote:
+            return "Remote"
+        case .tailscale:
+            return "Tailscale"
+        case .lan:
+            return "LAN"
+        }
+    }
 }
 
 struct SettingsRoutesScreen: View {

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import LooperCompanionCore
 import Security
 
 struct CompanionConnection: Sendable {
@@ -22,6 +23,7 @@ enum CompanionMobileSessionStoragePolicy {
 
 enum CompanionConfiguration {
     static let apiBaseURLOverrideKey = "looper.apiBaseURLOverride"
+    static let connectionRoutePreferenceKey = "looper.connectionRoutePreference"
     private static let apiBearerTokenService = "dev.looper.companion"
     private static let apiBearerTokenAccount = "mobile-api-bearer-token"
     private static let supportedConnectionCodeSchemes = ["looper"]
@@ -71,14 +73,23 @@ enum CompanionConfiguration {
         let storedBearerToken = loadBearerToken()
         if !storedURLs.isEmpty {
             if storedBearerToken == nil, bundledConnection.bearerToken != nil {
-                return bundledConnection
+                return CompanionConnection(
+                    baseURLs: preferredBaseURLs(bundledConnection.baseURLs),
+                    bearerToken: bundledConnection.bearerToken
+                )
             }
 
-            return CompanionConnection(baseURLs: storedURLs, bearerToken: storedBearerToken)
+            return CompanionConnection(
+                baseURLs: preferredBaseURLs(storedURLs),
+                bearerToken: storedBearerToken
+            )
         }
 
         if !bundledConnection.baseURLs.isEmpty {
-            return bundledConnection
+            return CompanionConnection(
+                baseURLs: preferredBaseURLs(bundledConnection.baseURLs),
+                bearerToken: bundledConnection.bearerToken
+            )
         }
 
         return CompanionConnection(baseURLs: [], bearerToken: nil)
@@ -139,7 +150,11 @@ enum CompanionConfiguration {
         ) {
             CompanionMobileSessionStore.clear()
         }
-        storeBaseURLString(connection.storageValue)
+        let preferredConnection = CompanionConnection(
+            baseURLs: preferredBaseURLs(connection.baseURLs),
+            bearerToken: connection.bearerToken
+        )
+        storeBaseURLString(preferredConnection.storageValue)
         storeBearerToken(connection.bearerToken)
     }
 
@@ -158,6 +173,32 @@ enum CompanionConfiguration {
 
     static func normalizedBaseURLsForUserInput(_ value: String) -> [URL] {
         normalizedBaseURLs(from: value)
+    }
+
+    static func connectionRoutePreference(
+        userDefaults: UserDefaults = .standard
+    ) -> CompanionConnectionRoutePreference {
+        guard let rawValue = userDefaults.string(forKey: connectionRoutePreferenceKey),
+              let preference = CompanionConnectionRoutePreference(rawValue: rawValue)
+        else {
+            return .defaultPreference
+        }
+
+        return preference
+    }
+
+    static func storeConnectionRoutePreference(_ preference: CompanionConnectionRoutePreference) {
+        UserDefaults.standard.set(preference.rawValue, forKey: connectionRoutePreferenceKey)
+    }
+
+    static func preferredBaseURLs(
+        _ baseURLs: [URL],
+        preference: CompanionConnectionRoutePreference? = nil
+    ) -> [URL] {
+        CompanionBaseURLSelection.preferredBaseURLs(
+            baseURLs,
+            preference: preference ?? connectionRoutePreference()
+        )
     }
 
     static func storeBaseURLString(_ value: String) {
@@ -586,6 +627,18 @@ struct UnconfiguredCompanionService: CompanionService {
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot { throw error }
     func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot { throw error }
+    func saveSiriDefaultSession(
+        id _: String?,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        throw error
+    }
+    func saveSiriCurrentSession(
+        id _: String?,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        throw error
+    }
     func registerPushDevice(
         _: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

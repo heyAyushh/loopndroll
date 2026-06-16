@@ -4,6 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+use crate::acp_client_host::{
+    AcpClientHostInstallResponse, AcpClientHostProbeResponse, AcpClientHostResponse,
+    AcpClientHostsResponse, DEVIN_ACP_CLIENT_HOST_ID, acp_client_host_install,
+    acp_client_host_probe, devin_acp_client_host,
+};
 use crate::acp_targets::AcpTarget;
 use crate::assistant::{
     AssistantAdapterCapability, AssistantKind, adapter_capabilities, static_adapter_capabilities,
@@ -17,7 +22,7 @@ use crate::claude_code::{
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    inspect_control_plane, read_state,
+    inspect_control_plane, read_state, read_state_with_thread_limit,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
@@ -68,6 +73,21 @@ const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
 const ZED_ACP_CONNECTION_ID: &str = "zed-acp";
 const ZED_ACP_CONNECTION_LABEL: &str = "Zed ACP";
 const ZED_ACP_CONNECTION_ACTION_HINT: &str = "Zed External Agents are configured in ~/.zed/settings.json agent_servers; Looper reads settings only.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcpClientHostProvider {
+    Devin,
+}
+
+impl AcpClientHostProvider {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Devin => DEVIN_ACP_CLIENT_HOST_ID,
+        }
+    }
+}
+
+const ACP_CLIENT_HOST_PROVIDERS: &[AcpClientHostProvider] = &[AcpClientHostProvider::Devin];
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -295,10 +315,13 @@ impl ControlPlane {
 
     pub fn emit_mobile_event(&self, input: MobileEventInput) {
         let event = build_mobile_event(input);
-        if let Err(error) = self.store.record_mobile_event(&event) {
-            eprintln!("mobile event persistence failed: {error}");
+        match self.store.record_mobile_event(&event) {
+            Ok(record) => self.mobile_events.publish_persisted(record),
+            Err(error) => {
+                eprintln!("mobile event persistence failed: {error}");
+                self.mobile_events.publish_ephemeral(event);
+            }
         }
-        self.mobile_events.publish(event);
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
@@ -615,6 +638,67 @@ impl ControlPlane {
         targets
     }
 
+    pub fn acp_client_hosts_response(&self) -> AcpClientHostsResponse {
+        AcpClientHostsResponse {
+            hosts: ACP_CLIENT_HOST_PROVIDERS
+                .iter()
+                .map(|provider| self.acp_client_host_status(*provider))
+                .collect(),
+        }
+    }
+
+    pub fn acp_client_host_response(&self, client_id: &str) -> Option<AcpClientHostResponse> {
+        let provider = self.acp_client_host_provider(client_id)?;
+        Some(AcpClientHostResponse {
+            host: self.acp_client_host_status(provider),
+        })
+    }
+
+    pub fn acp_client_host_probe_response(
+        &self,
+        client_id: &str,
+        agent_id: Option<&str>,
+    ) -> Option<AcpClientHostProbeResponse> {
+        let provider = self.acp_client_host_provider(client_id)?;
+        Some(match provider {
+            AcpClientHostProvider::Devin => {
+                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let probe =
+                    build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id);
+                let runtime = self.devin_acp_runtime.status();
+                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                AcpClientHostProbeResponse {
+                    host: devin_acp_client_host(&status, &sessions, &runtime),
+                    probe: acp_client_host_probe(probe),
+                }
+            }
+        })
+    }
+
+    pub fn install_acp_client_host_response(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<AcpClientHostInstallResponse>> {
+        let Some(provider) = self.acp_client_host_provider(client_id) else {
+            return Ok(None);
+        };
+        Ok(Some(match provider {
+            AcpClientHostProvider::Devin => {
+                let install = install_looper_acp_agent_for_home(
+                    &self.config.home_path,
+                    &crate::runtime::default_server_base_url(),
+                )?;
+                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let runtime = self.devin_acp_runtime.status();
+                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                AcpClientHostInstallResponse {
+                    host: devin_acp_client_host(&status, &sessions, &runtime),
+                    install: acp_client_host_install(provider.id(), install),
+                }
+            }
+        }))
+    }
+
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
         DevinAcpBridgeResponse {
             bridge: inspect_devin_desktop_for_home(&self.config.home_path).acp_bridge,
@@ -645,6 +729,27 @@ impl ControlPlane {
             bridge: status.acp_bridge,
             runtime: self.devin_acp_runtime.status(),
         })
+    }
+
+    fn acp_client_host_provider(&self, client_id: &str) -> Option<AcpClientHostProvider> {
+        ACP_CLIENT_HOST_PROVIDERS
+            .iter()
+            .copied()
+            .find(|provider| provider.id() == client_id)
+    }
+
+    fn acp_client_host_status(
+        &self,
+        provider: AcpClientHostProvider,
+    ) -> crate::acp_client_host::AcpClientHost {
+        match provider {
+            AcpClientHostProvider::Devin => {
+                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                let runtime = self.devin_acp_runtime.status();
+                devin_acp_client_host(&status, &sessions, &runtime)
+            }
+        }
     }
 
     pub fn compactions(&self) -> Result<Vec<CompactionEvent>> {
@@ -909,7 +1014,7 @@ impl ControlPlane {
         } else {
             self.status()
         };
-        let state = read_state(&self.config.codex_home)?;
+        let state = read_state_with_thread_limit(&self.config.codex_home, thread_limit)?;
         let all_threads = state.threads.clone();
         let snapshot_codex_threads = codex_threads_for_snapshot(&all_threads, thread_limit);
         let capabilities = self.capabilities_by_threads(&state, &snapshot_codex_threads);
@@ -990,7 +1095,7 @@ impl ControlPlane {
                 compaction_file_scan_limit,
             )?
         };
-        let mut known_thread_ids = known_thread_ids(&all_threads);
+        let mut known_thread_ids = state.known_thread_ids.clone();
         known_thread_ids.extend(
             grok_sessions
                 .iter()
@@ -1021,10 +1126,10 @@ impl ControlPlane {
             .into_iter()
             .map(|automation| automation.to_summary(&known_thread_ids))
             .collect::<Vec<_>>();
-        let codex_active_thread_count =
-            all_threads.iter().filter(|thread| !thread.archived).count();
-        let codex_archived_thread_count =
-            all_threads.len().saturating_sub(codex_active_thread_count);
+        let codex_active_thread_count = state.active_thread_count;
+        let codex_archived_thread_count = state
+            .total_thread_count
+            .saturating_sub(codex_active_thread_count);
         let grok_active_thread_count = grok_build.active_session_count;
         let claude_active_thread_count = claude_sessions
             .iter()
@@ -1069,7 +1174,7 @@ impl ControlPlane {
 
         Ok(DesktopSnapshot {
             control_plane: control_plane_status,
-            thread_count: all_threads.len()
+            thread_count: state.total_thread_count
                 + grok_build.session_count
                 + claude_sessions.len()
                 + devin_sessions.len()
@@ -1100,6 +1205,8 @@ impl ControlPlane {
         target_thread_id: Option<&str>,
         scheduled_at_ms: i64,
         fired_at_ms: i64,
+        delivery_mode: &str,
+        result: &str,
         detail: Option<&str>,
     ) -> Result<Option<AutomationRunRecord>> {
         self.store.record_automation_run(
@@ -1107,8 +1214,21 @@ impl ControlPlane {
             target_thread_id,
             scheduled_at_ms,
             fired_at_ms,
+            delivery_mode,
+            result,
             detail,
         )
+    }
+
+    pub fn update_automation_fire_result(
+        &self,
+        run_id: &str,
+        delivery_mode: &str,
+        result: &str,
+        detail: Option<&str>,
+    ) -> Result<AutomationRunRecord> {
+        self.store
+            .update_automation_run_result(run_id, delivery_mode, result, detail)
     }
 
     fn capabilities_by_thread(

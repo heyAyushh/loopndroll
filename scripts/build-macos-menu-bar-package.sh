@@ -86,12 +86,13 @@ extract_macos_profile_entitlements() {
 }
 
 APP_NAME="looper"
-BUNDLE_ID="dev.looper.app.ios"
-LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
+BUNDLE_ID="dev.looper.app.menubar"
+LEGACY_BUNDLE_IDS=("dev.looper.app.ios")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
 MACOS_APPLICATION_IDENTIFIER="${CODE_SIGN_TEAM_ID}.${BUNDLE_ID}"
 CODE_SIGN_IDENTITY="$(resolve_code_sign_identity)"
+HELPER_CODE_SIGN_IDENTITY="${LOOPER_MACOS_HELPER_CODE_SIGN_IDENTITY:--}"
 MACOS_PROVISIONING_PROFILE_DIR="${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles"
 ENABLE_MACOS_ENTITLEMENTS="${LOOPER_MACOS_ENABLE_ENTITLEMENTS:-auto}"
 CONTROL_PLANE_CRATE="crates/agent-control-plane/Cargo.toml"
@@ -195,6 +196,7 @@ plutil -insert CFBundlePackageType -string APPL "$plist_path"
 plutil -insert CFBundleShortVersionString -string "$version" "$plist_path"
 plutil -insert CFBundleVersion -string "$(git rev-list --count HEAD)" "$plist_path"
 plutil -insert LSMinimumSystemVersion -string "$MACOS_MINIMUM_SYSTEM_VERSION" "$plist_path"
+plutil -insert LSUIElement -bool YES "$plist_path"
 plutil -insert NSHighResolutionCapable -bool YES "$plist_path"
 plutil -insert NSUserActivityTypes -array "$plist_path"
 plutil -insert NSUserActivityTypes.0 -string "$CONTINUATION_ACTIVITY_TYPE" "$plist_path"
@@ -220,6 +222,11 @@ codesign_with_optional_entitlements() {
   else
     codesign --force --sign "$CODE_SIGN_IDENTITY" "$target"
   fi
+}
+
+codesign_helper_executable() {
+  local target="$1"
+  codesign --force --sign "$HELPER_CODE_SIGN_IDENTITY" "$target"
 }
 
 prune_install_backups() {
@@ -256,9 +263,9 @@ launch_installed_app() {
   fail "installed app did not launch: $INSTALL_PATH"
 }
 
-codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${SERVER_EXECUTABLE}"
-codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${LOOPER_EXECUTABLE}"
-codesign --force --sign "$CODE_SIGN_IDENTITY" "${macos_dir}/${CLI_EXECUTABLE}"
+codesign_helper_executable "${macos_dir}/${SERVER_EXECUTABLE}"
+codesign_helper_executable "${macos_dir}/${LOOPER_EXECUTABLE}"
+codesign_helper_executable "${macos_dir}/${CLI_EXECUTABLE}"
 codesign_with_optional_entitlements "${macos_dir}/${MENU_BAR_EXECUTABLE}"
 codesign_with_optional_entitlements "$app_bundle"
 

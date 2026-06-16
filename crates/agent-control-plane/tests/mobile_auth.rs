@@ -6,12 +6,15 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
+use rusqlite::Connection;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 const FIXED_SIGNING_KEY_BYTES: [u8; 32] = [7; 32];
 
 struct MobileAuthFixture {
     _temp_dir: TempDir,
+    store_path: PathBuf,
     service: MobileAuthService,
 }
 
@@ -23,11 +26,22 @@ struct TestDevicePasskey {
 impl MobileAuthFixture {
     fn new() -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let service = MobileAuthService::new(temp_dir.path().join("control-plane.sqlite"));
+        let store_path = temp_dir.path().join("control-plane.sqlite");
+        let service = MobileAuthService::new(store_path.clone());
         Self {
             _temp_dir: temp_dir,
+            store_path,
             service,
         }
+    }
+
+    fn row_count(&self, table_name: &str) -> i64 {
+        let connection = Connection::open(&self.store_path).expect("open store");
+        connection
+            .query_row(&format!("select count(*) from {table_name}"), [], |row| {
+                row.get(0)
+            })
+            .expect("row count")
     }
 }
 
@@ -205,6 +219,62 @@ fn mobile_passkey_registration_and_authentication_issue_sessions() {
             .validate_session_header(Some(&authentication_session), &pairing_token.id)
             .expect("authentication session")
     );
+}
+
+#[test]
+fn mobile_passkey_challenges_are_single_use_without_partial_rows() {
+    let fixture = MobileAuthFixture::new();
+    let pairing_token = fixture
+        .service
+        .issue_pairing_token()
+        .expect("issue pairing token");
+    let passkey = TestDevicePasskey::new();
+    let registration_challenge = fixture
+        .service
+        .issue_registration_challenge(&pairing_token.id)
+        .expect("registration challenge");
+    let registration_input = CompleteMobilePasskeyRegistrationInput {
+        challenge_id: registration_challenge.challenge_id,
+        public_key_x963: passkey.public_key_x963.clone(),
+        signature: passkey.sign(&registration_challenge.message),
+        label: Some("Race iPhone".to_owned()),
+    };
+
+    let registration = fixture
+        .service
+        .complete_registration(registration_input.clone(), &pairing_token.id)
+        .expect("complete registration once");
+    assert!(matches!(
+        fixture
+            .service
+            .complete_registration(registration_input, &pairing_token.id)
+            .expect_err("registration challenge is one-time"),
+        MobileAuthError::InvalidChallenge
+    ));
+    assert_eq!(fixture.row_count("mobile_passkey_credentials"), 1);
+    assert_eq!(fixture.row_count("mobile_passkey_sessions"), 1);
+
+    let authentication_challenge = fixture
+        .service
+        .issue_authentication_challenge(&registration.credential_id, &pairing_token.id)
+        .expect("authentication challenge");
+    let authentication_input = CompleteMobilePasskeyAuthenticationInput {
+        credential_id: registration.credential_id,
+        challenge_id: authentication_challenge.challenge_id,
+        signature: passkey.sign(&authentication_challenge.message),
+    };
+    fixture
+        .service
+        .complete_authentication(authentication_input.clone(), &pairing_token.id)
+        .expect("complete authentication once");
+    assert!(matches!(
+        fixture
+            .service
+            .complete_authentication(authentication_input, &pairing_token.id)
+            .expect_err("authentication challenge is one-time"),
+        MobileAuthError::InvalidChallenge
+    ));
+    assert_eq!(fixture.row_count("mobile_passkey_sessions"), 2);
 }
 
 #[test]

@@ -6,6 +6,7 @@ import UserNotifications
 struct LooperApp: App {
     @UIApplicationDelegateAdaptor(LooperAppDelegate.self) private var appDelegate
     @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
     @State private var authenticator: CompanionAppAuthenticator
     @State private var model: CompanionAppModel
 
@@ -36,7 +37,14 @@ struct LooperApp: App {
                     handleContinuationURL(url)
                 }
                 .onAppear {
-                    drainPendingContinuationActivities()
+                    drainPendingOpenRequests()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else {
+                        return
+                    }
+
+                    drainPendingOpenRequests()
                 }
         }
     }
@@ -57,11 +65,12 @@ struct LooperApp: App {
         }
     }
 
-    private func drainPendingContinuationActivities() {
+    private func drainPendingOpenRequests() {
         Task { @MainActor in
             for activity in LooperContinuationInbox.shared.drainActivities() {
                 await model.continueFromMacActivity(activity)
             }
+            await model.continueFromPendingSiriOpenSessionRequest()
         }
     }
 }

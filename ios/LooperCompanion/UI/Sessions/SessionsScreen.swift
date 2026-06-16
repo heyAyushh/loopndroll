@@ -183,7 +183,10 @@ struct SessionsScreen: View {
         return Section {
             ForEach(visibleSessions) { session in
                 NavigationLink(value: session) {
-                    SessionRow(session: session)
+                    SessionRow(
+                        session: session,
+                        assistantSurface: model.selectedAssistantSurface
+                    )
                 }
                 .companionCardRowSurface()
             }

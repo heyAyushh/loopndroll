@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde_json::Value;
@@ -11,10 +11,31 @@ const ASSISTANT_ROLE: &str = "assistant";
 const OUTPUT_TEXT_CONTENT_TYPE: &str = "output_text";
 const TEXT_CONTENT_TYPE: &str = "text";
 const ELLIPSIS_CHARS: usize = 3;
+const BYTES_PER_KIB: u64 = 1024;
+const TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES: u64 = 64 * BYTES_PER_KIB;
 
 pub fn latest_assistant_message_for_path(transcript_path: &Path) -> Option<String> {
-    let file = File::open(transcript_path).ok()?;
-    let reader = BufReader::new(file);
+    latest_assistant_message_from_tail(transcript_path).or_else(|| {
+        let file = File::open(transcript_path).ok()?;
+        latest_assistant_message_from_reader(BufReader::new(file))
+    })
+}
+
+fn latest_assistant_message_from_tail(transcript_path: &Path) -> Option<String> {
+    let mut file = File::open(transcript_path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+    if file_len <= TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES {
+        return latest_assistant_message_from_reader(BufReader::new(file));
+    }
+    let start = file_len.saturating_sub(TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buffer = Vec::with_capacity(TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES as usize);
+    file.read_to_end(&mut buffer).ok()?;
+    let tail = String::from_utf8_lossy(&buffer);
+    latest_assistant_message_from_reversed_lines(tail.lines().rev())
+}
+
+fn latest_assistant_message_from_reader(reader: impl BufRead) -> Option<String> {
     let mut latest_message = None;
     for line in reader.lines().map_while(Result::ok) {
         let Some(message) = assistant_message_from_transcript_line(&line) else {
@@ -23,6 +44,18 @@ pub fn latest_assistant_message_for_path(transcript_path: &Path) -> Option<Strin
         latest_message = Some(truncate_text(&message, ASSISTANT_MESSAGE_MAX_CHARS));
     }
     latest_message
+}
+
+fn latest_assistant_message_from_reversed_lines<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> Option<String> {
+    for line in lines {
+        let Some(message) = assistant_message_from_transcript_line(line) else {
+            continue;
+        };
+        return Some(truncate_text(&message, ASSISTANT_MESSAGE_MAX_CHARS));
+    }
+    None
 }
 
 fn assistant_message_from_transcript_line(line: &str) -> Option<String> {
@@ -78,4 +111,62 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
             .collect::<String>()
             .trim_end()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest_assistant_message_for_path;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn latest_assistant_message_reads_from_tail() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("tail.jsonl");
+        let filler = "x".repeat((super::TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES + 1) as usize);
+        let old_message = assistant_record("old");
+        let new_message = assistant_record("new tail message");
+        fs::write(
+            &transcript_path,
+            format!("{old_message}\n{filler}\n{new_message}"),
+        )
+        .expect("write transcript");
+
+        assert_eq!(
+            latest_assistant_message_for_path(&transcript_path).as_deref(),
+            Some("new tail message")
+        );
+    }
+
+    #[test]
+    fn latest_assistant_message_falls_back_to_full_scan_when_tail_has_no_match() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("fallback.jsonl");
+        let old_message = assistant_record("old full scan message");
+        let filler = "x".repeat((super::TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES + 1) as usize);
+        fs::write(&transcript_path, format!("{old_message}\n{filler}")).expect("write transcript");
+
+        assert_eq!(
+            latest_assistant_message_for_path(&transcript_path).as_deref(),
+            Some("old full scan message")
+        );
+    }
+
+    fn assistant_record(text: &str) -> String {
+        json!({
+            "type": super::RESPONSE_ITEM_RECORD_TYPE,
+            "payload": {
+                "type": super::MESSAGE_PAYLOAD_TYPE,
+                "role": super::ASSISTANT_ROLE,
+                "content": [
+                    {
+                        "type": super::OUTPUT_TEXT_CONTENT_TYPE,
+                        "text": text
+                    }
+                ]
+            }
+        })
+        .to_string()
+    }
 }

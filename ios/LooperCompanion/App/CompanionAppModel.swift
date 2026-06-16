@@ -1,3 +1,4 @@
+import AppIntents
 import Foundation
 import LooperCompanionCore
 import Observation
@@ -13,6 +14,11 @@ private enum CachedSnapshotRestoreReason {
     static let bundledConnectionChange = "bundled-connection-change"
     static let handoffConnectionChange = "handoff-connection-change"
     static let loadFailure = "load-failure"
+}
+
+private enum SiriDonationEvent {
+    static let openSession = "open-session"
+    static let setDefaultSession = "set-default-session"
 }
 
 @MainActor
@@ -55,6 +61,7 @@ final class CompanionAppModel {
     @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
     @ObservationIgnored private var isSavingAssistantSurface = false
     @ObservationIgnored private var connectionRevision = 0
+    @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
 
     init(
         environment: CompanionEnvironment,
@@ -354,6 +361,24 @@ final class CompanionAppModel {
     func saveConnection(_ connection: CompanionConnection) async {
         CompanionConfiguration.storeConnection(connection)
         await reloadConnection()
+    }
+
+    func setConnectionRoutePreference(_ preference: CompanionConnectionRoutePreference) async {
+        let currentConnection = CompanionConfiguration.resolvedConnection()
+        let currentPreference = CompanionConfiguration.connectionRoutePreference()
+        guard preference != currentPreference else {
+            return
+        }
+
+        CompanionConfiguration.storeConnectionRoutePreference(preference)
+        CompanionConfiguration.storeConnection(
+            currentConnection,
+            mobileSessionPolicy: .preserveIfBearerTokenUnchanged
+        )
+        await reloadConnection()
+        CompanionDiagnostics.record(
+            "connection:route-preference preference=\(preference.rawValue) primary=\(configuredBaseURL)"
+        )
     }
 
     func saveConnectionCode(_ connectionCode: String) async throws {
@@ -661,7 +686,8 @@ final class CompanionAppModel {
         let nextBaseURLs = CompanionBaseURLSelection.mergedPreferredBaseURLs(
             reached: resolvedHealth.reachedBaseURL,
             advertised: discoveredBaseURLs,
-            existing: currentConnection.baseURLs
+            existing: currentConnection.baseURLs,
+            preference: CompanionConfiguration.connectionRoutePreference()
         )
         guard nextBaseURLs.map(\.absoluteString) != currentConnection.baseURLs.map(\.absoluteString) else {
             return
@@ -725,6 +751,30 @@ final class CompanionAppModel {
         await continueFromMacSession(id: sessionID)
     }
 
+    func continueFromPendingSiriOpenSessionRequest() async {
+        guard let request = LooperSiriOpenSessionRequestStore.drain() else {
+            return
+        }
+
+        let sessionID = request.sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sessionID.isEmpty else {
+            CompanionDiagnostics.record("siri-open:pending-invalid-session")
+            return
+        }
+
+        CompanionDiagnostics.record("siri-open:pending-session id=\(sessionID)")
+        if snapshot == nil || snapshot?.session(withID: sessionID) == nil {
+            await loadSnapshot()
+        }
+
+        let sessionSurface = requestedAssistantSurfaceIfAvailable(
+            request.assistantSurface,
+            sessionID: sessionID
+        ) ?? selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+        pendingOpenSessionID = sessionID
+        await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
+    }
+
     private func connectFromMacURL(_ url: URL) async -> Bool {
         guard let connectionCode = LooperConnectionDeepLink.connectionCode(from: url) else {
             return false
@@ -750,6 +800,26 @@ final class CompanionAppModel {
         await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
     }
 
+    private func requestedAssistantSurfaceIfAvailable(
+        _ requestedSurface: CompanionAssistantSurface?,
+        sessionID: String
+    ) -> CompanionAssistantSurface? {
+        guard let requestedSurface,
+              snapshot?.sessions(for: requestedSurface).contains(where: { session in
+                  session.id == sessionID && !session.isArchived
+              }) == true
+        else {
+            return nil
+        }
+
+        selectedAssistantSurface = requestedSurface
+        applyVisibleAssistantSurface(requestedSurface)
+        CompanionDiagnostics.record(
+            "siri-open:surface-match sessionID=\(sessionID) surface=\(requestedSurface.rawValue)"
+        )
+        return requestedSurface
+    }
+
     private func adoptHandoffBaseURLIfAvailable(from activity: NSUserActivity) {
         guard let handoffBaseURL = LooperContinuationActivity.baseURL(from: activity) else {
             return
@@ -771,7 +841,8 @@ final class CompanionAppModel {
         let nextBaseURLs = CompanionBaseURLSelection.mergedPreferredBaseURLs(
             reached: handoffBaseURL,
             advertised: [],
-            existing: currentConnection.baseURLs
+            existing: currentConnection.baseURLs,
+            preference: CompanionConfiguration.connectionRoutePreference()
         )
         guard nextBaseURLs.map(\.absoluteString) != currentConnection.baseURLs.map(\.absoluteString) else {
             CompanionDiagnostics.record("handoff:base-url-unchanged baseURL=\(handoffBaseURL.absoluteString)")
@@ -953,6 +1024,77 @@ final class CompanionAppModel {
         if didMutate, detailBySessionID[sessionID] != nil {
             await refreshSessionDetail(id: sessionID)
         }
+    }
+
+    func setSiriDefaultSession(_ session: SessionSummary) async {
+        let sessionID = session.id
+        let targetSurface = assistantSurface(for: sessionID)
+        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
+            try await service.saveSiriDefaultSession(
+                id: sessionID,
+                assistantSurface: targetSurface
+            )
+        }
+
+        if didMutate {
+            Haptics.success()
+            await donateSetDefaultSiriSession(session)
+        }
+    }
+
+    func donateOpenedSiriSession(_ session: SessionSummary) async {
+        let sessionID = session.id
+        guard !donatedOpenedSiriSessionIDs.contains(sessionID) else {
+            return
+        }
+
+        let intent = OpenLooperSessionIntent()
+        intent.target = siriSessionEntity(for: session)
+        let didDonate = await donateSiriIntent(
+            intent,
+            event: SiriDonationEvent.openSession,
+            sessionID: sessionID
+        )
+
+        if didDonate {
+            donatedOpenedSiriSessionIDs.insert(sessionID)
+        }
+    }
+
+    func markCurrentSiriSession(_ session: SessionSummary) async {
+        let sessionID = session.id
+        let targetSurface = assistantSurface(for: sessionID)
+        guard snapshot?.globalSettings.siriCurrentSessionId != sessionID ||
+            snapshot?.globalSettings.siriCurrentAssistantSurface != targetSurface
+        else {
+            return
+        }
+
+        let mutationRevision = connectionRevision
+        do {
+            let nextSnapshot = try await service.saveSiriCurrentSession(
+                id: sessionID,
+                assistantSurface: targetSurface
+            )
+            guard mutationRevision == connectionRevision else {
+                CompanionDiagnostics.record("siri-current:stale-skip sessionID=\(sessionID)")
+                return
+            }
+
+            await applySnapshot(nextSnapshot)
+        } catch {
+            guard !isCancellationError(error) else {
+                return
+            }
+
+            CompanionDiagnostics.record(
+                "siri-current:update-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
+        assistantSurface(for: sessionID)
     }
 
     func performQuickAction(
@@ -1244,12 +1386,53 @@ final class CompanionAppModel {
         return surface
     }
 
+    private func assistantSurface(for sessionID: String) -> CompanionAssistantSurface {
+        snapshot?.assistantSurface(containingSessionID: sessionID) ?? selectedAssistantSurface
+    }
+
+    private func siriSessionEntity(for session: SessionSummary) -> LooperSessionEntity {
+        LooperSessionEntity(
+            session: session,
+            assistantSurface: siriAssistantSurface(for: session.id)
+        )
+    }
+
+    private func donateSetDefaultSiriSession(_ session: SessionSummary) async {
+        let intent = SetDefaultLooperSessionIntent()
+        intent.session = siriSessionEntity(for: session)
+        _ = await donateSiriIntent(
+            intent,
+            event: SiriDonationEvent.setDefaultSession,
+            sessionID: session.id
+        )
+    }
+
+    private func donateSiriIntent(
+        _ intent: some AppIntent,
+        event: String,
+        sessionID: String
+    ) async -> Bool {
+        do {
+            try await IntentDonationManager.shared.donate(intent: intent)
+            CompanionDiagnostics.record("siri-donation:\(event) sessionID=\(sessionID)")
+            return true
+        } catch {
+            CompanionDiagnostics.record(
+                "siri-donation:\(event)-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
     private func syncSpotlightIndex(with sessions: [SessionSummary]) {
         let indexableSessions = SessionSpotlightIndexingPolicy.indexableSessions(from: sessions)
         let nextRecords = Dictionary(uniqueKeysWithValues: indexableSessions.map { session in
             (session.id, SessionSpotlightRecord(session: session))
         })
         let removedIDs = Set(spotlightRecordsBySessionID.keys).subtracting(nextRecords.keys)
+        let removedSearchableIDs = removedIDs.flatMap { sessionID in
+            spotlightRecordsBySessionID[sessionID]?.searchableIdentifiers ?? [sessionID]
+        }
         let changedSessions = indexableSessions.filter { session in
             nextRecords[session.id] != spotlightRecordsBySessionID[session.id]
         }
@@ -1268,7 +1451,7 @@ final class CompanionAppModel {
                 if shouldRebuildIndex {
                     try await spotlightIndexer.deleteAllSessions()
                 } else if !removedIDs.isEmpty {
-                    try await spotlightIndexer.deleteSessions(withIDs: Array(removedIDs))
+                    try await spotlightIndexer.deleteSessions(withIDs: removedSearchableIDs)
                 }
 
                 let sessionsToIndex = shouldRebuildIndex ? indexableSessions : changedSessions

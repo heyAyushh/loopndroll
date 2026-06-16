@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 pub const LOOPER_ACP_AGENT_ID: &str = "looper";
 pub const LOOPER_ACP_AGENT_NAME: &str = "Looper";
-pub const LOOPER_ACP_ROUTE: &str = "/acp/devin";
+pub const LOOPER_ACP_ROUTE: &str = "/acp/client-hosts/devin";
+pub const LEGACY_LOOPER_ACP_ROUTE: &str = "/acp/devin";
 
 const ACP_PROTOCOL_VERSION: u16 = 1;
 const AGENT_MESSAGE_CHUNK_UPDATE: &str = "agent_message_chunk";

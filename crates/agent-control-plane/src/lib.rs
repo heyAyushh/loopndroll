@@ -1,3 +1,4 @@
+pub mod acp_client_host;
 pub mod acp_targets;
 pub mod assistant;
 pub mod auth;

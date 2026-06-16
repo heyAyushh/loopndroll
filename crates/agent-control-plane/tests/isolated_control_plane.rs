@@ -15,7 +15,7 @@ use agent_control_plane::grpc::proto::{
 };
 use agent_control_plane::http::build_router;
 use agent_control_plane::mobile_events::{
-    MobileEventInput, MobileEventKind, build_mobile_event, mobile_event_sse_name,
+    MobileEventInput, MobileEventKind, MobileEventRecord, build_mobile_event, mobile_event_sse_name,
 };
 use agent_control_plane::mobile_session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
@@ -113,6 +113,8 @@ target_thread_id = "thread-main"
     assert_eq!(fired.len(), 1);
     assert_eq!(fired[0].automation_id, "daily-review");
     assert_eq!(fired[0].target_thread_id.as_deref(), Some("thread-main"));
+    assert_eq!(fired[0].delivery_mode, "local-prompt-dispatch");
+    assert_eq!(fired[0].result, "resumed");
 
     let duplicate = runner.tick(1_000_000).expect("dedupe tick");
     assert!(duplicate.is_empty());
@@ -123,6 +125,7 @@ target_thread_id = "thread-main"
     assert_eq!(snapshot["active_thread_count"], 2);
     assert!(snapshot["control_plane"]["codex_servers"].is_array());
     assert_eq!(snapshot["automations"][0]["id"], "daily-review");
+    assert_eq!(snapshot["automation_runs"][0]["result"], "resumed");
     assert_eq!(snapshot["goals"].as_array().expect("goals").len(), 0);
     let main_thread = snapshot["threads"]
         .as_array()
@@ -651,9 +654,51 @@ async fn unknown_hook_target_is_rejected() {
     let fixture = IsolatedCodexFixture::new();
     let router = build_router(fixture.control_plane());
 
-    let response =
-        request_with_options(&router, Method::POST, "/hooks/devin/register", &[], None).await;
+    let response = request_with_options(
+        &router,
+        Method::POST,
+        "/hooks/devin/register",
+        &[],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn hook_mutation_routes_reject_remote_callers() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_config_toml(true);
+    fixture.write_hooks_json("agent-control-plane --hook --managed-by looper");
+    let router = build_router(fixture.control_plane());
+    let remote_socket = Some("192.168.99.25:49152".parse().expect("remote socket"));
+
+    for path in [
+        "/hooks/clear",
+        "/hooks/register",
+        "/hooks/grok/register",
+        "/hooks/unregister",
+        "/hooks/unregister-live",
+        "/hooks/grok/unregister-live",
+    ] {
+        let response = request_with_options(&router, Method::POST, path, &[], remote_socket).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn acp_install_routes_reject_remote_callers() {
+    let fixture = IsolatedCodexFixture::new();
+    let router = build_router(fixture.control_plane());
+    let remote_socket = Some("192.168.99.25:49152".parse().expect("remote socket"));
+
+    for path in [
+        "/desktop/devin/acp-bridge/install",
+        "/desktop/acp-client-hosts/devin/install",
+    ] {
+        let response = request_with_options(&router, Method::POST, path, &[], remote_socket).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -966,6 +1011,67 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert!(!acp_probe_json.contains("must-not-leak"));
     assert!(!acp_probe_json.contains("@agentclientprotocol/codex-acp"));
 
+    let acp_hosts = request_json_with_options(
+        &router,
+        Method::GET,
+        "/desktop/acp-client-hosts",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(acp_hosts["hosts"][0]["id"], "devin");
+    assert_eq!(acp_hosts["hosts"][0]["label"], "Devin Desktop");
+    assert_eq!(acp_hosts["hosts"][0]["registry"]["agent_count"], 1);
+    assert_eq!(
+        acp_hosts["hosts"][0]["actions"][0]["path"],
+        "/desktop/acp-client-hosts/devin/install"
+    );
+    let acp_hosts_json = serde_json::to_string(&acp_hosts).expect("acp hosts json");
+    assert!(!acp_hosts_json.contains("must-not-leak"));
+    assert!(!acp_hosts_json.contains("@agentclientprotocol/codex-acp"));
+
+    let acp_host = request_json_with_options(
+        &router,
+        Method::GET,
+        "/desktop/acp-client-hosts/devin",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(acp_host["host"]["id"], "devin");
+    assert_eq!(acp_host["host"]["agents"][0]["id"], "codex");
+    assert_eq!(
+        acp_host["host"]["agents"][0]["control_level"],
+        "agent-configured"
+    );
+
+    let missing_host = request_with_options(
+        &router,
+        Method::GET,
+        "/desktop/acp-client-hosts/zed",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(missing_host.status(), StatusCode::NOT_FOUND);
+
+    let generic_acp_probe = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/devin/probe",
+        serde_json::json!({ "agentId": "codex" }),
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(generic_acp_probe["host"]["id"], "devin");
+    assert_eq!(generic_acp_probe["probe"]["status"], "ready");
+    assert_eq!(generic_acp_probe["probe"]["agent_id"], "codex");
+    assert_eq!(
+        generic_acp_probe["host"]["actions"][1]["path"],
+        "/desktop/acp-client-hosts/devin/probe"
+    );
+
     let acp_install = request_json_body_with_options(
         &router,
         Method::POST,
@@ -978,7 +1084,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert_eq!(acp_install["install"]["installed_agent_id"], "looper");
     assert_eq!(
         acp_install["install"]["websocket_url"],
-        "ws://127.0.0.1:8765/acp/devin"
+        "ws://127.0.0.1:8765/acp/client-hosts/devin"
     );
     let devin_after_install =
         request_json_with_options(&router, Method::GET, "/desktop/devin", &[], loopback_socket)
@@ -999,6 +1105,26 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
                     .expect("launch methods")
                     .iter()
                     .any(|method| method == "websocket"))
+    );
+
+    let generic_acp_install = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/devin/install",
+        serde_json::Value::Null,
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(generic_acp_install["host"]["id"], "devin");
+    assert_eq!(generic_acp_install["install"]["client_id"], "devin");
+    assert_eq!(
+        generic_acp_install["install"]["installed_agent_id"],
+        "looper"
+    );
+    assert_eq!(
+        generic_acp_install["install"]["transport_url"],
+        "ws://127.0.0.1:8765/acp/client-hosts/devin"
     );
 
     let renamed = request_json_body_with_options(
@@ -1234,6 +1360,46 @@ async fn mobile_snapshot_caps_initial_thread_list() {
 }
 
 #[tokio::test]
+async fn desktop_menu_snapshot_uses_bounded_codex_rows_with_total_counts() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.append_state_threads(EXTRA_MOBILE_SNAPSHOT_THREADS);
+    fixture.write_automation(
+        "hidden-main",
+        r#"
+id = "hidden-main"
+kind = "heartbeat"
+name = "Hidden main"
+prompt = "Review hidden main."
+status = "ACTIVE"
+rrule = "FREQ=MINUTELY;INTERVAL=5"
+target_thread_id = "thread-main"
+"#,
+    );
+    let router = build_router(fixture.control_plane());
+
+    let snapshot = request_json(&router, "/desktop/snapshot?profile=menu").await;
+
+    assert_eq!(snapshot["thread_count"], 22);
+    assert_eq!(snapshot["active_thread_count"], 22);
+    assert_eq!(
+        snapshot["threads"].as_array().expect("threads").len(),
+        MOBILE_SNAPSHOT_VISIBLE_THREAD_LIMIT
+    );
+    assert!(
+        snapshot["threads"]
+            .as_array()
+            .expect("threads")
+            .iter()
+            .all(|thread| thread["thread_id"]
+                .as_str()
+                .expect("thread id")
+                .starts_with("thread-extra-"))
+    );
+    assert_eq!(snapshot["automations"][0]["target_known"], true);
+}
+
+#[tokio::test]
 async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -1407,6 +1573,14 @@ async fn mobile_session_controls_are_owned_by_rust() {
         settings_snapshot["globalSettings"]["defaultPrompt"],
         "Continue exactly from phone."
     );
+    assert_eq!(
+        settings_snapshot["globalSettings"]["siriDefaultSessionId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        settings_snapshot["globalSettings"]["siriDefaultAssistantSurface"],
+        serde_json::Value::Null
+    );
 
     let mode_snapshot = request_json_body_with_options(
         &router,
@@ -1545,6 +1719,166 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(
         mobile_snapshot_session(&mute_snapshot, "thread-main")["id"],
         "thread-main"
+    );
+
+    let siri_default_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-default-session",
+        serde_json::json!({
+            "sessionId": "thread-main",
+            "assistantSurface": "codex"
+        }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        siri_default_snapshot["globalSettings"]["siriDefaultSessionId"],
+        "thread-main"
+    );
+    assert_eq!(
+        siri_default_snapshot["globalSettings"]["siriDefaultAssistantSurface"],
+        "codex"
+    );
+    assert_eq!(
+        siri_default_snapshot["globalSettings"]["siriCurrentSessionId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        siri_default_snapshot["globalSettings"]["siriCurrentAssistantSurface"],
+        serde_json::Value::Null
+    );
+
+    let mut json_headers = auth_headers.to_vec();
+    json_headers.push((axum::http::header::CONTENT_TYPE, "application/json"));
+    let missing_siri_default = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-default-session",
+        serde_json::to_vec(&serde_json::json!({
+            "sessionId": "missing-thread",
+            "assistantSurface": "codex"
+        }))
+        .expect("json body"),
+        &json_headers,
+        None,
+    )
+    .await;
+    assert_eq!(missing_siri_default.status(), StatusCode::NOT_FOUND);
+
+    let invalid_siri_default_surface = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-default-session",
+        serde_json::to_vec(&serde_json::json!({
+            "sessionId": "thread-main",
+            "assistantSurface": "wrong"
+        }))
+        .expect("json body"),
+        &json_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        invalid_siri_default_surface.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let current_siri_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-current-session",
+        serde_json::json!({
+            "sessionId": "thread-main",
+            "assistantSurface": "codex"
+        }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        current_siri_snapshot["globalSettings"]["siriCurrentSessionId"],
+        "thread-main"
+    );
+    assert_eq!(
+        current_siri_snapshot["globalSettings"]["siriCurrentAssistantSurface"],
+        "codex"
+    );
+
+    let missing_siri_current = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-current-session",
+        serde_json::to_vec(&serde_json::json!({
+            "sessionId": "missing-thread",
+            "assistantSurface": "codex"
+        }))
+        .expect("json body"),
+        &json_headers,
+        None,
+    )
+    .await;
+    assert_eq!(missing_siri_current.status(), StatusCode::NOT_FOUND);
+
+    let invalid_siri_current_surface = request_with_body_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-current-session",
+        serde_json::to_vec(&serde_json::json!({
+            "sessionId": "thread-main",
+            "assistantSurface": "wrong"
+        }))
+        .expect("json body"),
+        &json_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        invalid_siri_current_surface.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let cleared_siri_current_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-current-session",
+        serde_json::json!({
+            "sessionId": null,
+            "assistantSurface": null
+        }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        cleared_siri_current_snapshot["globalSettings"]["siriCurrentSessionId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        cleared_siri_current_snapshot["globalSettings"]["siriCurrentAssistantSurface"],
+        serde_json::Value::Null
+    );
+
+    let cleared_siri_default_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/siri-default-session",
+        serde_json::json!({
+            "sessionId": null,
+            "assistantSurface": null
+        }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        cleared_siri_default_snapshot["globalSettings"]["siriDefaultSessionId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        cleared_siri_default_snapshot["globalSettings"]["siriDefaultAssistantSurface"],
+        serde_json::Value::Null
     );
 
     let archived_snapshot = request_json_body_with_options(
@@ -2120,6 +2454,35 @@ fn mobile_event_payload_matches_ios_contract() {
     assert_eq!(mobile_event_sse_name(event.event_type), "prompt.queued");
 }
 
+async fn wait_for_sse_buffer(body: &mut Body, buffer: &mut String, needle: &str, label: &str) {
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(
+        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
+    ));
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            frame = body.frame() => {
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Ok(chunk) = frame.into_data() {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            if buffer.contains(needle) {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(error)) => panic!("sse frame error: {error}"),
+                    None => panic!("sse stream ended early waiting for {label}. buffer={buffer}"),
+                }
+            }
+            _ = &mut deadline => {
+                panic!("timed out waiting for {label}. buffer={buffer}");
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn desktop_events_sse_streams_without_mobile_auth() {
     let fixture = IsolatedCodexFixture::new();
@@ -2271,6 +2634,77 @@ async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
 
     assert!(buffer.contains("event: connected"));
     assert!(buffer.contains("\"threadId\":\"thread-main\""));
+}
+
+#[tokio::test]
+async fn mobile_events_sse_replays_same_millisecond_backfill_after_live_event() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .store()
+        .initialize()
+        .expect("initialize events");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let request = axum::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/mobile/events")
+        .header(axum::http::header::AUTHORIZATION, authorization.as_str())
+        .header(axum::http::header::ACCEPT, "text/event-stream")
+        .body(Body::empty())
+        .expect("request");
+    let response = router.clone().oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut body = response.into_body();
+    let mut buffer = String::new();
+    wait_for_sse_buffer(
+        &mut body,
+        &mut buffer,
+        "event: connected",
+        "connected SSE event",
+    )
+    .await;
+
+    let connection = Connection::open(control_plane.store().path()).expect("open events");
+    for (event_id, detail) in [
+        ("event-a", "same-ms-live"),
+        ("event-b", "same-ms-backfill-b"),
+        ("event-c", "same-ms-backfill-c"),
+    ] {
+        connection
+            .execute(
+                "insert into mobile_event_log (
+                    event_id, event_type, thread_id, prompt_id, detail, created_at_ms
+                ) values (?1, 'session.changed', 'thread-main', null, ?2, 42)",
+                rusqlite::params![event_id, detail],
+            )
+            .expect("insert mobile event");
+    }
+    control_plane
+        .mobile_event_hub()
+        .publish_persisted(MobileEventRecord {
+            event_id: "event-a".to_owned(),
+            event_type: MobileEventKind::SessionChanged,
+            thread_id: Some("thread-main".to_owned()),
+            prompt_id: None,
+            detail: Some("same-ms-live".to_owned()),
+            created_at_ms: 42,
+        });
+
+    wait_for_sse_buffer(
+        &mut body,
+        &mut buffer,
+        "same-ms-backfill-c",
+        "same millisecond backfill",
+    )
+    .await;
+
+    assert!(buffer.contains("same-ms-live"));
+    assert!(buffer.contains("same-ms-backfill-b"));
+    assert!(buffer.contains("same-ms-backfill-c"));
 }
 
 #[tokio::test]
@@ -3010,7 +3444,14 @@ async fn request_json_with_method(
     method: Method,
     path: &str,
 ) -> serde_json::Value {
-    request_json_with_options(router, method, path, &[], None).await
+    request_json_with_options(
+        router,
+        method,
+        path,
+        &[],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await
 }
 
 fn record_thread_active(control_plane: &ControlPlane, thread_id: &str) {

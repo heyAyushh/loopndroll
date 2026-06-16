@@ -11,6 +11,7 @@ pub(super) const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 
 const LOOP_SCOPES: &[&str] = &["global", "per-task"];
 pub(crate) const ASSISTANT_SURFACES: &[&str] = &["codex", "devin", "grok-build"];
+const NANOS_PER_MILLISECOND: i128 = 1_000_000;
 
 pub(super) fn normalized_preset(preset: Option<&str>) -> MobileSessionResult<Option<String>> {
     let Some(preset) = preset.and_then(normalized_optional) else {
@@ -90,4 +91,9 @@ pub(super) fn bool_to_flag(value: bool) -> i64 {
 
 pub(super) fn now_iso_string() -> MobileSessionResult<String> {
     Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
+}
+
+pub(super) fn now_unix_timestamp_millis() -> i64 {
+    let millis = OffsetDateTime::now_utc().unix_timestamp_nanos() / NANOS_PER_MILLISECOND;
+    i64::try_from(millis).unwrap_or(i64::MAX)
 }

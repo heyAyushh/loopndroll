@@ -17,14 +17,8 @@ const ACP_BRIDGE_INSTALL_PATH: &str = "/desktop/devin/acp-bridge/install";
 const ACP_METHODS: &[&str] = &[
     "initialize",
     "session/new",
-    "session/load",
-    "session/list",
-    "session/resume",
     "session/prompt",
     "session/cancel",
-    "session/close",
-    "session/setMode",
-    "ext/*",
 ];
 const AUTO_EXECUTION_LIMITATION: &str =
     "Looper reads Devin Desktop state and never auto-executes registry commands.";
@@ -382,6 +376,7 @@ impl BridgeSettings {
             .collect::<BTreeSet<_>>();
         let preferred_agent = installations
             .iter()
+            .rev()
             .find_map(|installation| installation.preferred_agent.clone());
         Self {
             acp_enabled: installations
@@ -424,26 +419,41 @@ mod tests {
         }
     }
 
+    fn installation_with_channel(
+        channel: &str,
+        enabled_agents: &[&str],
+        preferred_agent: Option<&str>,
+    ) -> DevinInstallationStatus {
+        DevinInstallationStatus {
+            channel: channel.to_owned(),
+            ..installation(enabled_agents, preferred_agent)
+        }
+    }
+
     fn registry(launch_configured: bool) -> DevinAcpRegistryStatus {
+        registry_with_agents(vec![DevinAcpAgent {
+            id: "codex".to_owned(),
+            name: "Codex".to_owned(),
+            version: None,
+            description: None,
+            launch_configured,
+            launch: DevinAcpLaunchMetadata {
+                configured: launch_configured,
+                methods: if launch_configured {
+                    vec!["npx".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            },
+        }])
+    }
+
+    fn registry_with_agents(agents: Vec<DevinAcpAgent>) -> DevinAcpRegistryStatus {
         DevinAcpRegistryStatus {
             path: "/tmp/.devin-next/acp/registry.json".to_owned(),
             exists: true,
             version: Some("1.0.0".to_owned()),
-            agents: vec![DevinAcpAgent {
-                id: "codex".to_owned(),
-                name: "Codex".to_owned(),
-                version: None,
-                description: None,
-                launch_configured,
-                launch: DevinAcpLaunchMetadata {
-                    configured: launch_configured,
-                    methods: if launch_configured {
-                        vec!["npx".to_owned()]
-                    } else {
-                        Vec::new()
-                    },
-                },
-            }],
+            agents,
         }
     }
 
@@ -478,6 +488,15 @@ mod tests {
                 .limitations
                 .iter()
                 .any(|limitation| limitation.contains("never auto-executes"))
+        );
+        assert_eq!(
+            status.supported_methods,
+            vec![
+                "initialize".to_owned(),
+                "session/new".to_owned(),
+                "session/prompt".to_owned(),
+                "session/cancel".to_owned()
+            ]
         );
     }
 
@@ -527,6 +546,45 @@ mod tests {
         assert!(probe.ready);
         assert_eq!(probe.launch_methods, vec!["npx"]);
         assert!(probe.detail.contains("no registry command was executed"));
+    }
+
+    #[test]
+    fn probe_prefers_next_installation_settings_over_stale_stable_settings() {
+        let probe = build_acp_bridge_probe(
+            &[
+                installation_with_channel("stable", &["codex"], Some("codex")),
+                installation_with_channel("next", &["looper"], Some("looper")),
+            ],
+            &registry_with_agents(vec![
+                DevinAcpAgent {
+                    id: "codex".to_owned(),
+                    name: "Codex".to_owned(),
+                    version: None,
+                    description: None,
+                    launch_configured: true,
+                    launch: DevinAcpLaunchMetadata {
+                        configured: true,
+                        methods: vec!["npx".to_owned()],
+                    },
+                },
+                DevinAcpAgent {
+                    id: "looper".to_owned(),
+                    name: "Looper".to_owned(),
+                    version: None,
+                    description: None,
+                    launch_configured: true,
+                    launch: DevinAcpLaunchMetadata {
+                        configured: true,
+                        methods: vec!["websocket".to_owned()],
+                    },
+                },
+            ]),
+            None,
+        );
+
+        assert!(probe.ok);
+        assert_eq!(probe.agent_id.as_deref(), Some("looper"));
+        assert_eq!(probe.launch_methods, vec!["websocket"]);
     }
 
     #[test]

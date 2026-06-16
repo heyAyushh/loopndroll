@@ -110,12 +110,48 @@ fn run_menubar_command(args: &[String]) -> Result<()> {
 }
 
 async fn run_acp_command(args: &[String], format: OutputFormat) -> Result<()> {
+    ensure_server_ready().await?;
     match args.first().map(String::as_str) {
-        Some("targets") | Some("target") | Some("list") | None => {
-            print_get("/desktop/acp-targets", format).await
+        Some("targets") | Some("target") => print_get("/desktop/acp-targets", format).await,
+        Some("hosts") | Some("list") | None => print_get("/desktop/acp-client-hosts", format).await,
+        Some("status") | Some("show") => {
+            let Some(client_id) = args.get(1) else {
+                bail!("usage: looper acp status <client-host-id>");
+            };
+            print_get(&format!("/desktop/acp-client-hosts/{client_id}"), format).await
         }
-        _ => bail!("usage: looper acp [targets]"),
+        Some("probe") => run_acp_probe_command(args.get(1), args.get(2), format).await,
+        Some("install") | Some("register") => {
+            let Some(client_id) = args.get(1) else {
+                bail!("usage: looper acp install <client-host-id>");
+            };
+            post_json(
+                &format!("/desktop/acp-client-hosts/{client_id}/install"),
+                Value::Null,
+                format,
+            )
+            .await
+        }
+        _ => bail!(
+            "usage: looper acp [hosts|targets|status <client-host-id>|probe <client-host-id> [agent-id]|install <client-host-id>]"
+        ),
     }
+}
+
+async fn run_acp_probe_command(
+    client_id: Option<&String>,
+    agent_id: Option<&String>,
+    format: OutputFormat,
+) -> Result<()> {
+    let Some(client_id) = client_id else {
+        bail!("usage: looper acp probe <client-host-id> [agent-id]");
+    };
+    post_json(
+        &format!("/desktop/acp-client-hosts/{client_id}/probe"),
+        acp_probe_body(agent_id.map(String::as_str)),
+        format,
+    )
+    .await
 }
 
 async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> {
@@ -141,13 +177,13 @@ async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> 
 async fn run_devin_probe_command(agent_id: Option<&String>, format: OutputFormat) -> Result<()> {
     post_json(
         "/desktop/devin/acp-bridge/probe",
-        devin_probe_body(agent_id.map(String::as_str)),
+        acp_probe_body(agent_id.map(String::as_str)),
         format,
     )
     .await
 }
 
-fn devin_probe_body(agent_id: Option<&str>) -> Value {
+fn acp_probe_body(agent_id: Option<&str>) -> Value {
     match agent_id {
         Some(agent_id) => serde_json::json!({ "agentId": agent_id }),
         None => serde_json::json!({}),
@@ -698,5 +734,14 @@ mod tests {
         let result = request.match_snapshot(&snapshot, Some(1));
 
         assert_eq!(result.unwrap()["condition"], "updated");
+    }
+
+    #[test]
+    fn acp_probe_body_uses_generic_agent_id_contract() {
+        assert_eq!(
+            acp_probe_body(Some("codex")),
+            serde_json::json!({ "agentId": "codex" })
+        );
+        assert_eq!(acp_probe_body(None), serde_json::json!({}));
     }
 }

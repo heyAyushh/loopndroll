@@ -41,9 +41,15 @@ pub struct MobileEventRecord {
     pub created_at_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MobileEventBroadcast {
+    Persisted(MobileEventRecord),
+    Ephemeral(MobileEvent),
+}
+
 #[derive(Clone)]
 pub struct MobileEventHub {
-    sender: broadcast::Sender<MobileEvent>,
+    sender: broadcast::Sender<MobileEventBroadcast>,
 }
 
 impl MobileEventHub {
@@ -52,12 +58,16 @@ impl MobileEventHub {
         Self { sender }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<MobileEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<MobileEventBroadcast> {
         self.sender.subscribe()
     }
 
-    pub fn publish(&self, event: MobileEvent) {
-        let _ = self.sender.send(event);
+    pub fn publish_persisted(&self, record: MobileEventRecord) {
+        let _ = self.sender.send(MobileEventBroadcast::Persisted(record));
+    }
+
+    pub fn publish_ephemeral(&self, event: MobileEvent) {
+        let _ = self.sender.send(MobileEventBroadcast::Ephemeral(event));
     }
 }
 

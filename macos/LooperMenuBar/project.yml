@@ -74,6 +74,7 @@ targets:
         CFBundleDisplayName: looper
         CFBundleName: looper
         CFBundleIconFile: AppIcon
+        LSUIElement: true
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         NSUserActivityTypes:
@@ -84,7 +85,7 @@ targets:
         com.apple.developer.team-identifier: Z5454ZPPUX
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.ios
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar
         PRODUCT_NAME: LooperMenuBar
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: Apple Development

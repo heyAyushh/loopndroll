@@ -22,6 +22,14 @@ protocol CompanionService: Sendable {
     func muteSession(id: String) async throws -> MobileSnapshot
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot
     func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot
+    func saveSiriDefaultSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot
+    func saveSiriCurrentSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot
     func registerPushDevice(_ request: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse
     func sendTestPush(installationID: String) async throws -> RemotePushTestResponse
 }

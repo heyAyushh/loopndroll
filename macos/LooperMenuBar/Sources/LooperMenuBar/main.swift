@@ -7,10 +7,15 @@ import OSLog
 @MainActor
 private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum Layout {
-        static let statusIconSize = NSSize(width: 18, height: 18)
+        static let acpHostsMenuTitle = "ACP Hosts"
+        static let agentsDetailsMenuTitle = "Agents"
+        static let coverageDetailsMenuTitle = "Coverage"
+        static let statusItemTitle = "looper"
         static let visibleThreadLimitPerSection = 5
         static let statusIconResourceName = "looper-status-icon"
         static let appDisplayName = "looper"
+        static let devinAcpHostID = "devin"
+        static let devinAcpHostTitle = "Devin Desktop"
         static let threadMenuTitleCharacterLimit = 38
         static let detachServerOnQuitKey = "detachServerOnQuit"
         static let continuationRefreshInterval: Duration = .seconds(20)
@@ -19,6 +24,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let handoffHotkeySubMenuTitle = "Handoff Hotkey"
         static let handoffHoldSubMenuTitle = "Handoff Hold"
         static let detailsMenuTitle = "Details"
+        static let mobileRouteMenuTitle = "Mobile Route"
         static let settingsMenuTitle = "Settings"
         static let acpTargetsMenuTitle = "ACP Targets"
     }
@@ -26,6 +32,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private let client: HTTPControlPlaneClient
     private let lifecycle: LooperLifecycleCoordinator
     private let continuationPublisher = LooperContinuationActivityPublisher()
+    private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
     private var statusItem: NSStatusItem?
     private var menu: NSMenu?
     private var continuationRefreshTask: Task<Void, Never>?
@@ -33,7 +40,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private var devinProbe: DevinAcpBridgeProbe?
     private let handoffHotkeyController = HandoffHotkeyController()
     private lazy var desktopEventStream = DesktopEventStreamCoordinator(client: client) { [weak self] in
-        await self?.refreshMenu()
+        await self?.refreshMenu(force: true)
     }
 
     override init() {
@@ -103,7 +110,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     private func installStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         applyHumanStatus(.starting(detachOnQuit: detachServerOnQuit), to: item)
         continuationPublisher.attachHost(item.button)
 
@@ -113,16 +120,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         statusItem = item
     }
 
-    private func refreshMenu() async {
-        do {
-            let snapshot = try await client.fetchDesktopSnapshot()
-            updateMobileHealth(try? await client.fetchMobileHealth())
+    private func refreshMenu(force: Bool = false) async {
+        let result = await menuRefreshCoordinator.refresh(force: force)
+        if let snapshot = result.snapshot {
+            updateMobileHealth(result.mobileHealth)
             publishContinuationActivity(from: snapshot)
-            replaceMenu(snapshot: snapshot, error: nil)
-        } catch {
+            replaceMenu(snapshot: snapshot, connections: result.connections, error: nil)
+        } else {
             updateMobileHealth(nil)
             continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
-            replaceMenu(snapshot: nil, error: error)
+            replaceMenu(snapshot: nil, connections: nil, error: result.error)
         }
     }
 
@@ -137,11 +144,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     private func refreshContinuationActivity() async {
-        do {
-            let snapshot = try await client.fetchDesktopSnapshot()
-            updateMobileHealth(try? await client.fetchMobileHealth())
+        let result = await menuRefreshCoordinator.refresh()
+        if let snapshot = result.snapshot {
+            updateMobileHealth(result.mobileHealth)
             publishContinuationActivity(from: snapshot)
-        } catch {
+        } else {
             updateMobileHealth(nil)
             continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
         }
@@ -151,7 +158,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         continuationPublisher.publish(
             LooperContinuationActivityBuilder.descriptor(
                 from: snapshot,
-                handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL
+                handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL(preference: mobileRoutePreference)
             )
         )
     }
@@ -174,7 +181,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             return nil
         }
 
-        if let snapshot = try? await client.fetchDesktopSnapshot(),
+        let result = await menuRefreshCoordinator.refresh()
+        if let snapshot = result.snapshot,
            let thread = snapshot.threads.first(where: { $0.threadId == threadID })
         {
             return LooperThreadOpenTarget(
@@ -192,14 +200,22 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         )
     }
 
-    private func replaceMenu(snapshot: DesktopSnapshotResponse?, error: Error?) {
+    private func replaceMenu(
+        snapshot: DesktopSnapshotResponse?,
+        connections: DesktopConnectionsResponse? = nil,
+        error: Error?
+    ) {
         updateStatusItem(snapshot: snapshot, error: error)
-        let menu = makeMenu(snapshot: snapshot, error: error)
+        let menu = makeMenu(snapshot: snapshot, connections: connections, error: error)
         statusItem?.menu = menu
         self.menu = menu
     }
 
-    private func makeMenu(snapshot: DesktopSnapshotResponse?, error: Error?) -> NSMenu {
+    private func makeMenu(
+        snapshot: DesktopSnapshotResponse?,
+        connections: DesktopConnectionsResponse? = nil,
+        error: Error?
+    ) -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
         addDisabledItem(Layout.appDisplayName, to: menu)
@@ -211,7 +227,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         menu.addItem(NSMenuItem.separator())
         addActionItem("Refresh", action: #selector(refreshMenuAction(_:)), keyEquivalent: "r", to: menu)
-        addDetailsItem(snapshot: snapshot, error: error, to: menu)
+        addDetailsItem(snapshot: snapshot, connections: connections, error: error, to: menu)
         addSettingsItem(to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
         menu.addItem(NSMenuItem.separator())
@@ -219,13 +235,18 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         return menu
     }
 
-    private func addDetailsItem(snapshot: DesktopSnapshotResponse?, error: Error?, to menu: NSMenu) {
+    private func addDetailsItem(
+        snapshot: DesktopSnapshotResponse?,
+        connections: DesktopConnectionsResponse? = nil,
+        error: Error?,
+        to menu: NSMenu
+    ) {
         let item = NSMenuItem(title: Layout.detailsMenuTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.detailsMenuTitle)
         submenu.autoenablesItems = false
 
         if let snapshot {
-            addSnapshotDetails(snapshot, to: submenu)
+            addSnapshotDetails(snapshot, connections: connections, to: submenu)
         } else if error != nil {
             addUnavailableDetails(to: submenu)
         } else {
@@ -236,36 +257,85 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
-    private func addSnapshotDetails(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
+    private func addSnapshotDetails(
+        _ snapshot: DesktopSnapshotResponse,
+        connections: DesktopConnectionsResponse?,
+        to menu: NSMenu
+    ) {
         let status = LooperHumanStatus.from(
             snapshot: snapshot,
             mobileHealth: mobileHealth,
             detachOnQuit: detachServerOnQuit
         )
         addDisabledItem("Status: \(status.title)", to: menu)
-        addDisabledItem("Codex hooks: \(snapshot.controlPlane.hooks.health)", to: menu)
-        addDisabledItem("iPhone: \(mobileStatusTitle())", to: menu)
         addDisabledItem("Lifecycle: \(status.lifecycle)", to: menu)
+        addDisabledItem("iPhone: \(mobileStatusTitle())", to: menu)
+        addMobileRouteDetails(to: menu)
         addDisabledItem("Chats: \(snapshot.activeThreadCount) active, \(snapshot.archivedThreadCount) archived", to: menu)
-        addDisabledItem("Codex: \(snapshot.controlPlane.codexServers.count) local servers", to: menu)
-        addDisabledItem("Grok Build: \(snapshot.grokBuildStatusTitle)", to: menu)
-        addDisabledItem("Grok hooks: \(snapshot.grokBuildHooksTitle)", to: menu)
-        if let grokBuild = snapshot.grokBuild {
-            addDisabledItem(
-                "Grok sessions: \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total",
-                to: menu
-            )
+        menu.addItem(NSMenuItem.separator())
+        addAgentDetails(snapshot, connections: connections, to: menu)
+        addCoverageDetails(snapshot, to: menu)
+    }
+
+    private func addMobileRouteDetails(to menu: NSMenu) {
+        guard let mobileHealth else {
+            return
         }
-        addDisabledItem("Devin: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: menu)
-        addDisabledItem("Zed: \(snapshot.zedStatusTitle)", to: menu)
+
+        addDisabledItem("Route: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
+
+        guard let tailscale = mobileHealth.tailscale else {
+            return
+        }
+
+        let detail = tailscale.routeDetailTitle
         addDisabledItem(
-            "ACP targets: \(LooperMenuContent.acpTargetStatusTitle(from: snapshot.acpTargets))",
+            "Tailscale: \(tailscale.statusTitle)",
+            subtitle: detail.isEmpty ? nil : detail,
             to: menu
         )
-        addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: menu)
-        addDisabledItem("Goals: \(runningGoalCount(snapshot))/\(snapshot.goals.count) running", to: menu)
-        addDevinBridgeItems(snapshot.devinDesktop.acpBridge, to: menu)
-        addAcpTargetsItem(snapshot.acpTargets, to: menu)
+    }
+
+    private func addAgentDetails(
+        _ snapshot: DesktopSnapshotResponse,
+        connections: DesktopConnectionsResponse?,
+        to menu: NSMenu
+    ) {
+        let item = NSMenuItem(title: Layout.agentsDetailsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.agentsDetailsMenuTitle)
+        submenu.autoenablesItems = false
+        addDisabledItem("Devin: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: submenu)
+        addDisabledItem("Zed: \(snapshot.zedStatusTitle)", to: submenu)
+        addDisabledItem(
+            "ACP targets: \(LooperMenuContent.acpTargetStatusTitle(from: snapshot.acpTargets))",
+            to: submenu
+        )
+
+        let agentRows = snapshot.agentDetailMenuRows(connections: connections)
+        if agentRows.isEmpty {
+            submenu.addItem(NSMenuItem.separator())
+            addDisabledItem("No agent connections", to: submenu)
+        } else {
+            submenu.addItem(NSMenuItem.separator())
+            for row in agentRows {
+                addDisabledItem(row.title, subtitle: row.detail, to: submenu)
+            }
+        }
+        addDevinBridgeItems(snapshot.devinDesktop.acpBridge, to: submenu)
+        addAcpTargetsItem(snapshot.acpTargets, to: submenu)
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addCoverageDetails(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
+        let item = NSMenuItem(title: Layout.coverageDetailsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.coverageDetailsMenuTitle)
+        submenu.autoenablesItems = false
+        addDisabledItem("Automations: \(coveredAutomationCount(snapshot))/\(snapshot.automations.count) covered", to: submenu)
+        addDisabledItem("Goals: \(runningGoalCount(snapshot))/\(snapshot.goals.count) running", to: submenu)
+        item.submenu = submenu
+        menu.addItem(item)
     }
 
     private func addSnapshotThreadSections(_ snapshot: DesktopSnapshotResponse, to menu: NSMenu) {
@@ -441,21 +511,26 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
     }
 
-    private func addDisabledItem(_ title: String, to menu: NSMenu) {
+    private func addDisabledItem(_ title: String, subtitle: String? = nil, to menu: NSMenu) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
+        if let subtitle {
+            setSubtitle(subtitle, on: item)
+        }
         menu.addItem(item)
     }
 
+    @discardableResult
     private func addActionItem(
         _ title: String,
         action: Selector,
         keyEquivalent: String,
         to menu: NSMenu
-    ) {
+    ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
         menu.addItem(item)
+        return item
     }
 
     private func addDetachServerItem(to menu: NSMenu) {
@@ -473,6 +548,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         let item = NSMenuItem(title: Layout.settingsMenuTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.settingsMenuTitle)
         submenu.autoenablesItems = false
+        addMobileRouteSettingsItem(to: submenu)
         addHandoffFocusAssistItem(to: submenu)
         addHandoffHotkeyItem(to: submenu)
         addHandoffHoldItem(to: submenu)
@@ -480,8 +556,82 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         submenu.addItem(NSMenuItem.separator())
         addRepairHooksItem(to: submenu)
         addClearLiveHooksItem(to: submenu)
-        addDevinAcpBridgeSettingsItem(to: submenu)
+        addAcpHostsSettingsItem(to: submenu)
+        submenu.addItem(NSMenuItem.separator())
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: submenu)
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addMobileRouteSettingsItem(to menu: NSMenu) {
+        let item = NSMenuItem(
+            title: Layout.mobileRouteMenuTitle,
+            action: nil,
+            keyEquivalent: ""
+        )
+        let submenu = NSMenu(title: Layout.mobileRouteMenuTitle)
+        submenu.autoenablesItems = false
+
+        for preference in MobileRoutePreference.allOptions {
+            let optionItem = NSMenuItem(
+                title: preference.menuTitle,
+                action: #selector(setMobileRoutePreferenceAction(_:)),
+                keyEquivalent: ""
+            )
+            optionItem.target = self
+            optionItem.representedObject = preference.rawValue
+            optionItem.state = mobileRoutePreference == preference ? .on : .off
+            submenu.addItem(optionItem)
+        }
+
+        submenu.addItem(NSMenuItem.separator())
+        addMobileRouteStatusItems(to: submenu)
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addMobileRouteStatusItems(to menu: NSMenu) {
+        guard let mobileHealth else {
+            addDisabledItem("Status: Loading", to: menu)
+            return
+        }
+
+        addDisabledItem("Selected: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
+
+        guard let tailscale = mobileHealth.tailscale else {
+            addDisabledItem("Tailscale: Unknown", to: menu)
+            return
+        }
+
+        let detail = tailscale.routeDetailTitle
+        addDisabledItem(
+            "Tailscale: \(tailscale.statusTitle)",
+            subtitle: detail.isEmpty ? nil : detail,
+            to: menu
+        )
+    }
+
+    private func addAcpHostsSettingsItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: Layout.acpHostsMenuTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.acpHostsMenuTitle)
+        submenu.autoenablesItems = false
+        addDevinAcpHostSettingsItem(to: submenu)
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addDevinAcpHostSettingsItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: Layout.devinAcpHostTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.devinAcpHostTitle)
+        submenu.autoenablesItems = false
+        addActionItem(
+            "Install or Repair Bridge",
+            action: #selector(installDevinAcpBridgeAction(_:)),
+            keyEquivalent: "",
+            to: submenu
+        )
+
         item.submenu = submenu
         menu.addItem(item)
     }
@@ -510,21 +660,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             submenu.addItem(item)
         }
         return submenu
-    }
-
-    private func addDevinAcpBridgeSettingsItem(to menu: NSMenu) {
-        let item = NSMenuItem(title: "Devin ACP Bridge", action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: "Devin ACP Bridge")
-        submenu.autoenablesItems = false
-        addActionItem(
-            "Install or Repair Bridge",
-            action: #selector(installDevinAcpBridgeAction(_:)),
-            keyEquivalent: "",
-            to: submenu
-        )
-        addActionItem("Probe Devin Agent", action: #selector(probeDevinAcpAction(_:)), keyEquivalent: "", to: submenu)
-        item.submenu = submenu
-        menu.addItem(item)
     }
 
     private func addHandoffFocusAssistItem(to menu: NSMenu) {
@@ -641,6 +776,15 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
     }
 
+    private var mobileRoutePreference: MobileRoutePreference {
+        get {
+            MobileRoutePreference.stored()
+        }
+        set {
+            newValue.save()
+        }
+    }
+
     private func installHandoffHotkey() {
         handoffHotkeyController.start(option: handoffHotkeyOption) { [weak self] in
             self?.handleHandoffHotkey()
@@ -663,7 +807,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     @objc private func refreshMenuAction(_ sender: Any?) {
         Task {
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -677,10 +821,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
                     try await client.registerHooks()
                 }
             } catch {
+                await menuRefreshCoordinator.clearCache()
                 replaceMenu(snapshot: nil, error: error)
                 return
             }
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -697,23 +842,40 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
                     try client.unregisterLiveHooks(timeout: LooperLifecycleDefaults.requestTimeoutSeconds)
                 }
             } catch {
+                await menuRefreshCoordinator.clearCache()
                 replaceMenu(snapshot: nil, error: error)
                 return
             }
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
     @objc private func installDevinAcpBridgeAction(_ sender: Any?) {
         Task {
             do {
-                _ = try await client.installDevinAcpBridge()
-                devinProbe = nil
+                _ = try await client.installAcpClientHost(id: Layout.devinAcpHostID)
             } catch {
+                await menuRefreshCoordinator.clearCache()
                 replaceMenu(snapshot: nil, error: error)
                 return
             }
-            await refreshMenu()
+            await refreshMenu(force: true)
+        }
+    }
+
+    @objc private func probeDevinAcpAction(_ sender: NSMenuItem) {
+        let agentID = sender.representedObject as? String
+        Task {
+            do {
+                let response = try await client.probeDevinAcpBridge(agentId: agentID)
+                devinProbe = response.probe
+            } catch {
+                devinProbe = nil
+                await menuRefreshCoordinator.clearCache()
+                replaceMenu(snapshot: nil, error: error)
+                return
+            }
+            await refreshMenu(force: true)
         }
     }
 
@@ -726,7 +888,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     @objc private func toggleDetachServerOnQuitAction(_ sender: Any?) {
         detachServerOnQuit.toggle()
         Task {
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -739,7 +901,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         handoffFocusAssist = option
         Task {
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -752,7 +914,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         handoffHotkeyOption = option
         Task {
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -765,29 +927,27 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         handoffHoldDuration = option
         Task {
-            await refreshMenu()
+            await refreshMenu(force: true)
+        }
+    }
+
+    @objc private func setMobileRoutePreferenceAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let preference = MobileRoutePreference(rawValue: rawValue)
+        else {
+            return
+        }
+
+        mobileRoutePreference = preference
+        Task {
+            await refreshMenu(force: true)
         }
     }
 
     @objc private func stopServerAction(_ sender: Any?) {
         lifecycle.shutdownServer()
         Task {
-            await refreshMenu()
-        }
-    }
-
-    @objc private func probeDevinAcpAction(_ sender: NSMenuItem) {
-        let agentId = sender.representedObject as? String
-        Task {
-            do {
-                let response = try await client.probeDevinAcpBridge(agentId: agentId)
-                devinProbe = response.probe
-            } catch {
-                devinProbe = nil
-                replaceMenu(snapshot: nil, error: error)
-                return
-            }
-            await refreshMenu()
+            await refreshMenu(force: true)
         }
     }
 
@@ -832,32 +992,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     private func applyHumanStatus(_ status: LooperHumanStatus, to item: NSStatusItem) {
-        item.button?.image = Self.statusIconImage()
-        item.button?.imagePosition = .imageOnly
+        item.button?.title = Layout.statusItemTitle
+        item.button?.image = nil
+        item.button?.imagePosition = .noImage
         item.button?.toolTip = "\(Layout.appDisplayName): \(status.title). \(status.lifecycle). \(status.detail)"
-    }
-
-    private static func statusIconImage() -> NSImage? {
-        guard let image = statusIconImage(named: Layout.statusIconResourceName)
-            ?? statusIconImage(named: FallbackResource.statusIconResourceName)
-        else {
-            return nil
-        }
-        image.isTemplate = false
-        image.accessibilityDescription = Layout.appDisplayName
-        image.size = Layout.statusIconSize
-        return image
-    }
-
-    private static func statusIconImage(named resourceName: String) -> NSImage? {
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
-    }
-
-    private enum FallbackResource {
-        static let statusIconResourceName = "notification-orb"
     }
 }
 

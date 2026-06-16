@@ -128,6 +128,81 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func mobileHealthPrefersTailscaleForNativeHandoff() {
+        let health = MobileHealthResponse(
+            ok: true,
+            baseURL: "http://192.168.1.4:8765",
+            baseURLs: [
+                "http://192.168.1.4:8765",
+                "http://100.119.200.69:8765",
+                "http://127.0.0.1:8765",
+            ],
+            requiresAuthentication: true,
+            tailscale: MobileTailscaleStatus(
+                available: true,
+                running: true,
+                backendState: "Running",
+                baseURL: "http://100.119.200.69:8765",
+                dnsName: "ayushs-macbook-pro.tail62d9a8.ts.net",
+                ipAddresses: ["100.119.200.69"],
+                magicDNSEnabled: true,
+                magicDNSSuffix: "tail62d9a8.ts.net",
+                source: "cli",
+                tailnetName: "heyayushh.github"
+            )
+        )
+
+        #expect(health.supportsNativeHandoff)
+        #expect(health.preferredReachableHandoffBaseURL?.absoluteString == "http://100.119.200.69:8765")
+        #expect(health.routeSummaryTitle == "Tailscale: 100.119.200.69")
+    }
+
+    @Test
+    func mobileHealthRoutePreferenceCanPreferLAN() {
+        let health = MobileHealthResponse(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: [
+                "http://127.0.0.1:8765",
+                "http://100.119.200.69:8765",
+                "http://192.168.1.4:8765",
+            ],
+            requiresAuthentication: true,
+            tailscale: MobileTailscaleStatus(
+                available: true,
+                running: true,
+                backendState: "Running",
+                baseURL: "http://100.119.200.69:8765",
+                dnsName: "ayushs-macbook-pro.tail62d9a8.ts.net",
+                ipAddresses: ["100.119.200.69"],
+                magicDNSEnabled: true,
+                magicDNSSuffix: "tail62d9a8.ts.net",
+                source: "cli",
+                tailnetName: "heyayushh.github"
+            )
+        )
+
+        #expect(
+            health.preferredReachableHandoffBaseURL(preference: .lan)?.absoluteString ==
+                "http://192.168.1.4:8765"
+        )
+        #expect(health.routeSummaryTitle(preference: .lan) == "LAN: 192.168.1.4")
+    }
+
+    @Test
+    func mobileRoutePreferencePersists() {
+        let suiteName = "dev.looper.tests.mobile-route.stored"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        MobileRoutePreference.remote.save(in: defaults)
+
+        #expect(MobileRoutePreference.stored(in: defaults) == .remote)
+        #expect(MobileRoutePreference.remote.menuTitle == "Remote")
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test
     func storesHandoffHoldPreference() {
         let suiteName = "dev.looper.tests.handoff-hold.stored"
         let defaults = UserDefaults(suiteName: suiteName)!

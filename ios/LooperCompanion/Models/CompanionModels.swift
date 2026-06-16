@@ -1,5 +1,7 @@
+import AppIntents
 import CoreSpotlight
 import Foundation
+import LooperCompanionCore
 
 enum LooperContinuationActivity {
     static let activityType = "dev.looper.app.continue-session"
@@ -25,26 +27,27 @@ enum LooperContinuationActivity {
         activityType == Self.activityType || activityType == CSSearchableItemActionType
     }
 
-    static func sessionDeepLinkURL(sessionID: String) -> URL? {
-        let pathAllowedCharacters = CharacterSet.urlPathAllowed.subtracting(
-            CharacterSet(charactersIn: "/")
-        )
-        guard let encodedSessionID = sessionID.addingPercentEncoding(
-            withAllowedCharacters: pathAllowedCharacters
-        ) else {
+    static func appEntityIdentifier(
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> EntityIdentifier? {
+        guard let normalizedSessionID = normalizedString(sessionID)?.nilIfEmpty else {
             return nil
         }
 
-        var components = URLComponents()
-        components.scheme = deepLinkScheme
-        components.host = sessionDeepLinkHost
-        components.path = "/\(encodedSessionID)"
-        return components.url
+        return EntityIdentifier(
+            for: LooperSessionEntity.self,
+            identifier: LooperSessionEntityIdentifier(
+                assistantSurface: assistantSurface,
+                sessionID: normalizedSessionID
+            ).rawValue
+        )
     }
 
     static func configureContinuationActivity(
         _ activity: NSUserActivity,
         sessionID: String,
+        assistantSurface: CompanionAssistantSurface,
         handoffBaseURL: URL?
     ) {
         guard let normalizedSessionID = normalizedString(sessionID)?.nilIfEmpty else {
@@ -66,6 +69,12 @@ enum LooperContinuationActivity {
         activity.userInfo = userInfo
         activity.targetContentIdentifier = "\(TargetContentIdentifier.sessionPrefix)\(normalizedSessionID)"
         activity.persistentIdentifier = activity.targetContentIdentifier
+        if #available(iOS 18.2, macOS 15.2, watchOS 11.2, tvOS 18.2, visionOS 2.2, *) {
+            activity.appEntityIdentifier = appEntityIdentifier(
+                sessionID: normalizedSessionID,
+                assistantSurface: assistantSurface
+            )
+        }
         activity.title = "Looper Session \(normalizedSessionID)"
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
@@ -280,11 +289,14 @@ enum LooperContinuationActivity {
             return nil
         }
 
-        if let normalizedDevinSessionID = normalizedLegacyDevinSessionID(from: decodedSessionID) {
+        let decodedEntitySessionID = LooperSessionEntityIdentifier(rawValue: decodedSessionID)?.sessionID
+            ?? decodedSessionID
+
+        if let normalizedDevinSessionID = normalizedLegacyDevinSessionID(from: decodedEntitySessionID) {
             return normalizedDevinSessionID
         }
 
-        return decodedSessionID
+        return decodedEntitySessionID
     }
 
     private static func normalizedLegacyDevinSessionID(
@@ -338,6 +350,58 @@ enum LooperContinuationActivity {
         static let providerSeparator = ":"
         static let sessionPathSeparator: Character = "/"
         static let sessionCanonicalSeparator = ":"
+    }
+}
+
+struct LooperSiriOpenSessionRequest: Codable, Equatable {
+    private static let currentVersion = 1
+
+    let version: Int
+    let sessionID: String
+    let assistantSurfaceRawValue: String?
+    let createdAt: Date
+
+    init(
+        sessionID: String,
+        assistantSurfaceRawValue: String?,
+        createdAt: Date = Date()
+    ) {
+        version = Self.currentVersion
+        self.sessionID = sessionID
+        self.assistantSurfaceRawValue = assistantSurfaceRawValue
+        self.createdAt = createdAt
+    }
+
+    var assistantSurface: CompanionAssistantSurface? {
+        assistantSurfaceRawValue.flatMap(CompanionAssistantSurface.init(rawValue:))
+    }
+}
+
+enum LooperSiriOpenSessionRequestStore {
+    private static let storageKey = "looper.pendingSiriOpenSessionRequest.v1"
+
+    static func save(
+        _ request: LooperSiriOpenSessionRequest,
+        userDefaults: UserDefaults = .standard
+    ) throws {
+        let data = try JSONEncoder().encode(request)
+        userDefaults.set(data, forKey: storageKey)
+    }
+
+    static func drain(userDefaults: UserDefaults = .standard) -> LooperSiriOpenSessionRequest? {
+        guard let data = userDefaults.data(forKey: storageKey) else {
+            return nil
+        }
+        userDefaults.removeObject(forKey: storageKey)
+
+        do {
+            return try JSONDecoder().decode(LooperSiriOpenSessionRequest.self, from: data)
+        } catch {
+            CompanionDiagnostics.record(
+                "siri-open:pending-decode-failed error=\(error.localizedDescription)"
+            )
+            return nil
+        }
     }
 }
 
@@ -659,7 +723,21 @@ enum SettingsSearchTarget: String, CaseIterable, Hashable, Identifiable, Sendabl
     var keywords: [String] {
         switch self {
         case .connection:
-            return ["connect", "mac", "device code", "scan mac code", "pair", "link", "local network"]
+            return [
+                "connect",
+                "mac",
+                "device code",
+                "scan mac code",
+                "pair",
+                "link",
+                "local network",
+                "route",
+                "remote",
+                "tailscale",
+                "tailnet",
+                "lan",
+                "vpn",
+            ]
         case .continuePrompt:
             return ["continue prompt", "prompt", "default prompt", "continue"]
         case .stopQuickActions:
@@ -729,6 +807,113 @@ struct HostSummary: Codable, Sendable {
     }
 }
 
+struct CompanionTailscaleStatus: Codable, Sendable {
+    var available: Bool
+    var running: Bool
+    var backendState: String?
+    var source: String?
+    var version: String?
+    var hostname: String?
+    var dnsName: String?
+    var tailnetName: String?
+    var magicDNSSuffix: String?
+    var magicDNSEnabled: Bool?
+    var ipAddresses: [String]
+    var baseURL: String?
+    var grpcBaseURL: String?
+    var health: [String]
+    var error: String?
+
+    var statusLabel: String {
+        if running {
+            return "Running"
+        }
+
+        return available ? "Available" : "Not Detected"
+    }
+
+    var detailLabel: String {
+        let primaryName = dnsName ?? hostname ?? tailnetName
+        let primaryAddress = baseURL ?? ipAddresses.first
+        return [primaryName, primaryAddress]
+            .compactMap { value in
+                value?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            }
+            .joined(separator: " ")
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case available
+        case running
+        case backendState
+        case source
+        case version
+        case hostname
+        case dnsName
+        case tailnetName
+        case magicDNSSuffix
+        case magicDNSEnabled
+        case ipAddresses
+        case baseURL
+        case grpcBaseURL
+        case health
+        case error
+    }
+
+    init(
+        available: Bool,
+        running: Bool,
+        backendState: String? = nil,
+        source: String? = nil,
+        version: String? = nil,
+        hostname: String? = nil,
+        dnsName: String? = nil,
+        tailnetName: String? = nil,
+        magicDNSSuffix: String? = nil,
+        magicDNSEnabled: Bool? = nil,
+        ipAddresses: [String] = [],
+        baseURL: String? = nil,
+        grpcBaseURL: String? = nil,
+        health: [String] = [],
+        error: String? = nil
+    ) {
+        self.available = available
+        self.running = running
+        self.backendState = backendState
+        self.source = source
+        self.version = version
+        self.hostname = hostname
+        self.dnsName = dnsName
+        self.tailnetName = tailnetName
+        self.magicDNSSuffix = magicDNSSuffix
+        self.magicDNSEnabled = magicDNSEnabled
+        self.ipAddresses = ipAddresses
+        self.baseURL = baseURL
+        self.grpcBaseURL = grpcBaseURL
+        self.health = health
+        self.error = error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        available = try container.decodeIfPresent(Bool.self, forKey: .available) ?? false
+        running = try container.decodeIfPresent(Bool.self, forKey: .running) ?? false
+        backendState = try container.decodeIfPresent(String.self, forKey: .backendState)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        hostname = try container.decodeIfPresent(String.self, forKey: .hostname)
+        dnsName = try container.decodeIfPresent(String.self, forKey: .dnsName)
+        tailnetName = try container.decodeIfPresent(String.self, forKey: .tailnetName)
+        magicDNSSuffix = try container.decodeIfPresent(String.self, forKey: .magicDNSSuffix)
+        magicDNSEnabled = try container.decodeIfPresent(Bool.self, forKey: .magicDNSEnabled)
+        ipAddresses = try container.decodeIfPresent([String].self, forKey: .ipAddresses) ?? []
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL)
+        grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL)
+        health = try container.decodeIfPresent([String].self, forKey: .health) ?? []
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 struct CompanionServerHealth: Codable, Sendable {
     var ok: Bool
     var baseURL: String
@@ -736,6 +921,7 @@ struct CompanionServerHealth: Codable, Sendable {
     var grpcBaseURL: String
     var grpcBaseURLs: [String]
     var serverTime: String
+    var tailscale: CompanionTailscaleStatus?
 
     private enum CodingKeys: String, CodingKey {
         case ok
@@ -744,6 +930,7 @@ struct CompanionServerHealth: Codable, Sendable {
         case grpcBaseURL
         case grpcBaseURLs
         case serverTime
+        case tailscale
     }
 
     init(
@@ -752,7 +939,8 @@ struct CompanionServerHealth: Codable, Sendable {
         baseURLs: [String],
         grpcBaseURL: String = "",
         grpcBaseURLs: [String] = [],
-        serverTime: String
+        serverTime: String,
+        tailscale: CompanionTailscaleStatus? = nil
     ) {
         self.ok = ok
         self.baseURL = baseURL
@@ -760,6 +948,7 @@ struct CompanionServerHealth: Codable, Sendable {
         self.grpcBaseURL = grpcBaseURL
         self.grpcBaseURLs = grpcBaseURLs
         self.serverTime = serverTime
+        self.tailscale = tailscale
     }
 
     init(from decoder: Decoder) throws {
@@ -770,6 +959,7 @@ struct CompanionServerHealth: Codable, Sendable {
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
         grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
         serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime) ?? ""
+        tailscale = try container.decodeIfPresent(CompanionTailscaleStatus.self, forKey: .tailscale)
     }
 }
 
@@ -796,6 +986,34 @@ enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sen
     }
 }
 
+struct LooperSessionEntityIdentifier: Hashable, Sendable {
+    let assistantSurface: CompanionAssistantSurface
+    let sessionID: String
+
+    var rawValue: String {
+        LooperSiriEntityIdentifier(
+            assistantSurface: assistantSurface.rawValue,
+            sessionID: sessionID
+        ).rawValue
+    }
+
+    init(assistantSurface: CompanionAssistantSurface, sessionID: String) {
+        self.assistantSurface = assistantSurface
+        self.sessionID = sessionID
+    }
+
+    init?(rawValue: String) {
+        guard let identifier = LooperSiriEntityIdentifier(rawValue: rawValue),
+              let assistantSurface = CompanionAssistantSurface(rawValue: identifier.assistantSurface)
+        else {
+            return nil
+        }
+
+        self.assistantSurface = assistantSurface
+        sessionID = identifier.sessionID
+    }
+}
+
 struct GlobalSettings: Codable, Sendable {
     var defaultPrompt: String
     var globalMode: SessionMode?
@@ -804,6 +1022,11 @@ struct GlobalSettings: Codable, Sendable {
     var completionCheckLabel: String?
     var completionCheckWaitForReply: Bool
     var assistantSurface: CompanionAssistantSurface
+    var siriDefaultSessionId: String?
+    var siriDefaultAssistantSurface: CompanionAssistantSurface?
+    var siriCurrentSessionId: String?
+    var siriCurrentAssistantSurface: CompanionAssistantSurface?
+    var siriCurrentUpdatedAtMs: Int64?
 
     init(
         defaultPrompt: String,
@@ -812,7 +1035,12 @@ struct GlobalSettings: Codable, Sendable {
         notificationLabel: String?,
         completionCheckLabel: String?,
         completionCheckWaitForReply: Bool,
-        assistantSurface: CompanionAssistantSurface = .defaultSurface
+        assistantSurface: CompanionAssistantSurface = .defaultSurface,
+        siriDefaultSessionId: String? = nil,
+        siriDefaultAssistantSurface: CompanionAssistantSurface? = nil,
+        siriCurrentSessionId: String? = nil,
+        siriCurrentAssistantSurface: CompanionAssistantSurface? = nil,
+        siriCurrentUpdatedAtMs: Int64? = nil
     ) {
         self.defaultPrompt = defaultPrompt
         self.globalMode = globalMode
@@ -821,6 +1049,11 @@ struct GlobalSettings: Codable, Sendable {
         self.completionCheckLabel = completionCheckLabel
         self.completionCheckWaitForReply = completionCheckWaitForReply
         self.assistantSurface = assistantSurface
+        self.siriDefaultSessionId = siriDefaultSessionId
+        self.siriDefaultAssistantSurface = siriDefaultAssistantSurface
+        self.siriCurrentSessionId = siriCurrentSessionId
+        self.siriCurrentAssistantSurface = siriCurrentAssistantSurface
+        self.siriCurrentUpdatedAtMs = siriCurrentUpdatedAtMs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -831,6 +1064,11 @@ struct GlobalSettings: Codable, Sendable {
         case completionCheckLabel
         case completionCheckWaitForReply
         case assistantSurface
+        case siriDefaultSessionId
+        case siriDefaultAssistantSurface
+        case siriCurrentSessionId
+        case siriCurrentAssistantSurface
+        case siriCurrentUpdatedAtMs
     }
 
     init(from decoder: Decoder) throws {
@@ -849,6 +1087,25 @@ struct GlobalSettings: Codable, Sendable {
         let assistantSurfaceRawValue = try container.decodeIfPresent(String.self, forKey: .assistantSurface)
         assistantSurface = assistantSurfaceRawValue
             .flatMap(CompanionAssistantSurface.init(rawValue:)) ?? .defaultSurface
+        siriDefaultSessionId = try container.decodeIfPresent(String.self, forKey: .siriDefaultSessionId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        let siriDefaultAssistantSurfaceRawValue = try container.decodeIfPresent(
+            String.self,
+            forKey: .siriDefaultAssistantSurface
+        )
+        siriDefaultAssistantSurface = siriDefaultAssistantSurfaceRawValue
+            .flatMap(CompanionAssistantSurface.init(rawValue:))
+        siriCurrentSessionId = try container.decodeIfPresent(String.self, forKey: .siriCurrentSessionId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        let siriCurrentAssistantSurfaceRawValue = try container.decodeIfPresent(
+            String.self,
+            forKey: .siriCurrentAssistantSurface
+        )
+        siriCurrentAssistantSurface = siriCurrentAssistantSurfaceRawValue
+            .flatMap(CompanionAssistantSurface.init(rawValue:))
+        siriCurrentUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .siriCurrentUpdatedAtMs)
     }
 }
 

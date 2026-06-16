@@ -1,10 +1,19 @@
+import AppIntents
 import SwiftUI
 
 struct SessionRow: View {
     let session: SessionSummary
+    let assistantSurface: CompanionAssistantSurface
 
     private var tint: Color {
         CompanionTint.tint(for: session.status)
+    }
+
+    private var appEntityIdentifier: EntityIdentifier? {
+        LooperContinuationActivity.appEntityIdentifier(
+            sessionID: session.id,
+            assistantSurface: assistantSurface
+        )
     }
 
     var body: some View {
@@ -73,5 +82,6 @@ struct SessionRow: View {
             .lineLimit(1)
         }
         .padding(.vertical, 4)
+        .looperAppEntityIdentifier(appEntityIdentifier)
     }
 }

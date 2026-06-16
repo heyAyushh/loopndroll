@@ -58,11 +58,27 @@ struct SessionDetailScreen: View {
             LooperContinuationActivity.configureContinuationActivity(
                 activity,
                 sessionID: session.id,
+                assistantSurface: model.siriAssistantSurface(for: session.id),
                 handoffBaseURL: URL(string: model.configuredBaseURL)
             )
         }
+        .looperAppEntityIdentifier(
+            LooperContinuationActivity.appEntityIdentifier(
+                sessionID: session.id,
+                assistantSurface: model.siriAssistantSurface(for: session.id)
+            )
+        )
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    setSiriDefaultSession()
+                } label: {
+                    Label("Use with Siri", systemImage: "pin")
+                }
+                .disabled(isMutatingSession)
+            }
+
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
 
@@ -73,9 +89,12 @@ struct SessionDetailScreen: View {
         }
         .task {
             await model.refreshSessionDetail(id: session.id)
+            await markCurrentSiriSession()
+            await model.donateOpenedSiriSession(session)
         }
         .refreshable {
             await model.refreshSessionDetail(id: session.id)
+            await markCurrentSiriSession()
         }
         .confirmationDialog(
             "Delete Session",
@@ -193,6 +212,15 @@ struct SessionDetailScreen: View {
             TextEditor(text: $draftPrompt)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
                 .focused($focusedInput, equals: .prompt)
+
+            ForEach(promptSuggestions, id: \.self) { suggestion in
+                Button {
+                    usePromptSuggestion(suggestion)
+                } label: {
+                    Label(suggestion, systemImage: "quote.bubble")
+                        .lineLimit(2)
+                }
+            }
 
             Button {
                 sendPrompt()
@@ -366,6 +394,20 @@ struct SessionDetailScreen: View {
         detail?.promptDeliveryUnavailableReason ?? session.promptDeliveryUnavailableReason
     }
 
+    private var promptSuggestions: [String] {
+        LooperSessionContextEngine.fallbackSuggestions(
+            title: detail?.title ?? session.title,
+            status: currentStatus,
+            assistantName: (detail?.assistantClient ?? session.assistantClient).displayTitle,
+            taskKind: currentMetadata.taskKind
+        )
+    }
+
+    private func usePromptSuggestion(_ suggestion: String) {
+        draftPrompt = suggestion
+        focusedInput = .prompt
+    }
+
     private func sendPrompt() {
         guard canSendPrompt else {
             return
@@ -383,6 +425,20 @@ struct SessionDetailScreen: View {
                 isSendingPrompt = false
             }
         }
+    }
+
+    private func setSiriDefaultSession() {
+        guard !isMutatingSession else {
+            return
+        }
+
+        Task {
+            await model.setSiriDefaultSession(session)
+        }
+    }
+
+    private func markCurrentSiriSession() async {
+        await model.markCurrentSiriSession(session)
     }
 
     private func channelSymbolName(_ channel: String) -> String {

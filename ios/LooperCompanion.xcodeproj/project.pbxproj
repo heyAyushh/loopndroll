@@ -12,8 +12,7 @@
 		0A72C7E22AABFE981A697D61 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D6DADF770C736556DE619E8 /* HapticManager.swift */; };
 		0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */; };
 		0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */; };
-		0F51A1110000000000000001 /* LooperSiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F51A1110000000000000003 /* LooperSiriIntents.swift */; };
-		0F51A1110000000000000002 /* LooperSiriSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */; };
+		13C3246C36D7054C424ACD3F /* LooperSiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */; };
 		20A4F5E4BBBC0282AF2AEEBD /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */; };
 		293C8235B895D87F362AFB95 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78346AF56F5D457B05954C0B /* SettingsScreen.swift */; };
 		2D482EE05EA391F40E13CF7B /* PinballDebugOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */; };
@@ -37,6 +36,7 @@
 		698E7359AA9B92B96EAC79B7 /* SessionDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95DECA57A9C3520B2610DF89 /* SessionDetailScreen.swift */; };
 		6AF9C85549D436BC7ED2A3A8 /* codex-logo-dark.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */; };
 		762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26E5665E69C8705992001B8 /* SessionSearchModel.swift */; };
+		7CDF49AAA7F79DA10FFF49A7 /* SessionEntityAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */; };
 		815F93B4B67E08B8B6EC1403 /* CompanionPasskeyAuthenticationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */; };
 		8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */; };
 		83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64992FB2DA134F019F69163E /* RootTabView.swift */; };
@@ -53,6 +53,7 @@
 		99C302A2036DAEDDD87A0CBD /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */; };
 		A075E99DA429033BC81CF2D6 /* SpotlightSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACE4AA7E26A90DEF6007679B /* SpotlightSearchService.swift */; };
 		A5EF972A8241CA28D7373C86 /* LocalNetworkAccessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */; };
+		A648E7D55E958E45B4145511 /* LooperCurrentSessionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */; };
 		A6CE50C55BF7F4B3E91803C0 /* SKNode+Debug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F13390658F0003A8AB6656 /* SKNode+Debug.swift */; };
 		AC398A4365589659672558F5 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B574A6D33E4D4266BD522D3F /* Preview Assets.xcassets */; };
 		AEE02BA4C8872FDFB121F4F2 /* CompanionConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150B19C23F529638DF99E573 /* CompanionConfiguration.swift */; };
@@ -67,6 +68,7 @@
 		DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */; };
 		DE616458E53567DBD195D43B /* MobileEventStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D3020C638B40E714B24B381 /* MobileEventStream.swift */; };
 		DEADABB2FAB9574917ACDCB3 /* LooperCompanionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4A1CE795142C8C486736E592 /* LooperCompanionCore */; };
+		E2EAF24D303EE6B8D48B349B /* LooperSiriSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */; };
 		F8CEA95579671A21AF796C46 /* SessionSearchRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37F135BB1B061C9ACFE9DCD /* SessionSearchRows.swift */; };
 		F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */; };
 /* End PBXBuildFile section */
@@ -74,18 +76,19 @@
 /* Begin PBXFileReference section */
 		02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsCategories.swift; sourceTree = "<group>"; };
 		0D3020C638B40E714B24B381 /* MobileEventStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEventStream.swift; sourceTree = "<group>"; };
-		0F51A1110000000000000003 /* LooperSiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriIntents.swift; sourceTree = "<group>"; };
-		0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriSessionSupport.swift; sourceTree = "<group>"; };
 		1425D9C9F419BAA476E8430F /* UIBodySynchronizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIBodySynchronizer.swift; sourceTree = "<group>"; };
 		150B19C23F529638DF99E573 /* CompanionConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConfiguration.swift; sourceTree = "<group>"; };
 		155542B6D3718553CC20717F /* LooperCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LooperCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionPasskeyAuthenticationClient.swift; sourceTree = "<group>"; };
+		19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriIntents.swift; sourceTree = "<group>"; };
 		1AE006F2F407024A15E4727F /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
 		2489ABFC353256268974517A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
 		2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Release.entitlements; sourceTree = "<group>"; };
 		2E6662FF1A21320CE35B28AF /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		35F13390658F0003A8AB6656 /* SKNode+Debug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SKNode+Debug.swift"; sourceTree = "<group>"; };
+		362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEntityAnnotation.swift; sourceTree = "<group>"; };
 		36C1BA5B608C2E2179EDC93B /* DiffBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffBlockView.swift; sourceTree = "<group>"; };
+		3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriSessionSupport.swift; sourceTree = "<group>"; };
 		3F45BF02832653F4817CA280 /* LiveOrbCameraScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOrbCameraScannerView.swift; sourceTree = "<group>"; };
 		46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPCompanionService.swift; sourceTree = "<group>"; };
 		49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconManager.swift; sourceTree = "<group>"; };
@@ -108,6 +111,7 @@
 		75F3F5A6F101C8D0578A7CA7 /* SessionsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsScreen.swift; sourceTree = "<group>"; };
 		76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbScannerScreen.swift; sourceTree = "<group>"; };
 		78346AF56F5D457B05954C0B /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
+		7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCurrentSessionResolver.swift; sourceTree = "<group>"; };
 		80DC6E68627D2DF8604A322B /* MotionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionController.swift; sourceTree = "<group>"; };
 		8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */ = {isa = PBXFileReference; path = "codex-logo-dark.mp4"; sourceTree = "<group>"; };
 		87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Debug.entitlements; sourceTree = "<group>"; };
@@ -178,15 +182,6 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
-		2BB1A1110000000000000001 /* AppIntents */ = {
-			isa = PBXGroup;
-			children = (
-				0F51A1110000000000000003 /* LooperSiriIntents.swift */,
-				0F51A1110000000000000004 /* LooperSiriSessionSupport.swift */,
-			);
-			path = AppIntents;
-			sourceTree = "<group>";
-		};
 		2E2CDC964788013933505897 /* Maze */ = {
 			isa = PBXGroup;
 			children = (
@@ -229,6 +224,16 @@
 				64992FB2DA134F019F69163E /* RootTabView.swift */,
 			);
 			path = Root;
+			sourceTree = "<group>";
+		};
+		744173B7F70D09504251A3FA /* AppIntents */ = {
+			isa = PBXGroup;
+			children = (
+				7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */,
+				19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */,
+				3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */,
+			);
+			path = AppIntents;
 			sourceTree = "<group>";
 		};
 		76FC1DE5699F0B77C3661A2A /* Models */ = {
@@ -328,7 +333,7 @@
 				87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */,
 				2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */,
 				914286F132B908555009B4A7 /* App */,
-				2BB1A1110000000000000001 /* AppIntents */,
+				744173B7F70D09504251A3FA /* AppIntents */,
 				A1A5ECF52C54A9331160D605 /* Extensions */,
 				76FC1DE5699F0B77C3661A2A /* Models */,
 				A301FC12935AB470C07D61B3 /* Preview Content */,
@@ -346,6 +351,7 @@
 				36C1BA5B608C2E2179EDC93B /* DiffBlockView.swift */,
 				75873BB45591016088027654 /* MarkdownMessageView.swift */,
 				95DECA57A9C3520B2610DF89 /* SessionDetailScreen.swift */,
+				362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */,
 				1AE006F2F407024A15E4727F /* SessionRow.swift */,
 				C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */,
 				E26E5665E69C8705992001B8 /* SessionSearchModel.swift */,
@@ -486,6 +492,9 @@
 				A5EF972A8241CA28D7373C86 /* LocalNetworkAccessMonitor.swift in Sources */,
 				961C8BD940EFE071CCF54F0D /* LocalNotificationManager.swift in Sources */,
 				626E73486A4D4B1DA9409649 /* LooperCompanionApp.swift in Sources */,
+				A648E7D55E958E45B4145511 /* LooperCurrentSessionResolver.swift in Sources */,
+				13C3246C36D7054C424ACD3F /* LooperSiriIntents.swift in Sources */,
+				E2EAF24D303EE6B8D48B349B /* LooperSiriSessionSupport.swift in Sources */,
 				903103D600804B62253BDCB3 /* MarkdownMessageView.swift in Sources */,
 				3234EEB1D3D23E9E2A761B89 /* MazeGameView.swift in Sources */,
 				F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */,
@@ -502,9 +511,8 @@
 				98B40F9B225EEFDE1AFFE537 /* RemotePushRegistrar.swift in Sources */,
 				83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */,
 				A6CE50C55BF7F4B3E91803C0 /* SKNode+Debug.swift in Sources */,
-				0F51A1110000000000000001 /* LooperSiriIntents.swift in Sources */,
-				0F51A1110000000000000002 /* LooperSiriSessionSupport.swift in Sources */,
 				698E7359AA9B92B96EAC79B7 /* SessionDetailScreen.swift in Sources */,
+				7CDF49AAA7F79DA10FFF49A7 /* SessionEntityAnnotation.swift in Sources */,
 				913D972992CF173197037276 /* SessionRow.swift in Sources */,
 				762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */,
 				F8CEA95579671A21AF796C46 /* SessionSearchRows.swift in Sources */,
@@ -531,7 +539,6 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"LooperCompanion/Preview Content\"";
 				DEVELOPMENT_TEAM = Z5454ZPPUX;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LooperCompanion/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -543,6 +550,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = Looper;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -585,7 +593,6 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -598,6 +605,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
@@ -641,7 +649,6 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -661,6 +668,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
@@ -676,7 +684,6 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"LooperCompanion/Preview Content\"";
 				DEVELOPMENT_TEAM = Z5454ZPPUX;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LooperCompanion/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -688,6 +695,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios;
 				PRODUCT_NAME = Looper;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;
 			};

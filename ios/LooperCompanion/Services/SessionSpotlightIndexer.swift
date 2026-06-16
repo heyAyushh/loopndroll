@@ -1,8 +1,10 @@
+import AppIntents
 import CoreSpotlight
 import UniformTypeIdentifiers
 
 private enum SpotlightIndexing {
     static let batchSize = 100
+    static let entityAssociationPriority = 1
 }
 
 enum SpotlightIdentifiers {
@@ -31,6 +33,35 @@ struct SessionSpotlightRecord: Equatable, Sendable {
         isArchived = session.isArchived
         assistantClient = session.assistantClient
         metadata = session.metadata
+    }
+
+    var searchableIdentifiers: [String] {
+        Self.searchableIdentifiers(
+            for: id,
+            assistantSurface: assistantClient.spotlightAssistantSurface
+        )
+    }
+
+    static func searchableIdentifiers(
+        for sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> [String] {
+        [
+            sessionID,
+            LooperSessionEntityIdentifier(
+                assistantSurface: assistantSurface,
+                sessionID: sessionID
+            ).rawValue
+        ]
+    }
+
+    static func legacyAndQualifiedSearchableIdentifiers(for sessionID: String) -> [String] {
+        [sessionID] + CompanionAssistantSurface.allCases.map { assistantSurface in
+            LooperSessionEntityIdentifier(
+                assistantSurface: assistantSurface,
+                sessionID: sessionID
+            ).rawValue
+        }
     }
 }
 
@@ -67,51 +98,67 @@ enum SessionSpotlightIndexingPolicy {
 struct SessionSearchableItem {
     let session: SessionSummary
 
+    var appEntity: LooperSessionEntity {
+        LooperSessionEntity(
+            session: session,
+            assistantSurface: session.assistantClient.spotlightAssistantSurface
+        )
+    }
+
     var searchableItem: CSSearchableItem {
-        let attributeSet = CSSearchableItemAttributeSet(contentType: .text)
-        attributeSet.title = session.title
-        attributeSet.contentDescription = session.assistantPreview ?? "Session \(session.ref)"
-        attributeSet.contentURL = LooperContinuationActivity.sessionDeepLinkURL(sessionID: session.id)
+        let entity = appEntity
+        let attributeSet = entity.attributeSet
         if let lastUpdatedDate = session.lastUpdatedDate {
             attributeSet.contentModificationDate = lastUpdatedDate
             attributeSet.lastUsedDate = lastUpdatedDate
         }
-        attributeSet.textContent = [
-            session.ref,
-            session.title,
-            session.assistantPreview ?? "",
-            session.status.label,
-            session.assistantClient.displayTitle,
-            session.metadata.displayTitle,
-            session.metadata.sourceDisplayName,
-            session.metadata.projectPath ?? "",
-            session.metadata.taskKind.label,
-            session.metadata.gitRepository?.repositoryName ?? "",
-            session.metadata.gitRepository?.remoteURL ?? "",
-            session.metadata.gitRepository?.branch ?? "",
-            session.metadata.pullRequestURL ?? "",
-            session.metadata.kind.label,
-            session.metadata.installedPlugins.map(\.name).joined(separator: " "),
-            session.metadata.sources.map(\.value).joined(separator: " ")
-        ].joined(separator: " ")
-        attributeSet.keywords = [
-            session.ref,
-            session.status.rawValue,
-            session.assistantClient.rawValue,
-            session.status.label,
-            session.metadata.kind.rawValue,
-            session.metadata.taskKind.rawValue
-        ] + session.assistantClient.searchKeywords + session.metadata.userFacingTags
-        attributeSet.displayName = session.title
+        attributeSet.textContent = searchableText(for: entity)
+        attributeSet.keywords = searchableKeywords(for: entity)
+        attributeSet.associateAppEntity(entity, priority: SpotlightIndexing.entityAssociationPriority)
 
         let item = CSSearchableItem(
-            uniqueIdentifier: session.id,
+            uniqueIdentifier: entity.id,
             domainIdentifier: SpotlightIdentifiers.domainIdentifier,
             attributeSet: attributeSet
         )
         item.expirationDate = Date.distantFuture
 
         return item
+    }
+
+    private func searchableText(for entity: LooperSessionEntity) -> String {
+        [
+            entity.searchableText,
+            session.metadata.displayTitle,
+            session.metadata.gitRepository?.remoteURL ?? "",
+            session.metadata.pullRequestURL ?? "",
+            session.metadata.kind.label,
+            session.metadata.sources.map { "\($0.label) \($0.value)" }.joined(separator: " ")
+        ].joined(separator: " ")
+    }
+
+    private func searchableKeywords(for entity: LooperSessionEntity) -> [String] {
+        (
+            entity.attributeSet.keywords ?? []
+        ) + [
+            session.status.rawValue,
+            session.assistantClient.rawValue,
+            session.metadata.kind.rawValue,
+            session.metadata.taskKind.rawValue
+        ] + session.assistantClient.searchKeywords + session.metadata.userFacingTags
+    }
+}
+
+private extension AssistantClient {
+    var spotlightAssistantSurface: CompanionAssistantSurface {
+        switch self {
+        case .devin:
+            return .devin
+        case .grokBuild:
+            return .grokBuild
+        case .unknown, .codex, .cursor, .claudeCode, .superEngineering, .openclaw:
+            return .codex
+        }
     }
 }
 
@@ -138,9 +185,11 @@ final class SessionSpotlightIndexer: @unchecked Sendable {
                 offsetBy: SpotlightIndexing.batchSize,
                 limitedBy: sessions.endIndex
             ) ?? sessions.endIndex
-            let items = sessions[startIndex..<endIndex].map {
-                SessionSearchableItem(session: $0).searchableItem
+            let searchableItems = sessions[startIndex..<endIndex].map { session in
+                SessionSearchableItem(session: session)
             }
+            try await index.indexAppEntities(searchableItems.map(\.appEntity))
+            let items = searchableItems.map(\.searchableItem)
 
             try await index.indexSearchableItems(items)
             startIndex = endIndex
@@ -148,12 +197,16 @@ final class SessionSpotlightIndexer: @unchecked Sendable {
     }
 
     func indexSession(_ session: SessionSummary) async throws {
-        let item = SessionSearchableItem(session: session).searchableItem
+        let searchableItem = SessionSearchableItem(session: session)
+        try await index.indexAppEntities([searchableItem.appEntity])
+        let item = searchableItem.searchableItem
         try await index.indexSearchableItems([item])
     }
 
     func deleteSession(withId id: String) async throws {
-        try await index.deleteSearchableItems(withIdentifiers: [id])
+        let identifiers = SessionSpotlightRecord.legacyAndQualifiedSearchableIdentifiers(for: id)
+        try await index.deleteAppEntities(identifiedBy: identifiers, ofType: LooperSessionEntity.self)
+        try await index.deleteSearchableItems(withIdentifiers: identifiers)
     }
 
     func deleteSessions(withIDs ids: [String]) async throws {
@@ -161,10 +214,12 @@ final class SessionSpotlightIndexer: @unchecked Sendable {
             return
         }
 
+        try await index.deleteAppEntities(identifiedBy: ids, ofType: LooperSessionEntity.self)
         try await index.deleteSearchableItems(withIdentifiers: ids)
     }
 
     func deleteAllSessions() async throws {
+        try await index.deleteAppEntities(ofType: LooperSessionEntity.self)
         try await index.deleteSearchableItems(withDomainIdentifiers: [SpotlightIdentifiers.domainIdentifier])
     }
 }

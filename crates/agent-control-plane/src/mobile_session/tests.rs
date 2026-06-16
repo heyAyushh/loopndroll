@@ -16,6 +16,9 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
         .set_assistant_surface("devin")
         .expect("set assistant surface");
     service
+        .set_siri_default_session(Some("thread-1"), Some("codex"))
+        .expect("set siri default session");
+    service
         .queue_prompt("thread-1", "Keep going.")
         .expect("queue prompt");
     service
@@ -26,11 +29,35 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
     let mut state = service.state().expect("state");
     assert_eq!(state.default_prompt, "Continue this exact task.");
     assert_eq!(state.assistant_surface, "devin");
+    assert_eq!(state.siri_default_thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(
+        state.siri_default_assistant_surface.as_deref(),
+        Some("codex")
+    );
+    service
+        .set_siri_current_session(Some("thread-1"), Some("codex"))
+        .expect("set siri current session");
+    state = service.state().expect("state");
+    assert_eq!(state.siri_current_thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(
+        state.siri_current_assistant_surface.as_deref(),
+        Some("codex")
+    );
     service
         .set_assistant_surface("grok-build")
         .expect("set grok assistant surface");
+    service
+        .set_siri_default_session(None, None)
+        .expect("clear siri default session");
+    service
+        .set_siri_current_session(None, None)
+        .expect("clear siri current session");
     state = service.state().expect("state");
     assert_eq!(state.assistant_surface, "grok-build");
+    assert_eq!(state.siri_default_thread_id, None);
+    assert_eq!(state.siri_default_assistant_surface, None);
+    assert_eq!(state.siri_current_thread_id, None);
+    assert_eq!(state.siri_current_assistant_surface, None);
     let thread = state.sessions.get("thread-1").expect("thread override");
     assert_eq!(thread.preset.as_deref(), Some("max-turns-1"));
     assert_eq!(thread.archived, Some(true));

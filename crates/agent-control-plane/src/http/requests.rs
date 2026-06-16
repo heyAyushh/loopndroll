@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopSnapshotQuery {
@@ -7,8 +8,10 @@ pub(super) struct DesktopSnapshotQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopDevinAcpBridgeProbeRequest {
+pub(super) struct AcpClientHostProbeRequest {
     pub(super) agent_id: Option<String>,
+    #[serde(default)]
+    pub(super) _meta: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -83,6 +86,20 @@ pub(super) struct DesktopScopeRequest {
 #[serde(rename_all = "camelCase")]
 pub(super) struct MobileAssistantSurfaceRequest {
     pub(super) assistant_surface: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MobileSiriDefaultSessionRequest {
+    pub(super) session_id: Option<String>,
+    pub(super) assistant_surface: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MobileSiriCurrentSessionRequest {
+    pub(super) session_id: Option<String>,
+    pub(super) assistant_surface: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -42,6 +42,51 @@ struct LooperMenuContentTests {
     }
 
     @Test
+    func includesZedACPSourceLabelWhenThreadMentionsZedACP() {
+        let sections = LooperMenuContent.buildThreadSections(from: [
+            thread(id: "zed-1", title: "add Zed acp as acp targets", cwd: "/tmp/looper"),
+        ])
+
+        #expect(sections.first?.rows.first?.subtitle == "Zed ACP - looper")
+    }
+
+    @Test
+    func includesTailscaleSourceLabelWhenThreadMentionsTailscale() {
+        let sections = LooperMenuContent.buildThreadSections(from: [
+            thread(id: "tailscale-1", title: "fix Tailscale mobile route", cwd: "/tmp/looper"),
+        ])
+
+        #expect(sections.first?.rows.first?.subtitle == "Tailscale - looper")
+    }
+
+    @Test
+    func includesTailscaleSourceLabelForMagicDNSHost() {
+        let sections = LooperMenuContent.buildThreadSections(from: [
+            thread(id: "tailscale-2", title: "connect ayush-mac.tail62d9a8.ts.net", cwd: "/tmp/looper"),
+        ])
+
+        #expect(sections.first?.rows.first?.subtitle == "Tailscale - looper")
+    }
+
+    @Test
+    func includesTailscaleSourceLabelForTailscaleIPv4Address() {
+        let sections = LooperMenuContent.buildThreadSections(from: [
+            thread(id: "tailscale-3", title: "open http://100.95.2.4:8765", cwd: "/tmp/looper"),
+        ])
+
+        #expect(sections.first?.rows.first?.subtitle == "Tailscale - looper")
+    }
+
+    @Test
+    func keepsMultipleSurfaceLabelsWhenThreadMentionsBoth() {
+        let sections = LooperMenuContent.buildThreadSections(from: [
+            thread(id: "combo-1", title: "Zed ACP through 100.95.2.4", cwd: "/tmp/looper"),
+        ])
+
+        #expect(sections.first?.rows.first?.subtitle == "Zed ACP - Tailscale - looper")
+    }
+
+    @Test
     func fallsBackToThreadIdWhenTitleIsBlank() {
         let sections = LooperMenuContent.buildThreadSections(from: [
             thread(id: "thread-main", title: "   "),

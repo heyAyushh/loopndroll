@@ -419,8 +419,9 @@ create index if not exists mobile_passkey_sessions_lookup_idx
     pub fn resolve_connection_orb(&self, orb_id: &str) -> MobileAuthResult<MobileConnectionCode> {
         self.prune_stale_connection_orbs()?;
         let orb_id = normalized_required(orb_id).ok_or(MobileAuthError::ConnectionOrbRequired)?;
-        let connection = self.connection()?;
-        let row = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let row = transaction
             .query_row(
                 "select connection_code, created_at, consumed_at
                  from mobile_connection_orbs
@@ -443,13 +444,17 @@ create index if not exists mobile_passkey_sessions_lookup_idx
             return Err(MobileAuthError::ConnectionOrbExpired);
         }
 
-        connection.execute(
+        let changed = transaction.execute(
             "update mobile_connection_orbs
              set consumed_at = ?1
              where orb_id = ?2
                and consumed_at is null",
             params![now_iso_string()?, orb_id.as_str()],
         )?;
+        if changed != 1 {
+            return Err(MobileAuthError::ConnectionOrbExpired);
+        }
+        transaction.commit()?;
         mobile_connection_code_from_encoded_payload(&connection_code, &orb_id, &generated_at)
     }
 
@@ -522,11 +527,13 @@ create index if not exists mobile_passkey_sessions_lookup_idx
             return Err(MobileAuthError::InvalidSignature);
         }
 
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
         let credential_id = new_id();
         let credential_label = normalized_optional(input.label.as_deref())
             .unwrap_or_else(|| DEFAULT_PASSKEY_LABEL.to_owned());
-        connection.execute(
+        Self::consume_challenge_on(&transaction, &challenge.id)?;
+        transaction.execute(
             "insert into mobile_passkey_credentials (
                 id, public_key_x963, pairing_token_id, label, created_at, last_used_at, revoked_at
             ) values (?1, ?2, ?3, ?4, ?5, null, null)",
@@ -538,11 +545,13 @@ create index if not exists mobile_passkey_sessions_lookup_idx
                 now_iso_string()?,
             ],
         )?;
-        self.consume_challenge(&challenge.id)?;
+        let session =
+            Self::create_passkey_session_on(&transaction, &credential_id, &pairing_token_id)?;
+        transaction.commit()?;
 
         Ok(MobilePasskeyRegistrationResponse {
             credential_id: credential_id.clone(),
-            session: self.create_passkey_session(&credential_id, &pairing_token_id)?,
+            session,
         })
     }
 
@@ -593,17 +602,22 @@ create index if not exists mobile_passkey_sessions_lookup_idx
             return Err(MobileAuthError::InvalidSignature);
         }
 
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        Self::consume_challenge_on(&transaction, &challenge.id)?;
         let timestamp = now_iso_string()?;
-        self.connection()?.execute(
+        transaction.execute(
             "update mobile_passkey_credentials set last_used_at = ?1 where id = ?2",
             params![timestamp, credential.id],
         )?;
-        self.consume_challenge(&challenge.id)?;
+        let session =
+            Self::create_passkey_session_on(&transaction, &credential.id, &pairing_token_id)?;
+        transaction.commit()?;
 
         Ok(MobilePasskeyAuthenticationResponse {
             ok: true,
             credential_id: credential.id.clone(),
-            session: self.create_passkey_session(&credential.id, &pairing_token_id)?,
+            session,
         })
     }
 
@@ -915,11 +929,17 @@ create index if not exists mobile_passkey_sessions_lookup_idx
         Ok(row)
     }
 
-    fn consume_challenge(&self, challenge_id: &str) -> MobileAuthResult<()> {
-        self.connection()?.execute(
-            "update mobile_passkey_challenges set consumed_at = ?1 where id = ?2",
+    fn consume_challenge_on(connection: &Connection, challenge_id: &str) -> MobileAuthResult<()> {
+        let changed = connection.execute(
+            "update mobile_passkey_challenges
+             set consumed_at = ?1
+             where id = ?2
+               and consumed_at is null",
             params![now_iso_string()?, challenge_id],
         )?;
+        if changed != 1 {
+            return Err(MobileAuthError::InvalidChallenge);
+        }
         Ok(())
     }
 
@@ -958,8 +978,8 @@ create index if not exists mobile_passkey_sessions_lookup_idx
         Ok(credential)
     }
 
-    fn create_passkey_session(
-        &self,
+    fn create_passkey_session_on(
+        connection: &Connection,
         credential_id: &str,
         pairing_token_id: &str,
     ) -> MobileAuthResult<MobilePasskeySessionResponse> {
@@ -971,7 +991,7 @@ create index if not exists mobile_passkey_sessions_lookup_idx
                 + Duration::seconds(PASSKEY_SESSION_TTL_SECONDS))
             .format(&Rfc3339)?,
         };
-        self.connection()?.execute(
+        connection.execute(
             "insert into mobile_passkey_sessions (
                 id, token_hash, credential_id, pairing_token_id, created_at, last_used_at,
                 expires_at, revoked_at

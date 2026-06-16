@@ -18,7 +18,7 @@
     "test:menubar": "swift test --package-path macos/LooperMenuBar",
     "check:menubar": "swift test --package-path macos/LooperMenuBar",
     "check:rust-control-plane": "cargo fmt --check --manifest-path crates/agent-control-plane/Cargo.toml && cargo test --manifest-path crates/agent-control-plane/Cargo.toml",
-    "check:ios": "swift test --package-path ios/LooperCompanionCore && xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -configuration Debug -destination 'generic/platform=iOS' build",
+    "check:ios": "bash scripts/check-ios.sh",
     "check": "pnpm run check:rust-control-plane && pnpm run check:menubar && pnpm run check:ios"
   }
 }

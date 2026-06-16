@@ -14,6 +14,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: 6.0
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
 targets:
   LooperCompanion:
     type: application
@@ -36,6 +37,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEVELOPMENT_ASSET_PATHS: "\"LooperCompanion/Preview Content\""
         TARGETED_DEVICE_FAMILY: 1
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
     dependencies:
       - package: LooperCompanionCore
@@ -50,3 +52,16 @@ targets:
         CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Release.entitlements
         LOOPER_API_BASE_URL: ""
         LOOPER_API_BASE_URLS: ""
+schemes:
+  LooperCompanion:
+    build:
+      targets:
+        LooperCompanion: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

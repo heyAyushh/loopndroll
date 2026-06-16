@@ -137,6 +137,34 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
+    func saveSiriDefaultSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        try await request(
+            path: "/api/mobile/settings/siri-default-session",
+            method: HTTPMethod.post,
+            body: [
+                "sessionId": id ?? NSNull(),
+                "assistantSurface": assistantSurface?.rawValue ?? NSNull()
+            ]
+        )
+    }
+
+    func saveSiriCurrentSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        try await request(
+            path: "/api/mobile/settings/siri-current-session",
+            method: HTTPMethod.post,
+            body: [
+                "sessionId": id ?? NSNull(),
+                "assistantSurface": assistantSurface?.rawValue ?? NSNull()
+            ]
+        )
+    }
+
     func registerPushDevice(
         _ requestPayload: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

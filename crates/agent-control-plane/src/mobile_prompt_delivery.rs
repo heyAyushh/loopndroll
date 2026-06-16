@@ -45,6 +45,26 @@ pub fn send_session_prompt(
     Ok(dispatch)
 }
 
+pub fn send_non_acp_session_prompt(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    prompt: &str,
+) -> Result<PromptDispatch, MobileSessionError> {
+    let prompt = required_prompt(prompt)?;
+    let snapshot = mobile_desktop_snapshot(control_plane)
+        .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
+    let session_state = control_plane.mobile_session_service().state()?;
+    let action = prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?;
+    if matches!(action, PromptDeliveryAction::SendDevinAcp { .. }) {
+        return Err(MobileSessionError::PromptResumeUnavailable(
+            "automation prompt direct ACP delivery is unsupported".to_owned(),
+        ));
+    }
+    let dispatch = dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)?;
+    emit_prompt_dispatch(control_plane, thread_id, &dispatch);
+    Ok(dispatch)
+}
+
 pub fn queue_desktop_batch_prompt(
     control_plane: &ControlPlane,
     input: BatchPromptInput,

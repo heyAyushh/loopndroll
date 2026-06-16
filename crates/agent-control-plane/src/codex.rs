@@ -1,10 +1,11 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -199,6 +200,9 @@ pub struct StateData {
     pub threads: Vec<ThreadRecord>,
     pub dynamic_tools_by_thread: BTreeMap<String, Vec<DynamicTool>>,
     pub spawn_edges: Vec<SpawnEdge>,
+    pub known_thread_ids: BTreeSet<String>,
+    pub total_thread_count: usize,
+    pub active_thread_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,20 +302,48 @@ pub fn inspect_hooks(codex_home: &Path) -> HookStatus {
 }
 
 pub fn read_state(codex_home: &Path) -> Result<StateData> {
+    read_state_with_thread_limit(codex_home, None)
+}
+
+pub fn read_state_with_thread_limit(
+    codex_home: &Path,
+    thread_limit: Option<usize>,
+) -> Result<StateData> {
     let sources = discover_sources(codex_home);
     let Some(state_db) = sources.state_db else {
         return Ok(StateData {
             threads: Vec::new(),
             dynamic_tools_by_thread: BTreeMap::new(),
             spawn_edges: Vec::new(),
+            known_thread_ids: BTreeSet::new(),
+            total_thread_count: 0,
+            active_thread_count: 0,
         });
     };
     let connection = Connection::open(&state_db)
         .with_context(|| format!("open Codex state DB {}", state_db.display()))?;
+    let threads = read_threads(&connection, thread_limit)?;
+    let selected_thread_ids = threads
+        .iter()
+        .map(|thread| thread.thread_id.clone())
+        .collect::<BTreeSet<_>>();
+    let dynamic_tools_by_thread = match thread_limit {
+        Some(_) => read_dynamic_tools_for_threads(&connection, &selected_thread_ids)?,
+        None => read_dynamic_tools(&connection)?,
+    };
+    let spawn_edges = match thread_limit {
+        Some(_) => read_spawn_edges_for_threads(&connection, &selected_thread_ids)?,
+        None => read_spawn_edges(&connection)?,
+    };
+    let known_thread_ids = read_thread_ids(&connection)?;
+    let (total_thread_count, active_thread_count) = read_thread_counts(&connection)?;
     Ok(StateData {
-        threads: read_threads(&connection)?,
-        dynamic_tools_by_thread: read_dynamic_tools(&connection)?,
-        spawn_edges: read_spawn_edges(&connection)?,
+        threads,
+        dynamic_tools_by_thread,
+        spawn_edges,
+        known_thread_ids,
+        total_thread_count,
+        active_thread_count,
     })
 }
 
@@ -396,9 +428,7 @@ pub fn build_spawn_graph(thread_id: &str, edges: &[SpawnEdge]) -> SpawnGraph {
         .filter(|edge| edge.parent_thread_id == thread_id)
         .map(|edge| edge.child_thread_id.clone())
         .collect::<Vec<_>>();
-    let root_thread_id = parent_thread_id
-        .clone()
-        .unwrap_or_else(|| thread_id.to_owned());
+    let root_thread_id = root_thread_id_for_spawn_graph(thread_id, edges);
     SpawnGraph {
         parent_thread_id,
         root_thread_id,
@@ -411,7 +441,23 @@ pub fn build_spawn_graph(thread_id: &str, edges: &[SpawnEdge]) -> SpawnGraph {
     }
 }
 
-fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
+fn root_thread_id_for_spawn_graph(thread_id: &str, edges: &[SpawnEdge]) -> String {
+    let mut root_thread_id = thread_id.to_owned();
+    let mut seen = BTreeSet::from([root_thread_id.clone()]);
+    while let Some(parent_thread_id) = edges
+        .iter()
+        .find(|edge| edge.child_thread_id == root_thread_id)
+        .map(|edge| edge.parent_thread_id.clone())
+    {
+        if !seen.insert(parent_thread_id.clone()) {
+            break;
+        }
+        root_thread_id = parent_thread_id;
+    }
+    root_thread_id
+}
+
+fn read_threads(connection: &Connection, limit: Option<usize>) -> Result<Vec<ThreadRecord>> {
     if !table_exists(connection, "threads")? {
         return Ok(Vec::new());
     }
@@ -439,7 +485,7 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
             {updated} as updated_at_ms,
             {archived} as archived
          from threads
-         order by {order} desc",
+         order by {order} desc{limit_clause}",
         id = quoted_identifier(id_column),
         title = nullable_column(&columns, "title"),
         cwd = nullable_column(&columns, "cwd"),
@@ -461,6 +507,9 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
             .unwrap_or_else(|| "null".to_owned()),
         archived = nullable_column(&columns, "archived"),
         order = quoted_identifier(order_column),
+        limit_clause = limit
+            .map(|limit| format!(" limit {limit}"))
+            .unwrap_or_default(),
     );
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
@@ -490,6 +539,38 @@ fn read_threads(connection: &Connection) -> Result<Vec<ThreadRecord>> {
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn read_thread_ids(connection: &Connection) -> Result<BTreeSet<String>> {
+    if !table_exists(connection, "threads")? {
+        return Ok(BTreeSet::new());
+    }
+    let columns = table_columns(connection, "threads")?;
+    let id_column = preferred_column(&columns, &["thread_id", "id"]).unwrap_or("id");
+    let sql = format!("select {} from threads", quoted_identifier(id_column));
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    rows.collect::<Result<BTreeSet<_>, _>>().map_err(Into::into)
+}
+
+fn read_thread_counts(connection: &Connection) -> Result<(usize, usize)> {
+    if !table_exists(connection, "threads")? {
+        return Ok((0, 0));
+    }
+    let columns = table_columns(connection, "threads")?;
+    let active_expression = if columns.contains("archived") {
+        "sum(case when coalesce(archived, 0) = 0 then 1 else 0 end)".to_owned()
+    } else {
+        "count(*)".to_owned()
+    };
+    let sql = format!("select count(*), coalesce({active_expression}, 0) from threads");
+    connection
+        .query_row(&sql, [], |row| {
+            let total: i64 = row.get(0)?;
+            let active: i64 = row.get(1)?;
+            Ok((total.max(0) as usize, active.max(0) as usize))
+        })
+        .map_err(Into::into)
 }
 
 fn transcript_originator_for_path(path: &str) -> Option<String> {
@@ -539,6 +620,45 @@ fn read_dynamic_tools(connection: &Connection) -> Result<BTreeMap<String, Vec<Dy
     Ok(tools_by_thread)
 }
 
+fn read_dynamic_tools_for_threads(
+    connection: &Connection,
+    thread_ids: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Vec<DynamicTool>>> {
+    if thread_ids.is_empty() || !table_exists(connection, "thread_dynamic_tools")? {
+        return Ok(BTreeMap::new());
+    }
+    let placeholders = sql_placeholders(thread_ids.len());
+    let sql = format!(
+        "select thread_id, name, namespace, description, defer_loading
+         from thread_dynamic_tools
+         where thread_id in ({placeholders})
+         order by thread_id, position"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(thread_ids.iter()), |row| {
+        let name: String = row.get(1)?;
+        let namespace: Option<String> = row.get(2)?;
+        let description: Option<String> = row.get(3)?;
+        let defer_loading: Option<i64> = row.get(4)?;
+        Ok((
+            row.get::<_, String>(0)?,
+            DynamicTool {
+                classification: classify_tool(&name, namespace.as_deref()),
+                name,
+                namespace,
+                description,
+                defer_loading: defer_loading.unwrap_or(0) != 0,
+            },
+        ))
+    })?;
+    let mut tools_by_thread: BTreeMap<String, Vec<DynamicTool>> = BTreeMap::new();
+    for row in rows {
+        let (thread_id, tool) = row?;
+        tools_by_thread.entry(thread_id).or_default().push(tool);
+    }
+    Ok(tools_by_thread)
+}
+
 fn read_spawn_edges(connection: &Connection) -> Result<Vec<SpawnEdge>> {
     if !table_exists(connection, "thread_spawn_edges")? {
         return Ok(Vec::new());
@@ -556,6 +676,79 @@ fn read_spawn_edges(connection: &Connection) -> Result<Vec<SpawnEdge>> {
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn read_spawn_edges_for_threads(
+    connection: &Connection,
+    thread_ids: &BTreeSet<String>,
+) -> Result<Vec<SpawnEdge>> {
+    if thread_ids.is_empty() || !table_exists(connection, "thread_spawn_edges")? {
+        return Ok(Vec::new());
+    }
+    let mut edges_by_key = BTreeMap::<(String, String), SpawnEdge>::new();
+    let mut visited_children = BTreeSet::new();
+    let mut frontier = thread_ids.clone();
+    while !frontier.is_empty() {
+        let next_frontier =
+            read_spawn_edges_matching_column(connection, "child_thread_id", &frontier)?
+                .into_iter()
+                .filter_map(|edge| {
+                    let parent_thread_id = edge.parent_thread_id.clone();
+                    edges_by_key.insert(
+                        (edge.parent_thread_id.clone(), edge.child_thread_id.clone()),
+                        edge,
+                    );
+                    (!visited_children.contains(&parent_thread_id)).then_some(parent_thread_id)
+                })
+                .collect::<BTreeSet<_>>();
+        visited_children.extend(frontier);
+        frontier = next_frontier
+            .difference(&visited_children)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+    }
+
+    for edge in read_spawn_edges_matching_column(connection, "parent_thread_id", thread_ids)? {
+        edges_by_key.insert(
+            (edge.parent_thread_id.clone(), edge.child_thread_id.clone()),
+            edge,
+        );
+    }
+
+    Ok(edges_by_key.into_values().collect())
+}
+
+fn read_spawn_edges_matching_column(
+    connection: &Connection,
+    column: &str,
+    thread_ids: &BTreeSet<String>,
+) -> Result<Vec<SpawnEdge>> {
+    if thread_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = sql_placeholders(thread_ids.len());
+    let sql = format!(
+        "select parent_thread_id, child_thread_id, status
+         from thread_spawn_edges
+         where {} in ({placeholders})
+         order by parent_thread_id, child_thread_id",
+        quoted_identifier(column)
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(thread_ids.iter()), |row| {
+        Ok(SpawnEdge {
+            parent_thread_id: row.get(0)?,
+            child_thread_id: row.get(1)?,
+            status: row.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn sql_placeholders(count: usize) -> String {
+    std::iter::repeat_n("?", count)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
@@ -715,11 +908,36 @@ fn latest_matching_file(directory: &Path, prefix: &str, suffix: &str) -> Option<
                 .unwrap_or(false)
         })
         .collect::<Vec<_>>();
-    candidates.sort();
+    candidates.sort_by(|left, right| compare_matching_files(left, right, prefix, suffix));
     candidates
         .into_iter()
         .rev()
         .find(|path| is_valid_sqlite_file(path))
+}
+
+fn compare_matching_files(left: &Path, right: &Path, prefix: &str, suffix: &str) -> Ordering {
+    let left_suffix = matching_file_numeric_suffix(left, prefix, suffix);
+    let right_suffix = matching_file_numeric_suffix(right, prefix, suffix);
+    match (left_suffix, right_suffix) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => file_name_string(left).cmp(&file_name_string(right)),
+    }
+}
+
+fn matching_file_numeric_suffix(path: &Path, prefix: &str, suffix: &str) -> Option<u64> {
+    let name = path.file_name()?.to_str()?;
+    name.strip_prefix(prefix)?
+        .strip_suffix(suffix)?
+        .parse::<u64>()
+        .ok()
+}
+
+fn file_name_string(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 fn is_valid_sqlite_file(path: &Path) -> bool {
@@ -912,7 +1130,10 @@ fn process_ancestry(
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexServerOwner, inspect_codex_servers_from_process_lines, latest_matching_file};
+    use super::{
+        CodexServerOwner, LaunchKind, SpawnEdge, build_spawn_graph,
+        inspect_codex_servers_from_process_lines, latest_matching_file,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -996,5 +1217,58 @@ mod tests {
         let selected = latest_matching_file(tempdir.path(), "state_", ".sqlite");
 
         assert_eq!(selected.as_deref(), Some(valid_path.as_path()));
+    }
+
+    #[test]
+    fn latest_matching_file_orders_numeric_suffixes_numerically() {
+        let tempdir = tempdir().expect("tempdir");
+        let state_9 = tempdir.path().join("state_9.sqlite");
+        let state_10 = tempdir.path().join("state_10.sqlite");
+        let state_11_empty = tempdir.path().join("state_11.sqlite");
+        fs::write(&state_9, super::SQLITE_HEADER).expect("write state 9");
+        fs::write(&state_10, super::SQLITE_HEADER).expect("write state 10");
+        fs::write(&state_11_empty, []).expect("write empty state 11");
+
+        let selected = latest_matching_file(tempdir.path(), "state_", ".sqlite");
+
+        assert_eq!(selected.as_deref(), Some(state_10.as_path()));
+    }
+
+    #[test]
+    fn spawn_graph_resolves_nested_root_with_cycle_guard() {
+        let edges = vec![
+            SpawnEdge {
+                parent_thread_id: "root".to_owned(),
+                child_thread_id: "child".to_owned(),
+                status: None,
+            },
+            SpawnEdge {
+                parent_thread_id: "child".to_owned(),
+                child_thread_id: "grandchild".to_owned(),
+                status: None,
+            },
+        ];
+
+        let graph = build_spawn_graph("grandchild", &edges);
+
+        assert_eq!(graph.parent_thread_id.as_deref(), Some("child"));
+        assert_eq!(graph.root_thread_id, "root");
+        assert_eq!(graph.launch_kind, LaunchKind::Subagent);
+
+        let cyclic_edges = vec![
+            SpawnEdge {
+                parent_thread_id: "left".to_owned(),
+                child_thread_id: "right".to_owned(),
+                status: None,
+            },
+            SpawnEdge {
+                parent_thread_id: "right".to_owned(),
+                child_thread_id: "left".to_owned(),
+                status: None,
+            },
+        ];
+        let cyclic_graph = build_spawn_graph("left", &cyclic_edges);
+        assert_eq!(cyclic_graph.parent_thread_id.as_deref(), Some("right"));
+        assert_eq!(cyclic_graph.root_thread_id, "right");
     }
 }

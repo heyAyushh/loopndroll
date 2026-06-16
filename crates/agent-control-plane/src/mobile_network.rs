@@ -1,7 +1,12 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use tokio::process::Command as AsyncCommand;
+use tokio::time::timeout;
 
 pub const DEFAULT_AGENT_CONTROL_PLANE_PORT: u16 = 8765;
 pub const DEFAULT_GRPC_PORT_OFFSET: u16 = 1;
@@ -22,6 +27,20 @@ const LINK_LOCAL_FIRST_OCTET: u8 = 169;
 const LINK_LOCAL_SECOND_OCTET: u8 = 254;
 const UNSPECIFIED_FIRST_OCTET: u8 = 0;
 const MULTICAST_FIRST_OCTET_LOWER_BOUND: u8 = 224;
+const TAILSCALE_CGNAT_FIRST_OCTET: u8 = 100;
+const TAILSCALE_CGNAT_SECOND_OCTET_LOWER_BOUND: u8 = 64;
+const TAILSCALE_CGNAT_SECOND_OCTET_UPPER_BOUND: u8 = 127;
+const TAILSCALE_ULA_FIRST_SEGMENT: u16 = 0xfd7a;
+const TAILSCALE_ULA_SECOND_SEGMENT: u16 = 0x115c;
+const TAILSCALE_ULA_THIRD_SEGMENT: u16 = 0xa1e0;
+const TAILSCALE_DNS_SUFFIX: &str = ".ts.net";
+const TAILSCALE_STATUS_TIMEOUT_MS: u64 = 900;
+const TAILSCALE_CLI_EXECUTABLE: &str = "tailscale";
+const TAILSCALE_SOCKET_ENV: &str = "LOOPER_TAILSCALE_SOCKET";
+const DEFAULT_TAILSCALE_SOCKET_PATHS: &[&str] = &[
+    "/var/run/tailscale/tailscaled.sock",
+    "/var/run/tailscaled.socket",
+];
 const LOCAL_INTERFACE_NAMES: &[&str] = &["en0", "en1", "bridge100"];
 const MOBILE_BASE_URL_ENV_KEYS: &[&str] = &[
     "AGENT_CONTROL_PLANE_MOBILE_BASE_URLS",
@@ -82,6 +101,436 @@ pub fn advertised_mobile_grpc_base_urls(http_base_urls: &[String]) -> Vec<String
         configured_grpc_control_plane_port(),
         explicit_mobile_grpc_base_urls(),
     )
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MobileTailscaleStatus {
+    pub available: bool,
+    pub running: bool,
+    #[serde(rename = "backendState", skip_serializing_if = "Option::is_none")]
+    pub backend_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(rename = "dnsName", skip_serializing_if = "Option::is_none")]
+    pub dns_name: Option<String>,
+    #[serde(rename = "tailnetName", skip_serializing_if = "Option::is_none")]
+    pub tailnet_name: Option<String>,
+    #[serde(rename = "magicDNSSuffix", skip_serializing_if = "Option::is_none")]
+    pub magic_dns_suffix: Option<String>,
+    #[serde(rename = "magicDNSEnabled", skip_serializing_if = "Option::is_none")]
+    pub magic_dns_enabled: Option<bool>,
+    #[serde(rename = "ipAddresses")]
+    pub ip_addresses: Vec<String>,
+    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(rename = "grpcBaseURL", skip_serializing_if = "Option::is_none")]
+    pub grpc_base_url: Option<String>,
+    pub health: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TailscaleDiscovery {
+    source: String,
+    running: Option<bool>,
+    backend_state: Option<String>,
+    version: Option<String>,
+    hostname: Option<String>,
+    dns_name: Option<String>,
+    tailnet_name: Option<String>,
+    magic_dns_suffix: Option<String>,
+    magic_dns_enabled: Option<bool>,
+    ip_addresses: Vec<String>,
+    health: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TailscaleAdvertisedRoute {
+    base_url: String,
+    grpc_base_url: Option<String>,
+    ip_address: Option<String>,
+}
+
+pub async fn mobile_tailscale_status(
+    http_base_urls: &[String],
+    grpc_base_urls: &[String],
+) -> MobileTailscaleStatus {
+    let advertised_route = advertised_tailscale_route(http_base_urls, grpc_base_urls);
+    let discovery_result = discover_tailscale_status().await;
+    mobile_tailscale_status_from_sources(
+        discovery_result,
+        advertised_route,
+        configured_control_plane_port(),
+        configured_grpc_control_plane_port(),
+    )
+}
+
+fn mobile_tailscale_status_from_sources(
+    discovery_result: Result<TailscaleDiscovery>,
+    advertised_route: Option<TailscaleAdvertisedRoute>,
+    http_port: u16,
+    grpc_port: u16,
+) -> MobileTailscaleStatus {
+    let route_ip_address = advertised_route
+        .as_ref()
+        .and_then(|route| route.ip_address.clone());
+    let route_base_url = advertised_route
+        .as_ref()
+        .map(|route| route.base_url.clone());
+    let route_grpc_base_url = advertised_route
+        .as_ref()
+        .and_then(|route| route.grpc_base_url.clone());
+
+    let (discovery, discovery_error) = match discovery_result {
+        Ok(discovery) => (Some(discovery), None),
+        Err(error) => (None, Some(error.to_string())),
+    };
+
+    let ip_addresses = unique_values(
+        discovery
+            .as_ref()
+            .map(|status| status.ip_addresses.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(route_ip_address)
+            .collect(),
+    );
+    let base_url =
+        route_base_url.or_else(|| base_url_for_tailscale_addresses(&ip_addresses, http_port));
+    let grpc_base_url =
+        route_grpc_base_url.or_else(|| base_url_for_tailscale_addresses(&ip_addresses, grpc_port));
+    let available = base_url.is_some() || !ip_addresses.is_empty();
+    let running = discovery
+        .as_ref()
+        .and_then(|status| status.running)
+        .unwrap_or(available);
+    let source = discovery
+        .as_ref()
+        .map(|status| status.source.clone())
+        .or_else(|| available.then(|| "interface".to_owned()));
+    let error = (!available).then_some(discovery_error).flatten();
+
+    MobileTailscaleStatus {
+        available,
+        running,
+        backend_state: discovery
+            .as_ref()
+            .and_then(|status| status.backend_state.clone()),
+        source,
+        version: discovery.as_ref().and_then(|status| status.version.clone()),
+        hostname: discovery
+            .as_ref()
+            .and_then(|status| status.hostname.clone()),
+        dns_name: discovery
+            .as_ref()
+            .and_then(|status| status.dns_name.clone()),
+        tailnet_name: discovery
+            .as_ref()
+            .and_then(|status| status.tailnet_name.clone()),
+        magic_dns_suffix: discovery
+            .as_ref()
+            .and_then(|status| status.magic_dns_suffix.clone()),
+        magic_dns_enabled: discovery
+            .as_ref()
+            .and_then(|status| status.magic_dns_enabled),
+        ip_addresses,
+        base_url,
+        grpc_base_url,
+        health: discovery
+            .as_ref()
+            .map(|status| status.health.clone())
+            .unwrap_or_default(),
+        error,
+    }
+}
+
+async fn discover_tailscale_status() -> Result<TailscaleDiscovery> {
+    match discover_tailscale_status_with_localapi().await {
+        Ok(status) => return Ok(status),
+        Err(localapi_error) => match discover_tailscale_status_with_cli().await {
+            Ok(status) => Ok(status),
+            Err(cli_error) => Err(anyhow!(
+                "localapi unavailable: {localapi_error}; cli unavailable: {cli_error}"
+            )),
+        },
+    }
+}
+
+async fn discover_tailscale_status_with_localapi() -> Result<TailscaleDiscovery> {
+    let socket_path = tailscale_socket_paths()
+        .into_iter()
+        .find(|path| Path::new(path).exists())
+        .ok_or_else(|| anyhow!("tailscaled socket not found"))?;
+    let client = tailscale_localapi::LocalApi::new_with_socket_path(socket_path);
+    let status = timeout(tailscale_status_timeout(), client.status()).await??;
+    Ok(tailscale_discovery_from_localapi_status(status))
+}
+
+async fn discover_tailscale_status_with_cli() -> Result<TailscaleDiscovery> {
+    let output = timeout(
+        tailscale_status_timeout(),
+        AsyncCommand::new(TAILSCALE_CLI_EXECUTABLE)
+            .args(["status", "--json"])
+            .output(),
+    )
+    .await??;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "tailscale status exited with {}",
+            output.status.code().unwrap_or_default()
+        ));
+    }
+
+    let status: TailscaleCliStatus = serde_json::from_slice(&output.stdout)?;
+    Ok(tailscale_discovery_from_cli_status(status))
+}
+
+fn tailscale_status_timeout() -> Duration {
+    Duration::from_millis(TAILSCALE_STATUS_TIMEOUT_MS)
+}
+
+fn tailscale_socket_paths() -> Vec<String> {
+    std::env::var(TAILSCALE_SOCKET_ENV)
+        .ok()
+        .into_iter()
+        .chain(
+            DEFAULT_TAILSCALE_SOCKET_PATHS
+                .iter()
+                .map(|path| path.to_string()),
+        )
+        .collect()
+}
+
+fn tailscale_discovery_from_localapi_status(
+    status: tailscale_localapi::Status,
+) -> TailscaleDiscovery {
+    let backend_state = localapi_backend_state_label(&status.backend_state).to_owned();
+    let ip_addresses = unique_values(
+        status
+            .tailscale_ips
+            .into_iter()
+            .chain(status.self_status.tailscale_ips.clone())
+            .map(|address| address.to_string())
+            .filter(|address| is_tailscale_ip_address(address))
+            .collect(),
+    );
+    let current_tailnet = status.current_tailnet;
+
+    TailscaleDiscovery {
+        source: "localapi".to_owned(),
+        running: Some(localapi_backend_is_running(&status.backend_state)),
+        backend_state: Some(backend_state),
+        version: clean_optional_string(status.version),
+        hostname: clean_optional_string(status.self_status.hostname),
+        dns_name: clean_optional_dns_name(status.self_status.dnsname),
+        tailnet_name: current_tailnet
+            .as_ref()
+            .and_then(|tailnet| clean_optional_string(tailnet.name.clone())),
+        magic_dns_suffix: current_tailnet
+            .as_ref()
+            .and_then(|tailnet| clean_optional_dns_name(tailnet.magic_dns_suffix.clone())),
+        magic_dns_enabled: current_tailnet.map(|tailnet| tailnet.magic_dns_enabled),
+        ip_addresses,
+        health: status.health,
+    }
+}
+
+fn localapi_backend_state_label(state: &tailscale_localapi::BackendState) -> &'static str {
+    match state {
+        tailscale_localapi::BackendState::NoState => "NoState",
+        tailscale_localapi::BackendState::NeedsLogin => "NeedsLogin",
+        tailscale_localapi::BackendState::NeedsMachineAuth => "NeedsMachineAuth",
+        tailscale_localapi::BackendState::Stopped => "Stopped",
+        tailscale_localapi::BackendState::Starting => "Starting",
+        tailscale_localapi::BackendState::Running => "Running",
+        _ => "Unknown",
+    }
+}
+
+fn localapi_backend_is_running(state: &tailscale_localapi::BackendState) -> bool {
+    matches!(state, tailscale_localapi::BackendState::Running)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TailscaleCliStatus {
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    backend_state: String,
+    #[serde(rename = "TailscaleIPs", default)]
+    tailscale_ips: Vec<String>,
+    #[serde(rename = "Self", default)]
+    self_status: Option<TailscaleCliSelfStatus>,
+    #[serde(default)]
+    health: Vec<String>,
+    #[serde(default)]
+    current_tailnet: Option<TailscaleCliTailnetStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TailscaleCliSelfStatus {
+    #[serde(rename = "HostName", default)]
+    hostname: String,
+    #[serde(rename = "DNSName", default)]
+    dns_name: String,
+    #[serde(rename = "TailscaleIPs", default)]
+    tailscale_ips: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TailscaleCliTailnetStatus {
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "MagicDNSSuffix", default)]
+    magic_dns_suffix: String,
+    #[serde(rename = "MagicDNSEnabled", default)]
+    magic_dns_enabled: bool,
+}
+
+fn tailscale_discovery_from_cli_status(status: TailscaleCliStatus) -> TailscaleDiscovery {
+    let self_status = status.self_status;
+    let self_ip_addresses = self_status
+        .as_ref()
+        .map(|self_status| self_status.tailscale_ips.clone())
+        .unwrap_or_default();
+    let ip_addresses = unique_values(
+        status
+            .tailscale_ips
+            .into_iter()
+            .chain(self_ip_addresses)
+            .filter(|address| is_tailscale_ip_address(address))
+            .collect(),
+    );
+    let current_tailnet = status.current_tailnet;
+    let backend_state = clean_optional_string(status.backend_state);
+    let running = backend_state
+        .as_deref()
+        .map(|state| state.eq_ignore_ascii_case("running"));
+
+    TailscaleDiscovery {
+        source: "cli".to_owned(),
+        running,
+        backend_state,
+        version: clean_optional_string(status.version),
+        hostname: self_status
+            .as_ref()
+            .and_then(|self_status| clean_optional_string(self_status.hostname.clone())),
+        dns_name: self_status
+            .as_ref()
+            .and_then(|self_status| clean_optional_dns_name(self_status.dns_name.clone())),
+        tailnet_name: current_tailnet
+            .as_ref()
+            .and_then(|tailnet| clean_optional_string(tailnet.name.clone())),
+        magic_dns_suffix: current_tailnet
+            .as_ref()
+            .and_then(|tailnet| clean_optional_dns_name(tailnet.magic_dns_suffix.clone())),
+        magic_dns_enabled: current_tailnet.map(|tailnet| tailnet.magic_dns_enabled),
+        ip_addresses,
+        health: status.health,
+    }
+}
+
+fn advertised_tailscale_route(
+    http_base_urls: &[String],
+    grpc_base_urls: &[String],
+) -> Option<TailscaleAdvertisedRoute> {
+    let base_url = http_base_urls
+        .iter()
+        .find(|base_url| base_url_host(base_url).is_some_and(|host| is_tailscale_host(&host)))?;
+    let base_host = base_url_host(base_url);
+    let grpc_base_url = base_host.as_ref().and_then(|base_host| {
+        grpc_base_urls
+            .iter()
+            .find(|grpc_base_url| {
+                base_url_host(grpc_base_url)
+                    .as_ref()
+                    .is_some_and(|grpc_host| same_tailscale_host(base_host, grpc_host))
+            })
+            .cloned()
+    });
+
+    Some(TailscaleAdvertisedRoute {
+        base_url: base_url.clone(),
+        grpc_base_url,
+        ip_address: base_host.filter(|host| is_tailscale_ip_address(host)),
+    })
+}
+
+fn base_url_for_tailscale_addresses(ip_addresses: &[String], port: u16) -> Option<String> {
+    let host = ip_addresses
+        .iter()
+        .filter_map(|address| tailscale_url_host(address))
+        .min_by_key(|host| host.starts_with('['))?;
+    Some(format!("http://{host}:{port}"))
+}
+
+fn tailscale_url_host(value: &str) -> Option<String> {
+    let normalized = normalize_url_host(value);
+    let address = normalized.parse::<IpAddr>().ok()?;
+    if !is_tailscale_ip_address(&normalized) {
+        return None;
+    }
+
+    Some(match address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => format!("[{address}]"),
+    })
+}
+
+fn is_tailscale_host(host: &str) -> bool {
+    let normalized = normalize_url_host(host);
+    is_tailscale_ip_address(&normalized) || normalized.ends_with(TAILSCALE_DNS_SUFFIX)
+}
+
+fn same_tailscale_host(lhs: &str, rhs: &str) -> bool {
+    normalize_url_host(lhs) == normalize_url_host(rhs)
+}
+
+fn is_tailscale_ip_address(value: &str) -> bool {
+    match normalize_url_host(value).parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => is_tailscale_ipv4_octets(address.octets()),
+        Ok(IpAddr::V6(address)) => is_tailscale_ipv6_segments(address.segments()),
+        Err(_) => false,
+    }
+}
+
+fn is_tailscale_ipv4_octets(octets: [u8; IPV4_OCTET_COUNT]) -> bool {
+    let [first, second, _, _] = octets;
+    first == TAILSCALE_CGNAT_FIRST_OCTET
+        && (TAILSCALE_CGNAT_SECOND_OCTET_LOWER_BOUND..=TAILSCALE_CGNAT_SECOND_OCTET_UPPER_BOUND)
+            .contains(&second)
+}
+
+fn is_tailscale_ipv6_segments(segments: [u16; 8]) -> bool {
+    segments[0] == TAILSCALE_ULA_FIRST_SEGMENT
+        && segments[1] == TAILSCALE_ULA_SECOND_SEGMENT
+        && segments[2] == TAILSCALE_ULA_THIRD_SEGMENT
+}
+
+fn normalize_url_host(host: &str) -> String {
+    host.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn clean_optional_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+fn clean_optional_dns_name(value: String) -> Option<String> {
+    clean_optional_string(value).map(|value| value.trim_end_matches('.').to_owned())
 }
 
 fn configured_listener_accepts_remote_connections() -> bool {
@@ -451,5 +900,104 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
             addresses,
             vec!["192.168.1.4".to_owned(), "100.119.200.69".to_owned()]
         );
+    }
+
+    #[test]
+    fn tailscale_status_prefers_advertised_route_and_keeps_discovery_metadata() {
+        let status = mobile_tailscale_status_from_sources(
+            Ok(TailscaleDiscovery {
+                source: "cli".to_owned(),
+                running: Some(true),
+                backend_state: Some("Running".to_owned()),
+                version: Some("1.98.5".to_owned()),
+                hostname: Some("Ayush's MacBook Pro".to_owned()),
+                dns_name: Some("ayushs-macbook-pro.tail62d9a8.ts.net".to_owned()),
+                tailnet_name: Some("heyayushh.github".to_owned()),
+                magic_dns_suffix: Some("tail62d9a8.ts.net".to_owned()),
+                magic_dns_enabled: Some(true),
+                ip_addresses: vec!["100.119.200.69".to_owned()],
+                health: Vec::new(),
+            }),
+            advertised_tailscale_route(
+                &[
+                    "http://172.20.10.2:8765".to_owned(),
+                    "http://100.119.200.69:8765".to_owned(),
+                ],
+                &[
+                    "http://172.20.10.2:8766".to_owned(),
+                    "http://100.119.200.69:8766".to_owned(),
+                ],
+            ),
+            TEST_PORT,
+            TEST_GRPC_PORT,
+        );
+
+        assert!(status.available);
+        assert!(status.running);
+        assert_eq!(status.source.as_deref(), Some("cli"));
+        assert_eq!(
+            status.base_url.as_deref(),
+            Some("http://100.119.200.69:8765")
+        );
+        assert_eq!(
+            status.grpc_base_url.as_deref(),
+            Some("http://100.119.200.69:8766")
+        );
+        assert_eq!(
+            status.magic_dns_suffix.as_deref(),
+            Some("tail62d9a8.ts.net")
+        );
+    }
+
+    #[test]
+    fn tailscale_status_builds_route_from_discovered_ip_without_advertised_route() {
+        let status = mobile_tailscale_status_from_sources(
+            Ok(TailscaleDiscovery {
+                source: "localapi".to_owned(),
+                running: Some(true),
+                backend_state: Some("Running".to_owned()),
+                version: None,
+                hostname: None,
+                dns_name: None,
+                tailnet_name: None,
+                magic_dns_suffix: None,
+                magic_dns_enabled: None,
+                ip_addresses: vec![
+                    "fd7a:115c:a1e0::9634:c845".to_owned(),
+                    "100.119.200.69".to_owned(),
+                ],
+                health: Vec::new(),
+            }),
+            None,
+            TEST_PORT,
+            TEST_GRPC_PORT,
+        );
+
+        assert!(status.available);
+        assert_eq!(
+            status.base_url.as_deref(),
+            Some("http://100.119.200.69:8765")
+        );
+        assert_eq!(
+            status.grpc_base_url.as_deref(),
+            Some("http://100.119.200.69:8766")
+        );
+        assert_eq!(
+            status.ip_addresses,
+            vec![
+                "fd7a:115c:a1e0::9634:c845".to_owned(),
+                "100.119.200.69".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tailscale_host_detection_handles_cgnat_ipv6_and_magic_dns() {
+        assert!(is_tailscale_host("100.64.0.1"));
+        assert!(is_tailscale_host("100.127.255.254"));
+        assert!(is_tailscale_host("[fd7a:115c:a1e0::9634:c845]"));
+        assert!(is_tailscale_host("ayushs-macbook-pro.tail62d9a8.ts.net."));
+        assert!(!is_tailscale_host("100.128.0.1"));
+        assert!(!is_tailscale_host("192.168.1.4"));
     }
 }

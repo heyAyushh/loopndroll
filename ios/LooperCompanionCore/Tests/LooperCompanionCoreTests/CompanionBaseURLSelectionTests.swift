@@ -5,7 +5,9 @@ import Testing
 @Suite("Companion base URL selection")
 struct CompanionBaseURLSelectionTests {
     private let reachedBonjourURL = "http://looper.local:8765"
-    private let advertisedLANURL = "http://192.0.2.10:8765"
+    private let advertisedLANURL = "http://192.168.2.10:8765"
+    private let advertisedTailscaleURL = "http://100.95.2.4:8765"
+    private let advertisedMagicDNSURL = "http://ayushs-macbook-pro.tail62d9a8.ts.net:8765"
     private let advertisedRemoteURL = "https://looper.example.test"
     private let staleConfiguredURL = "http://198.51.100.20:8765"
     private let normalizedReachedURL = "http://LOOPER.local:8765/"
@@ -65,6 +67,61 @@ struct CompanionBaseURLSelectionTests {
 
         #expect(urls.count == 1)
         #expect(urls.first?.absoluteString == normalizedAdvertisedURL)
+    }
+
+    @Test("Route preference can prefer remote URLs")
+    func routePreferenceCanPreferRemoteURLs() throws {
+        let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: try url(reachedBonjourURL),
+            advertised: try urls(advertisedTailscaleURL, advertisedRemoteURL),
+            existing: [],
+            preference: .remote
+        )
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedRemoteURL,
+            advertisedTailscaleURL,
+            reachedBonjourURL,
+        ])
+    }
+
+    @Test("Route preference can prefer Tailscale URLs")
+    func routePreferenceCanPreferTailscaleURLs() throws {
+        let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: try url(reachedBonjourURL),
+            advertised: try urls(advertisedRemoteURL, advertisedTailscaleURL),
+            existing: [],
+            preference: .tailscale
+        )
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedTailscaleURL,
+            reachedBonjourURL,
+            advertisedRemoteURL,
+        ])
+    }
+
+    @Test("Route preference can prefer LAN URLs")
+    func routePreferenceCanPreferLANURLs() throws {
+        let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: try url(advertisedTailscaleURL),
+            advertised: try urls(advertisedLANURL, advertisedRemoteURL),
+            existing: [],
+            preference: .lan
+        )
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedLANURL,
+            advertisedTailscaleURL,
+            advertisedRemoteURL,
+        ])
+    }
+
+    @Test("Route classifier detects MagicDNS as Tailscale")
+    func routeClassifierDetectsMagicDNSAsTailscale() throws {
+        let route = CompanionBaseURLRouting.route(for: try url(advertisedMagicDNSURL))
+
+        #expect(route == .tailscale)
     }
 
     private func urls(_ values: String...) throws -> [URL] {

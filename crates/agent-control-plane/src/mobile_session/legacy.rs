@@ -199,6 +199,11 @@ fn read_legacy_mobile_state(connection: &Connection) -> MobileSessionResult<Lega
                         global_completion_check_wait_for_reply: row.get::<_, i64>(5)?
                             == ENABLED_FLAG,
                         assistant_surface: DEFAULT_ASSISTANT_SURFACE.to_owned(),
+                        siri_default_thread_id: None,
+                        siri_default_assistant_surface: None,
+                        siri_current_thread_id: None,
+                        siri_current_assistant_surface: None,
+                        siri_current_updated_at_ms: None,
                     })
                 },
             )

@@ -29,6 +29,18 @@ public enum LooperMenuContent {
         static let missingLaunchMetadata = "no launch metadata"
     }
 
+    private enum SurfaceLabel {
+        static let tailscale = "Tailscale"
+        static let zedACP = "Zed ACP"
+    }
+
+    private enum TailscaleNetwork {
+        static let magicDNSSuffix = ".ts.net"
+        static let legacyMagicDNSSuffix = ".beta.tailscale.net"
+        static let ipv4FirstOctet = 100
+        static let ipv4SecondOctetRange = 64...127
+    }
+
     public static func buildThreadSections(from threads: [DesktopThreadSummary]) -> [LooperMenuSection] {
         let activeRows = threads
             .filter { !$0.archived }
@@ -125,6 +137,70 @@ public enum LooperMenuContent {
             forWorkingDirectory: thread.cwd,
             fallback: fallback
         )
-        return thread.archived ? "Archived - \(projectName)" : projectName
+        let subtitle = (
+            sourceLabels(for: thread)
+            + [projectName]
+        )
+        .joined(separator: " - ")
+        return thread.archived ? "Archived - \(subtitle)" : subtitle
+    }
+
+    private static func sourceLabels(for thread: DesktopThreadSummary) -> [String] {
+        let fields = [
+            thread.title,
+            thread.source,
+            thread.capabilities.agentNickname,
+            thread.capabilities.agentRole,
+            thread.capabilities.agentPath,
+        ]
+
+        return [
+            fields.contains(where: containsZedACPReference) ? SurfaceLabel.zedACP : nil,
+            fields.contains(where: containsTailscaleReference) ? SurfaceLabel.tailscale : nil,
+        ]
+        .compactMap { $0 }
+    }
+
+    private static func containsZedACPReference(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        let normalized = value
+            .lowercased()
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return normalized.contains("zed acp") || normalized.contains("zed.dev")
+    }
+
+    private static func containsTailscaleReference(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        let normalized = value.lowercased()
+        return normalized.contains("tailscale")
+            || normalized.contains(TailscaleNetwork.magicDNSSuffix)
+            || normalized.contains(TailscaleNetwork.legacyMagicDNSSuffix)
+            || containsTailscaleIPv4Reference(in: normalized)
+    }
+
+    private static func containsTailscaleIPv4Reference(in value: String) -> Bool {
+        for candidate in value.split(whereSeparator: { !$0.isNumber && $0 != "." }) {
+            let octets = candidate.split(separator: ".", omittingEmptySubsequences: false)
+            guard octets.count == 4,
+                  let firstOctet = Int(octets[0]),
+                  let secondOctet = Int(octets[1])
+            else {
+                continue
+            }
+
+            if firstOctet == TailscaleNetwork.ipv4FirstOctet,
+               TailscaleNetwork.ipv4SecondOctetRange.contains(secondOctet) {
+                return true
+            }
+        }
+
+        return false
     }
 }

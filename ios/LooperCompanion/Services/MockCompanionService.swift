@@ -2,6 +2,7 @@ import Foundation
 import LooperCompanionCore
 
 private let mockCompanionBaseURL = "preview://looper"
+private let millisecondsPerSecond: TimeInterval = 1_000
 
 actor MockCompanionStore {
     private var allSessions: [SessionSummary]
@@ -166,6 +167,27 @@ actor MockCompanionStore {
         return publishSnapshot()
     }
 
+    func saveSiriDefaultSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) -> MobileSnapshot {
+        snapshot.globalSettings.siriDefaultSessionId = id
+        snapshot.globalSettings.siriDefaultAssistantSurface = id == nil ? nil : assistantSurface
+        return publishSnapshot()
+    }
+
+    func saveSiriCurrentSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) -> MobileSnapshot {
+        snapshot.globalSettings.siriCurrentSessionId = id
+        snapshot.globalSettings.siriCurrentAssistantSurface = id == nil ? nil : assistantSurface
+        snapshot.globalSettings.siriCurrentUpdatedAtMs = id == nil
+            ? nil
+            : Int64(Date().timeIntervalSince1970 * millisecondsPerSecond)
+        return publishSnapshot()
+    }
+
     @discardableResult
     private func publishSnapshot() -> MobileSnapshot {
         let surface = snapshot.globalSettings.assistantSurface
@@ -282,6 +304,20 @@ struct MockCompanionService: CompanionService {
 
     func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot {
         await store.saveAssistantSurface(surface)
+    }
+
+    func saveSiriDefaultSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        await store.saveSiriDefaultSession(id: id, assistantSurface: assistantSurface)
+    }
+
+    func saveSiriCurrentSession(
+        id: String?,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        await store.saveSiriCurrentSession(id: id, assistantSurface: assistantSurface)
     }
 
     func registerPushDevice(

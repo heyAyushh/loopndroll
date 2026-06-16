@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, params};
 
@@ -14,6 +15,8 @@ use super::{
 const SHELL_PATH: &str = "/bin/sh";
 const SHELL_COMMAND_FLAG: &str = "-lc";
 const COMPLETION_CHECK_OUTPUT_LINE_LIMIT: usize = 8;
+const DEFAULT_COMPLETION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const COMPLETION_CHECK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 impl MobileSessionService {
     pub fn upsert_completion_check(
@@ -143,16 +146,26 @@ pub(super) fn completion_check_failure_reason(
     cwd: &str,
     completion_check: &MobileCompletionCheck,
 ) -> Option<String> {
+    completion_check_failure_reason_with_timeout(
+        cwd,
+        completion_check,
+        DEFAULT_COMPLETION_CHECK_TIMEOUT,
+    )
+}
+
+fn completion_check_failure_reason_with_timeout(
+    cwd: &str,
+    completion_check: &MobileCompletionCheck,
+    timeout: Duration,
+) -> Option<String> {
     for command in &completion_check.commands {
-        let output = Command::new(SHELL_PATH)
-            .arg(SHELL_COMMAND_FLAG)
-            .arg(command)
-            .current_dir(cwd)
-            .output();
-        let output = match output {
+        let output = match run_completion_check_command(cwd, command, timeout) {
             Ok(output) => output,
-            Err(error) => {
+            Err(CompletionCheckRunError::Spawn(error)) => {
                 return Some(completion_check_spawn_failure_reason(command, &error));
+            }
+            Err(CompletionCheckRunError::Timeout) => {
+                return Some(completion_check_timeout_failure_reason(command, timeout));
             }
         };
         if output.status.success() {
@@ -163,11 +176,59 @@ pub(super) fn completion_check_failure_reason(
     None
 }
 
+enum CompletionCheckRunError {
+    Spawn(std::io::Error),
+    Timeout,
+}
+
+fn run_completion_check_command(
+    cwd: &str,
+    command: &str,
+    timeout: Duration,
+) -> Result<Output, CompletionCheckRunError> {
+    let mut child = Command::new(SHELL_PATH)
+        .arg(SHELL_COMMAND_FLAG)
+        .arg(command)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(CompletionCheckRunError::Spawn)?;
+    let started_at = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(CompletionCheckRunError::Spawn);
+            }
+            Ok(None) if started_at.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CompletionCheckRunError::Timeout);
+            }
+            Ok(None) => std::thread::sleep(COMPLETION_CHECK_POLL_INTERVAL),
+            Err(error) => return Err(CompletionCheckRunError::Spawn(error)),
+        }
+    }
+}
+
 fn completion_check_spawn_failure_reason(command: &str, error: &std::io::Error) -> String {
     [
         "Completion check failed while running:".to_owned(),
         command.to_owned(),
         format!("The command could not start: {error}"),
+        String::new(),
+        "Fix issues.".to_owned(),
+    ]
+    .join("\n")
+}
+
+fn completion_check_timeout_failure_reason(command: &str, timeout: Duration) -> String {
+    [
+        "Completion check failed while running:".to_owned(),
+        command.to_owned(),
+        format!("The command timed out after {} seconds.", timeout.as_secs()),
         String::new(),
         "Fix issues.".to_owned(),
     ]
@@ -214,6 +275,33 @@ fn completion_check_output_summary(output: &std::process::Output) -> Option<Stri
         .len()
         .saturating_sub(COMPLETION_CHECK_OUTPUT_LINE_LIMIT);
     Some(lines[start..].join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_check_failure_reason_with_timeout;
+    use crate::mobile_session::MobileCompletionCheck;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    #[test]
+    fn completion_check_times_out_hanging_command() {
+        let tempdir = tempdir().expect("tempdir");
+        let check = MobileCompletionCheck {
+            id: "hang".to_owned(),
+            label: "Hang".to_owned(),
+            commands: vec!["sleep 5".to_owned()],
+        };
+
+        let reason = completion_check_failure_reason_with_timeout(
+            tempdir.path().to_str().expect("tempdir path"),
+            &check,
+            Duration::from_millis(100),
+        )
+        .expect("timeout failure");
+
+        assert!(reason.contains("timed out"));
+    }
 }
 
 pub(super) fn active_completion_check<'a>(

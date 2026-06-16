@@ -164,6 +164,11 @@ pub fn mobile_global_settings(session_state: &MobileSessionState) -> Value {
         ),
         "completionCheckWaitForReply": session_state.global_completion_check_wait_for_reply,
         "assistantSurface": session_state.assistant_surface,
+        "siriDefaultSessionId": session_state.siri_default_thread_id,
+        "siriDefaultAssistantSurface": session_state.siri_default_assistant_surface,
+        "siriCurrentSessionId": session_state.siri_current_thread_id,
+        "siriCurrentAssistantSurface": session_state.siri_current_assistant_surface,
+        "siriCurrentUpdatedAtMs": session_state.siri_current_updated_at_ms,
     })
 }
 

@@ -145,6 +145,36 @@ pub(super) fn initialize_store(store_path: &Path) -> MobileSessionResult<()> {
     )?;
     ensure_column(
         &connection,
+        MOBILE_SETTINGS_TABLE,
+        "siri_default_thread_id",
+        "text",
+    )?;
+    ensure_column(
+        &connection,
+        MOBILE_SETTINGS_TABLE,
+        "siri_default_assistant_surface",
+        "text",
+    )?;
+    ensure_column(
+        &connection,
+        MOBILE_SETTINGS_TABLE,
+        "siri_current_thread_id",
+        "text",
+    )?;
+    ensure_column(
+        &connection,
+        MOBILE_SETTINGS_TABLE,
+        "siri_current_assistant_surface",
+        "text",
+    )?;
+    ensure_column(
+        &connection,
+        MOBILE_SETTINGS_TABLE,
+        "siri_current_updated_at_ms",
+        "integer",
+    )?;
+    ensure_column(
+        &connection,
         "mobile_notification_routes",
         "webhook_url",
         "text",

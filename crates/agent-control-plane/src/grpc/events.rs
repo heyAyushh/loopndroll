@@ -7,7 +7,9 @@ use tonic::Status;
 
 use crate::control_plane::ControlPlane;
 use crate::grpc::proto;
-use crate::mobile_events::{MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_now};
+use crate::mobile_events::{
+    MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
+};
 
 const EVENT_REPLAY_BATCH_SIZE: usize = 32;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -26,9 +28,9 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
     let stream = stream! {
         let mut receiver = control_plane.mobile_event_hub().subscribe();
         let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
-        let mut last_event_ms = control_plane
+        let mut last_event_cursor = control_plane
             .store()
-            .latest_mobile_event_created_at_ms()
+            .latest_mobile_event_cursor()
             .unwrap_or_default();
 
         yield Ok(connected_event(&last_revision));
@@ -41,19 +43,24 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                 received = receiver.recv() => {
                     match received {
                         Ok(event) => {
-                            last_event_ms = last_event_ms.max(
-                                control_plane.store().latest_mobile_event_created_at_ms().unwrap_or(last_event_ms)
-                            );
-                            yield Ok(proto_event_from_mobile_event(&event, ""));
+                            match event {
+                                MobileEventBroadcast::Persisted(record) => {
+                                    last_event_cursor = (&record).into();
+                                    yield Ok(proto_event_from_record(&record));
+                                }
+                                MobileEventBroadcast::Ephemeral(event) => {
+                                    yield Ok(proto_event_from_mobile_event(&event, ""));
+                                }
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = poll_interval.tick() => {
-                    if let Ok(records) = control_plane.store().mobile_events_since(last_event_ms, EVENT_REPLAY_BATCH_SIZE) {
+                    if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, EVENT_REPLAY_BATCH_SIZE) {
                         for record in records {
-                            last_event_ms = last_event_ms.max(record.created_at_ms);
+                            last_event_cursor = (&record).into();
                             yield Ok(proto_event_from_record(&record));
                         }
                     }

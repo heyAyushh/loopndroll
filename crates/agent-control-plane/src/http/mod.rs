@@ -14,8 +14,10 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use crate::acp_client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::claude_code::inspect_claude_hooks;
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread, HookMutationTarget};
+use crate::devin::LEGACY_LOOPER_ACP_ROUTE;
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
@@ -24,10 +26,10 @@ use crate::mobile_auth::{
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
 };
 use crate::mobile_events::{
-    MobileEvent, MobileEventInput, MobileEventKind, MobileEventRecord, mobile_event_now,
-    mobile_event_sse_name,
+    MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
+    mobile_event_now, mobile_event_sse_name,
 };
-use crate::mobile_network::advertised_mobile_grpc_base_urls;
+use crate::mobile_network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
 use crate::mobile_prompt_delivery::{
     BatchPromptInput, mobile_desktop_snapshot, queue_desktop_batch_prompt, send_session_prompt,
 };
@@ -45,14 +47,15 @@ use self::mobile_access::{
     desktop_loopback_rejection, request_advertised_mobile_base_urls,
 };
 use self::requests::{
-    DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
-    DesktopConnectionRenameRequest, DesktopDefaultPromptRequest, DesktopDevinAcpBridgeProbeRequest,
-    DesktopGlobalNotificationRequest, DesktopNotificationRequest, DesktopScopeRequest,
-    DesktopSessionBatchPromptRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
-    DesktopTelegramChatsRequest, MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
+    AcpClientHostProbeRequest, DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
+    DesktopConnectionRenameRequest, DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest,
+    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionBatchPromptRequest,
+    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
+    MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
-    MobileSessionPromptQuery, MobileSessionPromptRequest,
+    MobileSessionPromptQuery, MobileSessionPromptRequest, MobileSiriCurrentSessionRequest,
+    MobileSiriDefaultSessionRequest,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -74,7 +77,11 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/desktop/snapshot", get(desktop_snapshot))
         .route("/desktop/events", get(desktop_events))
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
-        .route("/acp/devin", get(devin_acp_websocket))
+        .route(LEGACY_LOOPER_ACP_ROUTE, get(devin_acp_websocket))
+        .route(
+            "/acp/client-hosts/:client_id",
+            get(acp_client_host_websocket),
+        )
         .route("/desktop/devin", get(desktop_devin))
         .route("/desktop/zed", get(desktop_zed))
         .route("/desktop/devin/acp-bridge", get(desktop_devin_acp_bridge))
@@ -85,6 +92,19 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route(
             "/desktop/devin/acp-bridge/install",
             post(desktop_devin_acp_bridge_install),
+        )
+        .route("/desktop/acp-client-hosts", get(desktop_acp_client_hosts))
+        .route(
+            "/desktop/acp-client-hosts/:client_id",
+            get(desktop_acp_client_host),
+        )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/probe",
+            post(desktop_acp_client_host_probe),
+        )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/install",
+            post(desktop_acp_client_host_install),
         )
         .route("/desktop/connections", get(desktop_connections))
         .route("/desktop/pairing", get(desktop_pairing))
@@ -220,6 +240,14 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             post(mobile_assistant_surface),
         )
         .route(
+            "/api/mobile/settings/siri-default-session",
+            post(mobile_siri_default_session),
+        )
+        .route(
+            "/api/mobile/settings/siri-current-session",
+            post(mobile_siri_current_session),
+        )
+        .route(
             "/api/mobile/passkeys/registration-challenge",
             post(mobile_passkey_registration_challenge),
         )
@@ -310,7 +338,7 @@ async fn desktop_devin_acp_bridge(State(control_plane): State<ControlPlane>) -> 
 
 async fn desktop_devin_acp_bridge_probe(
     State(control_plane): State<ControlPlane>,
-    Json(input): Json<DesktopDevinAcpBridgeProbeRequest>,
+    Json(input): Json<AcpClientHostProbeRequest>,
 ) -> impl IntoResponse {
     Json(control_plane.devin_acp_bridge_probe_response(input.agent_id.as_deref()))
 }
@@ -330,6 +358,73 @@ async fn desktop_devin_acp_bridge_install(
         )
             .into_response(),
     }
+}
+
+async fn desktop_acp_client_hosts(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+    Json(control_plane.acp_client_hosts_response())
+}
+
+async fn desktop_acp_client_host(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+) -> Response {
+    match control_plane.acp_client_host_response(&client_id) {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => acp_client_host_not_found(&client_id),
+    }
+}
+
+async fn desktop_acp_client_host_probe(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+    Json(input): Json<AcpClientHostProbeRequest>,
+) -> Response {
+    match control_plane.acp_client_host_probe_response(&client_id, input.agent_id.as_deref()) {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => acp_client_host_not_found(&client_id),
+    }
+}
+
+async fn desktop_acp_client_host_install(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane.install_acp_client_host_response(&client_id) {
+        Ok(Some(response)) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(None) => acp_client_host_not_found(&client_id),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn acp_client_host_not_found(client_id: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": format!("ACP client host not found: {client_id}")
+        })),
+    )
+        .into_response()
+}
+
+async fn acp_client_host_websocket(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+    websocket: WebSocketUpgrade,
+) -> Response {
+    if client_id != DEVIN_ACP_CLIENT_HOST_ID {
+        return acp_client_host_not_found(&client_id);
+    }
+    websocket
+        .on_upgrade(move |socket| run_devin_acp_socket(control_plane, socket))
+        .into_response()
 }
 
 async fn devin_acp_websocket(
@@ -1043,7 +1138,13 @@ async fn sync_manifest(State(control_plane): State<ControlPlane>) -> impl IntoRe
     }
 }
 
-async fn unregister_hooks(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+async fn unregister_hooks(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
     match control_plane.unregister_hooks() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => (
@@ -1054,7 +1155,13 @@ async fn unregister_hooks(State(control_plane): State<ControlPlane>) -> impl Int
     }
 }
 
-async fn register_hooks(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+async fn register_hooks(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
     match control_plane.register_hooks() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => (
@@ -1067,8 +1174,12 @@ async fn register_hooks(State(control_plane): State<ControlPlane>) -> impl IntoR
 
 async fn register_target_hooks(
     State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Path(target): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
     let Some(target) = HookMutationTarget::parse(&target) else {
         return unknown_hook_target_response();
     };
@@ -1082,7 +1193,13 @@ async fn register_target_hooks(
     }
 }
 
-async fn unregister_live_hooks(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+async fn unregister_live_hooks(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
     match control_plane.unregister_live_hooks() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => (
@@ -1095,8 +1212,12 @@ async fn unregister_live_hooks(State(control_plane): State<ControlPlane>) -> imp
 
 async fn unregister_live_target_hooks(
     State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Path(target): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
     let Some(target) = HookMutationTarget::parse(&target) else {
         return unknown_hook_target_response();
     };
@@ -1138,6 +1259,7 @@ async fn hook_contract_toml() -> impl IntoResponse {
 async fn mobile_health(headers: HeaderMap) -> impl IntoResponse {
     let base_urls = request_advertised_mobile_base_urls(&headers);
     let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
+    let tailscale = mobile_tailscale_status(&base_urls, &grpc_base_urls).await;
     Json(serde_json::json!({
         "ok": true,
         "baseURL": base_urls.first().cloned().unwrap_or_default(),
@@ -1146,6 +1268,7 @@ async fn mobile_health(headers: HeaderMap) -> impl IntoResponse {
         "grpcBaseURLs": grpc_base_urls,
         "requiresAuthentication": true,
         "serverTime": current_mobile_time(),
+        "tailscale": tailscale,
     }))
 }
 
@@ -1236,9 +1359,9 @@ fn local_desktop_events_stream(
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
     let mut receiver = control_plane.mobile_event_hub().subscribe();
     let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
-    let mut last_event_ms = control_plane
+    let mut last_event_cursor = control_plane
         .store()
-        .latest_mobile_event_created_at_ms()
+        .latest_mobile_event_cursor()
         .unwrap_or_default();
     let connected_payload = serde_json::to_string(&serde_json::json!({
         "event_type": "connected",
@@ -1257,19 +1380,24 @@ fn local_desktop_events_stream(
                 received = receiver.recv() => {
                     match received {
                         Ok(event) => {
-                            last_event_ms = last_event_ms.max(
-                                control_plane.store().latest_mobile_event_created_at_ms().unwrap_or(last_event_ms)
-                            );
-                            yield Ok::<Event, Infallible>(mobile_sse_event(&event));
+                            match event {
+                                MobileEventBroadcast::Persisted(record) => {
+                                    last_event_cursor = (&record).into();
+                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                                }
+                                MobileEventBroadcast::Ephemeral(event) => {
+                                    yield Ok::<Event, Infallible>(mobile_sse_event(&event));
+                                }
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = poll_interval.tick() => {
-                    if let Ok(records) = control_plane.store().mobile_events_since(last_event_ms, 32) {
+                    if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, 32) {
                         for record in records {
-                            last_event_ms = last_event_ms.max(record.created_at_ms);
+                            last_event_cursor = (&record).into();
                             yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
                         }
                     }
@@ -1517,6 +1645,129 @@ async fn mobile_assistant_surface(
         }
         Err(error) => mobile_session_error_response(error),
     }
+}
+
+async fn mobile_siri_default_session(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+    Json(input): Json<MobileSiriDefaultSessionRequest>,
+) -> Response {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+
+    let snapshot = match mobile_desktop_snapshot(&control_plane) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    let session_state = match control_plane.mobile_session_service().state() {
+        Ok(session_state) => session_state,
+        Err(error) => return mobile_session_error_response(error),
+    };
+
+    match validate_mobile_siri_target(
+        &snapshot,
+        &session_state,
+        input.session_id.as_deref(),
+        input.assistant_surface.as_deref(),
+    ) {
+        Ok(Some((session_id, assistant_surface))) => {
+            if let Err(error) = control_plane
+                .mobile_session_service()
+                .set_siri_default_session(Some(session_id), Some(assistant_surface))
+            {
+                return mobile_session_error_response(error);
+            }
+        }
+        Ok(None) => {
+            if let Err(error) = control_plane
+                .mobile_session_service()
+                .set_siri_default_session(None, None)
+            {
+                return mobile_session_error_response(error);
+            }
+        }
+        Err(error) => return mobile_session_error_response(error),
+    }
+
+    emit_mobile_session_changed(&control_plane, None, Some("siri-default-session-updated"));
+    mobile_snapshot_response(&control_plane, &headers)
+}
+
+async fn mobile_siri_current_session(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+    Json(input): Json<MobileSiriCurrentSessionRequest>,
+) -> Response {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+
+    let snapshot = match mobile_desktop_snapshot(&control_plane) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    let session_state = match control_plane.mobile_session_service().state() {
+        Ok(session_state) => session_state,
+        Err(error) => return mobile_session_error_response(error),
+    };
+
+    match validate_mobile_siri_target(
+        &snapshot,
+        &session_state,
+        input.session_id.as_deref(),
+        input.assistant_surface.as_deref(),
+    ) {
+        Ok(Some((session_id, assistant_surface))) => {
+            if let Err(error) = control_plane
+                .mobile_session_service()
+                .set_siri_current_session(Some(session_id), Some(assistant_surface))
+            {
+                return mobile_session_error_response(error);
+            }
+        }
+        Ok(None) => {
+            if let Err(error) = control_plane
+                .mobile_session_service()
+                .set_siri_current_session(None, None)
+            {
+                return mobile_session_error_response(error);
+            }
+        }
+        Err(error) => return mobile_session_error_response(error),
+    }
+
+    emit_mobile_session_changed(&control_plane, None, Some("siri-current-session-updated"));
+    mobile_snapshot_response(&control_plane, &headers)
+}
+
+fn validate_mobile_siri_target<'a>(
+    snapshot: &DesktopSnapshot,
+    session_state: &'a MobileSessionState,
+    session_id: Option<&'a str>,
+    assistant_surface: Option<&'a str>,
+) -> Result<Option<(&'a str, &'a str)>, MobileSessionError> {
+    let Some(session_id) = session_id
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+    else {
+        return Ok(None);
+    };
+    let assistant_surface = assistant_surface
+        .map(str::trim)
+        .filter(|surface| !surface.is_empty())
+        .unwrap_or(session_state.assistant_surface.as_str());
+
+    if !ASSISTANT_SURFACES.contains(&assistant_surface) {
+        return Err(MobileSessionError::InvalidAssistantSurface);
+    }
+    crate::mobile_api::validate_mobile_prompt_delivery_target(
+        snapshot,
+        session_state,
+        session_id,
+        Some(assistant_surface),
+    )?;
+    Ok(Some((session_id, assistant_surface)))
 }
 
 async fn mobile_passkey_registration_challenge(

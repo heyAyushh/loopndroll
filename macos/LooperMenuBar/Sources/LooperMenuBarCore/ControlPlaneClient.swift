@@ -43,6 +43,11 @@ public enum LooperLifecycleDefaults {
 }
 
 public enum ControlPlaneEndpoint: Equatable {
+    case acpClientHosts
+    case acpClientHost(String)
+    case acpClientHostProbe(String)
+    case acpClientHostInstall(String)
+    case desktopConnections
     case registerHooks
     case registerTargetHooks(HookRepairTarget)
     case unregisterLiveHooks
@@ -57,6 +62,16 @@ public enum ControlPlaneEndpoint: Equatable {
 
     public var path: String {
         switch self {
+        case .acpClientHosts:
+            "/desktop/acp-client-hosts"
+        case let .acpClientHost(clientHostID):
+            "/desktop/acp-client-hosts/\(clientHostID)"
+        case let .acpClientHostProbe(clientHostID):
+            "/desktop/acp-client-hosts/\(clientHostID)/probe"
+        case let .acpClientHostInstall(clientHostID):
+            "/desktop/acp-client-hosts/\(clientHostID)/install"
+        case .desktopConnections:
+            "/desktop/connections"
         case .registerHooks:
             "/hooks/register"
         case let .registerTargetHooks(target):
@@ -84,10 +99,12 @@ public enum ControlPlaneEndpoint: Equatable {
 
     public var method: String {
         switch self {
-        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
-             .devinAcpBridgeProbe, .devinAcpBridgeInstall:
+        case .acpClientHostProbe, .acpClientHostInstall, .registerHooks, .registerTargetHooks,
+             .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown, .devinAcpBridgeProbe,
+             .devinAcpBridgeInstall:
             "POST"
-        case .controlPlaneStatus, .desktopSnapshot, .desktopEvents, .mobileHealth:
+        case .acpClientHosts, .acpClientHost, .desktopConnections, .controlPlaneStatus, .desktopSnapshot,
+             .desktopEvents, .mobileHealth:
             "GET"
         }
     }
@@ -96,7 +113,8 @@ public enum ControlPlaneEndpoint: Equatable {
         switch self {
         case .desktopSnapshot:
             [URLQueryItem(name: "profile", value: "menu")]
-        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
+        case .acpClientHosts, .acpClientHost, .acpClientHostProbe, .acpClientHostInstall, .desktopConnections,
+             .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
              .mobileHealth, .controlPlaneStatus, .desktopEvents, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
             []
         }
@@ -108,7 +126,8 @@ public enum ControlPlaneEndpoint: Equatable {
             LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
         case .desktopEvents:
             LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
-        case .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
+        case .acpClientHosts, .acpClientHost, .acpClientHostProbe, .acpClientHostInstall, .desktopConnections,
+             .registerHooks, .registerTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
              .mobileHealth, .controlPlaneStatus, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
             LooperLifecycleDefaults.requestTimeoutSeconds
         }
@@ -127,6 +146,7 @@ public protocol ControlPlaneClient: Sendable {
     func shutdownServer(timeout: TimeInterval) throws
     func fetchControlPlaneStatus() async throws -> ControlPlaneStatusResponse
     func fetchDesktopSnapshot() async throws -> DesktopSnapshotResponse
+    func fetchDesktopConnections() async throws -> DesktopConnectionsResponse
     func fetchMobileHealth() async throws -> MobileHealthResponse
     func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse
 }
@@ -193,8 +213,36 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try await fetchJSON(DesktopSnapshotResponse.self, from: .desktopSnapshot)
     }
 
+    public func fetchDesktopConnections() async throws -> DesktopConnectionsResponse {
+        try await fetchJSON(DesktopConnectionsResponse.self, from: .desktopConnections)
+    }
+
     public func fetchMobileHealth() async throws -> MobileHealthResponse {
         try await fetchJSON(MobileHealthResponse.self, from: .mobileHealth)
+    }
+
+    public func fetchAcpClientHosts() async throws -> AcpClientHostsResponse {
+        try await fetchJSON(AcpClientHostsResponse.self, from: .acpClientHosts)
+    }
+
+    public func fetchAcpClientHost(id: String) async throws -> AcpClientHostResponse {
+        try await fetchJSON(AcpClientHostResponse.self, from: .acpClientHost(id))
+    }
+
+    public func probeAcpClientHost(id: String, agentId: String? = nil) async throws -> AcpClientHostProbeResponse {
+        try await postJSON(
+            AcpClientHostProbeResponse.self,
+            to: .acpClientHostProbe(id),
+            body: DevinAcpBridgeProbeRequest(agentId: agentId)
+        )
+    }
+
+    public func installAcpClientHost(id: String) async throws -> AcpClientHostInstallResponse {
+        try await postJSON(
+            AcpClientHostInstallResponse.self,
+            to: .acpClientHostInstall(id),
+            body: EmptyRequest()
+        )
     }
 
     public func probeDevinAcpBridge(agentId: String? = nil) async throws -> DevinAcpBridgeProbeResponse {
@@ -410,13 +458,89 @@ public struct SourceStatusSummary: Codable, Equatable, Sendable {
 
 public struct AssistantAdapterCapability: Codable, Equatable, Sendable {
     public let assistantKind: String
+    public let liveSessions: Bool
+    public let toolInventory: Bool
+    public let spawnGraph: Bool
+    public let diffSummary: Bool
+    public let authCapabilities: Bool
     public let runtimes: [AssistantRuntimeSummary]
     public let detail: String
 
+    public var isVisibleInAgentMenu: Bool {
+        liveSessions || runtimes.contains { $0.running || $0.installed }
+    }
+
+    public var displayTitle: String {
+        assistantKind.identifierDisplayTitle
+    }
+
+    public var menuStatusTitle: String {
+        let runningCount = runtimes.filter(\.running).count
+        if runningCount == 1 {
+            return "running"
+        }
+        if runningCount > 1 {
+            return "\(runningCount) running"
+        }
+
+        let installedCount = runtimes.filter(\.installed).count
+        if installedCount == 1 {
+            return "installed"
+        }
+        if installedCount > 1 {
+            return "\(installedCount) installed"
+        }
+
+        if liveSessions {
+            return "sessions"
+        }
+
+        return "available"
+    }
+
     enum CodingKeys: String, CodingKey {
         case assistantKind = "assistant_kind"
+        case liveSessions = "live_sessions"
+        case toolInventory = "tool_inventory"
+        case spawnGraph = "spawn_graph"
+        case diffSummary = "diff_summary"
+        case authCapabilities = "auth_capabilities"
         case runtimes
         case detail
+    }
+
+    public init(
+        assistantKind: String,
+        liveSessions: Bool = false,
+        toolInventory: Bool = false,
+        spawnGraph: Bool = false,
+        diffSummary: Bool = false,
+        authCapabilities: Bool = false,
+        runtimes: [AssistantRuntimeSummary],
+        detail: String
+    ) {
+        self.assistantKind = assistantKind
+        self.liveSessions = liveSessions
+        self.toolInventory = toolInventory
+        self.spawnGraph = spawnGraph
+        self.diffSummary = diffSummary
+        self.authCapabilities = authCapabilities
+        self.runtimes = runtimes
+        self.detail = detail
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            assistantKind: try container.decode(String.self, forKey: .assistantKind),
+            liveSessions: try container.decodeIfPresent(Bool.self, forKey: .liveSessions) ?? false,
+            toolInventory: try container.decodeIfPresent(Bool.self, forKey: .toolInventory) ?? false,
+            spawnGraph: try container.decodeIfPresent(Bool.self, forKey: .spawnGraph) ?? false,
+            diffSummary: try container.decodeIfPresent(Bool.self, forKey: .diffSummary) ?? false,
+            authCapabilities: try container.decodeIfPresent(Bool.self, forKey: .authCapabilities) ?? false,
+            runtimes: try container.decodeIfPresent([AssistantRuntimeSummary].self, forKey: .runtimes) ?? [],
+            detail: try container.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        )
     }
 }
 
@@ -426,6 +550,110 @@ public struct AssistantRuntimeSummary: Codable, Equatable, Sendable {
     public let installed: Bool
     public let label: String
     public let executable: String?
+
+    public init(
+        kind: String,
+        running: Bool,
+        installed: Bool,
+        label: String,
+        executable: String? = nil
+    ) {
+        self.kind = kind
+        self.running = running
+        self.installed = installed
+        self.label = label
+        self.executable = executable
+    }
+}
+
+public struct AgentDetailMenuRow: Equatable, Sendable {
+    public let title: String
+    public let detail: String?
+
+    public init(title: String, detail: String? = nil) {
+        self.title = title
+        self.detail = detail?.nilIfBlank
+    }
+}
+
+public struct DesktopConnectionsResponse: Codable, Equatable, Sendable {
+    public let connections: [DesktopConnectionSummary]
+
+    public var agentDetailMenuRows: [AgentDetailMenuRow] {
+        connections
+            .filter(\.isAgentConnection)
+            .sorted { lhs, rhs in
+                lhs.sortKey.lexicographicallyPrecedes(rhs.sortKey)
+            }
+            .map { connection in
+                AgentDetailMenuRow(
+                    title: "\(connection.label): \(connection.status.displayStatusTitle)",
+                    detail: connection.detail ?? connection.subtitle
+                )
+            }
+    }
+}
+
+public struct DesktopConnectionSummary: Codable, Equatable, Sendable {
+    public let id: String
+    public let kind: String
+    public let label: String
+    public let status: String
+    public let subtitle: String?
+    public let detail: String?
+
+    public var isAgentConnection: Bool {
+        kind != "mobile"
+    }
+
+    fileprivate var sortKey: String {
+        "\(kind)\u{0}\(label)\u{0}\(id)"
+    }
+}
+
+fileprivate extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var identifierDisplayTitle: String {
+        splitIdentifierWords().map(\.displayTitleWord).joined(separator: " ")
+    }
+
+    var displayStatusTitle: String {
+        splitIdentifierWords().map(\.displayTitleWord).joined(separator: " ")
+    }
+
+    private func splitIdentifierWords() -> [String] {
+        split { character in
+            character == "-" || character == "_" || character == " "
+        }
+        .map(String.init)
+    }
+
+    private var displayTitleWord: String {
+        switch lowercased() {
+        case "acp":
+            return "ACP"
+        case "ai":
+            return "AI"
+        case "api":
+            return "API"
+        case "cli":
+            return "CLI"
+        case "id":
+            return "ID"
+        case "ios":
+            return "iOS"
+        case "macos":
+            return "macOS"
+        case "ui":
+            return "UI"
+        default:
+            return prefix(1).uppercased() + dropFirst()
+        }
+    }
 }
 
 public struct AcpLaunchMetadataSummary: Codable, Equatable, Sendable {
@@ -584,6 +812,24 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         zed.summary
     }
 
+    public func agentDetailMenuRows(connections: DesktopConnectionsResponse?) -> [AgentDetailMenuRow] {
+        if let connectionRows = connections?.agentDetailMenuRows, !connectionRows.isEmpty {
+            return connectionRows
+        }
+
+        return assistantAdapters
+            .filter(\.isVisibleInAgentMenu)
+            .sorted { lhs, rhs in
+                lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
+            }
+            .map { adapter in
+                AgentDetailMenuRow(
+                    title: "\(adapter.displayTitle): \(adapter.menuStatusTitle)",
+                    detail: adapter.detail
+                )
+            }
+    }
+
     enum CodingKeys: String, CodingKey {
         case controlPlane = "control_plane"
         case devinDesktop = "devin_desktop"
@@ -653,11 +899,257 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     }
 }
 
-public struct DevinDesktopStatus: Codable, Equatable, Sendable {
-    public let acpBridge: DevinAcpBridgeStatus
+public struct AcpClientHostsResponse: Codable, Equatable, Sendable {
+    public let hosts: [AcpClientHost]
+}
+
+public struct AcpClientHostResponse: Codable, Equatable, Sendable {
+    public let host: AcpClientHost
+}
+
+public struct AcpClientHostProbeResponse: Codable, Equatable, Sendable {
+    public let host: AcpClientHost
+    public let probe: AcpClientHostProbe
+}
+
+public struct AcpClientHostInstallResponse: Codable, Equatable, Sendable {
+    public let host: AcpClientHost
+    public let install: AcpClientHostInstall
+}
+
+public struct AcpClientHost: Codable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let running: Bool
+    public let installed: Bool
+    public let registry: AcpClientHostRegistry
+    public let agents: [AcpClientHostAgent]
+    public let sessions: [AcpClientHostSession]
+    public let actions: [AcpClientHostAction]
+    public let limitations: [String]
+    public let runtime: AcpClientHostRuntime?
+
+    public var enabledAgentCount: Int {
+        agents.filter(\.enabled).count
+    }
+
+    public var preferredAgent: AcpClientHostAgent? {
+        agents.first(where: \.preferred)
+    }
+
+    public var defaultProbeAgent: AcpClientHostAgent? {
+        guard let defaultAgentID = actions.compactMap(\.defaultAgentID).first else {
+            return agents.first(where: \.probeCapable)
+        }
+        return agents.first { $0.id == defaultAgentID } ?? agents.first(where: \.probeCapable)
+    }
+}
+
+public struct AcpClientHostRegistry: Codable, Equatable, Sendable {
+    public let path: String
+    public let exists: Bool
+    public let version: String?
+    public let agentCount: Int
 
     enum CodingKeys: String, CodingKey {
+        case path
+        case exists
+        case version
+        case agentCount = "agent_count"
+    }
+}
+
+public struct AcpClientHostAgent: Codable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let version: String?
+    public let description: String?
+    public let enabled: Bool
+    public let preferred: Bool
+    public let launchConfigured: Bool
+    public let controlLevel: String
+    public let supportsSessions: Bool
+    public let supportsPrompt: Bool
+    public let supportsCancel: Bool
+    public let source: String
+
+    public var probeCapable: Bool {
+        enabled && launchConfigured && controlLevel == "agent-configured"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case version
+        case description
+        case enabled
+        case preferred
+        case launchConfigured = "launch_configured"
+        case controlLevel = "control_level"
+        case supportsSessions = "supports_sessions"
+        case supportsPrompt = "supports_prompt"
+        case supportsCancel = "supports_cancel"
+        case source
+    }
+}
+
+public struct AcpClientHostSession: Codable, Equatable, Sendable {
+    public let threadID: String
+    public let sessionID: String
+    public let providerID: String
+    public let title: String?
+    public let cwd: String?
+    public let status: String
+    public let archived: Bool
+    public let updatedAtMs: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case threadID = "thread_id"
+        case sessionID = "session_id"
+        case providerID = "provider_id"
+        case title
+        case cwd
+        case status
+        case archived
+        case updatedAtMs = "updated_at_ms"
+    }
+}
+
+public struct AcpClientHostAction: Codable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let method: String
+    public let path: String
+    public let defaultAgentID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case method
+        case path
+        case defaultAgentID = "default_agent_id"
+    }
+}
+
+public struct AcpClientHostRuntime: Codable, Equatable, Sendable {
+    public let connected: Bool
+    public let connectionCount: Int
+    public let sessionCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case connected
+        case connectionCount = "connection_count"
+        case sessionCount = "session_count"
+    }
+}
+
+public struct AcpClientHostProbe: Codable, Equatable, Sendable {
+    public let ok: Bool
+    public let status: String
+    public let agentID: String?
+    public let name: String?
+    public let controlLevel: String
+    public let ready: Bool
+    public let probeKind: String
+    public let launchConfigured: Bool
+    public let launchMethods: [String]
+    public let supportedMethods: [String]
+    public let blockers: [String]
+    public let detail: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case status
+        case agentID = "agent_id"
+        case name
+        case controlLevel = "control_level"
+        case ready
+        case probeKind = "probe_kind"
+        case launchConfigured = "launch_configured"
+        case launchMethods = "launch_methods"
+        case supportedMethods = "supported_methods"
+        case blockers
+        case detail
+    }
+}
+
+public struct AcpClientHostInstall: Codable, Equatable, Sendable {
+    public let clientID: String
+    public let installedAgentID: String
+    public let registryPath: String
+    public let settingsPath: String
+    public let transportURL: String
+    public let preferredAgent: String
+
+    enum CodingKeys: String, CodingKey {
+        case clientID = "client_id"
+        case installedAgentID = "installed_agent_id"
+        case registryPath = "registry_path"
+        case settingsPath = "settings_path"
+        case transportURL = "transport_url"
+        case preferredAgent = "preferred_agent"
+    }
+}
+
+public struct DevinDesktopStatus: Codable, Equatable, Sendable {
+    public let installations: [DevinInstallationStatus]
+    public let acpBridge: DevinAcpBridgeStatus
+
+    public var running: Bool {
+        installations.contains(where: \.running)
+    }
+
+    public var installed: Bool {
+        installations.contains(where: \.installed)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case installations
         case acpBridge = "acp_bridge"
+    }
+
+    public init(
+        installations: [DevinInstallationStatus] = [],
+        acpBridge: DevinAcpBridgeStatus
+    ) {
+        self.installations = installations
+        self.acpBridge = acpBridge
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            installations: try container.decodeIfPresent([DevinInstallationStatus].self, forKey: .installations) ?? [],
+            acpBridge: try container.decode(DevinAcpBridgeStatus.self, forKey: .acpBridge)
+        )
+    }
+}
+
+public struct DevinInstallationStatus: Codable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let channel: String
+    public let running: Bool
+    public let installed: Bool
+    public let appSupportPath: String
+    public let settingsPath: String
+    public let settingsExists: Bool
+    public let acpEnabled: Bool?
+    public let preferredAgent: String?
+    public let enabledAgents: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case channel
+        case running
+        case installed
+        case appSupportPath = "app_support_path"
+        case settingsPath = "settings_path"
+        case settingsExists = "settings_exists"
+        case acpEnabled = "acp_enabled"
+        case preferredAgent = "preferred_agent"
+        case enabledAgents = "enabled_agents"
     }
 }
 
@@ -791,20 +1283,19 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     public let grpcBaseURL: String
     public let grpcBaseURLs: [String]
     public let requiresAuthentication: Bool
+    public let tailscale: MobileTailscaleStatus?
 
     public var preferredHandoffBaseURL: URL? {
-        preferredReachableHandoffBaseURL
+        preferredReachableHandoffBaseURL()
             ?? URL(string: baseURL)
     }
 
     public var preferredReachableHandoffBaseURL: URL? {
-        baseURLs
-            .compactMap(URL.init(string:))
-            .first(where: { !$0.isLoopbackHost })
+        preferredReachableHandoffBaseURL()
     }
 
     public var supportsNativeHandoff: Bool {
-        ok && requiresAuthentication && preferredReachableHandoffBaseURL != nil
+        ok && requiresAuthentication && preferredReachableHandoffBaseURL() != nil
     }
 
     public var preferredRealtimeBaseURLs: [URL] {
@@ -816,6 +1307,55 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
             }
     }
 
+    public var routeSummaryTitle: String {
+        routeSummaryTitle()
+    }
+
+    public func preferredReachableHandoffBaseURL(
+        preference: MobileRoutePreference = .defaultOption
+    ) -> URL? {
+        rankedBaseURLs(preference: preference)
+            .first(where: { !$0.isLoopbackHost })
+    }
+
+    public func routeSummaryTitle(
+        preference: MobileRoutePreference = .defaultOption
+    ) -> String {
+        guard let reachableBaseURL = preferredReachableHandoffBaseURL(preference: preference) else {
+            return "Loopback only"
+        }
+
+        return "\(reachableBaseURL.routeTitle): \(reachableBaseURL.host ?? reachableBaseURL.absoluteString)"
+    }
+
+    private func rankedBaseURLs(preference: MobileRoutePreference) -> [URL] {
+        let advertisedTailscaleBaseURLs = [tailscale?.baseURL]
+            .compactMap { $0 }
+            .compactMap(URL.init(string:))
+        let healthBaseURLs = baseURLs.compactMap(URL.init(string:))
+
+        return stableUniqueURLs(advertisedTailscaleBaseURLs + healthBaseURLs)
+            .enumerated()
+            .sorted { lhs, rhs in
+                let lhsPriority = lhs.element.routePriority(preference: preference)
+                let rhsPriority = rhs.element.routePriority(preference: preference)
+
+                guard lhsPriority != rhsPriority else {
+                    return lhs.offset < rhs.offset
+                }
+
+                return lhsPriority < rhsPriority
+            }
+            .map(\.element)
+    }
+
+    private func stableUniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { url in
+            seen.insert(url.absoluteString).inserted
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case ok
         case baseURL
@@ -823,6 +1363,7 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
         case grpcBaseURL
         case grpcBaseURLs
         case requiresAuthentication
+        case tailscale
     }
 
     public init(
@@ -831,7 +1372,8 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
         baseURLs: [String],
         grpcBaseURL: String = "",
         grpcBaseURLs: [String] = [],
-        requiresAuthentication: Bool
+        requiresAuthentication: Bool,
+        tailscale: MobileTailscaleStatus? = nil
     ) {
         self.ok = ok
         self.baseURL = baseURL
@@ -839,6 +1381,7 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
         self.grpcBaseURL = grpcBaseURL
         self.grpcBaseURLs = grpcBaseURLs
         self.requiresAuthentication = requiresAuthentication
+        self.tailscale = tailscale
     }
 
     public init(from decoder: Decoder) throws {
@@ -849,15 +1392,311 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
         grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
         requiresAuthentication = try container.decodeIfPresent(Bool.self, forKey: .requiresAuthentication) ?? true
+        tailscale = try container.decodeIfPresent(MobileTailscaleStatus.self, forKey: .tailscale)
+    }
+}
+
+public struct MobileTailscaleStatus: Codable, Equatable, Sendable {
+    public let available: Bool
+    public let running: Bool
+    public let backendState: String?
+    public let baseURL: String?
+    public let grpcBaseURL: String?
+    public let dnsName: String?
+    public let hostname: String?
+    public let ipAddresses: [String]
+    public let magicDNSEnabled: Bool
+    public let magicDNSSuffix: String?
+    public let source: String?
+    public let tailnetName: String?
+    public let version: String?
+    public let health: [String]
+
+    public var statusTitle: String {
+        if running {
+            return "Running"
+        }
+
+        if available {
+            return backendState ?? "Available"
+        }
+
+        return "Unavailable"
+    }
+
+    public var routeDetailTitle: String {
+        [
+            nonEmpty(dnsName),
+            nonEmpty(baseURL),
+            nonEmpty(tailnetName).map { "tailnet \($0)" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: " - ")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case running
+        case backendState
+        case baseURL
+        case grpcBaseURL
+        case dnsName
+        case hostname
+        case ipAddresses
+        case magicDNSEnabled
+        case magicDNSSuffix
+        case source
+        case tailnetName
+        case version
+        case health
+    }
+
+    public init(
+        available: Bool,
+        running: Bool,
+        backendState: String? = nil,
+        baseURL: String? = nil,
+        grpcBaseURL: String? = nil,
+        dnsName: String? = nil,
+        hostname: String? = nil,
+        ipAddresses: [String] = [],
+        magicDNSEnabled: Bool = false,
+        magicDNSSuffix: String? = nil,
+        source: String? = nil,
+        tailnetName: String? = nil,
+        version: String? = nil,
+        health: [String] = []
+    ) {
+        self.available = available
+        self.running = running
+        self.backendState = backendState
+        self.baseURL = baseURL
+        self.grpcBaseURL = grpcBaseURL
+        self.dnsName = dnsName
+        self.hostname = hostname
+        self.ipAddresses = ipAddresses
+        self.magicDNSEnabled = magicDNSEnabled
+        self.magicDNSSuffix = magicDNSSuffix
+        self.source = source
+        self.tailnetName = tailnetName
+        self.version = version
+        self.health = health
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        available = try container.decodeIfPresent(Bool.self, forKey: .available) ?? false
+        running = try container.decodeIfPresent(Bool.self, forKey: .running) ?? false
+        backendState = try container.decodeIfPresent(String.self, forKey: .backendState)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL)
+        grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL)
+        dnsName = try container.decodeIfPresent(String.self, forKey: .dnsName)
+        hostname = try container.decodeIfPresent(String.self, forKey: .hostname)
+        ipAddresses = try container.decodeIfPresent([String].self, forKey: .ipAddresses) ?? []
+        magicDNSEnabled = try container.decodeIfPresent(Bool.self, forKey: .magicDNSEnabled) ?? false
+        magicDNSSuffix = try container.decodeIfPresent(String.self, forKey: .magicDNSSuffix)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        tailnetName = try container.decodeIfPresent(String.self, forKey: .tailnetName)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        health = try container.decodeIfPresent([String].self, forKey: .health) ?? []
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+
+        return value
     }
 }
 
 private extension URL {
+    enum MobileRoute {
+        case remote
+        case tailscale
+        case lan
+        case loopback
+    }
+
+    enum RoutePriority {
+        static let first = 0
+        static let second = 1
+        static let third = 2
+        static let fourth = 3
+    }
+
+    enum TailscaleNetwork {
+        static let magicDNSSuffix = ".ts.net"
+        static let legacyMagicDNSSuffix = ".beta.tailscale.net"
+        static let ipv4OctetCount = 4
+        static let ipv4OctetRange = 0...255
+        static let ipv4FirstOctet = 100
+        static let ipv4SecondOctetRange = 64...127
+    }
+
+    enum LANNetwork {
+        static let localHostnameSuffix = ".local"
+        static let privateTenFirstOctet = 10
+        static let privateOneSevenTwoFirstOctet = 172
+        static let privateOneSevenTwoSecondOctetRange = 16...31
+        static let privateOneNineTwoFirstOctet = 192
+        static let privateOneNineTwoSecondOctet = 168
+        static let linkLocalFirstOctet = 169
+        static let linkLocalSecondOctet = 254
+    }
+
     var isLoopbackHost: Bool {
         guard let host else {
             return false
         }
         return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    var isTailscaleHost: Bool {
+        guard let host = normalizedHost else {
+            return false
+        }
+
+        return host.hasSuffix(TailscaleNetwork.magicDNSSuffix)
+            || host.hasSuffix(TailscaleNetwork.legacyMagicDNSSuffix)
+            || isTailscaleIPv4Host(host)
+    }
+
+    var routeTitle: String {
+        switch mobileRoute {
+        case .remote:
+            "Remote"
+        case .tailscale:
+            "Tailscale"
+        case .lan:
+            "LAN"
+        case .loopback:
+            "Loopback"
+        }
+    }
+
+    func routePriority(preference: MobileRoutePreference) -> Int {
+        switch preference {
+        case .remote:
+            remotePriority
+        case .tailscale:
+            tailscalePriority
+        case .lan:
+            lanPriority
+        }
+    }
+
+    private var mobileRoute: MobileRoute {
+        guard !isLoopbackHost else {
+            return .loopback
+        }
+
+        guard let host = normalizedHost else {
+            return .remote
+        }
+
+        if isTailscaleHost {
+            return .tailscale
+        }
+
+        if host.hasSuffix(LANNetwork.localHostnameSuffix) || isPrivateLANHost(host) || isLinkLocalHost(host) {
+            return .lan
+        }
+
+        return .remote
+    }
+
+    private var remotePriority: Int {
+        switch mobileRoute {
+        case .remote:
+            RoutePriority.first
+        case .tailscale:
+            RoutePriority.second
+        case .lan:
+            RoutePriority.third
+        case .loopback:
+            RoutePriority.fourth
+        }
+    }
+
+    private var tailscalePriority: Int {
+        switch mobileRoute {
+        case .tailscale:
+            RoutePriority.first
+        case .lan:
+            RoutePriority.second
+        case .remote:
+            RoutePriority.third
+        case .loopback:
+            RoutePriority.fourth
+        }
+    }
+
+    private var lanPriority: Int {
+        switch mobileRoute {
+        case .lan:
+            RoutePriority.first
+        case .tailscale:
+            RoutePriority.second
+        case .remote:
+            RoutePriority.third
+        case .loopback:
+            RoutePriority.fourth
+        }
+    }
+
+    private var normalizedHost: String? {
+        host?
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    }
+
+    private func isTailscaleIPv4Host(_ host: String) -> Bool {
+        guard let octets = ipv4Octets(from: host) else {
+            return false
+        }
+
+        return octets[0] == TailscaleNetwork.ipv4FirstOctet
+            && TailscaleNetwork.ipv4SecondOctetRange.contains(octets[1])
+    }
+
+    private func isPrivateLANHost(_ host: String) -> Bool {
+        guard let octets = ipv4Octets(from: host) else {
+            return false
+        }
+
+        return octets[0] == LANNetwork.privateTenFirstOctet ||
+            (
+                octets[0] == LANNetwork.privateOneSevenTwoFirstOctet &&
+                    LANNetwork.privateOneSevenTwoSecondOctetRange.contains(octets[1])
+            ) ||
+            (
+                octets[0] == LANNetwork.privateOneNineTwoFirstOctet &&
+                    octets[1] == LANNetwork.privateOneNineTwoSecondOctet
+            )
+    }
+
+    private func isLinkLocalHost(_ host: String) -> Bool {
+        guard let octets = ipv4Octets(from: host) else {
+            return false
+        }
+
+        return octets[0] == LANNetwork.linkLocalFirstOctet &&
+            octets[1] == LANNetwork.linkLocalSecondOctet
+    }
+
+    private func ipv4Octets(from host: String) -> [Int]? {
+        let octets = host
+            .split(separator: ".", omittingEmptySubsequences: false)
+            .compactMap { Int($0) }
+
+        guard octets.count == TailscaleNetwork.ipv4OctetCount,
+              octets.allSatisfy({ TailscaleNetwork.ipv4OctetRange.contains($0) })
+        else {
+            return nil
+        }
+
+        return octets
     }
 }
 

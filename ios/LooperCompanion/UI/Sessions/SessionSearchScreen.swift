@@ -187,7 +187,10 @@ struct SessionSearchScreen: View {
             Section(title) {
                 ForEach(sessions) { session in
                     NavigationLink(value: session) {
-                        SearchSessionRow(session: session)
+                        SearchSessionRow(
+                            session: session,
+                            assistantSurface: model.selectedAssistantSurface
+                        )
                     }
                 }
             }
@@ -238,7 +241,10 @@ struct SessionSearchScreen: View {
         switch result {
         case let .session(session):
             NavigationLink(value: session) {
-                SearchSessionRow(session: session)
+                SearchSessionRow(
+                    session: session,
+                    assistantSurface: model.selectedAssistantSurface
+                )
             }
         case let .settings(target):
             NavigationLink(value: target) {
@@ -310,7 +316,7 @@ struct SessionSearchScreen: View {
     }
 
     private var allSessions: [SessionSummary] {
-        model.snapshot?.sessions ?? []
+        model.snapshot?.sessionsAcrossSurfaces ?? []
     }
 
     private var localSessionResults: [SessionSummary] {
@@ -322,8 +328,13 @@ struct SessionSearchScreen: View {
             return []
         }
 
-        let spotlightIDs = Set(searchService.searchResults.map(\.uniqueIdentifier))
-        return allSessions.filter { spotlightIDs.contains($0.id) }
+        let spotlightSessionIDs = Set(
+            searchService.searchResults.compactMap { result in
+                LooperSessionEntityIdentifier(rawValue: result.uniqueIdentifier)?.sessionID
+                    ?? result.uniqueIdentifier
+            }
+        )
+        return allSessions.filter { spotlightSessionIDs.contains($0.id) }
     }
 
     private var filteredAllSessions: [SessionSummary] {

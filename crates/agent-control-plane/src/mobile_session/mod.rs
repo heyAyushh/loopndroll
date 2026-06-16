@@ -45,6 +45,11 @@ pub struct MobileSessionState {
     pub global_completion_check_id: Option<String>,
     pub global_completion_check_wait_for_reply: bool,
     pub assistant_surface: String,
+    pub siri_default_thread_id: Option<String>,
+    pub siri_default_assistant_surface: Option<String>,
+    pub siri_current_thread_id: Option<String>,
+    pub siri_current_assistant_surface: Option<String>,
+    pub siri_current_updated_at_ms: Option<i64>,
     pub notifications: Vec<MobileNotificationRoute>,
     pub completion_checks: Vec<MobileCompletionCheck>,
     pub sessions: BTreeMap<String, MobileSessionOverride>,
@@ -218,7 +223,12 @@ impl MobileSessionService {
                     global_notification_id,
                     global_completion_check_id,
                     global_completion_check_wait_for_reply,
-                    assistant_surface
+                    assistant_surface,
+                    siri_default_thread_id,
+                    siri_default_assistant_surface,
+                    siri_current_thread_id,
+                    siri_current_assistant_surface,
+                    siri_current_updated_at_ms
                  from mobile_settings
                  where id = 1",
                 [],
@@ -232,6 +242,11 @@ impl MobileSessionService {
                         global_completion_check_wait_for_reply: row.get::<_, i64>(5)?
                             == ENABLED_FLAG,
                         assistant_surface: row.get(6)?,
+                        siri_default_thread_id: row.get(7)?,
+                        siri_default_assistant_surface: row.get(8)?,
+                        siri_current_thread_id: row.get(9)?,
+                        siri_current_assistant_surface: row.get(10)?,
+                        siri_current_updated_at_ms: row.get(11)?,
                     })
                 },
             )
@@ -301,6 +316,17 @@ impl MobileSessionService {
                 .filter(|id| known_completion_check_ids.contains(id)),
             global_completion_check_wait_for_reply: settings.global_completion_check_wait_for_reply,
             assistant_surface: normalized_assistant_surface(&settings.assistant_surface)?,
+            siri_default_thread_id: settings.siri_default_thread_id,
+            siri_default_assistant_surface: settings
+                .siri_default_assistant_surface
+                .map(|surface| normalized_assistant_surface(&surface))
+                .transpose()?,
+            siri_current_thread_id: settings.siri_current_thread_id,
+            siri_current_assistant_surface: settings
+                .siri_current_assistant_surface
+                .map(|surface| normalized_assistant_surface(&surface))
+                .transpose()?,
+            siri_current_updated_at_ms: settings.siri_current_updated_at_ms,
             notifications,
             completion_checks,
             sessions,
