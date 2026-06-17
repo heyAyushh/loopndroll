@@ -3,11 +3,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::{Date, Month, PrimitiveDateTime, Time};
 
 use crate::assistant::{
     AssistantKind, assistant_kind_from_client, infer_assistant_client_from_paths,
@@ -32,6 +34,8 @@ const CODEX_APP_PROCESS_NEEDLES: &[&str] = &[
     "com.openai.codex",
 ];
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+const ROLLOUT_FILENAME_TIMESTAMP_LENGTH: usize = 19;
+const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneStatus {
@@ -129,6 +133,18 @@ pub struct ThreadRecord {
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
     pub archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RolloutRecord {
+    #[serde(rename = "type")]
+    record_type: Option<String>,
+    payload: Option<RolloutPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RolloutPayload {
+    id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -322,7 +338,11 @@ pub fn read_state_with_thread_limit(
     };
     let connection = Connection::open(&state_db)
         .with_context(|| format!("open Codex state DB {}", state_db.display()))?;
-    let threads = read_threads(&connection, thread_limit)?;
+    let mut threads = read_threads(&connection, None)?;
+    refresh_thread_rollout_paths(&mut threads, &sources.sessions_root);
+    if let Some(limit) = thread_limit {
+        threads = latest_thread_records(threads, limit);
+    }
     let selected_thread_ids = threads
         .iter()
         .map(|thread| thread.thread_id.clone())
@@ -539,6 +559,194 @@ fn read_threads(connection: &Connection, limit: Option<usize>) -> Result<Vec<Thr
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn refresh_thread_rollout_paths(threads: &mut [ThreadRecord], sessions_root: &Path) {
+    if threads.is_empty() || !sessions_root.is_dir() {
+        return;
+    }
+
+    let selected_thread_ids = threads
+        .iter()
+        .map(|thread| thread.thread_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut latest_rollouts_by_thread = BTreeMap::<String, RolloutPathCandidate>::new();
+
+    for candidate in rollout_paths_by_freshness(sessions_root) {
+        for session_id in rollout_session_ids(&candidate.path) {
+            if !selected_thread_ids.contains(session_id.as_str()) {
+                continue;
+            }
+            if !latest_rollouts_by_thread.contains_key(&session_id) {
+                latest_rollouts_by_thread.insert(session_id, candidate.clone());
+            }
+        }
+        if latest_rollouts_by_thread.len() == selected_thread_ids.len() {
+            break;
+        }
+    }
+
+    for thread in threads {
+        let Some(candidate) = latest_rollouts_by_thread.get(&thread.thread_id) else {
+            continue;
+        };
+        let current_freshness_at_ms = thread
+            .transcript_path
+            .as_deref()
+            .and_then(|path| rollout_path_freshness_at_ms(Path::new(path)));
+        if current_freshness_at_ms
+            .map(|current| current >= candidate.freshness_at_ms)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        thread.transcript_path = Some(candidate.path.display().to_string());
+        thread.updated_at_ms = Some(
+            thread
+                .updated_at_ms
+                .unwrap_or_default()
+                .max(candidate.freshness_at_ms),
+        );
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RolloutPathCandidate {
+    path: PathBuf,
+    freshness_at_ms: i64,
+}
+
+impl RolloutPathCandidate {
+    fn for_path(path: PathBuf) -> Option<Self> {
+        rollout_path_freshness_at_ms(&path).map(|freshness_at_ms| Self {
+            path,
+            freshness_at_ms,
+        })
+    }
+}
+
+fn rollout_paths_by_freshness(sessions_root: &Path) -> Vec<RolloutPathCandidate> {
+    let mut candidates = Vec::<RolloutPathCandidate>::new();
+    collect_rollout_paths(sessions_root, &mut candidates);
+    candidates.sort_by(|left, right| {
+        right
+            .freshness_at_ms
+            .cmp(&left.freshness_at_ms)
+            .then_with(|| right.path.cmp(&left.path))
+    });
+    candidates
+}
+
+fn collect_rollout_paths(directory: &Path, candidates: &mut Vec<RolloutPathCandidate>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rollout_paths(&path, candidates);
+            continue;
+        }
+        if !is_rollout_jsonl_path(&path) {
+            continue;
+        }
+        if let Some(candidate) = RolloutPathCandidate::for_path(path) {
+            candidates.push(candidate);
+        }
+    }
+}
+
+fn is_rollout_jsonl_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        .unwrap_or(false)
+}
+
+fn rollout_session_ids(path: &Path) -> Vec<String> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let reader = BufReader::new(file);
+    let mut session_ids = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(record) = serde_json::from_str::<RolloutRecord>(&line) else {
+            continue;
+        };
+        if record.record_type.as_deref() != Some("session_meta") {
+            continue;
+        }
+        if let Some(session_id) = record.payload.and_then(|payload| payload.id)
+            && !session_ids.contains(&session_id)
+        {
+            session_ids.push(session_id);
+        }
+    }
+    if session_ids.is_empty()
+        && let Some(session_id) = rollout_session_id_from_filename(path)
+    {
+        session_ids.push(session_id);
+    }
+    session_ids
+}
+
+fn rollout_session_id_from_filename(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    let uuid_start = stem.len().checked_sub(36)?;
+    Some(stem[uuid_start..].to_owned())
+}
+
+fn rollout_timestamp_from_filename(path: &Path) -> Option<i64> {
+    let name = path.file_name()?.to_str()?;
+    let timestamp = name
+        .strip_prefix("rollout-")?
+        .get(..ROLLOUT_FILENAME_TIMESTAMP_LENGTH)?;
+    let (date, time) = timestamp.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = Month::try_from(date_parts.next()?.parse::<u8>().ok()?).ok()?;
+    let day = date_parts.next()?.parse::<u8>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let mut time_parts = time.split('-');
+    let hour = time_parts.next()?.parse::<u8>().ok()?;
+    let minute = time_parts.next()?.parse::<u8>().ok()?;
+    let second = time_parts.next()?.parse::<u8>().ok()?;
+    if time_parts.next().is_some() {
+        return None;
+    }
+
+    let datetime = PrimitiveDateTime::new(
+        Date::from_calendar_date(year, month, day).ok()?,
+        Time::from_hms(hour, minute, second).ok()?,
+    );
+    i64::try_from(datetime.assume_utc().unix_timestamp_nanos() / NANOSECONDS_PER_MILLISECOND).ok()
+}
+
+fn file_modified_at_ms(path: &Path) -> Option<i64> {
+    let modified_at = std::fs::metadata(path).ok()?.modified().ok()?;
+    let duration = modified_at.duration_since(UNIX_EPOCH).ok()?;
+    i64::try_from(duration.as_millis()).ok()
+}
+
+fn rollout_path_freshness_at_ms(path: &Path) -> Option<i64> {
+    rollout_timestamp_from_filename(path).or_else(|| file_modified_at_ms(path))
+}
+
+fn latest_thread_records(mut threads: Vec<ThreadRecord>, limit: usize) -> Vec<ThreadRecord> {
+    threads.sort_by(|left, right| {
+        right
+            .updated_at_ms
+            .unwrap_or_default()
+            .cmp(&left.updated_at_ms.unwrap_or_default())
+            .then_with(|| left.thread_id.cmp(&right.thread_id))
+    });
+    threads.truncate(limit);
+    threads
 }
 
 fn read_thread_ids(connection: &Connection) -> Result<BTreeSet<String>> {
@@ -1131,10 +1339,13 @@ fn process_ancestry(
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexServerOwner, LaunchKind, SpawnEdge, build_spawn_graph,
+        CodexServerOwner, LaunchKind, SpawnEdge, ThreadRecord, build_spawn_graph,
         inspect_codex_servers_from_process_lines, latest_matching_file,
+        read_state_with_thread_limit, refresh_thread_rollout_paths,
     };
+    use rusqlite::Connection;
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
 
     #[test]
@@ -1189,6 +1400,136 @@ mod tests {
 
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].owner, CodexServerOwner::DevinDesktop);
+    }
+
+    #[test]
+    fn refresh_thread_rollout_paths_uses_session_meta_for_resumed_threads() {
+        let tempdir = tempdir().expect("tempdir");
+        let sessions_root = tempdir
+            .path()
+            .join("sessions")
+            .join("2026")
+            .join("06")
+            .join("16");
+        fs::create_dir_all(&sessions_root).expect("sessions root");
+        let stale_rollout = sessions_root
+            .join("rollout-2026-06-16T00-00-00-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl");
+        let resumed_rollout = sessions_root
+            .join("rollout-2026-06-16T13-05-58-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl");
+        write_session_meta_rollout(&stale_rollout, "thread-1");
+        write_session_meta_rollout(&resumed_rollout, "fork-thread");
+        append_session_meta_rollout(&resumed_rollout, "thread-1");
+        let mut threads = vec![test_thread_record(
+            "thread-1",
+            stale_rollout.display().to_string(),
+        )];
+
+        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+
+        assert_eq!(
+            threads[0].transcript_path.as_deref(),
+            Some(resumed_rollout.to_str().expect("utf8 path"))
+        );
+        assert!(threads[0].updated_at_ms.unwrap_or_default() > 1);
+    }
+
+    #[test]
+    fn refresh_thread_rollout_paths_scans_past_early_session_meta() {
+        let tempdir = tempdir().expect("tempdir");
+        let sessions_root = create_test_sessions_root(tempdir.path());
+        let stale_rollout = sessions_root
+            .join("rollout-2026-06-16T00-00-00-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl");
+        let resumed_rollout = sessions_root
+            .join("rollout-2026-06-16T13-05-58-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl");
+        write_session_meta_rollout(&stale_rollout, "thread-1");
+        write_session_meta_rollout(&resumed_rollout, "fork-thread");
+        append_filler_records(&resumed_rollout, 160);
+        append_session_meta_rollout(&resumed_rollout, "thread-1");
+        let mut threads = vec![test_thread_record(
+            "thread-1",
+            stale_rollout.display().to_string(),
+        )];
+
+        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+
+        assert_eq!(
+            threads[0].transcript_path.as_deref(),
+            Some(resumed_rollout.to_str().expect("utf8 path"))
+        );
+    }
+
+    #[test]
+    fn refresh_thread_rollout_paths_prefers_newer_rollout_name_over_touched_stale_file() {
+        let tempdir = tempdir().expect("tempdir");
+        let sessions_root = create_test_sessions_root(tempdir.path());
+        let stale_rollout = sessions_root
+            .join("rollout-2026-06-16T00-00-00-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl");
+        let resumed_rollout = sessions_root
+            .join("rollout-2026-06-16T13-05-58-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl");
+        write_session_meta_rollout(&resumed_rollout, "thread-1");
+        write_session_meta_rollout(&stale_rollout, "thread-1");
+        append_session_meta_rollout(&stale_rollout, "thread-1");
+        let mut threads = vec![test_thread_record(
+            "thread-1",
+            stale_rollout.display().to_string(),
+        )];
+
+        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+
+        assert_eq!(
+            threads[0].transcript_path.as_deref(),
+            Some(resumed_rollout.to_str().expect("utf8 path"))
+        );
+    }
+
+    #[test]
+    fn bounded_state_refreshes_rollouts_before_applying_thread_limit() {
+        let tempdir = tempdir().expect("tempdir");
+        let state_db = tempdir.path().join("state_1.sqlite");
+        let connection = Connection::open(&state_db).expect("open state db");
+        connection
+            .execute(
+                "create table threads (
+                    id text primary key,
+                    rollout_path text,
+                    updated_at_ms integer,
+                    archived integer
+                )",
+                [],
+            )
+            .expect("create threads");
+        for index in 0..12 {
+            connection
+                .execute(
+                    "insert into threads (id, updated_at_ms, archived) values (?1, ?2, 0)",
+                    (format!("newer-thread-{index}"), 10_000_i64 - index),
+                )
+                .expect("insert newer thread");
+        }
+
+        let sessions_root = create_test_sessions_root(tempdir.path());
+        let stale_rollout = sessions_root
+            .join("rollout-2026-06-16T00-00-00-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl");
+        let resumed_rollout = sessions_root
+            .join("rollout-2026-06-16T13-05-58-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl");
+        write_session_meta_rollout(&stale_rollout, "thread-13");
+        write_session_meta_rollout(&resumed_rollout, "thread-13");
+        connection
+            .execute(
+                "insert into threads (id, rollout_path, updated_at_ms, archived)
+                 values (?1, ?2, ?3, 0)",
+                ("thread-13", stale_rollout.display().to_string(), 1_i64),
+            )
+            .expect("insert stale thread");
+
+        let state = read_state_with_thread_limit(tempdir.path(), Some(12)).expect("read state");
+
+        assert_eq!(state.threads.len(), 12);
+        assert_eq!(state.threads[0].thread_id, "thread-13");
+        assert_eq!(
+            state.threads[0].transcript_path.as_deref(),
+            Some(resumed_rollout.to_str().expect("utf8 path"))
+        );
     }
 
     #[test]
@@ -1270,5 +1611,90 @@ mod tests {
         let cyclic_graph = build_spawn_graph("left", &cyclic_edges);
         assert_eq!(cyclic_graph.parent_thread_id.as_deref(), Some("right"));
         assert_eq!(cyclic_graph.root_thread_id, "right");
+    }
+
+    fn write_session_meta_rollout(path: &Path, session_id: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("rollout parent");
+        }
+        let record = serde_json::json!({
+            "type": "session_meta",
+            "payload": {
+                "id": session_id
+            }
+        })
+        .to_string();
+        fs::write(path, format!("{record}\n")).expect("write rollout");
+    }
+
+    fn create_test_sessions_root(root: &Path) -> std::path::PathBuf {
+        let sessions_root = root.join("sessions").join("2026").join("06").join("16");
+        fs::create_dir_all(&sessions_root).expect("sessions root");
+        sessions_root
+    }
+
+    fn append_session_meta_rollout(path: &Path, session_id: &str) {
+        use std::io::Write;
+
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("open rollout");
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id
+                }
+            })
+        )
+        .expect("append rollout");
+    }
+
+    fn append_filler_records(path: &Path, count: usize) {
+        use std::io::Write;
+
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("open rollout");
+        for index in 0..count {
+            writeln!(
+                file,
+                "{}",
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "progress",
+                        "message": format!("filler {index}")
+                    }
+                })
+            )
+            .expect("append filler");
+        }
+    }
+
+    fn test_thread_record(thread_id: &str, transcript_path: String) -> ThreadRecord {
+        ThreadRecord {
+            thread_id: thread_id.to_owned(),
+            title: None,
+            cwd: None,
+            transcript_path: Some(transcript_path),
+            source: Some("vscode".to_owned()),
+            originator: Some("Codex Desktop".to_owned()),
+            model: None,
+            reasoning_effort: None,
+            git_sha: None,
+            git_branch: None,
+            cli_version: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            created_at_ms: None,
+            updated_at_ms: Some(1),
+            archived: false,
+        }
     }
 }

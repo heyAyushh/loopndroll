@@ -46,6 +46,7 @@ pub struct ClaudeSessionRecord {
     pub transcript_path: PathBuf,
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
+    pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
     pub running: bool,
 }
@@ -229,6 +230,7 @@ pub fn claude_session_to_desktop_thread(session: &ClaudeSessionRecord) -> Deskto
         agent_path: None,
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
+        latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
@@ -290,6 +292,7 @@ fn read_claude_session_file(
         transcript_path: path.to_path_buf(),
         created_at_ms: draft.created_at_ms,
         updated_at_ms,
+        latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
         running,
     }))
@@ -317,6 +320,7 @@ fn read_claude_session_file_fast(
         transcript_path: path.to_path_buf(),
         created_at_ms: draft.created_at_ms,
         updated_at_ms,
+        latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
         running,
     }))

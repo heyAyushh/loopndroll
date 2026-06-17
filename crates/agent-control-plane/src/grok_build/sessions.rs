@@ -27,6 +27,7 @@ pub struct GrokSessionRecord {
     pub cwd: Option<String>,
     pub updates_path: PathBuf,
     pub updated_at: String,
+    pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
     pub running: bool,
 }
@@ -141,6 +142,7 @@ pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThr
         agent_path: None,
         created_at_ms: None,
         updated_at_ms: parse_timestamp_ms(&session.updated_at),
+        latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
@@ -215,6 +217,7 @@ fn grok_session_record_from_dir(
         title,
         cwd: active_cwd.or(summary.info.cwd),
         updates_path,
+        latest_message_at_ms: parse_timestamp_ms(&updated_at),
         updated_at,
         assistant_preview,
         running,

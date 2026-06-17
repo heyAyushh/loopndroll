@@ -5,7 +5,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::assistant::{
-    AssistantKind, infer_assistant_client_from_paths, session_matches_assistant_surface,
+    AssistantKind, assistant_client_matches_surface, infer_assistant_client_from_paths,
 };
 use crate::control_plane::{DesktopSnapshot, DesktopThread, GrokBuildStatus};
 use crate::devin::{
@@ -37,6 +37,13 @@ const CODEX_SOURCE_LABEL: &str = "Codex";
 const CLAUDE_SOURCE_LABEL: &str = "Claude Code";
 const DEVIN_SOURCE_LABEL: &str = "Devin";
 const GROK_BUILD_SOURCE_LABEL: &str = "Grok Build";
+const CODEX_ASSISTANT_CLIENT: &str = "codex";
+const DEVIN_ASSISTANT_CLIENT: &str = "devin";
+const GROK_BUILD_ASSISTANT_CLIENT: &str = "grok-build";
+const CLAUDE_CODE_ASSISTANT_CLIENT: &str = "claude-code";
+const CURSOR_ASSISTANT_CLIENT: &str = "cursor";
+const OPENCLAW_ASSISTANT_CLIENT: &str = "openclaw";
+const SUPER_ENGINEERING_ASSISTANT_CLIENT: &str = "super-engineering";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptResumeTarget {
@@ -114,14 +121,7 @@ fn mobile_sessions_for_surface(
 }
 
 fn thread_matches_assistant_surface(thread: &DesktopThread, surface: &str) -> bool {
-    session_matches_assistant_surface(
-        thread.transcript_path.as_deref(),
-        thread.cwd.as_deref(),
-        thread.source.as_deref(),
-        thread.originator.as_deref(),
-        thread.agent_path.as_deref(),
-        surface,
-    )
+    assistant_client_matches_surface(assistant_client_for_thread(thread), surface)
 }
 
 pub fn mobile_grok_build_status(grok_build: &GrokBuildStatus) -> Value {
@@ -482,20 +482,18 @@ fn session_summary(
         thread.runtime_status.as_deref(),
     );
     let prompt_delivery_availability = prompt_delivery_availability(thread, is_archived, status);
-    let assistant_client = infer_assistant_client_from_paths(
-        thread.transcript_path.as_deref(),
-        thread.cwd.as_deref(),
-        thread.source.as_deref(),
-        thread.originator.as_deref(),
-        thread.agent_path.as_deref(),
-    );
+    let last_activity_at = thread_activity_timestamp(thread);
+    let last_message_at = thread_message_timestamp(thread);
+    let assistant_client = assistant_client_for_thread(thread);
     json!({
         "id": thread.thread_id,
         "ref": format!("{THREAD_REF_PREFIX}{}", index + 1),
         "title": session_title(thread),
         "status": status,
         "effectiveMode": effective_mode,
-        "lastUpdatedAt": thread_timestamp(thread),
+        "lastUpdatedAt": last_activity_at.clone(),
+        "lastActivityAt": last_activity_at,
+        "lastMessageAt": nullable_string_value(last_message_at.as_deref()),
         "assistantPreview": nullable_string_value(thread.assistant_preview.as_deref()),
         "isArchived": is_archived,
         "canSendPrompt": prompt_delivery_availability.can_send_prompt,
@@ -523,6 +521,26 @@ fn session_summary(
     })
 }
 
+fn assistant_client_for_thread(thread: &DesktopThread) -> &'static str {
+    match thread.capabilities.assistant_kind {
+        AssistantKind::Codex => CODEX_ASSISTANT_CLIENT,
+        AssistantKind::DevinDesktop => DEVIN_ASSISTANT_CLIENT,
+        AssistantKind::GrokBuild => GROK_BUILD_ASSISTANT_CLIENT,
+        AssistantKind::ClaudeCode => CLAUDE_CODE_ASSISTANT_CLIENT,
+        AssistantKind::Cursor => CURSOR_ASSISTANT_CLIENT,
+        AssistantKind::OpenClaw => OPENCLAW_ASSISTANT_CLIENT,
+        AssistantKind::Superconductor => SUPER_ENGINEERING_ASSISTANT_CLIENT,
+        AssistantKind::Unknown => infer_assistant_client_from_paths(
+            thread.transcript_path.as_deref(),
+            thread.cwd.as_deref(),
+            thread.source.as_deref(),
+            thread.originator.as_deref(),
+            thread.agent_path.as_deref(),
+        ),
+        _ => CODEX_ASSISTANT_CLIENT,
+    }
+}
+
 fn mobile_thread_goal_summary(goal: Option<&crate::goals::ThreadGoalSummary>) -> Value {
     goal.map(|goal| {
         json!({
@@ -542,9 +560,9 @@ fn mobile_thread_goal_summary(goal: Option<&crate::goals::ThreadGoalSummary>) ->
 
 fn source_display_name(assistant_client: &str) -> &'static str {
     match assistant_client {
-        "claude-code" => CLAUDE_SOURCE_LABEL,
-        "devin" => DEVIN_SOURCE_LABEL,
-        "grok-build" => GROK_BUILD_SOURCE_LABEL,
+        CLAUDE_CODE_ASSISTANT_CLIENT => CLAUDE_SOURCE_LABEL,
+        DEVIN_ASSISTANT_CLIENT => DEVIN_SOURCE_LABEL,
+        GROK_BUILD_ASSISTANT_CLIENT => GROK_BUILD_SOURCE_LABEL,
         _ => CODEX_SOURCE_LABEL,
     }
 }
@@ -677,12 +695,27 @@ fn inactive_session_status(effective_mode: Option<&str>) -> &'static str {
     }
 }
 
-fn thread_timestamp(thread: &DesktopThread) -> String {
-    thread
-        .updated_at_ms
-        .or(thread.created_at_ms)
+fn thread_activity_timestamp(thread: &DesktopThread) -> String {
+    latest_thread_activity_millis(thread)
         .and_then(timestamp_millis_to_iso)
         .unwrap_or_else(current_iso_time)
+}
+
+fn thread_message_timestamp(thread: &DesktopThread) -> Option<String> {
+    thread
+        .latest_message_at_ms
+        .and_then(timestamp_millis_to_iso)
+}
+
+fn latest_thread_activity_millis(thread: &DesktopThread) -> Option<i64> {
+    [
+        thread.updated_at_ms,
+        thread.latest_message_at_ms,
+        thread.created_at_ms,
+    ]
+    .into_iter()
+    .flatten()
+    .max()
 }
 
 fn timestamp_millis_to_iso(timestamp_millis: i64) -> Option<String> {
@@ -786,6 +819,89 @@ mod tests {
         let summary = session_summary(&thread, 0, &session_state);
         assert_eq!(summary["canSendPrompt"], true);
         assert_eq!(summary["promptDeliveryUnavailableReason"], Value::Null);
+    }
+
+    #[test]
+    fn session_summary_separates_activity_and_message_freshness() {
+        let mut thread = test_thread("thread-1", AssistantKind::Codex, None);
+        thread.updated_at_ms = Some(1_781_596_920_000);
+        thread.latest_message_at_ms = Some(1_781_596_860_000);
+        let session_state = session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_ACTIVE);
+
+        let summary = session_summary(&thread, 0, &session_state);
+
+        assert_eq!(summary["lastUpdatedAt"], "2026-06-16T08:02:00Z");
+        assert_eq!(summary["lastActivityAt"], "2026-06-16T08:02:00Z");
+        assert_eq!(summary["lastMessageAt"], "2026-06-16T08:01:00Z");
+    }
+
+    #[test]
+    fn codex_acp_session_under_devin_paths_stays_on_codex_surface() {
+        let mut thread = test_thread("thread-1", AssistantKind::Codex, None);
+        thread.source = Some("codex-acp".to_owned());
+        thread.originator = Some("Codex ACP via Devin - Next".to_owned());
+        thread.transcript_path = Some(
+            "/Users/test/Library/Application Support/Devin - Next/User/acp-events/1.ndjson"
+                .to_owned(),
+        );
+        let session_state = session_state_with_lifecycle("thread-1", MOBILE_SESSION_STATUS_ACTIVE);
+
+        let summary = session_summary(&thread, 0, &session_state);
+
+        assert!(thread_matches_assistant_surface(&thread, "codex"));
+        assert!(!thread_matches_assistant_surface(&thread, "devin"));
+        assert_eq!(summary["assistantClient"], CODEX_ASSISTANT_CLIENT);
+        assert_eq!(summary["metadata"]["sourceDisplayName"], CODEX_SOURCE_LABEL);
+    }
+
+    #[test]
+    fn typed_devin_sessions_with_sparse_metadata_stay_on_devin_surface() {
+        let thread = test_thread(
+            "devin:looper:session-1",
+            AssistantKind::DevinDesktop,
+            Some(MOBILE_SESSION_STATUS_ACTIVE),
+        );
+        let session_state = MobileSessionState::default();
+
+        assert!(thread_matches_assistant_surface(&thread, "devin"));
+        assert!(!thread_matches_assistant_surface(&thread, "codex"));
+
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["assistantClient"], DEVIN_ASSISTANT_CLIENT);
+        assert_eq!(summary["metadata"]["sourceDisplayName"], DEVIN_SOURCE_LABEL);
+    }
+
+    #[test]
+    fn typed_codex_surface_clients_do_not_fall_back_to_devin_paths() {
+        let mut thread = test_thread("thread-1", AssistantKind::Cursor, None);
+        thread.originator = Some("Devin - Next".to_owned());
+        thread.transcript_path = Some(
+            "/Users/test/Library/Application Support/Devin - Next/User/acp-events/1.ndjson"
+                .to_owned(),
+        );
+        let session_state = MobileSessionState::default();
+
+        assert!(thread_matches_assistant_surface(&thread, "codex"));
+        assert!(!thread_matches_assistant_surface(&thread, "devin"));
+
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["assistantClient"], CURSOR_ASSISTANT_CLIENT);
+        assert_eq!(summary["metadata"]["sourceDisplayName"], CODEX_SOURCE_LABEL);
+    }
+
+    #[test]
+    fn unknown_sessions_still_fall_back_to_path_inference() {
+        let mut thread = test_thread("thread-1", AssistantKind::Unknown, None);
+        thread.transcript_path = Some("/Users/test/.codex/sessions/thread-1.jsonl".to_owned());
+        thread.source = Some("vscode".to_owned());
+        thread.originator = Some("Devin - Next".to_owned());
+        let session_state = MobileSessionState::default();
+
+        assert!(thread_matches_assistant_surface(&thread, "devin"));
+        assert!(!thread_matches_assistant_surface(&thread, "codex"));
+
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["assistantClient"], DEVIN_ASSISTANT_CLIENT);
     }
 
     #[test]
@@ -1024,6 +1140,7 @@ mod tests {
             agent_path: None,
             created_at_ms: Some(1),
             updated_at_ms: Some(2),
+            latest_message_at_ms: Some(3),
             assistant_preview: None,
             runtime_status: runtime_status.map(str::to_owned),
             archived: false,

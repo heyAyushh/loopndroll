@@ -23,6 +23,8 @@ use crate::mobile_session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_
 const DEVIN_NEXT_ORIGINATOR: &str = "Devin - Next";
 const DEVIN_STABLE_ORIGINATOR: &str = "Devin";
 const DEVIN_DESKTOP_SOURCE: &str = "devin-desktop";
+const CODEX_ACP_SOURCE: &str = "codex-acp";
+const CODEX_ACP_AGENT_NICKNAME: &str = "Codex ACP";
 const DEVIN_THREAD_ID_PREFIX: &str = "devin";
 const DEVIN_ACP_SESSION_PREFIX: &str = "acp/";
 const DEVIN_IDLE_STATUS: &str = "idle";
@@ -59,6 +61,7 @@ pub struct DevinSessionRecord {
     pub originator: String,
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
+    pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
     pub archived: bool,
 }
@@ -148,6 +151,9 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
     } else {
         MOBILE_SESSION_STATUS_STOPPED
     };
+    let source = session_source(session);
+    let originator = session_originator(session);
+    let agent_nickname = session_agent_nickname(session);
 
     DesktopThread {
         thread_id: session.thread_id.clone(),
@@ -157,18 +163,19 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
             .transcript_path
             .as_ref()
             .map(|path| path.display().to_string()),
-        source: Some(DEVIN_DESKTOP_SOURCE.to_owned()),
-        originator: Some(session.originator.clone()),
+        source: Some(source.to_owned()),
+        originator: Some(originator),
         model: None,
         reasoning_effort: None,
         git_sha: None,
         git_branch: None,
         cli_version: None,
-        agent_nickname: Some(session.originator.clone()),
+        agent_nickname: Some(agent_nickname),
         agent_role: Some(session.provider_id.clone()),
         agent_path: None,
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
+        latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: session.archived,
@@ -178,6 +185,10 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
 }
 
 pub fn devin_session_to_thread_record(session: &DevinSessionRecord) -> ThreadRecord {
+    let source = session_source(session);
+    let originator = session_originator(session);
+    let agent_nickname = session_agent_nickname(session);
+
     ThreadRecord {
         thread_id: session.thread_id.clone(),
         title: session.title.clone(),
@@ -186,14 +197,14 @@ pub fn devin_session_to_thread_record(session: &DevinSessionRecord) -> ThreadRec
             .transcript_path
             .as_ref()
             .map(|path| path.display().to_string()),
-        source: Some(DEVIN_DESKTOP_SOURCE.to_owned()),
-        originator: Some(session.originator.clone()),
+        source: Some(source.to_owned()),
+        originator: Some(originator),
         model: None,
         reasoning_effort: None,
         git_sha: None,
         git_branch: None,
         cli_version: None,
-        agent_nickname: Some(session.originator.clone()),
+        agent_nickname: Some(agent_nickname),
         agent_role: Some(session.provider_id.clone()),
         agent_path: None,
         created_at_ms: session.created_at_ms,
@@ -205,7 +216,7 @@ pub fn devin_session_to_thread_record(session: &DevinSessionRecord) -> ThreadRec
 pub fn devin_session_capabilities(session: &DevinSessionRecord) -> ThreadCapabilities {
     ThreadCapabilities {
         thread_id: session.thread_id.clone(),
-        assistant_kind: AssistantKind::DevinDesktop,
+        assistant_kind: session_assistant_kind(session),
         tools: Vec::new(),
         mcp_tools: Vec::new(),
         app_tools: Vec::new(),
@@ -222,9 +233,41 @@ pub fn devin_session_capabilities(session: &DevinSessionRecord) -> ThreadCapabil
             produced_file_changes: false,
             paths: Vec::new(),
         },
-        agent_nickname: Some(session.originator.clone()),
+        agent_nickname: Some(session_agent_nickname(session)),
         agent_role: Some(session.provider_id.clone()),
         agent_path: None,
+    }
+}
+
+fn session_assistant_kind(session: &DevinSessionRecord) -> AssistantKind {
+    if is_codex_acp_provider(&session.provider_id) {
+        AssistantKind::Codex
+    } else {
+        AssistantKind::DevinDesktop
+    }
+}
+
+fn session_source(session: &DevinSessionRecord) -> &'static str {
+    if is_codex_acp_provider(&session.provider_id) {
+        CODEX_ACP_SOURCE
+    } else {
+        DEVIN_DESKTOP_SOURCE
+    }
+}
+
+fn session_originator(session: &DevinSessionRecord) -> String {
+    if is_codex_acp_provider(&session.provider_id) {
+        format!("{CODEX_ACP_AGENT_NICKNAME} via {}", session.originator)
+    } else {
+        session.originator.clone()
+    }
+}
+
+fn session_agent_nickname(session: &DevinSessionRecord) -> String {
+    if is_codex_acp_provider(&session.provider_id) {
+        CODEX_ACP_AGENT_NICKNAME.to_owned()
+    } else {
+        session.originator.clone()
     }
 }
 
@@ -315,7 +358,7 @@ fn session_record_from_metadata(
         .and_then(latest_assistant_message_from_event_log);
 
     DevinSessionRecord {
-        thread_id: public_thread_id_for_session_id(&session.session_id),
+        thread_id: public_thread_id_for_metadata_session(&session.session_id, &session.provider_id),
         session_id: session.session_id,
         provider_id: session.provider_id,
         title: non_empty_string(session.title),
@@ -328,6 +371,7 @@ fn session_record_from_metadata(
         originator: originator.to_owned(),
         created_at_ms,
         updated_at_ms,
+        latest_message_at_ms: updated_at_ms,
         assistant_preview,
         archived,
     }
@@ -422,7 +466,7 @@ fn keep_newer_session(
     session: DevinSessionRecord,
 ) {
     let should_replace = sessions_by_id
-        .get(&session.session_id)
+        .get(&session.thread_id)
         .map(|existing| {
             session.updated_at_ms.unwrap_or_default() > existing.updated_at_ms.unwrap_or_default()
         })
@@ -432,12 +476,35 @@ fn keep_newer_session(
     }
 }
 
+fn public_thread_id_for_metadata_session(session_id: &str, provider_id: &str) -> String {
+    if is_codex_acp_provider(provider_id) {
+        return codex_thread_id_for_devin_acp_session(session_id, provider_id);
+    }
+
+    public_thread_id_for_session_id(session_id)
+}
+
+fn codex_thread_id_for_devin_acp_session(session_id: &str, provider_id: &str) -> String {
+    let without_acp_prefix = session_id
+        .strip_prefix(DEVIN_ACP_SESSION_PREFIX)
+        .unwrap_or(session_id);
+    let without_provider_prefix = without_acp_prefix
+        .strip_prefix(provider_id)
+        .and_then(|value| value.strip_prefix('/'))
+        .unwrap_or(without_acp_prefix);
+    without_provider_prefix.replace('/', ":")
+}
+
 fn public_thread_id_for_session_id(session_id: &str) -> String {
     let normalized_session_id = session_id
         .strip_prefix(DEVIN_ACP_SESSION_PREFIX)
         .unwrap_or(session_id)
         .replace('/', ":");
     format!("{DEVIN_THREAD_ID_PREFIX}:{normalized_session_id}")
+}
+
+fn is_codex_acp_provider(provider_id: &str) -> bool {
+    matches!(provider_id.trim(), "codex" | "codex-acp")
 }
 
 pub fn devin_thread_identity_from_public_thread_id(thread_id: &str) -> Option<DevinThreadIdentity> {
@@ -577,9 +644,19 @@ mod tests {
             .iter()
             .find(|session| session.provider_id == "codex")
             .expect("codex session hosted by Devin Desktop");
-        assert_eq!(codex_session.thread_id, "devin:codex:thread");
+        assert_eq!(codex_session.thread_id, "thread");
         assert_eq!(codex_session.originator, DEVIN_NEXT_ORIGINATOR);
         assert_eq!(codex_session.title.as_deref(), Some("Codex inside Devin"));
+        let desktop_thread = devin_session_to_desktop_thread(codex_session);
+        assert_eq!(desktop_thread.source.as_deref(), Some(CODEX_ACP_SOURCE));
+        assert_eq!(
+            desktop_thread.originator.as_deref(),
+            Some("Codex ACP via Devin - Next")
+        );
+        assert_eq!(
+            desktop_thread.capabilities.assistant_kind,
+            AssistantKind::Codex
+        );
     }
 
     #[test]

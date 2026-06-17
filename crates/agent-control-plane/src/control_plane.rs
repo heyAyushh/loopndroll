@@ -46,7 +46,7 @@ use crate::mobile_push::MobilePushService;
 use crate::mobile_session::MobileSessionService;
 use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
-use crate::transcript_preview::latest_assistant_message_for_path;
+use crate::transcript_preview::transcript_preview_for_path;
 use crate::zed::{ZED_CLIENT_ID, ZedStatus, inspect_zed_for_home, zed_acp_targets};
 
 const DESKTOP_COMPACTION_LIMIT: usize = 50;
@@ -57,6 +57,8 @@ const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
+const CODEX_STATE_SOURCE: &str = "vscode";
+const CODEX_ACP_SOURCE: &str = "codex-acp";
 const DEVIN_CONNECTION_KIND: &str = "devin";
 const DEVIN_HOOKS_CONNECTION_ID: &str = "devin-hooks";
 const DEVIN_HOOKS_CONNECTION_LABEL: &str = "Devin hooks";
@@ -287,6 +289,7 @@ pub struct DesktopThread {
     pub agent_path: Option<String>,
     pub created_at_ms: Option<i64>,
     pub updated_at_ms: Option<i64>,
+    pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
     pub runtime_status: Option<String>,
     pub archived: bool,
@@ -331,10 +334,16 @@ impl ControlPlane {
             codex_threads_for_snapshot(&state.threads, Some(DESKTOP_MENU_THREAD_LIMIT))
                 .iter()
                 .map(|thread| {
+                    let transcript_modified_at_ms = thread
+                        .transcript_path
+                        .as_deref()
+                        .and_then(|path| metadata_modified_at_ms(Path::new(path)))
+                        .unwrap_or_default();
                     format!(
-                        "{}:{}:{}",
+                        "{}:{}:{}:{}",
                         thread.thread_id,
                         thread.updated_at_ms.unwrap_or_default(),
+                        transcript_modified_at_ms,
                         thread.archived
                     )
                 })
@@ -1025,6 +1034,26 @@ impl ControlPlane {
                     .get(&thread.thread_id)
                     .cloned()
                     .ok_or_else(|| anyhow!("missing capabilities for {}", thread.thread_id))?;
+                let transcript_modified_at_ms = thread
+                    .transcript_path
+                    .as_deref()
+                    .and_then(|path| metadata_modified_at_ms(Path::new(path)));
+                let transcript_preview = thread
+                    .transcript_path
+                    .as_deref()
+                    .and_then(|path| transcript_preview_for_path(Path::new(path)));
+                let latest_message_at_ms = transcript_preview
+                    .as_ref()
+                    .and_then(|preview| preview.latest_message_at_ms);
+                let latest_transcript_activity_at_ms = transcript_preview
+                    .as_ref()
+                    .and_then(|preview| preview.latest_activity_at_ms);
+                let updated_at_ms = latest_millis([
+                    thread.updated_at_ms,
+                    transcript_modified_at_ms,
+                    latest_transcript_activity_at_ms,
+                    latest_message_at_ms,
+                ]);
                 Ok(DesktopThread {
                     thread_id: thread.thread_id.clone(),
                     title: thread.title.clone(),
@@ -1041,11 +1070,11 @@ impl ControlPlane {
                     agent_role: thread.agent_role.clone(),
                     agent_path: thread.agent_path.clone(),
                     created_at_ms: thread.created_at_ms,
-                    updated_at_ms: thread.updated_at_ms,
-                    assistant_preview: thread
-                        .transcript_path
-                        .as_deref()
-                        .and_then(|path| latest_assistant_message_for_path(Path::new(path))),
+                    updated_at_ms,
+                    latest_message_at_ms,
+                    assistant_preview: transcript_preview.and_then(|preview| {
+                        preview.latest_assistant_message.map(|message| message.text)
+                    }),
                     runtime_status: None,
                     archived: thread.archived,
                     goal: None,
@@ -1078,11 +1107,9 @@ impl ControlPlane {
             limited_items(&devin_acp_runtime.sessions, thread_limit)
                 .map(devin_acp_runtime_session_to_desktop_thread),
         );
+        dedupe_desktop_threads_by_id(&mut desktop_threads);
         desktop_threads.sort_by(|left, right| {
-            right
-                .updated_at_ms
-                .unwrap_or_default()
-                .cmp(&left.updated_at_ms.unwrap_or_default())
+            desktop_thread_activity_ms(right).cmp(&desktop_thread_activity_ms(left))
         });
         let visible_codex_threads = snapshot_codex_threads;
 
@@ -1512,6 +1539,7 @@ fn devin_acp_runtime_session_to_desktop_thread(session: &DevinAcpRuntimeSession)
         agent_path: None,
         created_at_ms: Some(session.created_at_ms),
         updated_at_ms: Some(session.updated_at_ms),
+        latest_message_at_ms: Some(session.updated_at_ms),
         assistant_preview: session.latest_assistant_message.clone(),
         runtime_status: Some(if session.cancelled {
             "stopped".to_owned()
@@ -1522,6 +1550,80 @@ fn devin_acp_runtime_session_to_desktop_thread(session: &DevinAcpRuntimeSession)
         goal: None,
         capabilities: devin_acp_runtime_session_capabilities(session),
     }
+}
+
+fn dedupe_desktop_threads_by_id(threads: &mut Vec<DesktopThread>) {
+    let mut threads_by_id = BTreeMap::<String, DesktopThread>::new();
+    for thread in std::mem::take(threads) {
+        match threads_by_id.remove(&thread.thread_id) {
+            Some(existing) => {
+                threads_by_id.insert(
+                    thread.thread_id.clone(),
+                    preferred_desktop_thread(existing, thread),
+                );
+            }
+            None => {
+                threads_by_id.insert(thread.thread_id.clone(), thread);
+            }
+        }
+    }
+    *threads = threads_by_id.into_values().collect();
+}
+
+fn preferred_desktop_thread(left: DesktopThread, right: DesktopThread) -> DesktopThread {
+    let left_score = desktop_thread_source_score(&left);
+    let right_score = desktop_thread_source_score(&right);
+    if right_score > left_score {
+        return merge_desktop_thread(right, left);
+    }
+    if left_score > right_score {
+        return merge_desktop_thread(left, right);
+    }
+
+    if desktop_thread_activity_ms(&right) > desktop_thread_activity_ms(&left) {
+        merge_desktop_thread(right, left)
+    } else {
+        merge_desktop_thread(left, right)
+    }
+}
+
+fn desktop_thread_source_score(thread: &DesktopThread) -> u8 {
+    match thread.source.as_deref() {
+        Some(CODEX_STATE_SOURCE) => 3,
+        Some(CODEX_ACP_SOURCE) => 2,
+        _ => 1,
+    }
+}
+
+fn desktop_thread_activity_ms(thread: &DesktopThread) -> i64 {
+    latest_millis([
+        thread.updated_at_ms,
+        thread.latest_message_at_ms,
+        thread.created_at_ms,
+    ])
+    .unwrap_or_default()
+}
+
+fn merge_desktop_thread(mut preferred: DesktopThread, fallback: DesktopThread) -> DesktopThread {
+    preferred.updated_at_ms = latest_millis([preferred.updated_at_ms, fallback.updated_at_ms]);
+    preferred.latest_message_at_ms = latest_millis([
+        preferred.latest_message_at_ms,
+        fallback.latest_message_at_ms,
+    ]);
+    if preferred.assistant_preview.is_none() {
+        preferred.assistant_preview = fallback.assistant_preview;
+    }
+    if preferred.transcript_path.is_none() {
+        preferred.transcript_path = fallback.transcript_path;
+    }
+    if preferred.runtime_status.is_none() {
+        preferred.runtime_status = fallback.runtime_status;
+    }
+    preferred
+}
+
+fn latest_millis(values: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
+    values.into_iter().flatten().max()
 }
 
 fn attach_goals_to_desktop_threads(threads: &mut [DesktopThread], goals: &[GoalSummary]) {
@@ -1683,6 +1785,13 @@ fn desktop_thread_to_thread_record(thread: &DesktopThread) -> ThreadRecord {
         updated_at_ms: thread.updated_at_ms,
         archived: thread.archived,
     }
+}
+
+fn metadata_modified_at_ms(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let millis = duration.as_millis();
+    i64::try_from(millis).ok()
 }
 
 #[cfg(test)]
