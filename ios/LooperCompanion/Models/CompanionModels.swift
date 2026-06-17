@@ -495,6 +495,15 @@ enum ConnectivityState: String, Sendable {
             return "Scan the Mac code or enter the device code in Settings to start syncing looper."
         }
     }
+
+    var allowsConnectionRoutePresentation: Bool {
+        switch self {
+        case .connected, .unauthorized, .locked:
+            return true
+        case .connecting, .offline, .unpaired:
+            return false
+        }
+    }
 }
 
 private extension String {
@@ -1478,6 +1487,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var status: SessionStatus
     var effectiveMode: SessionMode?
     var lastUpdatedAt: String
+    var lastActivityAt: String
+    var lastMessageAt: String?
     var assistantPreview: String?
     var isArchived: Bool
     var canSendPrompt: Bool
@@ -1493,6 +1504,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case status
         case effectiveMode
         case lastUpdatedAt
+        case lastActivityAt
+        case lastMessageAt
         case assistantPreview
         case isArchived
         case canSendPrompt
@@ -1509,6 +1522,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         status: SessionStatus,
         effectiveMode: SessionMode?,
         lastUpdatedAt: String,
+        lastActivityAt: String? = nil,
+        lastMessageAt: String? = nil,
         assistantPreview: String?,
         isArchived: Bool,
         canSendPrompt: Bool = true,
@@ -1523,6 +1538,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         self.status = status
         self.effectiveMode = effectiveMode
         self.lastUpdatedAt = lastUpdatedAt
+        self.lastActivityAt = lastActivityAt ?? lastUpdatedAt
+        self.lastMessageAt = lastMessageAt
         self.assistantPreview = assistantPreview
         self.isArchived = isArchived
         self.canSendPrompt = canSendPrompt
@@ -1540,6 +1557,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         status = try container.decode(SessionStatus.self, forKey: .status)
         effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
         lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
+        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt) ?? lastUpdatedAt
+        lastMessageAt = try container.decodeIfPresent(String.self, forKey: .lastMessageAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ??
             (status == .archived)
@@ -1559,22 +1578,36 @@ extension SessionSummary {
         SessionTimestampParser.date(from: lastUpdatedAt)
     }
 
+    var lastActivityDate: Date? {
+        LooperSessionFreshness.date(from: lastActivityAt)
+    }
+
+    var lastMessageDate: Date? {
+        lastMessageAt.flatMap(LooperSessionFreshness.date)
+    }
+
+    var displayFreshnessAt: String {
+        LooperSessionFreshness.displayTimestamp(lastActivityAt: lastActivityAt)
+    }
+
+    var displayFreshnessDate: Date? {
+        LooperSessionFreshness.displayDate(lastActivityAt: lastActivityAt)
+    }
+
+    var displayFreshnessPrefix: String {
+        LooperSessionFreshness.displayPrefix()
+    }
+
     static func isNewerOrLowerRef(
         leftSession: SessionSummary,
         rightSession: SessionSummary
     ) -> Bool {
-        if let leftDate = leftSession.lastUpdatedDate,
-           let rightDate = rightSession.lastUpdatedDate,
-           leftDate != rightDate
-        {
-            return leftDate > rightDate
-        }
-
-        if leftSession.lastUpdatedAt != rightSession.lastUpdatedAt {
-            return leftSession.lastUpdatedAt > rightSession.lastUpdatedAt
-        }
-
-        return leftSession.ref < rightSession.ref
+        LooperSessionFreshness.isNewerActivityOrLowerReference(
+            leftLastActivityAt: leftSession.lastActivityAt,
+            leftRef: leftSession.ref,
+            rightLastActivityAt: rightSession.lastActivityAt,
+            rightRef: rightSession.ref
+        )
     }
 }
 
@@ -1585,6 +1618,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var status: SessionStatus
     var effectiveMode: SessionMode?
     var lastUpdatedAt: String
+    var lastActivityAt: String
+    var lastMessageAt: String?
     var assistantPreview: String?
     var latestAssistantMessage: String?
     var isArchived: Bool
@@ -1606,6 +1641,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case status
         case effectiveMode
         case lastUpdatedAt
+        case lastActivityAt
+        case lastMessageAt
         case assistantPreview
         case latestAssistantMessage
         case isArchived
@@ -1628,6 +1665,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         status: SessionStatus,
         effectiveMode: SessionMode?,
         lastUpdatedAt: String,
+        lastActivityAt: String? = nil,
+        lastMessageAt: String? = nil,
         assistantPreview: String?,
         latestAssistantMessage: String?,
         isArchived: Bool,
@@ -1648,6 +1687,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.status = status
         self.effectiveMode = effectiveMode
         self.lastUpdatedAt = lastUpdatedAt
+        self.lastActivityAt = lastActivityAt ?? lastUpdatedAt
+        self.lastMessageAt = lastMessageAt
         self.assistantPreview = assistantPreview
         self.latestAssistantMessage = latestAssistantMessage
         self.isArchived = isArchived
@@ -1671,6 +1712,8 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         status = try container.decode(SessionStatus.self, forKey: .status)
         effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
         lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
+        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt) ?? lastUpdatedAt
+        lastMessageAt = try container.decodeIfPresent(String.self, forKey: .lastMessageAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
@@ -1797,10 +1840,19 @@ struct MobileSnapshot: Codable, Sendable {
         var sessionsByID: [String: SessionSummary] = [:]
         for surface in CompanionAssistantSurface.allCases {
             for session in sessions(for: surface) {
-                sessionsByID[session.id] = session
+                if let existingSession = sessionsByID[session.id] {
+                    if SessionSummary.isNewerOrLowerRef(
+                        leftSession: session,
+                        rightSession: existingSession
+                    ) {
+                        sessionsByID[session.id] = session
+                    }
+                } else {
+                    sessionsByID[session.id] = session
+                }
             }
         }
-        return Array(sessionsByID.values)
+        return sessionsByID.values.sorted(by: SessionSummary.isNewerOrLowerRef)
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
@@ -1887,18 +1939,7 @@ struct SessionSections: Sendable {
 
 enum SessionTimestampParser {
     static func date(from value: String) -> Date? {
-        iso8601Formatter(formatOptions: [.withInternetDateTime, .withFractionalSeconds])
-            .date(from: value) ??
-            iso8601Formatter(formatOptions: [.withInternetDateTime])
-            .date(from: value)
-    }
-
-    private static func iso8601Formatter(
-        formatOptions: ISO8601DateFormatter.Options
-    ) -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = formatOptions
-        return formatter
+        LooperSessionFreshness.date(from: value)
     }
 }
 
@@ -1911,6 +1952,10 @@ enum ModelFormatting {
         }
 
         return date.formatted(.relative(presentation: .named))
+    }
+
+    static func sessionFreshness(_ session: SessionSummary) -> String {
+        "\(session.displayFreshnessPrefix) \(relativeTimestamp(session.displayFreshnessAt))"
     }
 
     static func friendlyDateTime(_ value: String) -> String {

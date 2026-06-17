@@ -62,7 +62,7 @@ struct SessionRow: View {
                 )
 
                 Label(
-                    ModelFormatting.relativeTimestamp(session.lastUpdatedAt),
+                    ModelFormatting.sessionFreshness(session),
                     systemImage: "clock"
                 )
 

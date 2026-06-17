@@ -60,6 +60,7 @@ actor MockCompanionStore {
     }
 
     func setMode(id: String, preset: SessionMode?) -> MobileSnapshot {
+        let timestamp = Date().ISO8601Format()
         allSessions = allSessions.map {
             guard $0.id == id else { return $0 }
             return SessionSummary(
@@ -68,7 +69,9 @@ actor MockCompanionStore {
                 title: $0.title,
                 status: $0.status,
                 effectiveMode: preset,
-                lastUpdatedAt: Date().ISO8601Format(),
+                lastUpdatedAt: timestamp,
+                lastActivityAt: timestamp,
+                lastMessageAt: $0.lastMessageAt,
                 assistantPreview: $0.assistantPreview,
                 isArchived: $0.isArchived,
                 assistantClient: $0.assistantClient,
@@ -78,7 +81,8 @@ actor MockCompanionStore {
 
         if var detail = allDetails[id] {
             detail.effectiveMode = preset
-            detail.lastUpdatedAt = Date().ISO8601Format()
+            detail.lastUpdatedAt = timestamp
+            detail.lastActivityAt = detail.lastUpdatedAt
             allDetails[id] = detail
         }
 
@@ -86,6 +90,7 @@ actor MockCompanionStore {
     }
 
     func setArchived(id: String, archived: Bool) -> MobileSnapshot {
+        let timestamp = Date().ISO8601Format()
         allSessions = allSessions.map {
             guard $0.id == id else { return $0 }
             return SessionSummary(
@@ -94,7 +99,9 @@ actor MockCompanionStore {
                 title: $0.title,
                 status: archived ? .archived : .active,
                 effectiveMode: $0.effectiveMode,
-                lastUpdatedAt: Date().ISO8601Format(),
+                lastUpdatedAt: timestamp,
+                lastActivityAt: timestamp,
+                lastMessageAt: $0.lastMessageAt,
                 assistantPreview: $0.assistantPreview,
                 isArchived: archived,
                 assistantClient: $0.assistantClient,
@@ -105,7 +112,8 @@ actor MockCompanionStore {
         if var detail = allDetails[id] {
             detail.isArchived = archived
             detail.status = archived ? .archived : .active
-            detail.lastUpdatedAt = Date().ISO8601Format()
+            detail.lastUpdatedAt = timestamp
+            detail.lastActivityAt = detail.lastUpdatedAt
             allDetails[id] = detail
         }
 
@@ -131,6 +139,8 @@ actor MockCompanionStore {
                 status: $0.status,
                 effectiveMode: $0.effectiveMode,
                 lastUpdatedAt: timestamp,
+                lastActivityAt: timestamp,
+                lastMessageAt: timestamp,
                 assistantPreview: preview,
                 isArchived: $0.isArchived,
                 assistantClient: $0.assistantClient,
@@ -142,6 +152,8 @@ actor MockCompanionStore {
             detail.assistantPreview = preview
             detail.latestAssistantMessage = preview
             detail.lastUpdatedAt = timestamp
+            detail.lastActivityAt = timestamp
+            detail.lastMessageAt = timestamp
             allDetails[id] = detail
         }
 

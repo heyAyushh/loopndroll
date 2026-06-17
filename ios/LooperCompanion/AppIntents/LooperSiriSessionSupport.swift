@@ -93,6 +93,12 @@ struct LooperSessionEntity: AppEntity, IndexedEntity {
     @Property(title: "Last Updated")
     var lastUpdated: String
 
+    @Property(title: "Last Active")
+    var lastActive: String
+
+    @Property(title: "Last Message")
+    var lastMessage: String
+
     @Property(title: "Preview")
     var preview: String
 
@@ -148,6 +154,8 @@ struct LooperSessionEntity: AppEntity, IndexedEntity {
         plugins: String,
         assistantSurfaceTitle: String,
         lastUpdated: String,
+        lastActive: String,
+        lastMessage: String,
         preview: String,
         canSendPrompt: Bool,
         promptDeliveryUnavailableReason: String,
@@ -171,6 +179,8 @@ struct LooperSessionEntity: AppEntity, IndexedEntity {
         self.plugins = plugins
         self.assistantSurfaceTitle = assistantSurfaceTitle
         self.lastUpdated = lastUpdated
+        self.lastActive = lastActive
+        self.lastMessage = lastMessage
         self.preview = preview
     }
 
@@ -196,6 +206,8 @@ struct LooperSessionEntity: AppEntity, IndexedEntity {
             plugins: metadata.installedPlugins.map(\.name).joined(separator: " "),
             assistantSurfaceTitle: assistantSurface.displayTitle,
             lastUpdated: session.lastUpdatedAt,
+            lastActive: session.lastActivityAt,
+            lastMessage: session.lastMessageAt ?? "",
             preview: session.assistantPreview ?? "",
             canSendPrompt: session.canSendPrompt,
             promptDeliveryUnavailableReason: session.promptDeliveryUnavailableReason ?? "",
@@ -243,6 +255,8 @@ struct LooperSessionEntity: AppEntity, IndexedEntity {
             assistantSurfaceTitle,
             assistantSurfaceRawValue,
             lastUpdated,
+            lastActive,
+            lastMessage,
             preview
         ]
     }
@@ -496,11 +510,12 @@ struct LooperSiriSessionClient: Sendable {
         left: LooperSessionEntity,
         right: LooperSessionEntity
     ) -> Bool {
-        if left.lastUpdated != right.lastUpdated {
-            return left.lastUpdated > right.lastUpdated
-        }
-
-        return left.ref < right.ref
+        LooperSessionFreshness.isNewerActivityOrLowerReference(
+            leftLastActivityAt: left.lastActive,
+            leftRef: left.ref,
+            rightLastActivityAt: right.lastActive,
+            rightRef: right.ref
+        )
     }
 }
 

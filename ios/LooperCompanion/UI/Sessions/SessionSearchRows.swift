@@ -67,7 +67,7 @@ struct SearchSessionRow: View {
                     .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                Text("Sessions -> \(session.status.label)")
+                Text("Sessions -> \(session.status.label) -> \(ModelFormatting.sessionFreshness(session))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -18,6 +18,8 @@ struct SessionSpotlightRecord: Equatable, Sendable {
     let title: String
     let status: SessionStatus
     let lastUpdatedAt: String
+    let lastActivityAt: String
+    let lastMessageAt: String?
     let assistantPreview: String?
     let isArchived: Bool
     let assistantClient: AssistantClient
@@ -29,6 +31,8 @@ struct SessionSpotlightRecord: Equatable, Sendable {
         title = session.title
         status = session.status
         lastUpdatedAt = session.lastUpdatedAt
+        lastActivityAt = session.lastActivityAt
+        lastMessageAt = session.lastMessageAt
         assistantPreview = session.assistantPreview
         isArchived = session.isArchived
         assistantClient = session.assistantClient
@@ -108,9 +112,9 @@ struct SessionSearchableItem {
     var searchableItem: CSSearchableItem {
         let entity = appEntity
         let attributeSet = entity.attributeSet
-        if let lastUpdatedDate = session.lastUpdatedDate {
-            attributeSet.contentModificationDate = lastUpdatedDate
-            attributeSet.lastUsedDate = lastUpdatedDate
+        if let lastActivityDate = session.lastActivityDate {
+            attributeSet.contentModificationDate = lastActivityDate
+            attributeSet.lastUsedDate = lastActivityDate
         }
         attributeSet.textContent = searchableText(for: entity)
         attributeSet.keywords = searchableKeywords(for: entity)

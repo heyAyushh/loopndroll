@@ -328,13 +328,28 @@ struct SessionSearchScreen: View {
             return []
         }
 
-        let spotlightSessionIDs = Set(
-            searchService.searchResults.compactMap { result in
-                LooperSessionEntityIdentifier(rawValue: result.uniqueIdentifier)?.sessionID
-                    ?? result.uniqueIdentifier
+        let sessionsByID = allSessions.reduce(into: [String: SessionSummary]()) { sessionsByID, session in
+            if let existingSession = sessionsByID[session.id] {
+                if SessionSummary.isNewerOrLowerRef(
+                    leftSession: session,
+                    rightSession: existingSession
+                ) {
+                    sessionsByID[session.id] = session
+                }
+            } else {
+                sessionsByID[session.id] = session
             }
-        )
-        return allSessions.filter { spotlightSessionIDs.contains($0.id) }
+        }
+        var seenSessionIDs = Set<String>()
+        let sessions = searchService.searchResults.compactMap { result -> SessionSummary? in
+            let sessionID = LooperSessionEntityIdentifier(rawValue: result.uniqueIdentifier)?.sessionID
+                ?? result.uniqueIdentifier
+            guard seenSessionIDs.insert(sessionID).inserted else {
+                return nil
+            }
+            return sessionsByID[sessionID]
+        }
+        return sessions.sorted(by: SessionSummary.isNewerOrLowerRef)
     }
 
     private var filteredAllSessions: [SessionSummary] {

@@ -30,6 +30,14 @@ struct SessionDetailScreen: View {
         detail?.metadata ?? session.metadata
     }
 
+    private var currentLastActivityAt: String {
+        detail?.lastActivityAt ?? session.lastActivityAt
+    }
+
+    private var currentLastMessageAt: String? {
+        detail?.lastMessageAt ?? session.lastMessageAt
+    }
+
     private var availableNotifications: [NotificationDestination] {
         detail?.availableNotifications ?? model.snapshot?.notifications ?? []
     }
@@ -188,8 +196,18 @@ struct SessionDetailScreen: View {
             }
 
             LabeledContent("Status", value: currentStatus.label)
-            LabeledContent("Updated") {
-                Text(ModelFormatting.relativeTimestamp(detail?.lastUpdatedAt ?? session.lastUpdatedAt))
+            if let currentLastMessageAt {
+                LabeledContent("Last Message") {
+                    Text(ModelFormatting.relativeTimestamp(currentLastMessageAt))
+                }
+            }
+            LabeledContent("Last Active") {
+                Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
+            }
+            if let lastSyncedAt = model.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+                LabeledContent("Last Synced") {
+                    Text(ModelFormatting.relativeTimestamp(lastSyncedAt))
+                }
             }
             LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
         }
