@@ -117,8 +117,8 @@ struct SessionsDeviceHubSheet: View {
                     LabeledContent("Software", value: deviceSoftwareLabel)
                     LabeledContent("Mac", value: model.snapshot?.host.name ?? "No Mac Connected")
                     LabeledContent("API", value: serverStatusLabel)
-                    if let baseURL = model.serverHealth?.baseURL {
-                        LabeledContent("API Host", value: baseURL)
+                    if let baseURL = model.activeConnectionRouteBaseURLString {
+                        LabeledContent("API Route", value: baseURL)
                     }
                     LabeledContent("Access", value: loginStatusLabel)
                     LabeledContent("Last Sync", value: syncLabel)

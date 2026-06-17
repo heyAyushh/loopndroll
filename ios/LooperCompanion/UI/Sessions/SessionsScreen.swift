@@ -1,3 +1,4 @@
+import LooperCompanionCore
 import SwiftUI
 
 private enum AssistantSurfaceControlMetrics {
@@ -123,6 +124,7 @@ struct SessionsScreen: View {
                 subtitle: connectionSubtitle,
                 statusText: model.connectionState.label,
                 statusTint: CompanionTint.tint(for: model.connectionState),
+                routePresentation: model.connectionRoutePresentation,
                 openSettings: openSettings,
                 assistantPicker: {
                     assistantPicker
@@ -329,6 +331,7 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
     let subtitle: String
     let statusText: String
     let statusTint: Color
+    let routePresentation: CompanionConnectionRoutePresentation?
     let openSettings: () -> Void
     @ViewBuilder let assistantPicker: () -> AssistantPicker
 
@@ -351,7 +354,13 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
 
                     Spacer(minLength: 12)
 
-                    StatusPill(text: statusText, tint: statusTint)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        StatusPill(text: statusText, tint: statusTint)
+
+                        if let routePresentation {
+                            ConnectionRouteBadge(presentation: routePresentation)
+                        }
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -362,9 +371,102 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
     }
 }
 
+private enum ConnectionRouteBadgeMetrics {
+    static let iconSize: CGFloat = 15
+    static let horizontalSpacing: CGFloat = 5
+    static let horizontalPadding: CGFloat = 8
+    static let verticalPadding: CGFloat = 5
+    static let backgroundOpacity = 0.12
+    static let minimumTextScale = 0.75
+}
+
+private struct ConnectionRouteBadge: View {
+    let presentation: CompanionConnectionRoutePresentation
+
+    var body: some View {
+        HStack(spacing: ConnectionRouteBadgeMetrics.horizontalSpacing) {
+            if presentation.usesTailscaleLogo {
+                TailscaleLogoMark(color: routeTint)
+                    .frame(
+                        width: ConnectionRouteBadgeMetrics.iconSize,
+                        height: ConnectionRouteBadgeMetrics.iconSize
+                    )
+            } else {
+                Image(systemName: presentation.systemImageName)
+                    .font(.caption.weight(.semibold))
+            }
+
+            Text(presentation.title)
+                .lineLimit(1)
+                .minimumScaleFactor(ConnectionRouteBadgeMetrics.minimumTextScale)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(routeTint)
+        .padding(.horizontal, ConnectionRouteBadgeMetrics.horizontalPadding)
+        .padding(.vertical, ConnectionRouteBadgeMetrics.verticalPadding)
+        .background(routeTint.opacity(ConnectionRouteBadgeMetrics.backgroundOpacity), in: Capsule())
+        .accessibilityLabel("\(presentation.title) route")
+        .accessibilityValue(presentation.detail)
+    }
+
+    private var routeTint: Color {
+        switch presentation.route {
+        case .tailscale:
+            return .blue
+        case .lan:
+            return .green
+        case .remote:
+            return .purple
+        case .loopback, .unsupported:
+            return .secondary
+        }
+    }
+}
+
+private enum TailscaleLogoMarkMetrics {
+    static let rowCount = 3
+    static let columnCount = 3
+    static let dotDiameter: CGFloat = 3.4
+    static let dotSpacing: CGFloat = 2.2
+}
+
+private struct TailscaleLogoMark: View {
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: TailscaleLogoMarkMetrics.dotSpacing) {
+            ForEach(0..<TailscaleLogoMarkMetrics.rowCount, id: \.self) { _ in
+                HStack(spacing: TailscaleLogoMarkMetrics.dotSpacing) {
+                    ForEach(0..<TailscaleLogoMarkMetrics.columnCount, id: \.self) { _ in
+                        Circle()
+                            .fill(color)
+                            .frame(
+                                width: TailscaleLogoMarkMetrics.dotDiameter,
+                                height: TailscaleLogoMarkMetrics.dotDiameter
+                            )
+                    }
+                }
+            }
+        }
+    }
+}
+
 #Preview {
     let model = CompanionAppModel(environment: CompanionEnvironment(service: MockCompanionService()))
     model.snapshot = PreviewFixtures.snapshot
+    model.serverHealth = CompanionServerHealth(
+        ok: true,
+        baseURL: "http://100.95.2.4:8765",
+        baseURLs: ["http://100.95.2.4:8765"],
+        serverTime: Date().ISO8601Format(),
+        tailscale: CompanionTailscaleStatus(
+            available: true,
+            running: true,
+            dnsName: "ayushs-macbook-pro.tail62d9a8.ts.net",
+            baseURL: "http://100.95.2.4:8765"
+        )
+    )
+    model.reachedBaseURL = URL(string: "http://100.95.2.4:8765")
 
     return SessionsScreen(model: model, authenticator: CompanionAppAuthenticator(), openSettings: {})
 }

@@ -230,7 +230,7 @@ struct SettingsScreen: View {
             LabeledContent("Tailnet", value: magicDNSSuffix)
         }
 
-        if let baseURL = tailscale?.baseURL {
+        if tailscale?.running == true, let baseURL = tailscale?.baseURL {
             LabeledContent("Tailnet URL", value: baseURL)
         }
 

@@ -27,6 +27,7 @@ final class CompanionAppModel {
     var configuredBaseURL = ""
     var snapshot: MobileSnapshot?
     var serverHealth: CompanionServerHealth?
+    var reachedBaseURL: URL?
     var detailBySessionID: [String: SessionDetail] = [:]
     var connectionState: ConnectivityState = .connecting
     var errorMessage: String?
@@ -147,6 +148,10 @@ final class CompanionAppModel {
 
     var connectivitySummary: String {
         if connectionState == .connected, snapshot != nil {
+            if let connectionRoutePresentation {
+                return "\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)."
+            }
+
             if let serverHealth, serverHealth.ok {
                 return "API running at \(serverHealth.baseURL)."
             }
@@ -155,6 +160,21 @@ final class CompanionAppModel {
         }
 
         return connectionState.summary
+    }
+
+    var connectionRoutePresentation: CompanionConnectionRoutePresentation? {
+        guard let baseURL = activeConnectionRouteBaseURL else {
+            return nil
+        }
+
+        return CompanionConnectionRoutePresentation(
+            baseURL: baseURL,
+            tailscaleDetail: serverHealth?.tailscale?.detailLabel
+        )
+    }
+
+    var activeConnectionRouteBaseURLString: String? {
+        activeConnectionRouteBaseURL?.absoluteString
     }
 
     var localNotificationStatusLabel: String {
@@ -435,6 +455,7 @@ final class CompanionAppModel {
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
         serverHealth = nil
+        reachedBaseURL = nil
         detailBySessionID = [:]
         pendingOpenSessionID = nil
         errorMessage = nil
@@ -449,6 +470,7 @@ final class CompanionAppModel {
 
     private func resetSnapshotState(cachedSnapshotRestoreReason: String?) {
         serverHealth = nil
+        reachedBaseURL = nil
         detailBySessionID = [:]
         errorMessage = nil
         if let cachedSnapshotRestoreReason,
@@ -621,11 +643,25 @@ final class CompanionAppModel {
                 }
                 let health = resolvedHealth.health
                 serverHealth = health
+                reachedBaseURL = resolvedHealth.reachedBaseURL
                 adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
             } catch {
                 guard !isCancellationError(error) else {
                     throw error
                 }
+
+                guard loadRevision == connectionRevision else {
+                    CompanionDiagnostics.record(
+                        "snapshot:load-stale-health-error-skip error=\(error.localizedDescription)"
+                    )
+                    return
+                }
+
+                serverHealth = nil
+                reachedBaseURL = nil
+                CompanionDiagnostics.record(
+                    "snapshot:health-load-failed-clear-route error=\(error.localizedDescription)"
+                )
             }
 
             try Task.checkCancellation()
@@ -655,9 +691,7 @@ final class CompanionAppModel {
             let hasUsableSnapshot = snapshot != nil
             let nextConnectionState = connectionState(for: error)
             connectionState = nextConnectionState
-            if nextConnectionState == .offline || nextConnectionState == .unpaired {
-                serverHealth = nil
-            }
+            clearConnectionRouteStateIfNeeded(for: nextConnectionState)
             errorMessage = shouldSuppressSnapshotLoadError(
                 state: nextConnectionState,
                 hasUsableSnapshot: hasUsableSnapshot
@@ -677,8 +711,12 @@ final class CompanionAppModel {
 
     private func adoptServerHealthBaseURLsIfNeeded(_ resolvedHealth: ResolvedCompanionServerHealth) {
         let health = resolvedHealth.health
+        let activeTailscaleBaseURL = health.tailscale?.running == true ? health.tailscale?.baseURL : nil
+        let advertisedBaseURLValues = [health.baseURL] +
+            health.baseURLs +
+            [activeTailscaleBaseURL].compactMap(\.self)
         let discoveredBaseURLs = CompanionConfiguration.normalizedBaseURLsForUserInput(
-            ([health.baseURL] + health.baseURLs).joined(separator: "\n")
+            advertisedBaseURLValues.joined(separator: "\n")
         )
         guard resolvedHealth.reachedBaseURL != nil || !discoveredBaseURLs.isEmpty else {
             return
@@ -708,6 +746,39 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "health:base-urls-adopted count=\(nextBaseURLs.count) primary=\(configuredBaseURL)"
         )
+    }
+
+    private var activeConnectionRouteBaseURL: URL? {
+        guard connectionState.allowsConnectionRoutePresentation else {
+            return nil
+        }
+
+        return CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
+            reachedBaseURL: reachedBaseURL,
+            configuredBaseURL: Self.nonEmptyURL(from: configuredBaseURL),
+            healthBaseURL: Self.nonEmptyURL(from: serverHealth?.baseURL),
+            tailscaleHealthBaseURL: Self.nonEmptyURL(from: serverHealth?.tailscale?.baseURL),
+            isTailscaleRunning: serverHealth?.tailscale?.running == true
+        )
+    }
+
+    private func clearConnectionRouteStateIfNeeded(for state: ConnectivityState) {
+        guard !state.allowsConnectionRoutePresentation else {
+            return
+        }
+
+        serverHealth = nil
+        reachedBaseURL = nil
+    }
+
+    private static func nonEmptyURL(from value: String?) -> URL? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+
+        return URL(string: value)
     }
 
     func continueFromMacActivity(_ activity: NSUserActivity) async {
@@ -1200,6 +1271,7 @@ final class CompanionAppModel {
             }
 
             connectionState = connectionState(for: error)
+            clearConnectionRouteStateIfNeeded(for: connectionState)
             errorMessage = error.localizedDescription
             Haptics.error()
             return false
@@ -1365,6 +1437,7 @@ final class CompanionAppModel {
     private func handleAssistantSurfaceSaveFailure(_ error: Error) {
         let nextConnectionState = connectionState(for: error)
         connectionState = nextConnectionState
+        clearConnectionRouteStateIfNeeded(for: nextConnectionState)
         errorMessage = shouldSuppressSnapshotLoadError(
             state: nextConnectionState,
             hasUsableSnapshot: snapshot != nil
@@ -1491,6 +1564,8 @@ final class CompanionAppModel {
             detail.status = session.status
             detail.effectiveMode = session.effectiveMode
             detail.lastUpdatedAt = session.lastUpdatedAt
+            detail.lastActivityAt = session.lastActivityAt
+            detail.lastMessageAt = session.lastMessageAt
             detail.assistantPreview = session.assistantPreview
             detail.isArchived = session.isArchived
             detail.metadata = session.metadata

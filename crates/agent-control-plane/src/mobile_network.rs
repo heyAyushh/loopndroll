@@ -200,15 +200,23 @@ fn mobile_tailscale_status_from_sources(
             .chain(route_ip_address)
             .collect(),
     );
-    let base_url =
-        route_base_url.or_else(|| base_url_for_tailscale_addresses(&ip_addresses, http_port));
-    let grpc_base_url =
-        route_grpc_base_url.or_else(|| base_url_for_tailscale_addresses(&ip_addresses, grpc_port));
-    let available = base_url.is_some() || !ip_addresses.is_empty();
+    let has_route_candidate = route_base_url.is_some() || !ip_addresses.is_empty();
+    let available = has_route_candidate;
     let running = discovery
         .as_ref()
         .and_then(|status| status.running)
         .unwrap_or(available);
+    let base_url = running
+        .then(|| {
+            route_base_url.or_else(|| base_url_for_tailscale_addresses(&ip_addresses, http_port))
+        })
+        .flatten();
+    let grpc_base_url = running
+        .then(|| {
+            route_grpc_base_url
+                .or_else(|| base_url_for_tailscale_addresses(&ip_addresses, grpc_port))
+        })
+        .flatten();
     let source = discovery
         .as_ref()
         .map(|status| status.source.clone())
@@ -989,6 +997,38 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
                 "100.119.200.69".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn tailscale_status_does_not_advertise_stopped_routes() {
+        let status = mobile_tailscale_status_from_sources(
+            Ok(TailscaleDiscovery {
+                source: "cli".to_owned(),
+                running: Some(false),
+                backend_state: Some("Stopped".to_owned()),
+                version: Some("1.98.5".to_owned()),
+                hostname: Some("Ayush's MacBook Pro".to_owned()),
+                dns_name: Some("ayushs-macbook-pro.tail62d9a8.ts.net".to_owned()),
+                tailnet_name: Some("heyayushh.github".to_owned()),
+                magic_dns_suffix: Some("tail62d9a8.ts.net".to_owned()),
+                magic_dns_enabled: Some(true),
+                ip_addresses: vec!["100.119.200.69".to_owned()],
+                health: vec!["Tailscale is stopped.".to_owned()],
+            }),
+            advertised_tailscale_route(
+                &["http://100.119.200.69:8765".to_owned()],
+                &["http://100.119.200.69:8766".to_owned()],
+            ),
+            TEST_PORT,
+            TEST_GRPC_PORT,
+        );
+
+        assert!(status.available);
+        assert!(!status.running);
+        assert_eq!(status.backend_state.as_deref(), Some("Stopped"));
+        assert_eq!(status.base_url, None);
+        assert_eq!(status.grpc_base_url, None);
+        assert_eq!(status.health, vec!["Tailscale is stopped.".to_owned()]);
     }
 
     #[test]
