@@ -1002,7 +1002,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 @MainActor
 private final class HandoffHotkeyController {
     private enum Layout {
-        static let loggingSubsystem = "dev.looper.app.ios"
+        static let loggingSubsystem = "dev.looper.app.menubar"
         static let loggingCategory = "handoff-hotkey"
         static let hotkeySignature = FourCharacterCode.make("LHky")
         static let hotkeyIdentifier: UInt32 = 1

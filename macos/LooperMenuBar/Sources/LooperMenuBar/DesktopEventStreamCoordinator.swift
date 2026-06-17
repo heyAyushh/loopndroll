@@ -6,7 +6,7 @@ import OSLog
 @MainActor
 final class DesktopEventStreamCoordinator {
     private enum Layout {
-        static let loggingSubsystem = "dev.looper.app.ios"
+        static let loggingSubsystem = "dev.looper.app.menubar"
         static let loggingCategory = "desktop-events"
         static let reconnectDelay: Duration = .seconds(2)
         static let refreshDebounce: Duration = .milliseconds(250)

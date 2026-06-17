@@ -23,7 +23,7 @@ final class LooperContinuationActivityPublisher {
     }
 
     private enum Logging {
-        static let subsystem = "dev.looper.app.ios"
+        static let subsystem = "dev.looper.app.menubar"
         static let category = "handoff"
         static let missingValue = "none"
     }
