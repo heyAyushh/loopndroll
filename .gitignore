@@ -47,3 +47,7 @@ docs/generated-orbs/
 # Stray hashed bundles at repo root (build / tooling drops)
 /main-*.js
 /main-*.js.map
+
+# Local browser/device verification artifacts
+.playwright-mcp/
+/looper-ios-sim-*.png
