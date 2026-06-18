@@ -291,15 +291,14 @@ struct SettingsScreen: View {
         Section {
             ForEach(QuickActionOption.allCases) { action in
                 Toggle(
+                    action.label,
                     isOn: Binding(
                         get: { selectedQuickActions.contains(action) },
                         set: { isEnabled in
                             updateQuickActions(action: action, isEnabled: isEnabled)
                         }
                     )
-                ) {
-                    QuickActionOptionLabel(action: action)
-                }
+                )
             }
         } header: {
             Text("Stop Quick Actions")
@@ -337,10 +336,8 @@ struct SettingsScreen: View {
                 .foregroundStyle(.secondary)
 
             if authenticator.isFaceIDUnlockEnabled {
-                Button {
+                Button("Lock Now") {
                     authenticator.lockIfNeeded()
-                } label: {
-                    Label("Lock Now", systemImage: "lock")
                 }
                 .disabled(!authenticator.isUnlocked)
             }
@@ -365,7 +362,7 @@ struct SettingsScreen: View {
         Section("Appearance") {
             Picker("Appearance", selection: appearanceMode) {
                 ForEach(CompanionAppearanceMode.allCases) { mode in
-                    Label(mode.label, systemImage: mode.systemImageName)
+                    Text(mode.label)
                         .tag(mode)
                 }
             }
@@ -375,17 +372,11 @@ struct SettingsScreen: View {
 
     private var pinballSection: some View {
         Section {
-            Toggle(isOn: $isPinballGameEnabled) {
-                Label("Pinball", systemImage: "gamecontroller")
-            }
-            Toggle(isOn: $isPinballDebugOverlayEnabled) {
-                Label("Physics Debug Overlay", systemImage: "waveform.path.ecg")
-            }
+            Toggle("Pinball", isOn: $isPinballGameEnabled)
+            Toggle("Physics Debug Overlay", isOn: $isPinballDebugOverlayEnabled)
                 .disabled(!isPinballGameEnabled)
-            NavigationLink {
+            NavigationLink("Maze") {
                 SettingsMazeScreen()
-            } label: {
-                Label("Maze", systemImage: "square.grid.3x3")
             }
         } header: {
             Text("Pinball")
@@ -396,16 +387,12 @@ struct SettingsScreen: View {
 
     private var advancedConfigurationSection: some View {
         Section("Advanced Mac Configuration") {
-            NavigationLink {
+            NavigationLink("Notification Routes") {
                 SettingsRoutesScreen(model: model)
-            } label: {
-                Label("Notification Routes", systemImage: "bell.badge")
             }
 
-            NavigationLink {
+            NavigationLink("Completion Checks") {
                 SettingsCompletionChecksScreen(model: model)
-            } label: {
-                Label("Completion Checks", systemImage: "checkmark.seal")
             }
         }
     }
@@ -545,69 +532,6 @@ private enum SettingsInput: Hashable {
 private enum TailscaleAppLink {
     // Tailscale reserves its app scheme for Tailnet Lock signing links, not generic launch.
     static let appStoreURLString = "https://apps.apple.com/app/tailscale/id1470499037"
-}
-
-private struct QuickActionOptionLabel: View {
-    let action: QuickActionOption
-
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(action.label)
-                Text(action.settingsDescription)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } icon: {
-            Image(systemName: action.settingsSystemImageName)
-        }
-    }
-}
-
-private extension CompanionAppearanceMode {
-    var systemImageName: String {
-        switch self {
-        case .system:
-            return "circle.lefthalf.filled"
-        case .light:
-            return "sun.max"
-        case .dark:
-            return "moon"
-        }
-    }
-}
-
-private extension QuickActionOption {
-    var settingsSystemImageName: String {
-        switch self {
-        case .openSession:
-            return "arrow.up.forward.app"
-        case .continueChat:
-            return "play.circle"
-        case .reply:
-            return "arrowshape.turn.up.left"
-        case .archive:
-            return "archivebox"
-        case .muteSession:
-            return "bell.slash"
-        }
-    }
-
-    var settingsDescription: String {
-        switch self {
-        case .openSession:
-            return "Open the stopped session from the alert."
-        case .continueChat:
-            return "Send the continue prompt back to the Mac."
-        case .reply:
-            return "Write a one-off reply before continuing."
-        case .archive:
-            return "Move finished work out of the active queue."
-        case .muteSession:
-            return "Stop future alerts for that session."
-        }
-    }
 }
 
 private extension CompanionConnectionRoutePreference {

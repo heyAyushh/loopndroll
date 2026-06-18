@@ -68,43 +68,27 @@ struct AssistantSurfacePicker: View {
     var isDisabled = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AssistantSurfacePickerMetrics.sectionSpacing) {
-            HStack(spacing: AssistantSurfacePickerMetrics.labelSpacing) {
-                Label("Assistant", systemImage: "sparkles")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: 0)
-
-                Text(selection.displayTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isDisabled ? .secondary : .primary)
-                    .lineLimit(1)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
-                    ForEach(CompanionAssistantSurface.allCases) { surface in
-                        Button {
-                            selection = surface
-                        } label: {
-                            AssistantSurfacePickerItem(
-                                surface: surface,
-                                isSelected: selection == surface
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isDisabled)
-                        .accessibilityLabel(surface.displayTitle)
-                        .accessibilityValue(selection == surface ? "Selected" : "Not selected")
-                        .accessibilityAddTraits(selection == surface ? .isSelected : [])
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
+                ForEach(CompanionAssistantSurface.allCases) { surface in
+                    Button {
+                        selection = surface
+                    } label: {
+                        AssistantSurfacePickerItem(
+                            surface: surface,
+                            isSelected: selection == surface
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .disabled(isDisabled)
+                    .accessibilityLabel(surface.displayTitle)
+                    .accessibilityAddTraits(selection == surface ? .isSelected : [])
                 }
-                .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
             }
+            .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
         }
         .disabled(isDisabled)
-        .opacity(isDisabled ? AssistantSurfacePickerMetrics.disabledOpacity : 1)
+        .accessibilityLabel("Assistant")
     }
 }
 
@@ -123,12 +107,6 @@ private struct AssistantSurfacePickerItem: View {
             Text(surface.displayTitle)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
-
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.caption.weight(.semibold))
-                    .imageScale(.small)
-            }
         }
         .padding(.horizontal, AssistantSurfacePickerMetrics.horizontalPadding)
         .frame(height: AssistantSurfacePickerMetrics.height)
@@ -289,15 +267,12 @@ private enum AssistantSurfaceLogoMetrics {
 }
 
 private enum AssistantSurfacePickerMetrics {
-    static let sectionSpacing: CGFloat = 4
-    static let labelSpacing: CGFloat = 8
     static let itemSpacing: CGFloat = 6
     static let contentSpacing: CGFloat = 5
     static let verticalPadding: CGFloat = 2
     static let horizontalPadding: CGFloat = 9
     static let height: CGFloat = 32
     static let iconSize: CGFloat = 18
-    static let disabledOpacity = 0.62
 }
 
 private enum GrokLogoAsset {
