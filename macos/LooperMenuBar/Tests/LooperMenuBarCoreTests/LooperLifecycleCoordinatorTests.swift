@@ -348,7 +348,15 @@ struct HTTPControlPlaneClientTests {
                   "available": true,
                   "control_level": "agent-configured",
                   "summary": "Devin Desktop agents are visible from the local ACP registry",
-                  "actions": [],
+                  "actions": [
+                    {
+                      "id": "probe",
+                      "label": "Probe Devin agent",
+                      "method": "POST",
+                      "path": "/desktop/devin/acp-bridge/probe",
+                      "default_agent_id": "looper"
+                    }
+                  ],
                   "agents": []
                 }
               },
@@ -489,9 +497,9 @@ struct HTTPControlPlaneClientTests {
                     "configured": true,
                     "methods": ["command"]
                   },
-                  "ready": true,
-                  "status": "ready",
-                  "detail": "Zed External Agent target is configured; Looper did not execute its command."
+                  "ready": false,
+                  "status": "read-only",
+                  "detail": "Zed External Agent target is configured; Looper reports it read-only and does not execute its command."
                 }
               ],
               "zed": {
@@ -662,6 +670,48 @@ struct HTTPControlPlaneClientTests {
                     "connection_count": 0,
                     "session_count": 0
                   }
+                },
+                {
+                  "id": "zed",
+                  "label": "Zed",
+                  "running": true,
+                  "installed": true,
+                  "registry": {
+                    "path": "/Users/test/.zed/settings.json",
+                    "exists": true,
+                    "version": null,
+                    "agent_count": 1
+                  },
+                  "agents": [
+                    {
+                      "id": "looper",
+                      "name": "looper",
+                      "version": null,
+                      "description": null,
+                      "enabled": true,
+                      "preferred": false,
+                      "launch_configured": true,
+                      "control_level": "visibility-only",
+                      "supports_sessions": false,
+                      "supports_prompt": false,
+                      "supports_cancel": false,
+                      "source": "zed-agent-servers"
+                    }
+                  ],
+                  "sessions": [],
+                  "actions": [
+                    {
+                      "id": "probe",
+                      "label": "Inspect Zed target",
+                      "method": "POST",
+                      "path": "/desktop/acp-client-hosts/zed/probe",
+                      "default_agent_id": "looper"
+                    }
+                  ],
+                  "limitations": [
+                    "Read-only: Zed manages External Agent install, auth, and runtime inside Zed."
+                  ],
+                  "runtime": null
                 }
               ]
             }
@@ -679,6 +729,14 @@ struct HTTPControlPlaneClientTests {
         #expect(host.defaultProbeAgent?.id == "looper")
         #expect(host.sessions[0].providerID == "codex-acp")
         #expect(host.runtime?.connected == false)
+        let zedHost = try #require(response.hosts.first { $0.id == "zed" })
+        #expect(zedHost.label == "Zed")
+        #expect(zedHost.registry.agentCount == 1)
+        #expect(zedHost.agents[0].id == "looper")
+        #expect(zedHost.agents[0].controlLevel == "visibility-only")
+        #expect(zedHost.actions.map(\.id) == ["probe"])
+        #expect(zedHost.defaultProbeAgent?.id == "looper")
+        #expect(zedHost.runtime == nil)
     }
 
     @Test("agent detail rows come from generic connections with adapter fallback")
@@ -886,6 +944,10 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
 
     func fetchDesktopConnections() async throws -> DesktopConnectionsResponse {
         DesktopConnectionsResponse(connections: [])
+    }
+
+    func fetchAcpClientHosts() async throws -> AcpClientHostsResponse {
+        AcpClientHostsResponse(hosts: [])
     }
 
     func fetchMobileHealth() async throws -> MobileHealthResponse {

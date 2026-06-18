@@ -2,11 +2,7 @@ import Foundation
 
 public enum CompanionBaseURLFiltering {
     public static func uniqueAttemptableBaseURLs(_ baseURLs: [URL]) -> [URL] {
-        var seen = Set<String>()
-        let uniqueBaseURLs = baseURLs.filter { baseURL in
-            shouldAttempt(baseURL) && seen.insert(CompanionBaseURLIdentity.key(for: baseURL)).inserted
-        }
-        return prioritizedBaseURLs(uniqueBaseURLs)
+        prioritizedBaseURLs(CompanionBaseURLIdentity.unique(baseURLs, including: shouldAttempt))
     }
 
     private static func prioritizedBaseURLs(_ baseURLs: [URL]) -> [URL] {

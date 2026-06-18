@@ -48,11 +48,12 @@ enum DiffLineKind {
 }
 
 struct DiffLine: Identifiable {
-    let id = UUID()
+    let id: Int
     let kind: DiffLineKind
     let text: String
 
-    init(_ rawLine: String) {
+    init(id: Int, rawLine: String) {
+        self.id = id
         text = rawLine
 
         if rawLine.hasPrefix("diff --git") ||
@@ -76,6 +77,19 @@ struct DiffLine: Identifiable {
 struct DiffBlockView: View {
     let language: String?
     let diff: String
+    private let lines: [DiffLine]
+    private let changeCount: DiffChangeCount
+
+    init(language: String?, diff: String) {
+        self.language = language
+        self.diff = diff
+        lines = diff.components(separatedBy: .newlines)
+            .enumerated()
+            .map { offset, rawLine in
+                DiffLine(id: offset, rawLine: rawLine)
+            }
+        changeCount = Self.countChanges(in: lines)
+    }
 
     static func isDiff(language: String?, code: String) -> Bool {
         let normalizedLanguage = language?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,10 +101,6 @@ struct DiffBlockView: View {
             code.hasPrefix("@@") ||
             code.contains("\ndiff --git ") ||
             code.hasPrefix("diff --git ")
-    }
-
-    private var lines: [DiffLine] {
-        diff.components(separatedBy: .newlines).map(DiffLine.init)
     }
 
     var body: some View {
@@ -117,8 +127,8 @@ struct DiffBlockView: View {
         }
     }
 
-    private var changeCount: (additions: Int, removals: Int) {
-        lines.reduce(into: (additions: 0, removals: 0)) { result, line in
+    private static func countChanges(in lines: [DiffLine]) -> DiffChangeCount {
+        lines.reduce(into: DiffChangeCount(additions: 0, removals: 0)) { result, line in
             switch line.kind {
             case .addition:
                 result.additions += 1
@@ -129,6 +139,11 @@ struct DiffBlockView: View {
             }
         }
     }
+}
+
+private struct DiffChangeCount {
+    var additions: Int
+    var removals: Int
 }
 
 private struct DiffLineRow: View {

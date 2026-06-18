@@ -11,6 +11,7 @@ public struct MenuRefreshError: Error, Equatable, Sendable {
 public struct MenuRefreshResult: Equatable, Sendable {
     public let snapshot: DesktopSnapshotResponse?
     public let connections: DesktopConnectionsResponse?
+    public let acpClientHosts: AcpClientHostsResponse?
     public let mobileHealth: MobileHealthResponse?
     public let error: MenuRefreshError?
 
@@ -101,10 +102,12 @@ public actor MenuRefreshCoordinator {
         switch await fetchSnapshot(client: client) {
         case let .success(snapshot):
             async let connections = fetchDesktopConnections(client: client)
+            async let acpClientHosts = fetchAcpClientHosts(client: client)
             async let health = fetchMobileHealth(client: client)
             return MenuRefreshResult(
                 snapshot: snapshot,
                 connections: await connections,
+                acpClientHosts: await acpClientHosts,
                 mobileHealth: await health,
                 error: nil
             )
@@ -112,6 +115,7 @@ public actor MenuRefreshCoordinator {
             return MenuRefreshResult(
                 snapshot: nil,
                 connections: nil,
+                acpClientHosts: nil,
                 mobileHealth: nil,
                 error: error
             )
@@ -134,5 +138,9 @@ public actor MenuRefreshCoordinator {
 
     private static func fetchDesktopConnections(client: any ControlPlaneClient) async -> DesktopConnectionsResponse? {
         try? await client.fetchDesktopConnections()
+    }
+
+    private static func fetchAcpClientHosts(client: any ControlPlaneClient) async -> AcpClientHostsResponse? {
+        try? await client.fetchAcpClientHosts()
     }
 }

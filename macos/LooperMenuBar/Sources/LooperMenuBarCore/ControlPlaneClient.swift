@@ -147,6 +147,7 @@ public protocol ControlPlaneClient: Sendable {
     func fetchControlPlaneStatus() async throws -> ControlPlaneStatusResponse
     func fetchDesktopSnapshot() async throws -> DesktopSnapshotResponse
     func fetchDesktopConnections() async throws -> DesktopConnectionsResponse
+    func fetchAcpClientHosts() async throws -> AcpClientHostsResponse
     func fetchMobileHealth() async throws -> MobileHealthResponse
     func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse
 }
@@ -267,11 +268,24 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         try runBlockingRequest(for: .unregisterLiveHooks, timeout: timeout)
     }
 
+    public func unregisterLiveHooksWithoutBlockingUI(
+        timeout: TimeInterval = LooperLifecycleDefaults.requestTimeoutSeconds
+    ) async throws {
+        try await runRequest(for: .unregisterLiveHooks, timeout: timeout)
+    }
+
     public func unregisterLiveHooks(
         target: HookRepairTarget,
         timeout: TimeInterval = LooperLifecycleDefaults.requestTimeoutSeconds
     ) throws {
         try runBlockingRequest(for: .unregisterLiveTargetHooks(target), timeout: timeout)
+    }
+
+    public func unregisterLiveHooksWithoutBlockingUI(
+        target: HookRepairTarget,
+        timeout: TimeInterval = LooperLifecycleDefaults.requestTimeoutSeconds
+    ) async throws {
+        try await runRequest(for: .unregisterLiveTargetHooks(target), timeout: timeout)
     }
 
     public func shutdownServer(
@@ -311,6 +325,16 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
         let (data, response) = try await session.data(for: request)
         try validate(response)
         return try JSONDecoder().decode(responseType, from: data)
+    }
+
+    private func runRequest(
+        for endpoint: ControlPlaneEndpoint,
+        timeout: TimeInterval
+    ) async throws {
+        var request = request(for: endpoint)
+        request.timeoutInterval = timeout
+        let (_, response) = try await session.data(for: request)
+        try validate(response)
     }
 
     private func runBlockingRequest(
@@ -1525,16 +1549,9 @@ private extension URL {
         static let fourth = 3
     }
 
-    enum TailscaleNetwork {
-        static let magicDNSSuffix = ".ts.net"
-        static let legacyMagicDNSSuffix = ".beta.tailscale.net"
+    enum LANNetwork {
         static let ipv4OctetCount = 4
         static let ipv4OctetRange = 0...255
-        static let ipv4FirstOctet = 100
-        static let ipv4SecondOctetRange = 64...127
-    }
-
-    enum LANNetwork {
         static let localHostnameSuffix = ".local"
         static let privateTenFirstOctet = 10
         static let privateOneSevenTwoFirstOctet = 172
@@ -1557,9 +1574,7 @@ private extension URL {
             return false
         }
 
-        return host.hasSuffix(TailscaleNetwork.magicDNSSuffix)
-            || host.hasSuffix(TailscaleNetwork.legacyMagicDNSSuffix)
-            || isTailscaleIPv4Host(host)
+        return TailscaleNetworkPattern.isTailscaleHost(host)
     }
 
     var routeTitle: String {
@@ -1651,15 +1666,6 @@ private extension URL {
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
     }
 
-    private func isTailscaleIPv4Host(_ host: String) -> Bool {
-        guard let octets = ipv4Octets(from: host) else {
-            return false
-        }
-
-        return octets[0] == TailscaleNetwork.ipv4FirstOctet
-            && TailscaleNetwork.ipv4SecondOctetRange.contains(octets[1])
-    }
-
     private func isPrivateLANHost(_ host: String) -> Bool {
         guard let octets = ipv4Octets(from: host) else {
             return false
@@ -1690,8 +1696,8 @@ private extension URL {
             .split(separator: ".", omittingEmptySubsequences: false)
             .compactMap { Int($0) }
 
-        guard octets.count == TailscaleNetwork.ipv4OctetCount,
-              octets.allSatisfy({ TailscaleNetwork.ipv4OctetRange.contains($0) })
+        guard octets.count == LANNetwork.ipv4OctetCount,
+              octets.allSatisfy({ LANNetwork.ipv4OctetRange.contains($0) })
         else {
             return nil
         }

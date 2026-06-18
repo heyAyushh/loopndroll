@@ -25,20 +25,17 @@ public enum LooperMenuContent {
     private enum AcpTargetText {
         static let none = "None"
         static let ready = "Ready"
+        static let readySummary = "ready"
+        static let readOnly = "Read-only"
+        static let readOnlySummary = "read-only"
         static let blocked = "Blocked"
+        static let blockedSummary = "blocked"
         static let missingLaunchMetadata = "no launch metadata"
     }
 
     private enum SurfaceLabel {
         static let tailscale = "Tailscale"
         static let zedACP = "Zed ACP"
-    }
-
-    private enum TailscaleNetwork {
-        static let magicDNSSuffix = ".ts.net"
-        static let legacyMagicDNSSuffix = ".beta.tailscale.net"
-        static let ipv4FirstOctet = 100
-        static let ipv4SecondOctetRange = 64...127
     }
 
     public static func buildThreadSections(from threads: [DesktopThreadSummary]) -> [LooperMenuSection] {
@@ -62,11 +59,23 @@ public enum LooperMenuContent {
         }
 
         let readyCount = targets.filter(\.ready).count
+        let readOnlyCount = targets.filter(isReadOnlyTarget).count
+        let blockedCount = max(targets.count - readyCount - readOnlyCount, 0)
         guard readyCount != targets.count else {
-            return "\(readyCount) ready"
+            return "\(readyCount) \(AcpTargetText.readySummary)"
         }
 
-        return "\(readyCount)/\(targets.count) ready"
+        guard readOnlyCount != targets.count else {
+            return "\(readOnlyCount) \(AcpTargetText.readOnlySummary)"
+        }
+
+        return [
+            readyCount > 0 ? "\(readyCount) \(AcpTargetText.readySummary)" : nil,
+            readOnlyCount > 0 ? "\(readOnlyCount) \(AcpTargetText.readOnlySummary)" : nil,
+            blockedCount > 0 ? "\(blockedCount) \(AcpTargetText.blockedSummary)" : nil,
+        ]
+        .compactMap { $0 }
+        .joined(separator: " / ")
     }
 
     public static func buildAcpTargetRows(from targets: [AcpTargetSummary]) -> [LooperAcpTargetRow] {
@@ -76,7 +85,7 @@ public enum LooperMenuContent {
     private static func makeThreadRow(_ thread: DesktopThreadSummary) -> LooperMenuRow {
         LooperMenuRow(
             threadId: thread.threadId,
-            title: titleText(for: thread),
+            title: DesktopThreadDisplayText.title(for: thread),
             subtitle: subtitleText(for: thread),
             archived: thread.archived,
             openTarget: LooperThreadOpenTarget(
@@ -113,7 +122,15 @@ public enum LooperMenuContent {
     }
 
     private static func acpReadinessText(_ target: AcpTargetSummary) -> String {
-        target.ready ? AcpTargetText.ready : AcpTargetText.blocked
+        if isReadOnlyTarget(target) {
+            return AcpTargetText.readOnly
+        }
+
+        return target.ready ? AcpTargetText.ready : AcpTargetText.blocked
+    }
+
+    private static func isReadOnlyTarget(_ target: AcpTargetSummary) -> Bool {
+        target.status == "read-only"
     }
 
     private static func launchMethodText(_ launch: AcpLaunchMetadataSummary) -> String {
@@ -123,20 +140,8 @@ public enum LooperMenuContent {
         return launch.methods.joined(separator: ", ")
     }
 
-    private static func titleText(for thread: DesktopThreadSummary) -> String {
-        let title = thread.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let title, !title.isEmpty {
-            return title
-        }
-        return thread.threadId
-    }
-
     private static func subtitleText(for thread: DesktopThreadSummary) -> String {
-        let fallback = thread.source ?? thread.capabilities.spawn.launchKind
-        let projectName = ProjectNameResolver.displayName(
-            forWorkingDirectory: thread.cwd,
-            fallback: fallback
-        )
+        let projectName = DesktopThreadDisplayText.projectName(for: thread)
         let subtitle = (
             sourceLabels(for: thread)
             + [projectName]
@@ -178,29 +183,6 @@ public enum LooperMenuContent {
             return false
         }
 
-        let normalized = value.lowercased()
-        return normalized.contains("tailscale")
-            || normalized.contains(TailscaleNetwork.magicDNSSuffix)
-            || normalized.contains(TailscaleNetwork.legacyMagicDNSSuffix)
-            || containsTailscaleIPv4Reference(in: normalized)
-    }
-
-    private static func containsTailscaleIPv4Reference(in value: String) -> Bool {
-        for candidate in value.split(whereSeparator: { !$0.isNumber && $0 != "." }) {
-            let octets = candidate.split(separator: ".", omittingEmptySubsequences: false)
-            guard octets.count == 4,
-                  let firstOctet = Int(octets[0]),
-                  let secondOctet = Int(octets[1])
-            else {
-                continue
-            }
-
-            if firstOctet == TailscaleNetwork.ipv4FirstOctet,
-               TailscaleNetwork.ipv4SecondOctetRange.contains(secondOctet) {
-                return true
-            }
-        }
-
-        return false
+        return TailscaleNetworkPattern.containsTailscaleReference(in: value)
     }
 }

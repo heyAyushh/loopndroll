@@ -189,7 +189,7 @@ final class LooperContinuationActivityPublisher {
     private func presentationForRefresh(allowsIdleActivation: Bool = true) -> LooperContinuationPresentation {
         guard isHandoffSupported else {
             deactivateFocusAssist()
-            return .nonActivating
+            return .inactive
         }
 
         let hadFocusAssistedLease = focusAssistedActivationLease.expiresAt != nil
@@ -197,7 +197,7 @@ final class LooperContinuationActivityPublisher {
             guard activityOwner.canMaintainCurrentHandoffPresentation else {
                 markIdleFocusAssistSuppressedUntilUserInput()
                 focusAssistedActivationLease.invalidate()
-                return .nonActivating
+                return .currentNonActivating
             }
 
             return .maintainFocusAssisted
@@ -207,7 +207,7 @@ final class LooperContinuationActivityPublisher {
             markIdleFocusAssistSuppressedUntilUserInput()
         }
         guard allowsIdleActivation, shouldActivateForIdleFocusAssist() else {
-            return .nonActivating
+            return .currentNonActivating
         }
 
         activateFocusAssist(reason: "idle")
@@ -305,7 +305,7 @@ final class LooperContinuationActivityPublisher {
             activity.persistentIdentifier = Self.persistentActivityIdentifier
         }
         activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = nil
+        activity.webpageURL = descriptor.webpageURL
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
@@ -393,18 +393,20 @@ final class LooperContinuationActivityPublisher {
 }
 
 private enum LooperContinuationPresentation {
-    case nonActivating
+    case inactive
+    case currentNonActivating
     case maintainFocusAssisted
     case activateApplication
 
-    var presentsCurrentHandoff: Bool {
+    var publishesCurrentHandoff: Bool {
         switch self {
-        case .activateApplication, .maintainFocusAssisted:
+        case .currentNonActivating, .activateApplication, .maintainFocusAssisted:
             true
-        case .nonActivating:
+        case .inactive:
             false
         }
     }
+
 }
 
 private enum LooperContinuationPanelVisualState: Equatable {
@@ -569,7 +571,7 @@ private final class LooperContinuationActivityPanelOwner {
     ) {
         viewController.refreshActivity(activity)
         activity.needsSave = true
-        if presentation.presentsCurrentHandoff {
+        if presentation.publishesCurrentHandoff {
             activity.becomeCurrent()
         } else {
             activity.resignCurrent()
@@ -591,7 +593,7 @@ private final class LooperContinuationActivityPanelOwner {
         activity.userInfo = descriptor.userInfo
         activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
         activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = nil
+        activity.webpageURL = descriptor.webpageURL
     }
 
     private func positionPanelInScreen(_ panel: NSWindow) {
@@ -622,7 +624,7 @@ private final class LooperContinuationActivityPanelOwner {
             enableFocusAssistedPresentation(activatesApplication: true)
         case .maintainFocusAssisted:
             maintainFocusAssistedPresentation()
-        case .nonActivating:
+        case .inactive, .currentNonActivating:
             hidePanel(animated: true)
         }
     }
@@ -722,7 +724,6 @@ private final class LooperContinuationActivityPanelOwner {
             return
         }
 
-        viewController.userActivity?.resignCurrent()
         let targetFrame = centeredPanelFrame(for: panel)
         visiblePanelState = nil
         viewController.setVisualState(.resting)
@@ -934,7 +935,7 @@ private final class LooperContinuationActivityPanelViewController: NSViewControl
         activity.userInfo = descriptor.userInfo
         activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
         activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = nil
+        activity.webpageURL = descriptor.webpageURL
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false

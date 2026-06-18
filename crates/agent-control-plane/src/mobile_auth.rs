@@ -351,10 +351,10 @@ create index if not exists mobile_passkey_sessions_lookup_idx
         let pairing_token_id = issued_token.id.clone();
         let pairing_token = issued_token.token.clone();
         let payload = serde_json::json!({
-            "baseURL": base_url,
-            "baseURLs": base_urls,
-            "pairingTokenId": pairing_token_id.clone(),
-            "pairingToken": pairing_token.clone(),
+            "baseURL": &base_url,
+            "baseURLs": &base_urls,
+            "pairingTokenId": &pairing_token_id,
+            "pairingToken": &pairing_token,
         });
         let code = encode_base64_url(&serde_json::to_vec(&payload)?);
         let orb_id = derive_orb_id(&code).to_string();
@@ -366,8 +366,8 @@ create index if not exists mobile_passkey_sessions_lookup_idx
             params![orb_id.as_str(), code.as_str(), generated_at.as_str()],
         )?;
         Ok(MobileConnectionCode {
-            base_url: payload["baseURL"].as_str().unwrap_or_default().to_owned(),
-            base_urls: serde_json::from_value(payload["baseURLs"].clone())?,
+            base_url,
+            base_urls,
             pairing_token_id,
             pairing_token,
             code,

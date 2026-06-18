@@ -695,6 +695,7 @@ async fn acp_install_routes_reject_remote_callers() {
     for path in [
         "/desktop/devin/acp-bridge/install",
         "/desktop/acp-client-hosts/devin/install",
+        "/desktop/acp-client-hosts/zed/install",
     ] {
         let response = request_with_options(&router, Method::POST, path, &[], remote_socket).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
@@ -977,7 +978,8 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
             .iter()
             .any(|target| target["id"] == "zed:looper"
                 && target["client"] == "zed"
-                && target["ready"] == true
+                && target["ready"] == false
+                && target["status"] == "read-only"
                 && target["launch"]["methods"]
                     .as_array()
                     .expect("launch methods")
@@ -1019,16 +1021,41 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         loopback_socket,
     )
     .await;
-    assert_eq!(acp_hosts["hosts"][0]["id"], "devin");
-    assert_eq!(acp_hosts["hosts"][0]["label"], "Devin Desktop");
-    assert_eq!(acp_hosts["hosts"][0]["registry"]["agent_count"], 1);
+    let acp_host_rows = acp_hosts["hosts"].as_array().expect("acp hosts");
+    let devin_acp_host = acp_host_rows
+        .iter()
+        .find(|host| host["id"] == "devin")
+        .expect("devin acp host");
+    let zed_acp_host = acp_host_rows
+        .iter()
+        .find(|host| host["id"] == "zed")
+        .expect("zed acp host");
+    assert_eq!(devin_acp_host["label"], "Devin Desktop");
+    assert_eq!(devin_acp_host["registry"]["agent_count"], 1);
     assert_eq!(
-        acp_hosts["hosts"][0]["actions"][0]["path"],
+        devin_acp_host["actions"][0]["path"],
         "/desktop/acp-client-hosts/devin/install"
+    );
+    assert_eq!(zed_acp_host["label"], "Zed");
+    assert_eq!(zed_acp_host["registry"]["agent_count"], 1);
+    assert_eq!(zed_acp_host["agents"][0]["id"], "looper");
+    assert_eq!(
+        zed_acp_host["agents"][0]["control_level"],
+        "visibility-only"
+    );
+    assert!(
+        zed_acp_host["actions"]
+            .as_array()
+            .expect("zed actions")
+            .iter()
+            .any(|action| action["id"] == "probe"
+                && action["path"] == "/desktop/acp-client-hosts/zed/probe"
+                && action["default_agent_id"] == "looper")
     );
     let acp_hosts_json = serde_json::to_string(&acp_hosts).expect("acp hosts json");
     assert!(!acp_hosts_json.contains("must-not-leak"));
     assert!(!acp_hosts_json.contains("@agentclientprotocol/codex-acp"));
+    assert!(!acp_hosts_json.contains("zed-secret-token"));
 
     let acp_host = request_json_with_options(
         &router,
@@ -1045,7 +1072,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         "agent-configured"
     );
 
-    let missing_host = request_with_options(
+    let zed_host = request_json_with_options(
         &router,
         Method::GET,
         "/desktop/acp-client-hosts/zed",
@@ -1053,7 +1080,35 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         loopback_socket,
     )
     .await;
-    assert_eq!(missing_host.status(), StatusCode::NOT_FOUND);
+    assert_eq!(zed_host["host"]["id"], "zed");
+    assert_eq!(zed_host["host"]["agents"][0]["id"], "looper");
+
+    let zed_generic_probe = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/zed/probe",
+        serde_json::json!({ "agentId": "looper" }),
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(zed_generic_probe["host"]["id"], "zed");
+    assert_eq!(zed_generic_probe["probe"]["status"], "blocked");
+    assert_eq!(
+        zed_generic_probe["probe"]["probe_kind"],
+        "read-only-visibility"
+    );
+    assert_eq!(zed_generic_probe["probe"]["agent_id"], "looper");
+
+    let zed_install = request_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/zed/install",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(zed_install.status(), StatusCode::METHOD_NOT_ALLOWED);
 
     let generic_acp_probe = request_json_body_with_options(
         &router,
@@ -2025,6 +2080,8 @@ async fn mobile_snapshot_includes_every_assistant_surface() {
     let surface_sessions = snapshot["surfaceSessions"]
         .as_object()
         .expect("surface sessions");
+    assert!(surface_sessions.contains_key("claude-code"));
+    assert!(surface_sessions.contains_key("zed"));
     assert_surface_sessions_include(surface_sessions, "codex", "thread-main");
     assert_surface_sessions_include(surface_sessions, "devin", "devin:devin-cli:brindle-cadet");
     assert_surface_sessions_include(surface_sessions, "grok-build", "grok-session-1");
@@ -2185,7 +2242,7 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
 }
 
 #[tokio::test]
-async fn mobile_snapshot_identifies_claude_originator_on_codex_surface() {
+async fn mobile_snapshot_identifies_claude_originator_on_claude_surface() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.set_thread_source("thread-main", "vscode");
@@ -2213,13 +2270,32 @@ async fn mobile_snapshot_identifies_claude_originator_on_codex_surface() {
         None,
     )
     .await;
-    let claude_session = mobile_snapshot_session(&codex_snapshot, "thread-main");
+    assert!(
+        codex_snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .all(|session| session["id"] != "thread-main")
+    );
+    let claude_session = mobile_surface_session(&codex_snapshot, "claude-code", "thread-main");
     assert_eq!(claude_session["assistantClient"], "claude-code");
     assert_eq!(claude_session["metadata"]["source"], "vscode");
     assert_eq!(
         claude_session["metadata"]["sourceDisplayName"],
         "Claude Code"
     );
+
+    let claude_snapshot = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "claude-code" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let visible_claude_session = mobile_snapshot_session(&claude_snapshot, "thread-main");
+    assert_eq!(visible_claude_session["assistantClient"], "claude-code");
 
     request_json_body_with_options(
         &router,
@@ -2230,7 +2306,6 @@ async fn mobile_snapshot_identifies_claude_originator_on_codex_surface() {
         None,
     )
     .await;
-
     let devin_snapshot = request_json_with_options(
         &router,
         Method::GET,
@@ -2288,7 +2363,15 @@ async fn desktop_and_mobile_snapshots_include_claude_code_sessions() {
         None,
     )
     .await;
-    let claude_session = mobile_snapshot_session(&mobile_snapshot, "claude:claude-session-1");
+    assert!(
+        mobile_snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .all(|session| session["id"] != "claude:claude-session-1")
+    );
+    let claude_session =
+        mobile_surface_session(&mobile_snapshot, "claude-code", "claude:claude-session-1");
     assert_eq!(claude_session["assistantClient"], "claude-code");
     assert_eq!(
         claude_session["metadata"]["sourceDisplayName"],
@@ -3224,6 +3307,7 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
         "/Applications/Superconductor.app/Contents/MacOS/Superconductor --host".to_owned(),
         "/Applications/Cursor.app/Contents/MacOS/Cursor --type=renderer".to_owned(),
         "/Applications/Claude.app/Contents/MacOS/Claude --type=renderer com.anthropic.claudefordesktop".to_owned(),
+        "/opt/homebrew/bin/claude --print test".to_owned(),
         "/Applications/Zed.app/Contents/MacOS/zed --foreground".to_owned(),
         "/opt/homebrew/bin/opencode run --json".to_owned(),
         "/Users/test/.grok/bin/grok agent stdio --model grok-build".to_owned(),
@@ -3273,6 +3357,14 @@ fn assistant_adapters_detect_gui_and_cli_surfaces() {
             .runtimes
             .iter()
             .any(|runtime| runtime.kind == AssistantRuntimeKind::Gui && runtime.running)
+    );
+    assert!(
+        claude
+            .runtimes
+            .iter()
+            .any(|runtime| runtime.label == "Claude Code CLI"
+                && runtime.kind == AssistantRuntimeKind::Cli
+                && runtime.running)
     );
 
     let opencode = adapters

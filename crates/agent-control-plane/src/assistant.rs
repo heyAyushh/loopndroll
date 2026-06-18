@@ -30,15 +30,11 @@ const CLAUDE_ORIGINATOR_NEEDLES: &[&str] = &[
     "claudefordesktop",
     "anthropic claude",
 ];
-const CODEX_SURFACE_CLIENTS: &[&str] = &[
-    CODEX_CLIENT,
-    "cursor",
-    CLAUDE_CODE_CLIENT,
-    "super-engineering",
-    "openclaw",
-];
+const CODEX_SURFACE_CLIENTS: &[&str] = &[CODEX_CLIENT, "cursor", "super-engineering", "openclaw"];
 const DEVIN_SURFACE_CLIENTS: &[&str] = &[DEVIN_CLIENT];
 const GROK_BUILD_SURFACE_CLIENTS: &[&str] = &[GROK_BUILD_CLIENT];
+const CLAUDE_CODE_SURFACE_CLIENTS: &[&str] = &[CLAUDE_CODE_CLIENT];
+const ZED_SURFACE_CLIENTS: &[&str] = &["zed"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -238,7 +234,7 @@ pub fn discover_assistant_adapters_from_sources(
                     AssistantRuntimeKind::Cli,
                     "Claude Code CLI",
                     None,
-                    &["claude ", "claude-code"],
+                    &["claude", "claude-code"],
                 ),
             ],
             detail: "Claude Code sessions read from ~/.claude/projects; prompts delivered through Looper-owned Claude hooks".to_owned(),
@@ -318,7 +314,7 @@ pub fn discover_assistant_adapters_from_sources(
                     &[ZED_CLI],
                 ),
             ],
-            "Zed ACP External Agent targets read from ~/.zed/settings.json agent_servers",
+            "Zed ACP External Agent targets read from ~/.zed/settings.json or ~/.config/zed/settings.json agent_servers",
         ),
     ]
 }
@@ -389,6 +385,18 @@ pub fn infer_assistant_client_from_paths(
     if path_contains_any(&path_haystack, &["openclaw", "open-claw"]) {
         return "openclaw";
     }
+    if path_contains_any(
+        &path_haystack,
+        &[
+            "/.zed/",
+            "/applications/zed.app/",
+            "zed acp",
+            "zed-agent-servers",
+            "zed.dev",
+        ],
+    ) {
+        return "zed";
+    }
     if path_contains_any(&path_haystack, &["/.codex/", ".codex/sessions"]) {
         return CODEX_CLIENT;
     }
@@ -426,6 +434,8 @@ pub fn assistant_client_matches_surface(client: &str, surface: &str) -> bool {
     match surface {
         DEVIN_CLIENT => DEVIN_SURFACE_CLIENTS.contains(&client),
         GROK_BUILD_CLIENT => GROK_BUILD_SURFACE_CLIENTS.contains(&client),
+        CLAUDE_CODE_CLIENT => CLAUDE_CODE_SURFACE_CLIENTS.contains(&client),
+        "zed" => ZED_SURFACE_CLIENTS.contains(&client),
         _ => CODEX_SURFACE_CLIENTS.contains(&client),
     }
 }
@@ -697,6 +707,20 @@ mod tests {
     }
 
     #[test]
+    fn infers_zed_client_from_zed_acp_metadata() {
+        assert_eq!(
+            infer_assistant_client_from_paths(
+                Some("/Users/test/.zed/sessions/thread-main.jsonl"),
+                Some("/Users/test/project"),
+                Some("zed-agent-servers"),
+                Some("Zed ACP"),
+                None,
+            ),
+            "zed"
+        );
+    }
+
+    #[test]
     fn assistant_surface_filter_hides_cross_surface_sessions() {
         assert!(session_matches_assistant_surface(
             Some("/Users/test/.grok/sessions/thread.jsonl"),
@@ -728,6 +752,14 @@ mod tests {
             Some("vscode"),
             Some("Claude Code"),
             None,
+            "claude-code",
+        ));
+        assert!(!session_matches_assistant_surface(
+            Some("/Users/test/.codex/sessions/claude-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("vscode"),
+            Some("Claude Code"),
+            None,
             "codex",
         ));
         assert!(!session_matches_assistant_surface(
@@ -751,6 +783,22 @@ mod tests {
             Some("/Users/test/project"),
             Some("vscode"),
             Some("Devin - Next"),
+            None,
+            "codex",
+        ));
+        assert!(session_matches_assistant_surface(
+            Some("/Users/test/.zed/sessions/zed-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("zed-agent-servers"),
+            Some("Zed ACP"),
+            None,
+            "zed",
+        ));
+        assert!(!session_matches_assistant_surface(
+            Some("/Users/test/.zed/sessions/zed-thread.jsonl"),
+            Some("/Users/test/project"),
+            Some("zed-agent-servers"),
+            Some("Zed ACP"),
             None,
             "codex",
         ));

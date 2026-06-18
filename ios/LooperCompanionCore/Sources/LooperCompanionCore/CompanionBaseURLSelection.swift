@@ -5,10 +5,16 @@ public enum CompanionBaseURLSelection {
         reached: URL?,
         advertised: [URL],
         existing: [URL],
-        preference: CompanionConnectionRoutePreference = .defaultPreference
+        preference: CompanionConnectionRoutePreference = .defaultPreference,
+        preservingExistingPorts: Bool = false
     ) -> [URL] {
-        preferredBaseURLs(
-            uniqueBaseURLs([reached].compactMap(\.self) + advertised + existing),
+        let discoveredBaseURLs = [reached].compactMap(\.self) + advertised
+        let compatibleDiscoveredBaseURLs = preservingExistingPorts ?
+            discoveredBaseURLs.compatibleWithPorts(in: existing) :
+            discoveredBaseURLs
+
+        return preferredBaseURLs(
+            uniqueBaseURLs(compatibleDiscoveredBaseURLs + existing),
             preference: preference
         )
     }
@@ -25,9 +31,23 @@ public enum CompanionBaseURLSelection {
     }
 
     private static func uniqueBaseURLs(_ baseURLs: [URL]) -> [URL] {
-        var seen = Set<String>()
-        return baseURLs.filter { baseURL in
-            seen.insert(CompanionBaseURLIdentity.key(for: baseURL)).inserted
+        CompanionBaseURLIdentity.unique(baseURLs)
+    }
+}
+
+private extension Array where Element == URL {
+    func compatibleWithPorts(in configuredBaseURLs: [URL]) -> [URL] {
+        let configuredPorts = Set(configuredBaseURLs.compactMap(\.companionNormalizedServerPort))
+        guard !configuredPorts.isEmpty else {
+            return self
+        }
+
+        return filter { baseURL in
+            guard let port = baseURL.companionNormalizedServerPort else {
+                return false
+            }
+
+            return configuredPorts.contains(port)
         }
     }
 }

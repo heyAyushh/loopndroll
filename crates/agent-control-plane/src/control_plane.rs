@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::acp_client_host::{
     AcpClientHostInstallResponse, AcpClientHostProbeResponse, AcpClientHostResponse,
-    AcpClientHostsResponse, DEVIN_ACP_CLIENT_HOST_ID, acp_client_host_install,
-    acp_client_host_probe, devin_acp_client_host,
+    AcpClientHostsResponse, DEVIN_ACP_CLIENT_HOST_ID, ZED_ACP_CLIENT_HOST_ID,
+    acp_client_host_install, acp_client_host_probe, devin_acp_client_host, zed_acp_client_host,
+    zed_acp_client_host_probe,
 };
 use crate::acp_targets::AcpTarget;
 use crate::assistant::{
@@ -28,10 +29,13 @@ use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_com
 use crate::devin::{
     DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpRuntime, DevinAcpRuntimeSession,
     DevinAcpRuntimeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
-    DevinInstallationStatus, build_acp_bridge_probe, devin_acp_targets, devin_connection_detail,
-    devin_session_capabilities, devin_session_to_desktop_thread, devin_session_to_thread_record,
-    discover_devin_sessions, inspect_devin_desktop_for_home, inspect_devin_hooks,
-    install_looper_acp_agent_for_home, register_owned_devin_hooks, unregister_owned_devin_hooks,
+    DevinInstallationStatus, DevinSessionDiscovery, DevinSessionDiscoveryError,
+    build_acp_bridge_probe, devin_acp_targets, devin_connection_detail, devin_session_capabilities,
+    devin_session_to_desktop_thread, devin_session_to_thread_record,
+    discover_devin_sessions_with_previews, discover_devin_sessions_without_previews,
+    discover_recent_devin_sessions, discover_recent_devin_sessions_with_previews,
+    inspect_devin_desktop_for_home, inspect_devin_hooks, install_looper_acp_agent_for_home,
+    register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
 use crate::events::{AutomationRunRecord, EventStore};
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
@@ -54,6 +58,7 @@ const DESKTOP_COMPACTION_FILE_SCAN_LIMIT: usize = 250;
 const DESKTOP_MENU_COMPACTION_LIMIT: usize = 10;
 const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
+const ACP_CLIENT_HOST_SESSION_LIMIT: usize = DESKTOP_MENU_THREAD_LIMIT;
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
@@ -74,22 +79,29 @@ const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
     "Claude Code hooks in ~/.claude/settings.json; running-session prompts are delivered on Stop.";
 const ZED_ACP_CONNECTION_ID: &str = "zed-acp";
 const ZED_ACP_CONNECTION_LABEL: &str = "Zed ACP";
-const ZED_ACP_CONNECTION_ACTION_HINT: &str = "Zed External Agents are configured in ~/.zed/settings.json agent_servers; Looper reads settings only.";
+const ZED_ACP_CONNECTION_ACTION_HINT: &str = "Zed External Agents are configured in ~/.zed/settings.json or ~/.config/zed/settings.json agent_servers; Looper reads settings only.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AcpClientHostProvider {
     Devin,
+    Zed,
 }
 
 impl AcpClientHostProvider {
     fn id(self) -> &'static str {
         match self {
             Self::Devin => DEVIN_ACP_CLIENT_HOST_ID,
+            Self::Zed => ZED_ACP_CLIENT_HOST_ID,
         }
+    }
+
+    fn supports_install(self) -> bool {
+        matches!(self, Self::Devin)
     }
 }
 
-const ACP_CLIENT_HOST_PROVIDERS: &[AcpClientHostProvider] = &[AcpClientHostProvider::Devin];
+const ACP_CLIENT_HOST_PROVIDERS: &[AcpClientHostProvider] =
+    &[AcpClientHostProvider::Devin, AcpClientHostProvider::Zed];
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -259,6 +271,9 @@ pub struct DesktopSnapshot {
     pub assistant_adapters: Vec<AssistantAdapterCapability>,
     pub acp_targets: Vec<AcpTarget>,
     pub devin_desktop: DevinDesktopStatus,
+    pub devin_session_count: usize,
+    pub devin_active_session_count: usize,
+    pub devin_session_errors: Vec<DevinSessionDiscoveryError>,
     pub zed: ZedStatus,
     pub grok_build: GrokBuildStatus,
     pub compactions: Vec<CompactionEvent>,
@@ -361,10 +376,11 @@ impl ControlPlane {
             })
             .collect::<Vec<_>>();
         grok_signature.sort();
-        let devin_sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
-        let mut devin_signature = devin_sessions
+        let devin_discovery =
+            self.recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT);
+        let mut devin_signature = devin_discovery
+            .sessions
             .iter()
-            .take(DESKTOP_MENU_THREAD_LIMIT)
             .map(|session| {
                 format!(
                     "{}:{}:{}:{}",
@@ -389,10 +405,7 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.running)
             .count();
-        let devin_active_thread_count = devin_sessions
-            .iter()
-            .filter(|session| session.is_active())
-            .count();
+        let devin_active_thread_count = devin_discovery.active_count;
         let claude_sessions = discover_recent_claude_sessions(
             &default_claude_home(&self.config.home_path),
             DESKTOP_MENU_THREAD_LIMIT,
@@ -415,10 +428,7 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.running)
             .count();
-        let devin_archived_thread_count = devin_sessions
-            .iter()
-            .filter(|session| session.archived)
-            .count();
+        let devin_archived_thread_count = devin_discovery.archived_count;
         let queued_prompt_count = session_state
             .sessions
             .values()
@@ -579,8 +589,9 @@ impl ControlPlane {
         let state = read_state(&self.config.codex_home)?;
         let mut threads = state.threads;
         threads.extend(
-            discover_devin_sessions(&self.config.home_path)
+            discover_devin_sessions_without_previews(&self.config.home_path)
                 .unwrap_or_default()
+                .sessions
                 .iter()
                 .map(devin_session_to_thread_record),
         );
@@ -675,13 +686,32 @@ impl ControlPlane {
                 let probe =
                     build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id);
                 let runtime = self.devin_acp_runtime.status();
-                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                let sessions = self
+                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
+                    .sessions;
                 AcpClientHostProbeResponse {
                     host: devin_acp_client_host(&status, &sessions, &runtime),
                     probe: acp_client_host_probe(probe),
                 }
             }
+            AcpClientHostProvider::Zed => {
+                let status = inspect_zed_for_home(&self.config.home_path);
+                AcpClientHostProbeResponse {
+                    host: zed_acp_client_host(&status),
+                    probe: zed_acp_client_host_probe(&status, agent_id),
+                }
+            }
         })
+    }
+
+    pub fn acp_client_host_exists(&self, client_id: &str) -> bool {
+        self.acp_client_host_provider(client_id).is_some()
+    }
+
+    pub fn acp_client_host_install_supported(&self, client_id: &str) -> bool {
+        self.acp_client_host_provider(client_id)
+            .map(AcpClientHostProvider::supports_install)
+            .unwrap_or(false)
     }
 
     pub fn install_acp_client_host_response(
@@ -699,12 +729,15 @@ impl ControlPlane {
                 )?;
                 let status = inspect_devin_desktop_for_home(&self.config.home_path);
                 let runtime = self.devin_acp_runtime.status();
-                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                let sessions = self
+                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
+                    .sessions;
                 AcpClientHostInstallResponse {
                     host: devin_acp_client_host(&status, &sessions, &runtime),
                     install: acp_client_host_install(provider.id(), install),
                 }
             }
+            AcpClientHostProvider::Zed => return Ok(None),
         }))
     }
 
@@ -754,9 +787,15 @@ impl ControlPlane {
         match provider {
             AcpClientHostProvider::Devin => {
                 let status = inspect_devin_desktop_for_home(&self.config.home_path);
-                let sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+                let sessions = self
+                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
+                    .sessions;
                 let runtime = self.devin_acp_runtime.status();
                 devin_acp_client_host(&status, &sessions, &runtime)
+            }
+            AcpClientHostProvider::Zed => {
+                let status = inspect_zed_for_home(&self.config.home_path);
+                zed_acp_client_host(&status)
             }
         }
     }
@@ -903,8 +942,9 @@ impl ControlPlane {
             return Ok(capabilities_for_state_thread(&state, thread_id));
         }
 
-        if let Some(session) = discover_devin_sessions(&self.config.home_path)
+        if let Some(session) = discover_devin_sessions_without_previews(&self.config.home_path)
             .unwrap_or_default()
+            .sessions
             .into_iter()
             .find(|session| session.thread_id == thread_id || session.session_id == thread_id)
         {
@@ -1098,7 +1138,12 @@ impl ControlPlane {
         desktop_threads.extend(
             limited_items(&claude_sessions, thread_limit).map(claude_session_to_desktop_thread),
         );
-        let devin_sessions = discover_devin_sessions(&self.config.home_path).unwrap_or_default();
+        let devin_discovery = self.devin_sessions_for_snapshot(thread_limit);
+        let devin_total_count = devin_discovery.total_count;
+        let devin_active_thread_count = devin_discovery.active_count;
+        let devin_archived_thread_count = devin_discovery.archived_count;
+        let devin_session_errors = devin_discovery.errors.clone();
+        let devin_sessions = devin_discovery.sessions;
         desktop_threads.extend(
             limited_items(&devin_sessions, thread_limit).map(devin_session_to_desktop_thread),
         );
@@ -1162,14 +1207,6 @@ impl ControlPlane {
             .iter()
             .filter(|session| session.running)
             .count();
-        let devin_active_thread_count = devin_sessions
-            .iter()
-            .filter(|session| session.is_active())
-            .count();
-        let devin_archived_thread_count = devin_sessions
-            .iter()
-            .filter(|session| session.archived)
-            .count();
         let devin_acp_active_thread_count = devin_acp_runtime.sessions.len();
         let active_thread_count = codex_active_thread_count
             + grok_active_thread_count
@@ -1204,7 +1241,7 @@ impl ControlPlane {
             thread_count: state.total_thread_count
                 + grok_build.session_count
                 + claude_sessions.len()
-                + devin_sessions.len()
+                + devin_total_count
                 + devin_acp_runtime.sessions.len(),
             active_thread_count,
             archived_thread_count,
@@ -1220,6 +1257,9 @@ impl ControlPlane {
             assistant_adapters,
             acp_targets,
             devin_desktop,
+            devin_session_count: devin_total_count,
+            devin_active_session_count: devin_active_thread_count,
+            devin_session_errors,
             zed,
             grok_build,
             compactions,
@@ -1293,12 +1333,29 @@ impl ControlPlane {
         .unwrap_or_default()
     }
 
+    fn devin_sessions_for_snapshot(&self, thread_limit: Option<usize>) -> DevinSessionDiscovery {
+        match thread_limit {
+            Some(limit) => {
+                discover_recent_devin_sessions_with_previews(&self.config.home_path, limit)
+                    .unwrap_or_else(|_| empty_devin_session_discovery())
+            }
+            None => discover_devin_sessions_with_previews(&self.config.home_path)
+                .unwrap_or_else(|_| empty_devin_session_discovery()),
+        }
+    }
+
+    fn recent_devin_sessions_for_snapshot(&self, limit: usize) -> DevinSessionDiscovery {
+        discover_recent_devin_sessions(&self.config.home_path, limit)
+            .unwrap_or_else(|_| empty_devin_session_discovery())
+    }
+
     fn known_desktop_thread_ids(&self) -> Result<BTreeSet<String>> {
         let state = read_state(&self.config.codex_home)?;
         let mut thread_ids = known_thread_ids(&state.threads);
         thread_ids.extend(
-            discover_devin_sessions(&self.config.home_path)
+            discover_devin_sessions_without_previews(&self.config.home_path)
                 .unwrap_or_default()
+                .sessions
                 .into_iter()
                 .map(|session| session.thread_id),
         );
@@ -1465,7 +1522,7 @@ fn zed_connection_should_render(status: &ZedStatus) -> bool {
 fn zed_acp_connection(status: &ZedStatus) -> ManagedConnection {
     let connection_status = if status.running {
         "connected"
-    } else if !status.acp_targets.is_empty() {
+    } else if status.settings_exists || !status.acp_targets.is_empty() {
         "configured"
     } else if status.installed {
         "installed"
@@ -1763,6 +1820,10 @@ fn codex_threads_for_snapshot(
 
 fn limited_items<T>(items: &[T], limit: Option<usize>) -> impl Iterator<Item = &T> {
     items.iter().take(limit.unwrap_or(items.len()))
+}
+
+fn empty_devin_session_discovery() -> DevinSessionDiscovery {
+    DevinSessionDiscovery::default()
 }
 
 fn desktop_thread_to_thread_record(thread: &DesktopThread) -> ThreadRecord {

@@ -754,7 +754,7 @@ private func looperLanguageModelSession(
     if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
         let modelInstructions = Instructions(instructions)
 
-        #if canImport(_CoreSpotlight_FoundationModels)
+        #if canImport(_CoreSpotlight_FoundationModels) && !arch(x86_64)
         if usesSpotlightTool {
             let spotlightSearchTool = SpotlightSearchTool(
                 configuration: SpotlightSearchTool.Configuration(sources: [.coreSpotlight])

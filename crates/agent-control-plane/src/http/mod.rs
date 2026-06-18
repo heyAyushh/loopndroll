@@ -1,13 +1,10 @@
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use async_stream::stream;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::sse::{Event, KeepAlive};
-use axum::response::{IntoResponse, Response, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::{
     Json, Router,
     routing::{delete, get, post},
@@ -16,18 +13,14 @@ use futures_util::{SinkExt, StreamExt};
 
 use crate::acp_client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::claude_code::inspect_claude_hooks;
-use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread, HookMutationTarget};
+use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
 use crate::devin::LEGACY_LOOPER_ACP_ROUTE;
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
-use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
+use crate::mobile_api::mobile_session_detail;
 use crate::mobile_auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
-};
-use crate::mobile_events::{
-    MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
-    mobile_event_now, mobile_event_sse_name,
 };
 use crate::mobile_network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
 use crate::mobile_prompt_delivery::{
@@ -38,13 +31,23 @@ use crate::mobile_session::{
     ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
 
+mod events;
+mod handoff;
 mod mobile_access;
+mod mobile_state;
 mod requests;
 mod responses;
+mod session_actions;
 
+use self::events::{desktop_events, events_tail, mobile_events_handler};
+use self::handoff::handoff_session_page;
 use self::mobile_access::{
     authorize_mobile_api_request, authorize_mobile_request, current_mobile_time,
     desktop_loopback_rejection, request_advertised_mobile_base_urls,
+};
+use self::mobile_state::{
+    desktop_mobile_state_response, emit_mobile_lifecycle_changed, emit_mobile_session_changed,
+    missing_mobile_session_rejection, mobile_snapshot_response,
 };
 use self::requests::{
     AcpClientHostProbeRequest, DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
@@ -62,8 +65,26 @@ use self::responses::{
     mobile_authorization_error_response, mobile_push_error_response, mobile_session_error_response,
     mobile_session_not_found_response, telegram_error_response,
 };
+use self::session_actions::{
+    delete_session as delete_session_action, mute_session as mute_session_action,
+    set_session_archived, set_session_mode,
+};
+
+const SHUTDOWN_EXIT_DELAY: Duration = Duration::from_millis(50);
 
 pub fn build_router(control_plane: ControlPlane) -> Router {
+    system_routes()
+        .merge(acp_routes())
+        .merge(desktop_connection_routes())
+        .merge(desktop_settings_routes())
+        .merge(desktop_session_routes())
+        .merge(hook_routes())
+        .merge(mobile_routes())
+        .merge(thread_routes())
+        .with_state(control_plane)
+}
+
+fn system_routes() -> Router<ControlPlane> {
     Router::new()
         .route("/health", get(health))
         .route("/status/control-plane", get(control_plane_status))
@@ -77,6 +98,11 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         .route("/desktop/snapshot", get(desktop_snapshot))
         .route("/desktop/events", get(desktop_events))
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
+        .route("/sync/manifest", get(sync_manifest))
+}
+
+fn acp_routes() -> Router<ControlPlane> {
+    Router::new()
         .route(LEGACY_LOOPER_ACP_ROUTE, get(devin_acp_websocket))
         .route(
             "/acp/client-hosts/:client_id",
@@ -106,6 +132,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             "/desktop/acp-client-hosts/:client_id/install",
             post(desktop_acp_client_host_install),
         )
+}
+
+fn desktop_connection_routes() -> Router<ControlPlane> {
+    Router::new()
         .route("/desktop/connections", get(desktop_connections))
         .route("/desktop/pairing", get(desktop_pairing))
         .route(
@@ -122,6 +152,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             "/desktop/push/devices/:installation_id/test",
             post(desktop_push_test),
         )
+}
+
+fn desktop_settings_routes() -> Router<ControlPlane> {
+    Router::new()
         .route(
             "/desktop/settings/default-prompt",
             post(desktop_default_prompt),
@@ -157,6 +191,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             "/desktop/completion-checks/:completion_check_id",
             delete(desktop_completion_check_delete),
         )
+}
+
+fn desktop_session_routes() -> Router<ControlPlane> {
+    Router::new()
         .route(
             "/desktop/sessions/:thread_id/notifications",
             post(desktop_session_notifications),
@@ -187,7 +225,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
             get(desktop_session_detail).delete(desktop_session_delete),
         )
         .route("/desktop/shutdown", post(desktop_shutdown))
-        .route("/sync/manifest", get(sync_manifest))
+}
+
+fn hook_routes() -> Router<ControlPlane> {
+    Router::new()
         .route("/hooks/clear", post(unregister_hooks))
         .route("/hooks/register", post(register_hooks))
         .route("/hooks/:target/register", post(register_target_hooks))
@@ -199,6 +240,10 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         )
         .route("/integrations/hook/contract", get(hook_contract))
         .route("/integrations/hook/contract.toml", get(hook_contract_toml))
+}
+
+fn mobile_routes() -> Router<ControlPlane> {
+    Router::new()
         .route("/api/mobile/health", get(mobile_health))
         .route("/api/mobile/connection-code", get(mobile_connection_code))
         .route(
@@ -269,11 +314,14 @@ pub fn build_router(control_plane: ControlPlane) -> Router {
         )
         .route("/api/mobile/push/register", post(mobile_push_registration))
         .route("/api/mobile/push/test", post(mobile_push_test))
+}
+
+fn thread_routes() -> Router<ControlPlane> {
+    Router::new()
         .route("/threads", get(threads))
         .route("/threads/:thread_id", get(thread_detail))
         .route("/threads/:thread_id/capabilities", get(thread_capabilities))
         .route("/events/tail", get(events_tail))
-        .with_state(control_plane)
 }
 
 async fn health(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -393,6 +441,12 @@ async fn desktop_acp_client_host_install(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
+    if !control_plane.acp_client_host_exists(&client_id) {
+        return acp_client_host_not_found(&client_id);
+    }
+    if !control_plane.acp_client_host_install_supported(&client_id) {
+        return acp_client_host_action_unsupported(&client_id, "install");
+    }
     match control_plane.install_acp_client_host_response(&client_id) {
         Ok(Some(response)) => (StatusCode::OK, Json(response)).into_response(),
         Ok(None) => acp_client_host_not_found(&client_id),
@@ -409,6 +463,16 @@ fn acp_client_host_not_found(client_id: &str) -> Response {
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({
             "error": format!("ACP client host not found: {client_id}")
+        })),
+    )
+        .into_response()
+}
+
+fn acp_client_host_action_unsupported(client_id: &str, action: &str) -> Response {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "error": format!("ACP client host {client_id} does not support {action}")
         })),
     )
         .into_response()
@@ -464,6 +528,7 @@ async fn run_devin_acp_socket(control_plane: ControlPlane, socket: WebSocket) {
 
     runtime.unregister_connection(&connection_id);
     writer.abort();
+    let _ = writer.await;
 }
 
 async fn codex_servers(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -498,70 +563,6 @@ async fn desktop_snapshot(
         )
             .into_response(),
     }
-}
-
-async fn desktop_events(
-    State(control_plane): State<ControlPlane>,
-) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
-    local_desktop_events_stream(control_plane)
-}
-
-async fn handoff_session_page(
-    State(control_plane): State<ControlPlane>,
-    Path(thread_id): Path<String>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let snapshot = match control_plane.desktop_menu_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                [(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain; charset=utf-8"),
-                )],
-                error.to_string(),
-            )
-                .into_response();
-        }
-    };
-
-    let Some(thread) = snapshot
-        .threads
-        .iter()
-        .find(|thread| thread.thread_id == thread_id && !thread.archived)
-        .or_else(|| {
-            snapshot
-                .threads
-                .iter()
-                .find(|thread| thread.thread_id == thread_id)
-        })
-    else {
-        return (
-            StatusCode::NOT_FOUND,
-            [(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
-            )],
-            "Session not found".to_owned(),
-        )
-            .into_response();
-    };
-
-    (
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/html; charset=utf-8"),
-        )],
-        handoff_session_html(
-            thread,
-            request_advertised_mobile_base_urls(&headers)
-                .first()
-                .map(String::as_str),
-        ),
-    )
-        .into_response()
 }
 
 async fn desktop_connections(
@@ -993,19 +994,8 @@ async fn desktop_session_mode(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_session_preset(&thread_id, input.preset.as_deref())
-    {
-        Ok(()) => {
-            emit_mobile_lifecycle_changed(
-                &control_plane,
-                &thread_id,
-                input.preset.as_deref().or(Some("mode-cleared")),
-            );
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("mode-updated"));
-            desktop_mobile_state_response(&control_plane)
-        }
+    match set_session_mode(&control_plane, &thread_id, input.preset.as_deref()) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1019,22 +1009,8 @@ async fn desktop_session_archive(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_session_archived(&thread_id, input.archived)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(
-                &control_plane,
-                Some(&thread_id),
-                Some(if input.archived {
-                    "archived"
-                } else {
-                    "unarchived"
-                }),
-            );
-            desktop_mobile_state_response(&control_plane)
-        }
+    match set_session_archived(&control_plane, &thread_id, input.archived) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1084,14 +1060,8 @@ async fn desktop_session_mute(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .mute_session(&thread_id)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("muted"));
-            desktop_mobile_state_response(&control_plane)
-        }
+    match mute_session_action(&control_plane, &thread_id) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1104,14 +1074,8 @@ async fn desktop_session_delete(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .delete_session(&thread_id)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("deleted"));
-            desktop_mobile_state_response(&control_plane)
-        }
+    match delete_session_action(&control_plane, &thread_id) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1121,7 +1085,7 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
         return response;
     }
     tokio::spawn(async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(SHUTDOWN_EXIT_DELAY).await;
         std::process::exit(0);
     });
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
@@ -1343,85 +1307,6 @@ async fn mobile_snapshot_handler(
     mobile_snapshot_response(&control_plane, &headers)
 }
 
-async fn mobile_events_handler(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-) -> Response {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-
-    local_desktop_events_stream(control_plane).into_response()
-}
-
-fn local_desktop_events_stream(
-    control_plane: ControlPlane,
-) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
-    let mut receiver = control_plane.mobile_event_hub().subscribe();
-    let mut last_revision = control_plane.mobile_snapshot_revision().unwrap_or_default();
-    let mut last_event_cursor = control_plane
-        .store()
-        .latest_mobile_event_cursor()
-        .unwrap_or_default();
-    let connected_payload = serde_json::to_string(&serde_json::json!({
-        "event_type": "connected",
-        "server_time": mobile_event_now(),
-        "revision": last_revision,
-    }))
-    .unwrap_or_else(|_| "{}".to_owned());
-
-    let stream = stream! {
-        yield Ok::<Event, Infallible>(Event::default().event("connected").data(connected_payload));
-        let mut poll_interval = tokio::time::interval(Duration::from_secs(2));
-        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            tokio::select! {
-                received = receiver.recv() => {
-                    match received {
-                        Ok(event) => {
-                            match event {
-                                MobileEventBroadcast::Persisted(record) => {
-                                    last_event_cursor = (&record).into();
-                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
-                                }
-                                MobileEventBroadcast::Ephemeral(event) => {
-                                    yield Ok::<Event, Infallible>(mobile_sse_event(&event));
-                                }
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = poll_interval.tick() => {
-                    if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, 32) {
-                        for record in records {
-                            last_event_cursor = (&record).into();
-                            yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
-                        }
-                    }
-
-                    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-                        if revision != last_revision {
-                            last_revision = revision;
-                            yield Ok::<Event, Infallible>(mobile_sse_event(&MobileEvent {
-                                event_type: MobileEventKind::SessionChanged,
-                                thread_id: None,
-                                prompt_id: None,
-                                detail: Some("snapshot-revision-changed".to_owned()),
-                                server_time: mobile_event_now(),
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
 async fn mobile_session_detail_handler(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
@@ -1469,19 +1354,8 @@ async fn mobile_session_mode(
         return response;
     }
 
-    match control_plane
-        .mobile_session_service()
-        .set_session_preset(&thread_id, input.preset.as_deref())
-    {
-        Ok(()) => {
-            emit_mobile_lifecycle_changed(
-                &control_plane,
-                &thread_id,
-                input.preset.as_deref().or(Some("mode-cleared")),
-            );
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("mode-updated"));
-            mobile_snapshot_response(&control_plane, &headers)
-        }
+    match set_session_mode(&control_plane, &thread_id, input.preset.as_deref()) {
+        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1499,22 +1373,8 @@ async fn mobile_session_archive(
         return response;
     }
 
-    match control_plane
-        .mobile_session_service()
-        .set_session_archived(&thread_id, input.archived)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(
-                &control_plane,
-                Some(&thread_id),
-                Some(if input.archived {
-                    "archived"
-                } else {
-                    "unarchived"
-                }),
-            );
-            mobile_snapshot_response(&control_plane, &headers)
-        }
+    match set_session_archived(&control_plane, &thread_id, input.archived) {
+        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1531,14 +1391,8 @@ async fn mobile_session_delete(
         return response;
     }
 
-    match control_plane
-        .mobile_session_service()
-        .delete_session(&thread_id)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("deleted"));
-            mobile_snapshot_response(&control_plane, &headers)
-        }
+    match delete_session_action(&control_plane, &thread_id) {
+        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1588,14 +1442,8 @@ async fn mobile_session_mute(
         return response;
     }
 
-    match control_plane
-        .mobile_session_service()
-        .mute_session(&thread_id)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(&control_plane, Some(&thread_id), Some("muted"));
-            mobile_snapshot_response(&control_plane, &headers)
-        }
+    match mute_session_action(&control_plane, &thread_id) {
+        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1922,39 +1770,6 @@ async fn thread_capabilities(
     }
 }
 
-async fn events_tail(
-    State(control_plane): State<ControlPlane>,
-) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
-    let stream = stream! {
-        loop {
-            let runs = control_plane
-                .store()
-                .automation_runs()
-                .unwrap_or_default();
-            let payload = serde_json::to_string(&serde_json::json!({
-                "event_type": "automation.snapshot",
-                "runs": runs,
-            }))
-            .unwrap_or_else(|_| "{}".to_owned());
-            yield Ok(Event::default().event("automation.snapshot").data(payload));
-            for compaction in control_plane.compactions().unwrap_or_default().into_iter().take(50) {
-                let payload = serde_json::to_string(&compaction).unwrap_or_else(|_| "{}".to_owned());
-                yield Ok(Event::default().event("codex.context_compacted").data(payload));
-            }
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-    };
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-fn desktop_mobile_state_response(control_plane: &ControlPlane) -> Response {
-    match control_plane.mobile_session_service().state() {
-        Ok(state) => (StatusCode::OK, Json(state)).into_response(),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
 fn new_record_id(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
 }
@@ -1989,209 +1804,4 @@ fn png_response(png_data: Vec<u8>) -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
-}
-
-fn mobile_snapshot_response(control_plane: &ControlPlane, headers: &HeaderMap) -> Response {
-    let snapshot = match mobile_desktop_snapshot(control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return internal_mobile_error_response(error.to_string()),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return mobile_session_error_response(error),
-    };
-    let base_urls = request_advertised_mobile_base_urls(headers);
-    let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
-
-    (
-        StatusCode::OK,
-        Json(mobile_snapshot(
-            &snapshot,
-            &session_state,
-            base_urls.first().map(String::as_str).unwrap_or_default(),
-            &grpc_base_urls,
-            &current_mobile_time(),
-        )),
-    )
-        .into_response()
-}
-
-fn missing_mobile_session_rejection(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> Option<Response> {
-    let snapshot = match mobile_desktop_snapshot(control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return Some(internal_mobile_error_response(error.to_string())),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return Some(mobile_session_error_response(error)),
-    };
-    if mobile_session_is_visible(&snapshot, &session_state, thread_id, assistant_surface) {
-        return None;
-    }
-
-    Some(mobile_session_not_found_response())
-}
-
-fn mobile_session_is_visible(
-    snapshot: &DesktopSnapshot,
-    session_state: &MobileSessionState,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> bool {
-    mobile_session_detail(snapshot, session_state, thread_id, assistant_surface).is_some()
-}
-
-fn handoff_session_html(thread: &DesktopThread, handoff_base_url: Option<&str>) -> String {
-    let title = handoff_session_title(thread);
-    let subtitle = thread
-        .cwd
-        .as_deref()
-        .map(handoff_project_name)
-        .unwrap_or_else(|| "Looper session".to_owned());
-    let preview = thread
-        .assistant_preview
-        .as_deref()
-        .map(str::trim)
-        .filter(|preview| !preview.is_empty())
-        .unwrap_or("Open this session in Looper on your iPhone.");
-    let deep_link = handoff_deep_link(&thread.thread_id, handoff_base_url);
-
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style>
-:root {{ color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }}
-body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }}
-main {{ width: min(34rem, calc(100vw - 2rem)); }}
-h1 {{ font-size: 1.35rem; line-height: 1.2; margin: 0 0 .5rem; }}
-p {{ color: color-mix(in srgb, CanvasText 72%, transparent); line-height: 1.45; }}
-a {{ display: inline-block; margin-top: 1rem; padding: .7rem .95rem; border-radius: .75rem; background: LinkText; color: Canvas; text-decoration: none; font-weight: 650; }}
-</style>
-</head>
-<body>
-<main>
-<h1>{title}</h1>
-<p>{subtitle}</p>
-<p>{preview}</p>
-<a href="{deep_link}">Open in looper</a>
-</main>
-</body>
-</html>"#,
-        title = html_escaped_text(&title),
-        subtitle = html_escaped_text(&subtitle),
-        preview = html_escaped_text(preview),
-        deep_link = html_escaped_attribute(&deep_link)
-    )
-}
-
-fn handoff_deep_link(thread_id: &str, handoff_base_url: Option<&str>) -> String {
-    let encoded_thread_id = percent_encoded_path_segment(thread_id);
-    let Some(handoff_base_url) = handoff_base_url else {
-        return format!("looper://session/{encoded_thread_id}");
-    };
-
-    format!(
-        "looper://session/{encoded_thread_id}?baseURL={}",
-        percent_encoded_url_component(handoff_base_url)
-    )
-}
-
-fn handoff_session_title(thread: &DesktopThread) -> String {
-    thread
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or(&thread.thread_id)
-        .to_owned()
-}
-
-fn handoff_project_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(path)
-        .to_owned()
-}
-
-fn html_escaped_text(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn html_escaped_attribute(value: &str) -> String {
-    html_escaped_text(value)
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn percent_encoded_path_segment(value: &str) -> String {
-    percent_encoded_url_component(value)
-}
-
-fn percent_encoded_url_component(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-                vec![byte as char]
-            } else {
-                format!("%{byte:02X}").chars().collect()
-            }
-        })
-        .collect()
-}
-
-fn emit_mobile_session_changed(
-    control_plane: &ControlPlane,
-    thread_id: Option<&str>,
-    detail: Option<&str>,
-) {
-    control_plane.emit_mobile_event(MobileEventInput {
-        kind: MobileEventKind::SessionChanged,
-        thread_id: thread_id.map(str::to_owned),
-        prompt_id: None,
-        detail: detail.map(str::to_owned),
-    });
-}
-
-fn emit_mobile_lifecycle_changed(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    detail: Option<&str>,
-) {
-    control_plane.emit_mobile_event(MobileEventInput {
-        kind: MobileEventKind::LifecycleChanged,
-        thread_id: Some(thread_id.to_owned()),
-        prompt_id: None,
-        detail: detail.map(str::to_owned),
-    });
-}
-
-fn mobile_sse_event(event: &MobileEvent) -> Event {
-    let payload = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_owned());
-    Event::default()
-        .event(mobile_event_sse_name(event.event_type))
-        .data(payload)
-}
-
-fn mobile_sse_event_from_record(record: &MobileEventRecord) -> Event {
-    mobile_sse_event(&MobileEvent {
-        event_type: record.event_type,
-        thread_id: record.thread_id.clone(),
-        prompt_id: record.prompt_id.clone(),
-        detail: record.detail.clone(),
-        server_time: mobile_event_now(),
-    })
 }

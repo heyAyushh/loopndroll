@@ -277,6 +277,16 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func blankContinuationTitleFallsBackToThreadID() throws {
+        let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
+            thread(id: "thread-main", title: "   ", updatedAtMs: 1),
+        ]))
+
+        #expect(descriptor.title == "thread-main")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionTitle] == "thread-main")
+    }
+
+    @Test
     func prefersNewestActiveThreadAcrossAssistants() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
             thread(id: "codex-main", title: "Codex", updatedAtMs: 1),
@@ -305,7 +315,7 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
-    func carriesDebugHandoffURLWithoutWebFallback() throws {
+    func carriesHandoffWebpageURL() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(
             from: desktopSnapshot(threads: [
                 thread(id: "thread-main", title: "Main", updatedAtMs: 1),
@@ -317,6 +327,7 @@ struct LooperContinuationActivityTests {
             descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
                 == "http://192.168.1.4:8765/handoff/sessions/thread-main"
         )
+        #expect(descriptor.webpageURL?.absoluteString == "http://192.168.1.4:8765/handoff/sessions/thread-main")
     }
 
     @Test
@@ -330,6 +341,10 @@ struct LooperContinuationActivityTests {
 
         #expect(
             descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
+                == "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
+        )
+        #expect(
+            descriptor.webpageURL?.absoluteString
                 == "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
         )
     }

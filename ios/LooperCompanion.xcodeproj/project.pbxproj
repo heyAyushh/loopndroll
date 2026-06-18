@@ -539,6 +539,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"LooperCompanion/Preview Content\"";
 				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LooperCompanion/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -684,6 +685,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"LooperCompanion/Preview Content\"";
 				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LooperCompanion/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;

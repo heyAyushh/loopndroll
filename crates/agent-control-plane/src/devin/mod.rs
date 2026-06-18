@@ -32,10 +32,12 @@ pub use self::hooks::{
 pub use self::installations::DevinInstallationStatus;
 pub use self::registry::{DevinAcpAgent, DevinAcpLaunchMetadata, DevinAcpRegistryStatus};
 pub use self::sessions::{
-    DevinPromptTransport, DevinSessionRecord, DevinThreadIdentity,
-    devin_prompt_transport_for_provider, devin_session_capabilities,
+    DevinPromptTransport, DevinSessionDiscovery, DevinSessionDiscoveryError, DevinSessionRecord,
+    DevinThreadIdentity, devin_prompt_transport_for_provider, devin_session_capabilities,
     devin_session_to_desktop_thread, devin_session_to_thread_record,
     devin_thread_identity_from_public_thread_id, discover_devin_sessions,
+    discover_devin_sessions_with_previews, discover_devin_sessions_without_previews,
+    discover_recent_devin_sessions, discover_recent_devin_sessions_with_previews,
 };
 
 pub(super) const DEVIN_NEXT_CHANNEL: &str = "next";

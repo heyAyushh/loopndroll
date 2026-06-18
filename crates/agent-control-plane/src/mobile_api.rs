@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -9,8 +9,8 @@ use crate::assistant::{
 };
 use crate::control_plane::{DesktopSnapshot, DesktopThread, GrokBuildStatus};
 use crate::devin::{
-    DevinPromptTransport, DevinThreadIdentity, devin_prompt_transport_for_provider,
-    devin_thread_identity_from_public_thread_id,
+    DevinDesktopStatus, DevinPromptTransport, DevinSessionDiscoveryError, DevinThreadIdentity,
+    devin_prompt_transport_for_provider, devin_thread_identity_from_public_thread_id,
 };
 use crate::grok_build::GrokHookStatus;
 use crate::mobile_session::{
@@ -37,6 +37,7 @@ const CODEX_SOURCE_LABEL: &str = "Codex";
 const CLAUDE_SOURCE_LABEL: &str = "Claude Code";
 const DEVIN_SOURCE_LABEL: &str = "Devin";
 const GROK_BUILD_SOURCE_LABEL: &str = "Grok Build";
+const ZED_SOURCE_LABEL: &str = "Zed";
 const CODEX_ASSISTANT_CLIENT: &str = "codex";
 const DEVIN_ASSISTANT_CLIENT: &str = "devin";
 const GROK_BUILD_ASSISTANT_CLIENT: &str = "grok-build";
@@ -44,6 +45,7 @@ const CLAUDE_CODE_ASSISTANT_CLIENT: &str = "claude-code";
 const CURSOR_ASSISTANT_CLIENT: &str = "cursor";
 const OPENCLAW_ASSISTANT_CLIENT: &str = "openclaw";
 const SUPER_ENGINEERING_ASSISTANT_CLIENT: &str = "super-engineering";
+const ZED_ASSISTANT_CLIENT: &str = "zed";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptResumeTarget {
@@ -86,6 +88,12 @@ pub fn mobile_snapshot(
             .iter()
             .map(completion_check_summary)
             .collect::<Vec<_>>(),
+        "devinDesktop": mobile_devin_desktop_status(
+            &snapshot.devin_desktop,
+            snapshot.devin_session_count,
+            snapshot.devin_active_session_count,
+            &snapshot.devin_session_errors,
+        ),
         "grokBuild": mobile_grok_build_status(&snapshot.grok_build),
     })
 }
@@ -129,6 +137,56 @@ pub fn mobile_grok_build_status(grok_build: &GrokBuildStatus) -> Value {
         "hooks": mobile_grok_hook_status(&grok_build.hooks),
         "sessionCount": grok_build.session_count,
         "activeSessionCount": grok_build.active_session_count,
+    })
+}
+
+pub fn mobile_devin_desktop_status(
+    devin_desktop: &DevinDesktopStatus,
+    session_count: usize,
+    active_session_count: usize,
+    session_errors: &[DevinSessionDiscoveryError],
+) -> Value {
+    let running = devin_desktop
+        .installations
+        .iter()
+        .any(|installation| installation.running);
+    let installed = devin_desktop
+        .installations
+        .iter()
+        .any(|installation| installation.installed);
+    let enabled_agent_ids = devin_desktop
+        .installations
+        .iter()
+        .flat_map(|installation| installation.enabled_agents.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let preferred_agent_ids = devin_desktop
+        .installations
+        .iter()
+        .filter_map(|installation| installation.preferred_agent.clone())
+        .collect::<BTreeSet<_>>();
+
+    json!({
+        "running": running,
+        "installed": installed,
+        "acpAvailable": devin_desktop.acp_bridge.available,
+        "registryExists": devin_desktop.acp_registry.exists,
+        "registryAgentCount": devin_desktop.acp_registry.agents.len(),
+        "enabledAgentCount": enabled_agent_ids.len(),
+        "preferredAgentIds": preferred_agent_ids.into_iter().collect::<Vec<_>>(),
+        "sessionCount": session_count,
+        "activeSessionCount": active_session_count,
+        "sessionDiagnostics": session_errors
+            .iter()
+            .map(mobile_devin_session_discovery_error)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn mobile_devin_session_discovery_error(error: &DevinSessionDiscoveryError) -> Value {
+    json!({
+        "source": error.source,
+        "code": error.code,
+        "detail": error.detail,
     })
 }
 
@@ -530,6 +588,7 @@ fn assistant_client_for_thread(thread: &DesktopThread) -> &'static str {
         AssistantKind::Cursor => CURSOR_ASSISTANT_CLIENT,
         AssistantKind::OpenClaw => OPENCLAW_ASSISTANT_CLIENT,
         AssistantKind::Superconductor => SUPER_ENGINEERING_ASSISTANT_CLIENT,
+        AssistantKind::Zed => ZED_ASSISTANT_CLIENT,
         AssistantKind::Unknown => infer_assistant_client_from_paths(
             thread.transcript_path.as_deref(),
             thread.cwd.as_deref(),
@@ -563,6 +622,7 @@ fn source_display_name(assistant_client: &str) -> &'static str {
         CLAUDE_CODE_ASSISTANT_CLIENT => CLAUDE_SOURCE_LABEL,
         DEVIN_ASSISTANT_CLIENT => DEVIN_SOURCE_LABEL,
         GROK_BUILD_ASSISTANT_CLIENT => GROK_BUILD_SOURCE_LABEL,
+        ZED_ASSISTANT_CLIENT => ZED_SOURCE_LABEL,
         _ => CODEX_SOURCE_LABEL,
     }
 }
@@ -890,6 +950,37 @@ mod tests {
     }
 
     #[test]
+    fn typed_claude_sessions_use_claude_mobile_surface() {
+        let thread = test_thread("thread-1", AssistantKind::ClaudeCode, None);
+        let session_state = MobileSessionState::default();
+
+        assert!(thread_matches_assistant_surface(&thread, "claude-code"));
+        assert!(!thread_matches_assistant_surface(&thread, "codex"));
+        assert!(!thread_matches_assistant_surface(&thread, "devin"));
+
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["assistantClient"], CLAUDE_CODE_ASSISTANT_CLIENT);
+        assert_eq!(
+            summary["metadata"]["sourceDisplayName"],
+            CLAUDE_SOURCE_LABEL
+        );
+    }
+
+    #[test]
+    fn typed_zed_sessions_use_zed_mobile_identity() {
+        let thread = test_thread("thread-1", AssistantKind::Zed, None);
+        let session_state = MobileSessionState::default();
+
+        assert!(thread_matches_assistant_surface(&thread, "zed"));
+        assert!(!thread_matches_assistant_surface(&thread, "codex"));
+        assert!(!thread_matches_assistant_surface(&thread, "devin"));
+
+        let summary = session_summary(&thread, 0, &session_state);
+        assert_eq!(summary["assistantClient"], ZED_ASSISTANT_CLIENT);
+        assert_eq!(summary["metadata"]["sourceDisplayName"], ZED_SOURCE_LABEL);
+    }
+
+    #[test]
     fn unknown_sessions_still_fall_back_to_path_inference() {
         let mut thread = test_thread("thread-1", AssistantKind::Unknown, None);
         thread.transcript_path = Some("/Users/test/.codex/sessions/thread-1.jsonl".to_owned());
@@ -1104,6 +1195,23 @@ mod tests {
             status["hooks"]["registeredEvents"],
             serde_json::json!(["session", "stop"])
         );
+    }
+
+    #[test]
+    fn mobile_devin_desktop_status_uses_mobile_contract() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let devin_desktop =
+            crate::devin::inspect_devin_desktop_with_processes(temp_dir.path(), &[]);
+
+        let status = mobile_devin_desktop_status(&devin_desktop, 3_130, 2, &[]);
+
+        assert_eq!(status["running"], false);
+        assert_eq!(status["installed"], false);
+        assert_eq!(status["acpAvailable"], false);
+        assert_eq!(status["registryExists"], false);
+        assert_eq!(status["sessionCount"], 3_130);
+        assert_eq!(status["activeSessionCount"], 2);
+        assert_eq!(status["sessionDiagnostics"], serde_json::json!([]));
     }
 
     fn session_state_with_lifecycle(thread_id: &str, status: &str) -> MobileSessionState {

@@ -117,25 +117,38 @@ struct LooperMenuContentTests {
     func summarizesAcpTargetReadiness() {
         #expect(LooperMenuContent.acpTargetStatusTitle(from: []) == "None")
         #expect(LooperMenuContent.acpTargetStatusTitle(from: [
-            acpTarget(id: "zed:looper", ready: true),
+            acpTarget(id: "devin:looper", clientName: "Devin Desktop", ready: true),
         ]) == "1 ready")
         #expect(LooperMenuContent.acpTargetStatusTitle(from: [
-            acpTarget(id: "zed:looper", ready: true),
+            acpTarget(id: "zed:looper", ready: false, status: "read-only"),
+        ]) == "1 read-only")
+        #expect(LooperMenuContent.acpTargetStatusTitle(from: [
+            acpTarget(id: "zed:looper", ready: false, status: "read-only"),
             acpTarget(id: "devin:codex", clientName: "Devin Desktop", ready: false),
-        ]) == "1/2 ready")
+        ]) == "1 read-only / 1 blocked")
     }
 
     @Test
     func buildsAcpTargetRowsWithoutLaunchValues() throws {
         let rows = LooperMenuContent.buildAcpTargetRows(from: [
             acpTarget(
-                id: "zed:looper",
-                clientName: "Zed",
+                id: "devin:looper",
+                clientName: "Devin Desktop",
                 agentId: "looper",
-                name: "looper",
+                name: "Looper",
                 methods: ["command"],
                 ready: true,
-                detail: "Zed External Agent target is configured; Looper did not execute its command."
+                detail: "Devin Desktop ACP agent is enabled with sanitized launch metadata."
+            ),
+            acpTarget(
+                id: "zed:readonly",
+                clientName: "Zed",
+                agentId: "readonly",
+                name: "readonly",
+                methods: ["command"],
+                ready: false,
+                status: "read-only",
+                detail: "Zed External Agent target is configured; Looper reports it read-only."
             ),
             acpTarget(
                 id: "zed:configured-only",
@@ -148,11 +161,13 @@ struct LooperMenuContentTests {
             ),
         ])
 
-        #expect(rows[0].title == "Zed: looper")
+        #expect(rows[0].title == "Devin Desktop: Looper")
         #expect(rows[0].subtitle == "Ready - command")
-        #expect(rows[0].detail == "Zed External Agent target is configured; Looper did not execute its command.")
-        #expect(rows[1].title == "Zed: configured-only")
-        #expect(rows[1].subtitle == "Blocked - no launch metadata")
+        #expect(rows[0].detail == "Devin Desktop ACP agent is enabled with sanitized launch metadata.")
+        #expect(rows[1].title == "Zed: readonly")
+        #expect(rows[1].subtitle == "Read-only - command")
+        #expect(rows[2].title == "Zed: configured-only")
+        #expect(rows[2].subtitle == "Blocked - no launch metadata")
     }
 
     private func thread(
@@ -198,6 +213,7 @@ struct LooperMenuContentTests {
         name: String = "looper",
         methods: [String] = ["command"],
         ready: Bool,
+        status: String? = nil,
         detail: String = "Configured"
     ) -> AcpTargetSummary {
         AcpTargetSummary(
@@ -216,7 +232,7 @@ struct LooperMenuContentTests {
                 methods: methods
             ),
             ready: ready,
-            status: ready ? "ready" : "blocked",
+            status: status ?? (ready ? "ready" : "blocked"),
             detail: detail
         )
     }

@@ -7,6 +7,7 @@ struct CompanionBaseURLFilteringTests {
     private let carrierGradeNatLowerBoundURL = "http://100.64.0.1:8765"
     private let carrierGradeNatMidRangeURL = "http://100.100.0.1:8765"
     private let carrierGradeNatUpperBoundURL = "http://100.127.255.254:8765"
+    private let tailscaleHTTPSURL = "https://100.119.200.69:8781"
     private let publicHTTPURLNearCarrierGradeNatRange = "http://100.128.0.1:8765"
     private let publicHTTPURL = "http://203.0.113.10:8765"
     private let publicHTTPSURL = "https://203.0.113.10:8765"
@@ -20,6 +21,19 @@ struct CompanionBaseURLFilteringTests {
     private let bonjourURL = "http://looper.local:8765"
     private let duplicateBonjourURL = "http://LOOPER.local:8765/"
 
+    @Test("Physical policy permits Tailscale CGNAT HTTP URLs")
+    func physicalPolicyPermitsTailscaleCGNATHTTPURLs() throws {
+        let urls = try [
+            carrierGradeNatLowerBoundURL,
+            carrierGradeNatMidRangeURL,
+            carrierGradeNatUpperBoundURL
+        ].map { value in
+            try #require(URL(string: value))
+        }
+
+        #expect(urls.allSatisfy(CompanionBaseURLRouting.isAttemptableOnPhysicalDevice))
+    }
+
     @Test("Physical device permits Tailscale CGNAT HTTP URLs")
     func physicalDevicePermitsTailscaleCGNATHTTPURLs() throws {
         #if targetEnvironment(simulator)
@@ -31,12 +45,19 @@ struct CompanionBaseURLFilteringTests {
                 carrierGradeNatUpperBoundURL
             )
 
-            #expect(urls.map(\.host) == [
-                "100.64.0.1",
-                "100.100.0.1",
-                "100.127.255.254",
+            #expect(urls.map(\.absoluteString) == [
+                carrierGradeNatLowerBoundURL,
+                carrierGradeNatMidRangeURL,
+                carrierGradeNatUpperBoundURL
             ])
         #endif
+    }
+
+    @Test("Physical device permits Tailscale HTTPS URLs")
+    func physicalDevicePermitsTailscaleHTTPSURLs() throws {
+        let urls = try attemptableURLs(tailscaleHTTPSURL)
+
+        #expect(urls.map(\.absoluteString) == [tailscaleHTTPSURL])
     }
 
     @Test("Physical device rejects public HTTP and loopback URLs")

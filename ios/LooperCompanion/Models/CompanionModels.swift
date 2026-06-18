@@ -974,8 +974,10 @@ struct CompanionServerHealth: Codable, Sendable {
 
 enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex
+    case claudeCode = "claude-code"
     case devin
     case grokBuild = "grok-build"
+    case zed
 
     static let defaultSurface = Self.codex
 
@@ -987,10 +989,14 @@ enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sen
         switch self {
         case .codex:
             return "Codex"
+        case .claudeCode:
+            return "Claude Code"
         case .devin:
             return "Devin"
         case .grokBuild:
             return "Grok Build"
+        case .zed:
+            return "Zed"
         }
     }
 }
@@ -1186,7 +1192,7 @@ struct CompletionCheckSummary: Codable, Identifiable, Hashable, Sendable {
     var commandCount: Int
 }
 
-/// Coding agent surface inferred on the Mac from cwd / transcript paths; icons are SF Symbols (native iOS assets).
+/// Coding agent surface inferred on the Mac from cwd / transcript paths.
 enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
     case unknown
     case codex
@@ -1196,6 +1202,7 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
     case superEngineering = "super-engineering"
     case openclaw
     case grokBuild = "grok-build"
+    case zed
 
     var displayTitle: String {
         switch self {
@@ -1215,6 +1222,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return "OpenClaw"
         case .grokBuild:
             return "Grok Build"
+        case .zed:
+            return "Zed"
         }
     }
 
@@ -1237,6 +1246,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return ["openclaw", "open claw", "claw"]
         case .grokBuild:
             return ["grok", "grok build", "xai"]
+        case .zed:
+            return ["zed", "zed acp", "zed external agents"]
         }
     }
 
@@ -1258,6 +1269,8 @@ enum AssistantClient: String, Codable, Sendable, CaseIterable, Hashable {
             return "pawprint.fill"
         case .grokBuild:
             return "sparkle"
+        case .zed:
+            return "bolt.square"
         }
     }
 }
@@ -1455,7 +1468,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     }
 
     var userFacingTags: [String] {
-        let rawSourceTags = Set(["vscode", "devin-desktop", "grok-build", source])
+        let rawSourceTags = Set(["vscode", "devin-desktop", "grok-build", "zed-agent-servers", source])
         return tags.filter { !rawSourceTags.contains($0) }
     }
 
@@ -1469,6 +1482,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
             return "Devin"
         case "grok-build":
             return "Grok Build"
+        case "zed":
+            return "Zed"
         case "unknown":
             return "Unknown"
         default:
@@ -1760,6 +1775,28 @@ struct GrokBuildStatus: Codable, Equatable, Sendable {
     }
 }
 
+struct DevinDesktopStatus: Codable, Equatable, Sendable {
+    var running: Bool
+    var installed: Bool
+    var acpAvailable: Bool
+    var registryExists: Bool
+    var registryAgentCount: Int
+    var enabledAgentCount: Int
+    var preferredAgentIds: [String]
+    var sessionCount: Int
+    var activeSessionCount: Int
+
+    var connectionTitle: String {
+        if running {
+            return "running"
+        }
+        if installed {
+            return "installed"
+        }
+        return "not installed"
+    }
+}
+
 struct MobileSnapshot: Codable, Sendable {
     var host: HostSummary
     var globalSettings: GlobalSettings
@@ -1767,6 +1804,7 @@ struct MobileSnapshot: Codable, Sendable {
     var surfaceSessions: [String: [SessionSummary]]
     var notifications: [NotificationDestination]
     var completionChecks: [CompletionCheckSummary]
+    var devinDesktop: DevinDesktopStatus?
     var grokBuild: GrokBuildStatus?
 
     init(
@@ -1776,6 +1814,7 @@ struct MobileSnapshot: Codable, Sendable {
         surfaceSessions: [String: [SessionSummary]] = [:],
         notifications: [NotificationDestination],
         completionChecks: [CompletionCheckSummary],
+        devinDesktop: DevinDesktopStatus? = nil,
         grokBuild: GrokBuildStatus? = nil
     ) {
         self.host = host
@@ -1784,6 +1823,7 @@ struct MobileSnapshot: Codable, Sendable {
         self.surfaceSessions = surfaceSessions
         self.notifications = notifications
         self.completionChecks = completionChecks
+        self.devinDesktop = devinDesktop
         self.grokBuild = grokBuild
     }
 
@@ -1794,6 +1834,7 @@ struct MobileSnapshot: Codable, Sendable {
         case surfaceSessions
         case notifications
         case completionChecks
+        case devinDesktop
         case grokBuild
     }
 
@@ -1814,6 +1855,7 @@ struct MobileSnapshot: Codable, Sendable {
             [CompletionCheckSummary].self,
             forKey: .completionChecks
         ) ?? []
+        devinDesktop = try container.decodeIfPresent(DevinDesktopStatus.self, forKey: .devinDesktop)
         grokBuild = try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild)
     }
 

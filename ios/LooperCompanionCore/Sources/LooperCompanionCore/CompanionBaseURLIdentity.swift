@@ -17,6 +17,13 @@ enum CompanionBaseURLIdentity {
         return components.string ?? baseURL.absoluteString
     }
 
+    static func unique(_ baseURLs: [URL], including shouldInclude: (URL) -> Bool = { _ in true }) -> [URL] {
+        var seen = Set<String>()
+        return baseURLs.filter { baseURL in
+            shouldInclude(baseURL) && seen.insert(key(for: baseURL)).inserted
+        }
+    }
+
     private static func normalizedPath(_ path: String) -> String {
         let trimmedPath = path.trimmingCharacters(in: pathTrimCharacters)
         guard !trimmedPath.isEmpty else {

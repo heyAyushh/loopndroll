@@ -10,7 +10,8 @@ pub(super) const DEFAULT_SCOPE: &str = "global";
 pub(super) const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 
 const LOOP_SCOPES: &[&str] = &["global", "per-task"];
-pub(crate) const ASSISTANT_SURFACES: &[&str] = &["codex", "devin", "grok-build"];
+pub(crate) const ASSISTANT_SURFACES: &[&str] =
+    &["codex", "claude-code", "devin", "grok-build", "zed"];
 const NANOS_PER_MILLISECOND: i128 = 1_000_000;
 
 pub(super) fn normalized_preset(preset: Option<&str>) -> MobileSessionResult<Option<String>> {

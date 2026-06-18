@@ -17,6 +17,10 @@ struct AssistantClientGlyph: View {
             ClaudeLogoMark()
                 .frame(width: Self.size, height: Self.size)
                 .accessibilityLabel(client.displayTitle)
+        } else if client == .zed {
+            ZedLogoMark()
+                .frame(width: Self.size, height: Self.size)
+                .accessibilityLabel(client.displayTitle)
         } else if let surface = CompanionAssistantSurface(assistantClient: client) {
             AssistantSurfaceLogoMark(surface: surface)
                 .frame(width: Self.size, height: Self.size)
@@ -64,15 +68,57 @@ struct AssistantSurfacePicker: View {
     var isDisabled = false
 
     var body: some View {
-        Picker("Assistant", selection: $selection) {
-            ForEach(CompanionAssistantSurface.allCases) { surface in
-                Text(surface.displayTitle)
-                    .tag(surface)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
+                ForEach(CompanionAssistantSurface.allCases) { surface in
+                    Button {
+                        selection = surface
+                    } label: {
+                        AssistantSurfacePickerItem(
+                            surface: surface,
+                            isSelected: selection == surface
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isDisabled)
+                    .accessibilityLabel(surface.displayTitle)
+                    .accessibilityAddTraits(selection == surface ? .isSelected : [])
+                }
             }
+            .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
         }
-        .pickerStyle(.segmented)
         .disabled(isDisabled)
         .accessibilityLabel("Assistant")
+    }
+}
+
+private struct AssistantSurfacePickerItem: View {
+    let surface: CompanionAssistantSurface
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: AssistantSurfacePickerMetrics.contentSpacing) {
+            AssistantSurfaceLogoMark(surface: surface)
+                .frame(
+                    width: AssistantSurfacePickerMetrics.iconSize,
+                    height: AssistantSurfacePickerMetrics.iconSize
+                )
+
+            Text(surface.displayTitle)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, AssistantSurfacePickerMetrics.horizontalPadding)
+        .frame(height: AssistantSurfacePickerMetrics.height)
+        .background(
+            Capsule()
+                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+        )
+        .overlay {
+            Capsule()
+                .strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(0.18))
+        }
+        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
     }
 }
 
@@ -86,10 +132,14 @@ struct AssistantSurfaceLogoMark: View {
                 monogram: "C",
                 gradientColors: AssistantSurfaceLogoPalette.codexGradient
             )
+        case .claudeCode:
+            ClaudeLogoMark()
         case .devin:
             DevinLogoMark()
         case .grokBuild:
             GrokLogoMark()
+        case .zed:
+            ZedLogoMark()
         }
     }
 }
@@ -120,6 +170,16 @@ private struct AssistantMonogramLogoMark: View {
                 .foregroundStyle(.white)
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct ZedLogoMark: View {
+    var body: some View {
+        Image(ZedLogoAsset.name)
+            .renderingMode(.original)
+            .resizable()
+            .scaledToFit()
+            .aspectRatio(1, contentMode: .fit)
     }
 }
 
@@ -206,12 +266,25 @@ private enum AssistantSurfaceLogoMetrics {
     static let fontSize: CGFloat = 13
 }
 
+private enum AssistantSurfacePickerMetrics {
+    static let itemSpacing: CGFloat = 6
+    static let contentSpacing: CGFloat = 5
+    static let verticalPadding: CGFloat = 2
+    static let horizontalPadding: CGFloat = 9
+    static let height: CGFloat = 32
+    static let iconSize: CGFloat = 18
+}
+
 private enum GrokLogoAsset {
     static let name = "GrokLogo"
 }
 
 private enum DevinLogoAsset {
     static let name = "DevinLogo"
+}
+
+private enum ZedLogoAsset {
+    static let name = "ZedLogo"
 }
 
 private enum DevinLogoPalette {
@@ -356,11 +429,15 @@ private extension CompanionAssistantSurface {
         switch assistantClient {
         case .codex:
             self = .codex
+        case .claudeCode:
+            self = .claudeCode
         case .devin:
             self = .devin
         case .grokBuild:
             self = .grokBuild
-        case .unknown, .cursor, .claudeCode, .superEngineering, .openclaw:
+        case .zed:
+            self = .zed
+        case .unknown, .cursor, .superEngineering, .openclaw:
             return nil
         }
     }

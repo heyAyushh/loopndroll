@@ -166,6 +166,9 @@ struct SessionsScreen: View {
         if model.selectedAssistantSurface == .grokBuild, let grokBuild = model.snapshot?.grokBuild {
             return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
         }
+        if model.selectedAssistantSurface == .devin, let devinDesktop = model.snapshot?.devinDesktop {
+            return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.activeSessionCount) active / \(devinDesktop.sessionCount) total · \(devinDesktop.enabledAgentCount) agents"
+        }
 
         return model.connectivitySummary
     }
@@ -285,9 +288,16 @@ struct SessionsScreen: View {
         }
 
         switch model.selectedAssistantSurface {
+        case .claudeCode:
+            return "Claude Code sessions appear here separately from Codex when Claude is running on your Mac."
+        case .zed:
+            return "Zed ACP targets are read-only in Looper. Zed session import is not available yet."
         case .grokBuild:
             return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
         case .devin:
+            if let devinDesktop = model.snapshot?.devinDesktop {
+                return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.enabledAgentCount) enabled agents · \(devinDesktop.sessionCount) indexed sessions."
+            }
             return "Devin Desktop sessions appear here when Devin is running on your Mac."
         case .codex:
             return model.connectivitySummary
@@ -298,6 +308,10 @@ struct SessionsScreen: View {
         switch model.connectionState {
         case .connected:
             switch model.selectedAssistantSurface {
+            case .claudeCode:
+                return "No Claude Code Sessions"
+            case .zed:
+                return "No Zed Sessions"
             case .grokBuild:
                 return "No Grok Build Sessions"
             case .devin:

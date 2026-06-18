@@ -22,8 +22,6 @@ public enum CompanionBaseURLRoute: Equatable, Sendable {
 }
 
 public enum CompanionBaseURLRouting {
-    private static let httpScheme = "http"
-    private static let httpsScheme = "https"
     private static let localHostnameSuffix = ".local"
     private static let tailscaleMagicDNSSuffix = ".ts.net"
     private static let tailscaleLegacyMagicDNSSuffix = ".beta.tailscale.net"
@@ -47,7 +45,7 @@ public enum CompanionBaseURLRouting {
     ]
 
     public static func route(for baseURL: URL) -> CompanionBaseURLRoute {
-        guard let host = normalizedHost(for: baseURL) else {
+        guard let host = baseURL.companionNormalizedHost else {
             return .unsupported
         }
 
@@ -63,7 +61,7 @@ public enum CompanionBaseURLRouting {
             return .lan
         }
 
-        guard baseURL.scheme?.lowercased() == httpScheme || baseURL.scheme?.lowercased() == httpsScheme else {
+        guard baseURL.usesSupportedCompanionHTTPScheme else {
             return .unsupported
         }
 
@@ -75,10 +73,11 @@ public enum CompanionBaseURLRouting {
         case .loopback, .unsupported:
             return false
         case .remote:
-            return baseURL.scheme?.lowercased() == httpsScheme
-        case .tailscale, .lan:
-            return baseURL.scheme?.lowercased() == httpScheme ||
-                baseURL.scheme?.lowercased() == httpsScheme
+            return baseURL.usesCompanionHTTPS
+        case .tailscale:
+            return baseURL.usesSupportedCompanionHTTPScheme
+        case .lan:
+            return baseURL.usesSupportedCompanionHTTPScheme
         }
     }
 
@@ -163,16 +162,6 @@ public enum CompanionBaseURLRouting {
         case .unsupported:
             return 4
         }
-    }
-
-    private static func normalizedHost(for baseURL: URL) -> String? {
-        guard let host = baseURL.host?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
-              !host.isEmpty
-        else {
-            return nil
-        }
-
-        return host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
     }
 
     private static func isTailscaleHost(_ host: String) -> Bool {

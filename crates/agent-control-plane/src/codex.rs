@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{Date, Month, PrimitiveDateTime, Time};
@@ -804,22 +804,7 @@ fn read_dynamic_tools(connection: &Connection) -> Result<BTreeMap<String, Vec<Dy
          from thread_dynamic_tools
          order by thread_id, position",
     )?;
-    let rows = statement.query_map([], |row| {
-        let name: String = row.get(1)?;
-        let namespace: Option<String> = row.get(2)?;
-        let description: Option<String> = row.get(3)?;
-        let defer_loading: Option<i64> = row.get(4)?;
-        Ok((
-            row.get::<_, String>(0)?,
-            DynamicTool {
-                classification: classify_tool(&name, namespace.as_deref()),
-                name,
-                namespace,
-                description,
-                defer_loading: defer_loading.unwrap_or(0) != 0,
-            },
-        ))
-    })?;
+    let rows = statement.query_map([], dynamic_tool_from_row)?;
     let mut tools_by_thread: BTreeMap<String, Vec<DynamicTool>> = BTreeMap::new();
     for row in rows {
         let (thread_id, tool) = row?;
@@ -843,22 +828,7 @@ fn read_dynamic_tools_for_threads(
          order by thread_id, position"
     );
     let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map(params_from_iter(thread_ids.iter()), |row| {
-        let name: String = row.get(1)?;
-        let namespace: Option<String> = row.get(2)?;
-        let description: Option<String> = row.get(3)?;
-        let defer_loading: Option<i64> = row.get(4)?;
-        Ok((
-            row.get::<_, String>(0)?,
-            DynamicTool {
-                classification: classify_tool(&name, namespace.as_deref()),
-                name,
-                namespace,
-                description,
-                defer_loading: defer_loading.unwrap_or(0) != 0,
-            },
-        ))
-    })?;
+    let rows = statement.query_map(params_from_iter(thread_ids.iter()), dynamic_tool_from_row)?;
     let mut tools_by_thread: BTreeMap<String, Vec<DynamicTool>> = BTreeMap::new();
     for row in rows {
         let (thread_id, tool) = row?;
@@ -876,13 +846,7 @@ fn read_spawn_edges(connection: &Connection) -> Result<Vec<SpawnEdge>> {
          from thread_spawn_edges
          order by parent_thread_id, child_thread_id",
     )?;
-    let rows = statement.query_map([], |row| {
-        Ok(SpawnEdge {
-            parent_thread_id: row.get(0)?,
-            child_thread_id: row.get(1)?,
-            status: row.get(2)?,
-        })
-    })?;
+    let rows = statement.query_map([], spawn_edge_from_row)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
@@ -943,14 +907,33 @@ fn read_spawn_edges_matching_column(
         quoted_identifier(column)
     );
     let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map(params_from_iter(thread_ids.iter()), |row| {
-        Ok(SpawnEdge {
-            parent_thread_id: row.get(0)?,
-            child_thread_id: row.get(1)?,
-            status: row.get(2)?,
-        })
-    })?;
+    let rows = statement.query_map(params_from_iter(thread_ids.iter()), spawn_edge_from_row)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn dynamic_tool_from_row(row: &Row<'_>) -> rusqlite::Result<(String, DynamicTool)> {
+    let name: String = row.get(1)?;
+    let namespace: Option<String> = row.get(2)?;
+    let description: Option<String> = row.get(3)?;
+    let defer_loading: Option<i64> = row.get(4)?;
+    Ok((
+        row.get::<_, String>(0)?,
+        DynamicTool {
+            classification: classify_tool(&name, namespace.as_deref()),
+            name,
+            namespace,
+            description,
+            defer_loading: defer_loading.unwrap_or(0) != 0,
+        },
+    ))
+}
+
+fn spawn_edge_from_row(row: &Row<'_>) -> rusqlite::Result<SpawnEdge> {
+    Ok(SpawnEdge {
+        parent_thread_id: row.get(0)?,
+        child_thread_id: row.get(1)?,
+        status: row.get(2)?,
+    })
 }
 
 fn sql_placeholders(count: usize) -> String {

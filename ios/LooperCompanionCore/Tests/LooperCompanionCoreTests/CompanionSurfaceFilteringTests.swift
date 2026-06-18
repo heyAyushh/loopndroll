@@ -7,8 +7,24 @@ struct CompanionSurfaceFilteringTests {
     func codexSurfaceFiltersAssistantClients() {
         #expect(CompanionSurfaceFiltering.matches(assistantClient: "codex", surface: "codex"))
         #expect(CompanionSurfaceFiltering.matches(assistantClient: "cursor", surface: "codex"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "claude-code", surface: "codex"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "zed", surface: "codex"))
         #expect(!CompanionSurfaceFiltering.matches(assistantClient: "devin", surface: "codex"))
         #expect(!CompanionSurfaceFiltering.matches(assistantClient: "grok-build", surface: "codex"))
+    }
+
+    @Test("Claude Code surface only shows Claude Code sessions")
+    func claudeCodeSurfaceFiltersAssistantClients() {
+        #expect(CompanionSurfaceFiltering.matches(assistantClient: "claude-code", surface: "claude-code"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "codex", surface: "claude-code"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "zed", surface: "claude-code"))
+    }
+
+    @Test("Zed surface only shows Zed sessions")
+    func zedSurfaceFiltersAssistantClients() {
+        #expect(CompanionSurfaceFiltering.matches(assistantClient: "zed", surface: "zed"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "codex", surface: "zed"))
+        #expect(!CompanionSurfaceFiltering.matches(assistantClient: "claude-code", surface: "zed"))
     }
 
     @Test("Devin surface only shows Devin sessions")
@@ -81,6 +97,15 @@ struct CompanionSurfaceFilteringTests {
                 agentPath: nil
             ) == "devin"
         )
+        #expect(
+            CompanionSurfaceFiltering.inferAssistantClient(
+                transcriptPath: "/Users/test/.zed/sessions/thread.jsonl",
+                cwd: "/Users/test/project",
+                source: "zed-agent-servers",
+                originator: "Zed ACP",
+                agentPath: nil
+            ) == "zed"
+        )
     }
 
     @Test("Path-based surface filtering mirrors server rules")
@@ -112,6 +137,16 @@ struct CompanionSurfaceFilteringTests {
                 source: "vscode",
                 originator: "Claude Code",
                 agentPath: nil,
+                surface: "claude-code"
+            )
+        )
+        #expect(
+            !CompanionSurfaceFiltering.sessionMatchesSurface(
+                transcriptPath: "/Users/test/.codex/sessions/claude-thread.jsonl",
+                cwd: nil,
+                source: "vscode",
+                originator: "Claude Code",
+                agentPath: nil,
                 surface: "codex"
             )
         )
@@ -143,6 +178,26 @@ struct CompanionSurfaceFilteringTests {
                 originator: "Codex Desktop",
                 agentPath: nil,
                 surface: "devin"
+            )
+        )
+        #expect(
+            CompanionSurfaceFiltering.sessionMatchesSurface(
+                transcriptPath: "/Users/test/.zed/sessions/zed-thread.jsonl",
+                cwd: nil,
+                source: "zed-agent-servers",
+                originator: "Zed ACP",
+                agentPath: nil,
+                surface: "zed"
+            )
+        )
+        #expect(
+            !CompanionSurfaceFiltering.sessionMatchesSurface(
+                transcriptPath: "/Users/test/.zed/sessions/zed-thread.jsonl",
+                cwd: nil,
+                source: "zed-agent-servers",
+                originator: "Zed ACP",
+                agentPath: nil,
+                surface: "codex"
             )
         )
     }

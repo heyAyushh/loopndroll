@@ -16,6 +16,7 @@ struct MenuRefreshCoordinatorTests {
         #expect(results.map(\.succeeded) == [true, true])
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.healthCalls == 1)
     }
 
@@ -29,12 +30,14 @@ struct MenuRefreshCoordinatorTests {
 
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.healthCalls == 1)
 
         _ = await coordinator.refresh(force: true)
 
         #expect(client.snapshotCalls == 2)
         #expect(client.connectionCalls == 2)
+        #expect(client.acpHostCalls == 2)
         #expect(client.healthCalls == 2)
     }
 
@@ -42,6 +45,7 @@ struct MenuRefreshCoordinatorTests {
     func optionalRefreshDetailsFetchConcurrentlyAfterSnapshotSucceeds() async {
         let client = MenuRefreshRecordingClient(
             connectionDelay: .milliseconds(200),
+            acpHostDelay: .milliseconds(200),
             healthDelay: .milliseconds(200)
         )
         let coordinator = MenuRefreshCoordinator(client: client, freshReuseDuration: .zero)
@@ -54,6 +58,7 @@ struct MenuRefreshCoordinatorTests {
         #expect(start.duration(to: clock.now) < .milliseconds(350))
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.healthCalls == 1)
     }
 
@@ -72,6 +77,21 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.error == nil)
     }
 
+    @Test("ACP host failure keeps successful snapshot")
+    func acpHostFailureKeepsSuccessfulSnapshot() async {
+        let client = MenuRefreshRecordingClient(
+            acpHostResult: .failure(ControlPlaneClientError.invalidResponse)
+        )
+        let coordinator = MenuRefreshCoordinator(client: client, freshReuseDuration: .zero)
+
+        let result = await coordinator.refresh(force: true)
+
+        #expect(result.succeeded)
+        #expect(result.snapshot != nil)
+        #expect(result.acpClientHosts == nil)
+        #expect(result.error == nil)
+    }
+
     @Test("connection failure keeps successful snapshot")
     func connectionFailureKeepsSuccessfulSnapshot() async {
         let client = MenuRefreshRecordingClient(
@@ -84,6 +104,7 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.succeeded)
         #expect(result.snapshot != nil)
         #expect(result.connections == nil)
+        #expect(result.acpClientHosts != nil)
         #expect(result.error == nil)
     }
 
@@ -101,6 +122,7 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.mobileHealth == nil)
         #expect(result.error?.message.contains("timeout") == true)
         #expect(client.connectionCalls == 0)
+        #expect(client.acpHostCalls == 0)
         #expect(client.healthCalls == 0)
     }
 
@@ -153,26 +175,33 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
     private let lock = NSLock()
     private let snapshotDelay: Duration
     private let connectionDelay: Duration
+    private let acpHostDelay: Duration
     private let healthDelay: Duration
     private let connectionResult: Result<DesktopConnectionsResponse, Error>
+    private let acpHostResult: Result<AcpClientHostsResponse, Error>
     private let healthResult: Result<MobileHealthResponse, Error>
     private var recordedSnapshotCalls = 0
     private var recordedConnectionCalls = 0
+    private var recordedAcpHostCalls = 0
     private var recordedHealthCalls = 0
     private var recordedSnapshotResultOverride: Result<DesktopSnapshotResponse, Error>?
 
     init(
         snapshotDelay: Duration = .zero,
         connectionDelay: Duration = .zero,
+        acpHostDelay: Duration = .zero,
         healthDelay: Duration = .zero,
         snapshotResult: Result<DesktopSnapshotResponse, Error>? = nil,
         connectionResult: Result<DesktopConnectionsResponse, Error>? = nil,
+        acpHostResult: Result<AcpClientHostsResponse, Error>? = nil,
         healthResult: Result<MobileHealthResponse, Error>? = nil
     ) {
         self.snapshotDelay = snapshotDelay
         self.connectionDelay = connectionDelay
+        self.acpHostDelay = acpHostDelay
         self.healthDelay = healthDelay
         self.connectionResult = connectionResult ?? .success(Self.desktopConnections())
+        self.acpHostResult = acpHostResult ?? .success(Self.acpClientHosts())
         self.healthResult = healthResult ?? .success(Self.mobileHealth())
         self.recordedSnapshotResultOverride = snapshotResult
     }
@@ -183,6 +212,10 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
 
     var connectionCalls: Int {
         lock.withLock { recordedConnectionCalls }
+    }
+
+    var acpHostCalls: Int {
+        lock.withLock { recordedAcpHostCalls }
     }
 
     var healthCalls: Int {
@@ -228,6 +261,14 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
         return try connectionResult.get()
     }
 
+    func fetchAcpClientHosts() async throws -> AcpClientHostsResponse {
+        lock.withLock {
+            recordedAcpHostCalls += 1
+        }
+        try? await Task.sleep(for: acpHostDelay)
+        return try acpHostResult.get()
+    }
+
     func fetchMobileHealth() async throws -> MobileHealthResponse {
         lock.withLock {
             recordedHealthCalls += 1
@@ -266,6 +307,32 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
                     subtitle: nil,
                     detail: "managed hooks"
                 )
+            ]
+        )
+    }
+
+    static func acpClientHosts() -> AcpClientHostsResponse {
+        AcpClientHostsResponse(
+            hosts: [
+                AcpClientHost(
+                    id: "zed",
+                    label: "Zed",
+                    running: true,
+                    installed: true,
+                    registry: AcpClientHostRegistry(
+                        path: "/Users/test/.zed/settings.json",
+                        exists: true,
+                        version: nil,
+                        agentCount: 1
+                    ),
+                    agents: [],
+                    sessions: [],
+                    actions: [],
+                    limitations: [
+                        "Read-only: Zed manages External Agent install, auth, and runtime inside Zed.",
+                    ],
+                    runtime: nil
+                ),
             ]
         )
     }

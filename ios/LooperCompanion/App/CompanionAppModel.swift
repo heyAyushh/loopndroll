@@ -727,7 +727,8 @@ final class CompanionAppModel {
             reached: resolvedHealth.reachedBaseURL,
             advertised: discoveredBaseURLs,
             existing: currentConnection.baseURLs,
-            preference: CompanionConfiguration.connectionRoutePreference()
+            preference: CompanionConfiguration.connectionRoutePreference(),
+            preservingExistingPorts: true
         )
         guard nextBaseURLs.map(\.absoluteString) != currentConnection.baseURLs.map(\.absoluteString) else {
             return
@@ -1522,7 +1523,7 @@ final class CompanionAppModel {
         let spotlightIndexer = spotlightIndexer
         let spotlightSyncWorker = spotlightSyncWorker
 
-        Task.detached(priority: .utility) {
+        Task { @MainActor in
             await spotlightSyncWorker.syncSessions(
                 indexer: spotlightIndexer,
                 rebuildsIndex: shouldRebuildIndex,
@@ -1547,7 +1548,7 @@ final class CompanionAppModel {
         let spotlightIndexer = spotlightIndexer
         let spotlightSyncWorker = spotlightSyncWorker
 
-        Task.detached(priority: .utility) {
+        Task { @MainActor in
             await spotlightSyncWorker.clearSessions(indexer: spotlightIndexer)
         }
     }
@@ -1677,11 +1678,15 @@ final class CompanionAppModel {
 }
 
 private actor SpotlightIndexSyncWorker {
+    private var currentTask: Task<Void, Never>?
+
+    deinit {
+        currentTask?.cancel()
+    }
+
     func clearSessions(indexer: SessionSpotlightIndexer) async {
-        do {
+        schedule {
             try await indexer.deleteAllSessions()
-        } catch {
-            print("Failed to clear cached sessions from Spotlight: \(error)")
         }
     }
 
@@ -1692,19 +1697,32 @@ private actor SpotlightIndexSyncWorker {
         changedSessions: [SessionSummary],
         indexableSessions: [SessionSummary]
     ) async {
-        do {
+        schedule {
             if rebuildsIndex {
                 try await indexer.deleteAllSessions()
             } else if !removedSearchableIDs.isEmpty {
                 try await indexer.deleteSessions(withIDs: removedSearchableIDs)
             }
+            try Task.checkCancellation()
 
             let sessionsToIndex = rebuildsIndex ? indexableSessions : changedSessions
             if !sessionsToIndex.isEmpty {
                 try await indexer.indexSessions(sessionsToIndex)
             }
-        } catch {
-            print("Failed to index sessions to Spotlight: \(error)")
+        }
+    }
+
+    private func schedule(_ operation: @escaping @Sendable () async throws -> Void) {
+        currentTask?.cancel()
+        currentTask = Task.detached(priority: .utility) {
+            do {
+                try Task.checkCancellation()
+                try await operation()
+                try Task.checkCancellation()
+            } catch is CancellationError {
+            } catch {
+                print("Failed to update Spotlight sessions: \(error)")
+            }
         }
     }
 }

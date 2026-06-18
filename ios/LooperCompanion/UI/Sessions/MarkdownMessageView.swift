@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum MessageRenderBlock: Identifiable {
-    case markdown(id: UUID, text: String)
-    case code(id: UUID, language: String?, text: String)
+    case markdown(id: Int, text: AttributedString)
+    case code(id: Int, language: String?, text: String)
 
-    var id: UUID {
+    var id: Int {
         switch self {
         case let .markdown(id, _), let .code(id, _, _):
             return id
@@ -13,22 +13,30 @@ enum MessageRenderBlock: Identifiable {
 }
 
 enum MessageRenderBlockParser {
+    private static let initialBlockID = 0
+
     static func parse(_ markdown: String) -> [MessageRenderBlock] {
         var blocks: [MessageRenderBlock] = []
         var markdownLines: [String] = []
         var codeLines: [String] = []
         var codeLanguage: String?
         var isInCodeBlock = false
+        var nextBlockID = initialBlockID
 
         for line in markdown.components(separatedBy: .newlines) {
             if let fenceLanguage = fenceLanguage(from: line) {
                 if isInCodeBlock {
-                    appendCodeBlock(&blocks, language: codeLanguage, lines: codeLines)
+                    appendCodeBlock(
+                        &blocks,
+                        id: &nextBlockID,
+                        language: codeLanguage,
+                        lines: codeLines
+                    )
                     codeLines = []
                     codeLanguage = nil
                     isInCodeBlock = false
                 } else {
-                    appendMarkdownBlock(&blocks, lines: markdownLines)
+                    appendMarkdownBlock(&blocks, id: &nextBlockID, lines: markdownLines)
                     markdownLines = []
                     codeLanguage = fenceLanguage
                     isInCodeBlock = true
@@ -44,9 +52,9 @@ enum MessageRenderBlockParser {
         }
 
         if isInCodeBlock {
-            appendCodeBlock(&blocks, language: codeLanguage, lines: codeLines)
+            appendCodeBlock(&blocks, id: &nextBlockID, language: codeLanguage, lines: codeLines)
         } else {
-            appendMarkdownBlock(&blocks, lines: markdownLines)
+            appendMarkdownBlock(&blocks, id: &nextBlockID, lines: markdownLines)
         }
 
         return blocks
@@ -62,17 +70,23 @@ enum MessageRenderBlockParser {
         return language.isEmpty ? "" : language
     }
 
-    private static func appendMarkdownBlock(_ blocks: inout [MessageRenderBlock], lines: [String]) {
+    private static func appendMarkdownBlock(
+        _ blocks: inout [MessageRenderBlock],
+        id: inout Int,
+        lines: [String]
+    ) {
         let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
         }
 
-        blocks.append(.markdown(id: UUID(), text: text))
+        blocks.append(.markdown(id: id, text: renderedText(from: text)))
+        id += 1
     }
 
     private static func appendCodeBlock(
         _ blocks: inout [MessageRenderBlock],
+        id: inout Int,
         language: String?,
         lines: [String]
     ) {
@@ -81,15 +95,22 @@ enum MessageRenderBlockParser {
             return
         }
 
-        blocks.append(.code(id: UUID(), language: language, text: text))
+        blocks.append(.code(id: id, language: language, text: text))
+        id += 1
+    }
+
+    private static func renderedText(from markdown: String) -> AttributedString {
+        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }
 
 struct MarkdownMessageView: View {
     let markdown: String
+    private let blocks: [MessageRenderBlock]
 
-    private var blocks: [MessageRenderBlock] {
-        MessageRenderBlockParser.parse(markdown)
+    init(markdown: String) {
+        self.markdown = markdown
+        blocks = MessageRenderBlockParser.parse(markdown)
     }
 
     var body: some View {
@@ -97,7 +118,7 @@ struct MarkdownMessageView: View {
             ForEach(blocks) { block in
                 switch block {
                 case let .markdown(_, text):
-                    MarkdownTextBlock(markdown: text)
+                    MarkdownTextBlock(text: text)
                 case let .code(_, language, text):
                     CodeBlockView(language: language, code: text)
                 }
@@ -108,18 +129,14 @@ struct MarkdownMessageView: View {
 }
 
 private struct MarkdownTextBlock: View {
-    let markdown: String
+    let text: AttributedString
 
     var body: some View {
-        Text(renderedText)
+        Text(text)
             .font(.body)
             .foregroundStyle(.primary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var renderedText: AttributedString {
-        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }
 

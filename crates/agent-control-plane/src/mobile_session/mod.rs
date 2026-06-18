@@ -168,7 +168,7 @@ pub enum MobileSessionError {
     InvalidPreset,
     #[error("scope must be global or per-task")]
     InvalidScope,
-    #[error("assistant surface must be codex, devin, or grok-build")]
+    #[error("assistant surface must be codex, claude-code, devin, grok-build, or zed")]
     InvalidAssistantSurface,
     #[error("prompt is required")]
     PromptRequired,

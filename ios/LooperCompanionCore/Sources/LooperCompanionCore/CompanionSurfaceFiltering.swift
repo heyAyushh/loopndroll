@@ -2,19 +2,24 @@ public enum CompanionSurfaceFiltering {
     private static let codexSurfaceClients = [
         "codex",
         "cursor",
-        "claude-code",
         "super-engineering",
         "openclaw",
     ]
+    private static let claudeCodeSurfaceClients = ["claude-code"]
     private static let devinSurfaceClients = ["devin"]
     private static let grokBuildSurfaceClients = ["grok-build"]
+    private static let zedSurfaceClients = ["zed"]
 
     public static func matches(assistantClient: String, surface: String) -> Bool {
         switch surface {
+        case "claude-code":
+            return claudeCodeSurfaceClients.contains(assistantClient)
         case "devin":
             return devinSurfaceClients.contains(assistantClient)
         case "grok-build":
             return grokBuildSurfaceClients.contains(assistantClient)
+        case "zed":
+            return zedSurfaceClients.contains(assistantClient)
         default:
             return codexSurfaceClients.contains(assistantClient)
         }
@@ -74,6 +79,9 @@ public enum CompanionSurfaceFiltering {
         }
         if containsAny(pathHaystack, needles: ["openclaw", "open-claw"]) {
             return "openclaw"
+        }
+        if containsAny(pathHaystack, needles: ["/.zed/", "/applications/zed.app/", "zed acp", "zed-agent-servers", "zed.dev"]) {
+            return "zed"
         }
         if containsAny(pathHaystack, needles: ["/.codex/", ".codex/sessions"]) {
             return "codex"

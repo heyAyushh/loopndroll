@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -64,6 +64,30 @@ pub struct DevinSessionRecord {
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
     pub archived: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DevinSessionDiscovery {
+    /// Sessions that remain after dedupe, optional limit, and sorting.
+    pub sessions: Vec<DevinSessionRecord>,
+    /// Total discovered sessions before applying caller-supplied limits.
+    pub total_count: usize,
+    /// Count of non-archived discovered sessions before applying limits.
+    pub active_count: usize,
+    /// Count of archived discovered sessions before applying limits.
+    pub archived_count: usize,
+    /// Sanitized source-level discovery failures.
+    pub errors: Vec<DevinSessionDiscoveryError>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DevinSessionDiscoveryError {
+    /// Human-readable Devin source label.
+    pub source: String,
+    /// Stable machine-readable diagnostic code.
+    pub code: String,
+    /// Sanitized detail safe for desktop and mobile clients.
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,11 +150,53 @@ struct EventLogEntry {
 type EventLogIndex = BTreeMap<String, EventLogEntry>;
 
 pub fn discover_devin_sessions(home: &Path) -> Result<Vec<DevinSessionRecord>> {
+    Ok(discover_devin_session_records(home, None, true)?.sessions)
+}
+
+pub fn discover_devin_sessions_with_previews(home: &Path) -> Result<DevinSessionDiscovery> {
+    discover_devin_session_records(home, None, true)
+}
+
+pub fn discover_devin_sessions_without_previews(home: &Path) -> Result<DevinSessionDiscovery> {
+    discover_devin_session_records(home, None, false)
+}
+
+pub fn discover_recent_devin_sessions(home: &Path, limit: usize) -> Result<DevinSessionDiscovery> {
+    discover_devin_session_records(home, Some(limit), false)
+}
+
+pub fn discover_recent_devin_sessions_with_previews(
+    home: &Path,
+    limit: usize,
+) -> Result<DevinSessionDiscovery> {
+    discover_devin_session_records(home, Some(limit), true)
+}
+
+fn discover_devin_session_records(
+    home: &Path,
+    limit: Option<usize>,
+    include_assistant_previews: bool,
+) -> Result<DevinSessionDiscovery> {
     let mut sessions_by_id = BTreeMap::<String, DevinSessionRecord>::new();
+    let mut errors = Vec::<DevinSessionDiscoveryError>::new();
     for source in devin_session_sources() {
         let app_support_path = home.join(source.app_support_relative_path);
-        for session in discover_devin_sessions_for_source(&app_support_path, source.originator)? {
-            keep_newer_session(&mut sessions_by_id, session);
+        let source_sessions = discover_devin_sessions_for_source(
+            &app_support_path,
+            source.originator,
+            include_assistant_previews,
+        );
+        match source_sessions {
+            Ok(source_sessions) => {
+                for session in source_sessions {
+                    keep_newer_session(&mut sessions_by_id, session);
+                }
+            }
+            Err(error) => errors.push(DevinSessionDiscoveryError {
+                source: source.originator.to_owned(),
+                code: DEVIN_SESSION_SOURCE_UNAVAILABLE_CODE.to_owned(),
+                detail: sanitized_devin_session_discovery_detail(&error),
+            }),
         }
     }
 
@@ -142,7 +208,22 @@ pub fn discover_devin_sessions(home: &Path) -> Result<Vec<DevinSessionRecord>> {
             .cmp(&left.updated_at_ms.unwrap_or_default())
             .then_with(|| left.session_id.cmp(&right.session_id))
     });
-    Ok(sessions)
+    let total_count = sessions.len();
+    let active_count = sessions
+        .iter()
+        .filter(|session| session.is_active())
+        .count();
+    let archived_count = sessions.iter().filter(|session| session.archived).count();
+    if let Some(limit) = limit {
+        sessions.truncate(limit);
+    }
+    Ok(DevinSessionDiscovery {
+        sessions,
+        total_count,
+        active_count,
+        archived_count,
+        errors,
+    })
 }
 
 pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopThread {
@@ -293,6 +374,7 @@ fn devin_session_sources() -> [DevinSessionSource; 2] {
 fn discover_devin_sessions_for_source(
     app_support_path: &Path,
     originator: &str,
+    include_assistant_previews: bool,
 ) -> Result<Vec<DevinSessionRecord>> {
     let state_db_path = app_support_path
         .join(USER_RELATIVE_PATH)
@@ -318,9 +400,23 @@ fn discover_devin_sessions_for_source(
         .sessions
         .into_iter()
         .map(|session| {
-            session_record_from_metadata(session, &event_log_index, &events_path, originator)
+            session_record_from_metadata(
+                session,
+                &event_log_index,
+                &events_path,
+                originator,
+                include_assistant_previews,
+            )
         })
         .collect())
+}
+
+const DEVIN_SESSION_SOURCE_UNAVAILABLE_CODE: &str = "source-unavailable";
+const DEVIN_SESSION_SOURCE_UNAVAILABLE_DETAIL: &str =
+    "Unable to read Devin session metadata for this source.";
+
+fn sanitized_devin_session_discovery_detail(_error: &anyhow::Error) -> String {
+    DEVIN_SESSION_SOURCE_UNAVAILABLE_DETAIL.to_owned()
 }
 
 fn session_record_from_metadata(
@@ -328,6 +424,7 @@ fn session_record_from_metadata(
     event_log_index: &EventLogIndex,
     events_path: &Path,
     originator: &str,
+    include_assistant_preview: bool,
 ) -> DevinSessionRecord {
     let event_entry = event_log_index.get(&session.session_id);
     let transcript_path = event_entry
@@ -353,9 +450,13 @@ fn session_record_from_metadata(
         .get(IS_ARCHIVED_META_KEY)
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let assistant_preview = transcript_path
-        .as_deref()
-        .and_then(latest_assistant_message_from_event_log);
+    let assistant_preview = include_assistant_preview
+        .then(|| {
+            transcript_path
+                .as_deref()
+                .and_then(latest_assistant_message_from_event_log)
+        })
+        .flatten();
 
     DevinSessionRecord {
         thread_id: public_thread_id_for_metadata_session(&session.session_id, &session.provider_id),
@@ -405,18 +506,26 @@ fn latest_assistant_message_from_event_log(event_log_path: &Path) -> Option<Stri
     let mut latest_message_id = None;
 
     for (line_index, line) in reader.lines().map_while(Result::ok).enumerate() {
-        let value = serde_json::from_str::<Value>(&line).ok()?;
-        let notification = value.get("notification")?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(notification) = value.get("notification") else {
+            continue;
+        };
         if notification.get(SESSION_UPDATE_KEY).and_then(Value::as_str)
             != Some(AGENT_MESSAGE_CHUNK_UPDATE)
         {
             continue;
         }
-        let content = notification.get("content")?;
+        let Some(content) = notification.get("content") else {
+            continue;
+        };
         if content.get(CONTENT_TYPE_KEY).and_then(Value::as_str) != Some(TEXT_CONTENT_TYPE) {
             continue;
         }
-        let text = content.get(CONTENT_TEXT_KEY).and_then(Value::as_str)?;
+        let Some(text) = content.get(CONTENT_TEXT_KEY).and_then(Value::as_str) else {
+            continue;
+        };
         let message_id = streaming_message_id(notification)
             .unwrap_or_else(|| format!("{MESSAGE_ID_FALLBACK_PREFIX}-{line_index}"));
         messages_by_id
@@ -657,6 +766,17 @@ mod tests {
             desktop_thread.capabilities.assistant_kind,
             AssistantKind::Codex
         );
+
+        let recent = discover_recent_devin_sessions(home, 1).expect("recent sessions");
+        assert_eq!(recent.total_count, 2);
+        assert_eq!(recent.active_count, 0);
+        assert_eq!(recent.archived_count, 0);
+        assert_eq!(recent.sessions.len(), 1);
+        assert_eq!(
+            recent.sessions[0].thread_id,
+            "devin:devin-cli:brindle-cadet"
+        );
+        assert_eq!(recent.sessions[0].assistant_preview, None);
     }
 
     #[test]
@@ -696,6 +816,94 @@ mod tests {
         assert_eq!(sessions[0].originator, DEVIN_STABLE_ORIGINATOR);
         assert!(sessions[0].transcript_path.is_none());
         assert!(sessions[0].archived);
+    }
+
+    #[test]
+    fn devin_discovery_keeps_good_sources_when_one_source_fails() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let home = temp_dir.path();
+        let stable_state_db_path = home
+            .join(DEVIN_STABLE_APP_SUPPORT_RELATIVE_PATH)
+            .join(USER_RELATIVE_PATH)
+            .join(GLOBAL_STORAGE_RELATIVE_PATH)
+            .join(STATE_DB_FILE);
+        fs::create_dir_all(stable_state_db_path.parent().expect("stable parent"))
+            .expect("stable parent");
+        fs::write(&stable_state_db_path, "not sqlite").expect("invalid stable db");
+
+        let next_state_db_path = home
+            .join(DEVIN_NEXT_APP_SUPPORT_RELATIVE_PATH)
+            .join(USER_RELATIVE_PATH)
+            .join(GLOBAL_STORAGE_RELATIVE_PATH)
+            .join(STATE_DB_FILE);
+        fs::create_dir_all(next_state_db_path.parent().expect("next parent")).expect("next parent");
+        write_state_db(
+            &next_state_db_path,
+            serde_json::json!({
+                "sessions": [
+                    {
+                        "sessionId": "acp/devin-cli/good-source",
+                        "providerId": "devin-cli",
+                        "title": "Good source"
+                    }
+                ]
+            }),
+            serde_json::json!({}),
+        );
+
+        let discovery = discover_devin_sessions_with_previews(home).expect("discovery");
+
+        assert_eq!(discovery.sessions.len(), 1);
+        assert_eq!(
+            discovery.sessions[0].thread_id,
+            "devin:devin-cli:good-source"
+        );
+        assert_eq!(discovery.total_count, 1);
+        assert_eq!(discovery.errors.len(), 1);
+        assert_eq!(discovery.errors[0].source, DEVIN_STABLE_ORIGINATOR);
+        assert_eq!(
+            discovery.errors[0].code,
+            DEVIN_SESSION_SOURCE_UNAVAILABLE_CODE
+        );
+        assert_eq!(
+            discovery.errors[0].detail,
+            DEVIN_SESSION_SOURCE_UNAVAILABLE_DETAIL
+        );
+    }
+
+    #[test]
+    fn latest_assistant_message_ignores_malformed_event_log_lines() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let event_log_path = temp_dir.path().join("event.ndjson");
+        fs::write(
+            &event_log_path,
+            [
+                serde_json::json!({ "metadata": { "kind": "not-a-message" } }).to_string(),
+                "{ invalid json".to_owned(),
+                serde_json::json!({
+                    "notification": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "Still " },
+                        "_meta": { STREAMING_MESSAGE_ID_META_KEY: "assistant-1" }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "notification": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "works" },
+                        "_meta": { STREAMING_MESSAGE_ID_META_KEY: "assistant-1" }
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("event log");
+
+        let preview = latest_assistant_message_from_event_log(&event_log_path);
+
+        assert_eq!(preview.as_deref(), Some("Still works"));
     }
 
     #[test]

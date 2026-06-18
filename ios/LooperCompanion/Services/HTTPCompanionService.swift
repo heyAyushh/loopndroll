@@ -7,6 +7,60 @@ private struct HTTPCompanionResponseData: Sendable {
     let baseURL: URL
 }
 
+// Race events stay internal to the task group so transport failures can be tried against the
+// next route without throwing out of the structured-concurrency scope.
+private enum HTTPCompanionBaseURLRaceEvent {
+    case response(Result<HTTPCompanionResponseData, Error>)
+    case fallbackTimer(generation: Int)
+}
+
+private struct HTTPCompanionBaseURLRaceState {
+    private let candidates: [CompanionBaseURLRaceCandidate]
+    private(set) var nextCandidateIndex = 0
+    private(set) var inFlightRequestCount = 0
+    private(set) var timerGeneration = 0
+
+    init(candidates: [CompanionBaseURLRaceCandidate]) {
+        self.candidates = candidates
+    }
+
+    var hasRemainingCandidates: Bool {
+        nextCandidateIndex < candidates.count
+    }
+
+    var shouldKeepWaiting: Bool {
+        inFlightRequestCount > 0 || hasRemainingCandidates
+    }
+
+    mutating func nextRequestCandidate() -> CompanionBaseURLRaceCandidate {
+        let candidate = candidates[nextCandidateIndex]
+        nextCandidateIndex += 1
+        inFlightRequestCount += 1
+        return candidate
+    }
+
+    mutating func nextFallbackTimer() -> (generation: Int, delay: Duration)? {
+        guard hasRemainingCandidates else {
+            return nil
+        }
+
+        timerGeneration += 1
+        return (timerGeneration, candidates[nextCandidateIndex].delay)
+    }
+
+    mutating func ignorePendingFallbackTimer() {
+        timerGeneration += 1
+    }
+
+    mutating func finishFailedRequest() {
+        inFlightRequestCount -= 1
+    }
+
+    func acceptsFallbackTimer(generation: Int) -> Bool {
+        generation == timerGeneration && hasRemainingCandidates
+    }
+}
+
 struct HTTPCompanionService: CompanionService {
     private static let healthPath = "/api/mobile/health"
     private static let snapshotPath = "/api/mobile/snapshot"
@@ -287,7 +341,7 @@ struct HTTPCompanionService: CompanionService {
 
         if method == .get {
             return try await firstSuccessfulGetData(
-                baseURLs: candidateBaseURLs,
+                candidates: CompanionBaseURLRacePlan.candidates(for: resolvedBaseURLs),
                 path: path,
                 includesAuthentication: includesAuthentication
             )
@@ -459,33 +513,90 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func firstSuccessfulGetData(
-        baseURLs: [URL],
+        candidates: [CompanionBaseURLRaceCandidate],
         path: String,
         includesAuthentication: Bool
     ) async throws -> HTTPCompanionResponseData {
-        try await withThrowingTaskGroup(of: HTTPCompanionResponseData.self) { group in
-            for baseURL in baseURLs {
+        guard !candidates.isEmpty else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+
+        return try await withThrowingTaskGroup(of: HTTPCompanionBaseURLRaceEvent.self) { group in
+            var raceState = HTTPCompanionBaseURLRaceState(candidates: candidates)
+            var lastError: Error?
+
+            func enqueueNextRequest() {
+                let candidate = raceState.nextRequestCandidate()
                 group.addTask {
-                    try await responseData(
-                        baseURL: baseURL,
-                        path: path,
-                        method: HTTPMethod.get,
-                        includesAuthentication: includesAuthentication
-                    )
+                    do {
+                        try Task.checkCancellation()
+                        let response = try await responseData(
+                            baseURL: candidate.baseURL,
+                            path: path,
+                            method: HTTPMethod.get,
+                            includesAuthentication: includesAuthentication
+                        )
+                        try Task.checkCancellation()
+                        return .response(.success(response))
+                    } catch {
+                        if isCancellationError(error) {
+                            throw error
+                        }
+                        return .response(.failure(error))
+                    }
                 }
             }
 
-            var lastError: Error?
-            while let result = await group.nextResult() {
-                switch result {
-                case let .success(response):
+            func enqueueFallbackTimerIfNeeded() {
+                guard let timer = raceState.nextFallbackTimer() else {
+                    return
+                }
+
+                group.addTask {
+                    if timer.delay != .zero {
+                        try await Task.sleep(for: timer.delay)
+                    }
+                    try Task.checkCancellation()
+                    return .fallbackTimer(generation: timer.generation)
+                }
+            }
+
+            enqueueNextRequest()
+            enqueueFallbackTimerIfNeeded()
+
+            while raceState.shouldKeepWaiting {
+                guard let event = try await group.next() else {
+                    break
+                }
+
+                switch event {
+                case let .response(.success(response)):
                     group.cancelAll()
                     return response
-                case let .failure(error):
+
+                case let .response(.failure(error)):
+                    raceState.finishFailedRequest()
                     lastError = error
+
+                    guard raceState.inFlightRequestCount == 0, raceState.hasRemainingCandidates else {
+                        continue
+                    }
+
+                    raceState.ignorePendingFallbackTimer()
+                    enqueueNextRequest()
+                    enqueueFallbackTimerIfNeeded()
+
+                case let .fallbackTimer(generation):
+                    guard raceState.acceptsFallbackTimer(generation: generation) else {
+                        continue
+                    }
+
+                    enqueueNextRequest()
+                    enqueueFallbackTimerIfNeeded()
                 }
             }
 
+            group.cancelAll()
             throw lastError ?? HTTPCompanionServiceError.invalidResponse
         }
     }

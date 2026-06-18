@@ -156,11 +156,15 @@ struct SessionSearchableItem {
 private extension AssistantClient {
     var spotlightAssistantSurface: CompanionAssistantSurface {
         switch self {
+        case .claudeCode:
+            return .claudeCode
         case .devin:
             return .devin
         case .grokBuild:
             return .grokBuild
-        case .unknown, .codex, .cursor, .claudeCode, .superEngineering, .openclaw:
+        case .zed:
+            return .zed
+        case .unknown, .codex, .cursor, .superEngineering, .openclaw:
             return .codex
         }
     }

@@ -7,8 +7,12 @@ struct CompanionBaseURLSelectionTests {
     private let reachedBonjourURL = "http://looper.local:8765"
     private let advertisedLANURL = "http://192.168.2.10:8765"
     private let advertisedTailscaleURL = "http://100.95.2.4:8765"
+    private let advertisedLANPinnedPortURL = "http://192.168.2.10:8781"
+    private let advertisedTailscalePinnedPortURL = "http://100.95.2.4:8781"
+    private let staleReachedURL = "http://192.168.2.10:8765"
     private let advertisedMagicDNSURL = "http://ayushs-macbook-pro.tail62d9a8.ts.net:8765"
     private let advertisedRemoteURL = "https://looper.example.test"
+    private let pinnedConfiguredURL = "http://192.168.1.26:8781"
     private let staleConfiguredURL = "http://198.51.100.20:8765"
     private let normalizedReachedURL = "http://LOOPER.local:8765/"
     private let normalizedAdvertisedURL = "http://looper.local:8765"
@@ -114,6 +118,43 @@ struct CompanionBaseURLSelectionTests {
             advertisedLANURL,
             advertisedTailscaleURL,
             advertisedRemoteURL,
+        ])
+    }
+
+    @Test("Health discovery preserves configured server ports")
+    func healthDiscoveryPreservesConfiguredServerPorts() throws {
+        let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: try url(staleReachedURL),
+            advertised: try urls(
+                advertisedLANURL,
+                advertisedLANPinnedPortURL,
+                advertisedTailscaleURL,
+                advertisedTailscalePinnedPortURL
+            ),
+            existing: try urls(pinnedConfiguredURL),
+            preference: .lan,
+            preservingExistingPorts: true
+        )
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedLANPinnedPortURL,
+            pinnedConfiguredURL,
+            advertisedTailscalePinnedPortURL,
+        ])
+    }
+
+    @Test("Default merge can intentionally adopt new server ports")
+    func defaultMergeCanIntentionallyAdoptNewServerPorts() throws {
+        let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
+            reached: try url(staleReachedURL),
+            advertised: try urls(advertisedLANURL),
+            existing: try urls(pinnedConfiguredURL),
+            preference: .lan
+        )
+
+        #expect(urls.map(\.absoluteString) == [
+            staleReachedURL,
+            pinnedConfiguredURL,
         ])
     }
 

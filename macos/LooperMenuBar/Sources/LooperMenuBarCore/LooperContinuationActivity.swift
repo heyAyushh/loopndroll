@@ -147,6 +147,7 @@ public enum LooperHandoffFocusAssist: String, CaseIterable, Identifiable, Sendab
 public struct LooperContinuationActivityDescriptor: Equatable, Sendable {
     public let title: String
     public let targetContentIdentifier: String
+    public let webpageURL: URL?
     public let userInfo: [String: String]
 }
 
@@ -170,8 +171,8 @@ public enum LooperContinuationActivityBuilder {
             return genericDescriptor()
         }
 
-        let title = titleText(for: thread)
-        let subtitle = subtitleText(for: thread)
+        let title = DesktopThreadDisplayText.title(for: thread)
+        let subtitle = DesktopThreadDisplayText.projectName(for: thread)
         let webpageURL = handoffBaseURL.map { handoffWebpageURL(baseURL: $0, threadID: thread.threadId) }
         var userInfo = [
             LooperContinuationActivity.UserInfoKey.kind: sessionActivityKind,
@@ -197,6 +198,7 @@ public enum LooperContinuationActivityBuilder {
         return LooperContinuationActivityDescriptor(
             title: title,
             targetContentIdentifier: "\(LooperContinuationActivity.sessionTargetContentIdentifierPrefix)\(thread.threadId)",
+            webpageURL: webpageURL,
             userInfo: userInfo
         )
     }
@@ -205,6 +207,7 @@ public enum LooperContinuationActivityBuilder {
         LooperContinuationActivityDescriptor(
             title: genericActivityTitle,
             targetContentIdentifier: genericTargetContentIdentifier,
+            webpageURL: nil,
             userInfo: [
                 LooperContinuationActivity.UserInfoKey.kind: genericActivityKind,
             ]
@@ -226,22 +229,6 @@ public enum LooperContinuationActivityBuilder {
 
     private static func timestamp(for thread: DesktopThreadSummary) -> Int64 {
         thread.updatedAtMs ?? Int64.min
-    }
-
-    private static func titleText(for thread: DesktopThreadSummary) -> String {
-        let title = thread.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let title, !title.isEmpty {
-            return title
-        }
-        return thread.threadId
-    }
-
-    private static func subtitleText(for thread: DesktopThreadSummary) -> String {
-        let fallback = thread.source ?? thread.capabilities.spawn.launchKind
-        return ProjectNameResolver.displayName(
-            forWorkingDirectory: thread.cwd,
-            fallback: fallback
-        )
     }
 
     private static func handoffWebpageURL(baseURL: URL, threadID: String) -> URL {

@@ -16,6 +16,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let appDisplayName = "looper"
         static let devinAcpHostID = "devin"
         static let devinAcpHostTitle = "Devin Desktop"
+        static let zedAcpHostID = "zed"
+        static let zedAcpHostTitle = "Zed"
         static let threadMenuTitleCharacterLimit = 38
         static let detachServerOnQuitKey = "detachServerOnQuit"
         static let continuationRefreshInterval: Duration = .seconds(20)
@@ -125,11 +127,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         if let snapshot = result.snapshot {
             updateMobileHealth(result.mobileHealth)
             publishContinuationActivity(from: snapshot)
-            replaceMenu(snapshot: snapshot, connections: result.connections, error: nil)
+            replaceMenu(
+                snapshot: snapshot,
+                connections: result.connections,
+                acpClientHosts: result.acpClientHosts,
+                error: nil
+            )
         } else {
             updateMobileHealth(nil)
             continuationPublisher.publishFallbackIfIdle(LooperContinuationActivityBuilder.genericDescriptor())
-            replaceMenu(snapshot: nil, connections: nil, error: result.error)
+            replaceMenu(snapshot: nil, connections: nil, acpClientHosts: nil, error: result.error)
         }
     }
 
@@ -203,10 +210,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private func replaceMenu(
         snapshot: DesktopSnapshotResponse?,
         connections: DesktopConnectionsResponse? = nil,
+        acpClientHosts: AcpClientHostsResponse? = nil,
         error: Error?
     ) {
         updateStatusItem(snapshot: snapshot, error: error)
-        let menu = makeMenu(snapshot: snapshot, connections: connections, error: error)
+        let menu = makeMenu(
+            snapshot: snapshot,
+            connections: connections,
+            acpClientHosts: acpClientHosts,
+            error: error
+        )
         statusItem?.menu = menu
         self.menu = menu
     }
@@ -214,6 +227,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     private func makeMenu(
         snapshot: DesktopSnapshotResponse?,
         connections: DesktopConnectionsResponse? = nil,
+        acpClientHosts: AcpClientHostsResponse? = nil,
         error: Error?
     ) -> NSMenu {
         let menu = NSMenu()
@@ -228,7 +242,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(NSMenuItem.separator())
         addActionItem("Refresh", action: #selector(refreshMenuAction(_:)), keyEquivalent: "r", to: menu)
         addDetailsItem(snapshot: snapshot, connections: connections, error: error, to: menu)
-        addSettingsItem(to: menu)
+        addSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: menu)
         addActionItem("Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -544,7 +558,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         menu.addItem(item)
     }
 
-    private func addSettingsItem(to menu: NSMenu) {
+    private func addSettingsItem(
+        snapshot: DesktopSnapshotResponse?,
+        acpClientHosts: AcpClientHostsResponse?,
+        to menu: NSMenu
+    ) {
         let item = NSMenuItem(title: Layout.settingsMenuTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.settingsMenuTitle)
         submenu.autoenablesItems = false
@@ -556,7 +574,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         submenu.addItem(NSMenuItem.separator())
         addRepairHooksItem(to: submenu)
         addClearLiveHooksItem(to: submenu)
-        addAcpHostsSettingsItem(to: submenu)
+        addAcpHostsSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
         submenu.addItem(NSMenuItem.separator())
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: submenu)
         item.submenu = submenu
@@ -612,11 +630,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         )
     }
 
-    private func addAcpHostsSettingsItem(to menu: NSMenu) {
+    private func addAcpHostsSettingsItem(
+        snapshot: DesktopSnapshotResponse?,
+        acpClientHosts: AcpClientHostsResponse?,
+        to menu: NSMenu
+    ) {
         let item = NSMenuItem(title: Layout.acpHostsMenuTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.acpHostsMenuTitle)
         submenu.autoenablesItems = false
         addDevinAcpHostSettingsItem(to: submenu)
+        addZedAcpHostSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
         item.submenu = submenu
         menu.addItem(item)
     }
@@ -634,6 +657,52 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
         item.submenu = submenu
         menu.addItem(item)
+    }
+
+    private func addZedAcpHostSettingsItem(
+        snapshot: DesktopSnapshotResponse?,
+        acpClientHosts: AcpClientHostsResponse?,
+        to menu: NSMenu
+    ) {
+        let item = NSMenuItem(title: Layout.zedAcpHostTitle, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: Layout.zedAcpHostTitle)
+        submenu.autoenablesItems = false
+
+        guard let snapshot else {
+            addDisabledItem("Status: Loading", to: submenu)
+            item.submenu = submenu
+            menu.addItem(item)
+            return
+        }
+
+        let zedHost = acpClientHosts?.hosts.first { $0.id == Layout.zedAcpHostID }
+        let zedTargets = snapshot.acpTargets.filter { $0.client == Layout.zedAcpHostID }
+        addDisabledItem("Status: \(snapshot.zedStatusTitle)", to: submenu)
+        addDisabledItem("Targets: \(LooperMenuContent.acpTargetStatusTitle(from: zedTargets))", to: submenu)
+        addAcpHostLimitations(zedHost, to: submenu)
+
+        if zedTargets.isEmpty {
+            addDisabledItem("No configured External Agents", to: submenu)
+        } else {
+            submenu.addItem(NSMenuItem.separator())
+            for row in LooperMenuContent.buildAcpTargetRows(from: zedTargets) {
+                submenu.addItem(makeAcpTargetItem(row))
+            }
+        }
+
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func addAcpHostLimitations(_ host: AcpClientHost?, to menu: NSMenu) {
+        guard let host, !host.limitations.isEmpty else {
+            return
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        for limitation in host.limitations {
+            addDisabledItem(limitation, to: menu)
+        }
     }
 
     private func addRepairHooksItem(to menu: NSMenu) {
@@ -834,12 +903,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         Task {
             do {
                 if let target {
-                    try client.unregisterLiveHooks(
+                    try await client.unregisterLiveHooksWithoutBlockingUI(
                         target: target,
                         timeout: LooperLifecycleDefaults.requestTimeoutSeconds
                     )
                 } else {
-                    try client.unregisterLiveHooks(timeout: LooperLifecycleDefaults.requestTimeoutSeconds)
+                    try await client.unregisterLiveHooksWithoutBlockingUI(
+                        timeout: LooperLifecycleDefaults.requestTimeoutSeconds
+                    )
                 }
             } catch {
                 await menuRefreshCoordinator.clearCache()
