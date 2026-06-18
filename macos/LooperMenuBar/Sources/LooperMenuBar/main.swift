@@ -618,6 +618,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             return
         }
 
+        addDisabledItem("Preference: \(mobileRoutePreference.menuTitle)", to: menu)
         addDisabledItem("Current route: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
 
         guard let tailscale = mobileHealth.tailscale else {
