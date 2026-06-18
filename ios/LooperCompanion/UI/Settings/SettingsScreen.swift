@@ -130,11 +130,26 @@ struct SettingsScreen: View {
 
             Picker("Route", selection: connectionRoutePreference) {
                 ForEach(CompanionConnectionRoutePreference.allCases) { preference in
-                    Text(preference.settingsLabel)
+                    Label(preference.settingsLabel, systemImage: preference.settingsSystemImageName)
                         .tag(preference)
                 }
             }
             .pickerStyle(.segmented)
+
+            if let routePresentation = model.connectionRoutePresentation {
+                ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)
+            } else {
+                LabeledContent {
+                    Text("Waiting")
+                        .foregroundStyle(.secondary)
+                } label: {
+                    Label("Current Route", systemImage: "network")
+                }
+            }
+
+            Text(connectionRoutePreference.wrappedValue.settingsDetail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
             Toggle(
                 isOn: Binding(
@@ -157,8 +172,10 @@ struct SettingsScreen: View {
             }
 
             if localNetworkAccess.status.canOpenAppSettings {
-                Button("Open iOS Settings") {
+                Button {
                     localNetworkAccess.openAppSettings()
+                } label: {
+                    Label("Open iOS Settings", systemImage: "gear")
                 }
             }
 
@@ -176,8 +193,10 @@ struct SettingsScreen: View {
                     focusedInput = nil
                 }
 
-            Button("Connect with Device Code") {
+            Button {
                 connectUsingDeviceCode()
+            } label: {
+                Label("Login with Device Code", systemImage: "link.badge.plus")
             }
             .disabled(isConnecting || draftConnectionCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
@@ -188,8 +207,10 @@ struct SettingsScreen: View {
             }
             .disabled(isConnecting)
 
-            Button("Run Setup Again") {
+            Button {
                 hasCompletedOnboarding = false
+            } label: {
+                Label("Run Setup Again", systemImage: "arrow.clockwise")
             }
 
             if isConnecting {
@@ -217,7 +238,19 @@ struct SettingsScreen: View {
     private var tailscaleRows: some View {
         let tailscale = model.serverHealth?.tailscale
 
-        LabeledContent("Tailscale", value: tailscale?.statusLabel ?? "Unknown")
+        LabeledContent {
+            Text(tailscale?.statusLabel ?? "Unknown")
+        } label: {
+            Label {
+                Text("Tailscale")
+            } icon: {
+                TailscaleLogoMark(color: .blue)
+                    .frame(
+                        width: ConnectionRouteVisuals.defaultIconSize,
+                        height: ConnectionRouteVisuals.defaultIconSize
+                    )
+            }
+        }
 
         if let detailLabel = tailscale?.detailLabel, !detailLabel.isEmpty {
             Text(detailLabel)
@@ -237,7 +270,7 @@ struct SettingsScreen: View {
         Button {
             openTailscaleDownload()
         } label: {
-            Label("Open Tailscale", systemImage: "arrow.up.forward.app")
+            Label("Open Tailscale in App Store", systemImage: "arrow.up.forward.app")
         }
     }
 
@@ -510,6 +543,28 @@ private extension CompanionConnectionRoutePreference {
             return "Tailscale"
         case .lan:
             return "LAN"
+        }
+    }
+
+    var settingsSystemImageName: String {
+        switch self {
+        case .remote:
+            return "globe"
+        case .tailscale:
+            return "circle.grid.3x3.fill"
+        case .lan:
+            return "wifi.router"
+        }
+    }
+
+    var settingsDetail: String {
+        switch self {
+        case .remote:
+            return "Remote is tried first, then Tailscale and LAN if the remote route is not reachable."
+        case .tailscale:
+            return "Tailscale is tried first, then LAN and remote if the tailnet route is not reachable."
+        case .lan:
+            return "LAN is tried first, then Tailscale and remote if local network access is unavailable."
         }
     }
 }

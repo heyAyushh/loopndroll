@@ -6,6 +6,15 @@ private enum AssistantSurfaceControlMetrics {
     static let controlTopPadding: CGFloat = 6
 }
 
+private enum SessionConnectionRowMetrics {
+    static let horizontalSpacing: CGFloat = 12
+    static let statusSpacing: CGFloat = 6
+    static let titleSpacing: CGFloat = 4
+    static let settingsIconSize: CGFloat = 28
+    static let minimumTrailingSpacing: CGFloat = 12
+    static let verticalPadding: CGFloat = 4
+}
+
 struct SessionsScreen: View {
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
@@ -354,8 +363,16 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
             Button {
                 openSettings()
             } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: SessionConnectionRowMetrics.horizontalSpacing) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(statusTint)
+                        .frame(
+                            width: SessionConnectionRowMetrics.settingsIconSize,
+                            height: SessionConnectionRowMetrics.settingsIconSize
+                        )
+
+                    VStack(alignment: .leading, spacing: SessionConnectionRowMetrics.titleSpacing) {
                         Text(title)
                             .font(.headline)
                             .foregroundStyle(.primary)
@@ -366,9 +383,9 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
                             .multilineTextAlignment(.leading)
                     }
 
-                    Spacer(minLength: 12)
+                    Spacer(minLength: SessionConnectionRowMetrics.minimumTrailingSpacing)
 
-                    VStack(alignment: .trailing, spacing: 6) {
+                    VStack(alignment: .trailing, spacing: SessionConnectionRowMetrics.statusSpacing) {
                         StatusPill(text: statusText, tint: statusTint)
 
                         if let routePresentation {
@@ -378,10 +395,11 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityHint("Opens connection settings")
 
             assistantPicker()
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, SessionConnectionRowMetrics.verticalPadding)
     }
 }
 
@@ -399,16 +417,10 @@ private struct ConnectionRouteBadge: View {
 
     var body: some View {
         HStack(spacing: ConnectionRouteBadgeMetrics.horizontalSpacing) {
-            if presentation.usesTailscaleLogo {
-                TailscaleLogoMark(color: routeTint)
-                    .frame(
-                        width: ConnectionRouteBadgeMetrics.iconSize,
-                        height: ConnectionRouteBadgeMetrics.iconSize
-                    )
-            } else {
-                Image(systemName: presentation.systemImageName)
-                    .font(.caption.weight(.semibold))
-            }
+            ConnectionRouteIcon(
+                presentation: presentation,
+                size: ConnectionRouteBadgeMetrics.iconSize
+            )
 
             Text(presentation.title)
                 .lineLimit(1)
@@ -424,44 +436,7 @@ private struct ConnectionRouteBadge: View {
     }
 
     private var routeTint: Color {
-        switch presentation.route {
-        case .tailscale:
-            return .blue
-        case .lan:
-            return .green
-        case .remote:
-            return .purple
-        case .loopback, .unsupported:
-            return .secondary
-        }
-    }
-}
-
-private enum TailscaleLogoMarkMetrics {
-    static let rowCount = 3
-    static let columnCount = 3
-    static let dotDiameter: CGFloat = 3.4
-    static let dotSpacing: CGFloat = 2.2
-}
-
-private struct TailscaleLogoMark: View {
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: TailscaleLogoMarkMetrics.dotSpacing) {
-            ForEach(0..<TailscaleLogoMarkMetrics.rowCount, id: \.self) { _ in
-                HStack(spacing: TailscaleLogoMarkMetrics.dotSpacing) {
-                    ForEach(0..<TailscaleLogoMarkMetrics.columnCount, id: \.self) { _ in
-                        Circle()
-                            .fill(color)
-                            .frame(
-                                width: TailscaleLogoMarkMetrics.dotDiameter,
-                                height: TailscaleLogoMarkMetrics.dotDiameter
-                            )
-                    }
-                }
-            }
-        }
+        ConnectionRouteVisuals.tint(for: presentation.route)
     }
 }
 

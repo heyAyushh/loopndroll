@@ -198,7 +198,7 @@ struct LooperContinuationActivityTests {
         MobileRoutePreference.remote.save(in: defaults)
 
         #expect(MobileRoutePreference.stored(in: defaults) == .remote)
-        #expect(MobileRoutePreference.remote.menuTitle == "Remote")
+        #expect(MobileRoutePreference.remote.menuTitle == "Remote first")
         defaults.removePersistentDomain(forName: suiteName)
     }
 

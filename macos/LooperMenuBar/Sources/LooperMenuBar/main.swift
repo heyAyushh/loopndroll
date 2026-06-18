@@ -7,8 +7,8 @@ import OSLog
 @MainActor
 private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum Layout {
-        static let acpHostsMenuTitle = "ACP Hosts"
-        static let agentsDetailsMenuTitle = "Agents"
+        static let acpHostsMenuTitle = "Assistant Hosts (ACP)"
+        static let agentsDetailsMenuTitle = "Agents & Assistant Hosts"
         static let coverageDetailsMenuTitle = "Coverage"
         static let statusItemTitle = "looper"
         static let visibleThreadLimitPerSection = 5
@@ -28,7 +28,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         static let detailsMenuTitle = "Details"
         static let mobileRouteMenuTitle = "Mobile Route"
         static let settingsMenuTitle = "Settings"
-        static let acpTargetsMenuTitle = "ACP Targets"
+        static let acpTargetsMenuTitle = "Configured ACP Targets"
+        static let acpHostLimitationsTitle = "Limitations"
+        static let acpHostLimitationItemTitle = "Limited capability"
     }
 
     private let client: HTTPControlPlaneClient
@@ -413,7 +415,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
 
         let probeItem = NSMenuItem(
-            title: "Probe Devin Agent",
+            title: "Probe Default Devin Agent",
             action: #selector(probeDevinAcpAction(_:)),
             keyEquivalent: ""
         )
@@ -567,6 +569,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         let submenu = NSMenu(title: Layout.settingsMenuTitle)
         submenu.autoenablesItems = false
         addMobileRouteSettingsItem(to: submenu)
+        addAcpHostsSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
+        submenu.addItem(NSMenuItem.separator())
         addHandoffFocusAssistItem(to: submenu)
         addHandoffHotkeyItem(to: submenu)
         addHandoffHoldItem(to: submenu)
@@ -574,7 +578,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         submenu.addItem(NSMenuItem.separator())
         addRepairHooksItem(to: submenu)
         addClearLiveHooksItem(to: submenu)
-        addAcpHostsSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
         submenu.addItem(NSMenuItem.separator())
         addActionItem("Copy Terminal Command", action: #selector(copyTerminalCommandAction(_:)), keyEquivalent: "c", to: submenu)
         item.submenu = submenu
@@ -615,7 +618,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             return
         }
 
-        addDisabledItem("Selected: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
+        addDisabledItem("Current route: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
 
         guard let tailscale = mobileHealth.tailscale else {
             addDisabledItem("Tailscale: Unknown", to: menu)
@@ -638,16 +641,39 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         let item = NSMenuItem(title: Layout.acpHostsMenuTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.acpHostsMenuTitle)
         submenu.autoenablesItems = false
-        addDevinAcpHostSettingsItem(to: submenu)
+        addDevinAcpHostSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
         addZedAcpHostSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: submenu)
         item.submenu = submenu
         menu.addItem(item)
     }
 
-    private func addDevinAcpHostSettingsItem(to menu: NSMenu) {
+    private func addDevinAcpHostSettingsItem(
+        snapshot: DesktopSnapshotResponse?,
+        acpClientHosts: AcpClientHostsResponse?,
+        to menu: NSMenu
+    ) {
         let item = NSMenuItem(title: Layout.devinAcpHostTitle, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: Layout.devinAcpHostTitle)
         submenu.autoenablesItems = false
+
+        if let snapshot {
+            addDisabledItem("Status: \(devinStatusTitle(snapshot.devinDesktop.acpBridge))", to: submenu)
+        } else {
+            addDisabledItem("Status: Loading", to: submenu)
+        }
+
+        if let devinHost = acpClientHosts?.hosts.first(where: { $0.id == Layout.devinAcpHostID }) {
+            addDisabledItem(
+                "Agents: \(devinHost.enabledAgentCount)/\(devinHost.agents.count) enabled",
+                to: submenu
+            )
+            if let defaultAgent = devinHost.defaultProbeAgent {
+                addDisabledItem("Default agent: \(defaultAgent.name)", subtitle: defaultAgent.id, to: submenu)
+            }
+            addAcpHostLimitations(devinHost, to: submenu)
+        }
+
+        submenu.addItem(NSMenuItem.separator())
         addActionItem(
             "Install or Repair Bridge",
             action: #selector(installDevinAcpBridgeAction(_:)),
@@ -700,8 +726,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
 
         menu.addItem(NSMenuItem.separator())
+        addDisabledItem(Layout.acpHostLimitationsTitle, to: menu)
         for limitation in host.limitations {
-            addDisabledItem(limitation, to: menu)
+            addDisabledItem(Layout.acpHostLimitationItemTitle, subtitle: limitation, to: menu)
         }
     }
 

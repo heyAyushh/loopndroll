@@ -76,6 +76,14 @@ struct SessionsDeviceHubSheet: View {
             : "Allow alerts before you rely on stop notifications."
     }
 
+    private var alertActionSystemImageName: String {
+        if model.areLocalNotificationsDenied {
+            return "gear"
+        }
+
+        return model.canSendLocalNotifications ? "bell.badge" : "bell"
+    }
+
     private var personalDeviceName: String {
         UIDevice.current.name
     }
@@ -117,8 +125,10 @@ struct SessionsDeviceHubSheet: View {
                     LabeledContent("Software", value: deviceSoftwareLabel)
                     LabeledContent("Mac", value: model.snapshot?.host.name ?? "No Mac Connected")
                     LabeledContent("API", value: serverStatusLabel)
-                    if let baseURL = model.activeConnectionRouteBaseURLString {
-                        LabeledContent("API Route", value: baseURL)
+                    if let routePresentation = model.connectionRoutePresentation {
+                        ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)
+                    } else if let baseURL = model.activeConnectionRouteBaseURLString {
+                        LabeledContent("Current Route", value: baseURL)
                     }
                     LabeledContent("Access", value: loginStatusLabel)
                     LabeledContent("Last Sync", value: syncLabel)
@@ -129,7 +139,7 @@ struct SessionsDeviceHubSheet: View {
                     Button {
                         isOrbScannerPresented = true
                     } label: {
-                        Label("Scan Orb", systemImage: "viewfinder.circle")
+                        Label("Scan Mac Orb", systemImage: "viewfinder.circle")
                     }
                 }
                 .listRowBackground(Color.clear)
@@ -143,11 +153,15 @@ struct SessionsDeviceHubSheet: View {
                             await runAlertAction()
                         }
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(alertActionTitle)
-                            Text(alertActionSubtitle)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(alertActionTitle)
+                                Text(alertActionSubtitle)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: alertActionSystemImageName)
                         }
                     }
                 }

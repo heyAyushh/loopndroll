@@ -16,11 +16,11 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
     public var menuTitle: String {
         switch self {
         case .remote:
-            "Remote"
+            "Remote first"
         case .tailscale:
-            "Tailscale"
+            "Tailscale first"
         case .lan:
-            "LAN"
+            "LAN first"
         }
     }
 
