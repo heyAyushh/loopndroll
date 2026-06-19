@@ -1921,6 +1921,85 @@ struct MobileSnapshot: Codable, Sendable {
     }
 }
 
+struct SessionIndex: Equatable, Sendable {
+    static let empty = SessionIndex(
+        allSessions: [],
+        sessionsByID: [:],
+        surfaceBySessionID: [:],
+        identity: "empty"
+    )
+
+    let allSessions: [SessionSummary]
+    private let sessionsByID: [String: SessionSummary]
+    private let surfaceBySessionID: [String: CompanionAssistantSurface]
+    let identity: String
+
+    init(snapshot: MobileSnapshot) {
+        var sessionsByID: [String: SessionSummary] = [:]
+        var surfaceBySessionID: [String: CompanionAssistantSurface] = [:]
+
+        for surface in CompanionAssistantSurface.allCases {
+            for session in snapshot.sessions(for: surface) {
+                if let existingSession = sessionsByID[session.id],
+                   !SessionSummary.isNewerOrLowerRef(
+                       leftSession: session,
+                       rightSession: existingSession
+                   )
+                {
+                    continue
+                }
+
+                sessionsByID[session.id] = session
+                surfaceBySessionID[session.id] = surface
+            }
+        }
+
+        let allSessions = sessionsByID.values.sorted(by: SessionSummary.isNewerOrLowerRef)
+        self.init(
+            allSessions: allSessions,
+            sessionsByID: sessionsByID,
+            surfaceBySessionID: surfaceBySessionID,
+            identity: Self.identity(snapshot: snapshot, sessions: allSessions)
+        )
+    }
+
+    private init(
+        allSessions: [SessionSummary],
+        sessionsByID: [String: SessionSummary],
+        surfaceBySessionID: [String: CompanionAssistantSurface],
+        identity: String
+    ) {
+        self.allSessions = allSessions
+        self.sessionsByID = sessionsByID
+        self.surfaceBySessionID = surfaceBySessionID
+        self.identity = identity
+    }
+
+    func session(withID sessionID: String) -> SessionSummary? {
+        sessionsByID[sessionID]
+    }
+
+    func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
+        surfaceBySessionID[sessionID]
+    }
+
+    private static func identity(snapshot: MobileSnapshot, sessions: [SessionSummary]) -> String {
+        let revision = snapshot.revision?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? "no-revision"
+        let sessionFingerprints = sessions.map { session in
+            [
+                session.id,
+                session.status.rawValue,
+                session.lastActivityAt,
+                session.lastMessageAt ?? "",
+                session.isArchived ? "archived" : "visible",
+            ].joined(separator: ":")
+        }
+        return ([revision, String(sessions.count)] + sessionFingerprints).joined(separator: "|")
+    }
+}
+
 enum SessionDisplayPolicy {
     static let collapsedSectionLimit = 40
 }

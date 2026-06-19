@@ -1,13 +1,15 @@
 import Foundation
 
-enum SessionSearchScope: String, CaseIterable, Identifiable {
+enum SessionSearchScope: String, CaseIterable, Identifiable, Sendable {
     case all
     case sessions
     case actions
     case settings
     case device
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {
@@ -40,17 +42,19 @@ enum SessionSearchScope: String, CaseIterable, Identifiable {
     }
 }
 
-enum GlobalSearchActionCategory: String {
+enum GlobalSearchActionCategory: String, Sendable {
     case quickActions
     case device
 }
 
-enum GlobalSearchAction: String, CaseIterable, Hashable, Identifiable {
+enum GlobalSearchAction: String, CaseIterable, Hashable, Identifiable, Sendable {
     case openDeviceHub
     case sendTestAlert
     case openNotificationSettings
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var category: GlobalSearchActionCategory {
         switch self {
@@ -106,7 +110,7 @@ enum GlobalSearchAction: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
-enum GlobalSearchResult: Identifiable, Hashable {
+enum GlobalSearchResult: Identifiable, Hashable, Sendable {
     case session(SessionSummary)
     case settings(SettingsSearchTarget)
     case action(GlobalSearchAction)
@@ -119,6 +123,221 @@ enum GlobalSearchResult: Identifiable, Hashable {
             return "settings:\(target.rawValue)"
         case let .action(action):
             return "action:\(action.rawValue)"
+        }
+    }
+}
+
+struct SessionSearchResults: Sendable {
+    static let empty = SessionSearchResults(
+        topResults: [],
+        visibleNeedsAttentionSessions: [],
+        visibleRunningSessions: [],
+        visibleStoppedSessions: [],
+        visibleArchivedSessions: [],
+        visibleQuickActions: [],
+        visibleDeviceActions: [],
+        visibleSettingsTargets: [],
+        hasSessionResults: false,
+        hasQuickActionResults: false,
+        hasDeviceResults: false,
+        hasSettingsResults: false
+    )
+
+    let topResults: [GlobalSearchResult]
+    let visibleNeedsAttentionSessions: [SessionSummary]
+    let visibleRunningSessions: [SessionSummary]
+    let visibleStoppedSessions: [SessionSummary]
+    let visibleArchivedSessions: [SessionSummary]
+    let visibleQuickActions: [GlobalSearchAction]
+    let visibleDeviceActions: [GlobalSearchAction]
+    let visibleSettingsTargets: [SettingsSearchTarget]
+    let hasSessionResults: Bool
+    let hasQuickActionResults: Bool
+    let hasDeviceResults: Bool
+    let hasSettingsResults: Bool
+
+    init(
+        searchText: String,
+        selectedScope: SessionSearchScope,
+        allSessions: [SessionSummary],
+        needsAttentionSessions: [SessionSummary],
+        runningSessions: [SessionSummary],
+        stoppedSessions: [SessionSummary],
+        archivedSessions: [SessionSummary],
+        spotlightResultSessionIDs: [String]
+    ) {
+        let spotlightSessionResults = Self.spotlightSessionResults(
+            allSessions: allSessions,
+            spotlightResultSessionIDs: spotlightResultSessionIDs,
+            searchText: searchText
+        )
+        let localSessionResults = SessionSearchEngine.sessions(allSessions, matching: searchText)
+        let spotlightIDs = Set(spotlightSessionResults.map(\.id))
+        let filteredAllSessions = spotlightSessionResults +
+            localSessionResults.filter { !spotlightIDs.contains($0.id) }
+        let filteredNeedsAttentionSessions = SessionSearchEngine.sessions(
+            needsAttentionSessions,
+            matching: searchText
+        )
+        let filteredRunningSessions = SessionSearchEngine.sessions(
+            runningSessions,
+            matching: searchText
+        )
+        let filteredStoppedSessions = SessionSearchEngine.sessions(
+            stoppedSessions,
+            matching: searchText
+        )
+        let filteredArchivedSessions = SessionSearchEngine.sessions(
+            archivedSessions,
+            matching: searchText
+        )
+        let filteredQuickActions = SessionSearchEngine.actions(in: .quickActions, for: searchText)
+        let filteredDeviceActions = SessionSearchEngine.actions(in: .device, for: searchText)
+        let filteredSettingsTargets = SessionSearchEngine.settingsTargets(for: searchText)
+        let topResults = Self.topResults(
+            searchText: searchText,
+            selectedScope: selectedScope,
+            filteredAllSessions: filteredAllSessions,
+            filteredQuickActions: filteredQuickActions,
+            filteredDeviceActions: filteredDeviceActions,
+            filteredSettingsTargets: filteredSettingsTargets,
+            needsAttentionSessions: needsAttentionSessions,
+            stoppedSessions: stoppedSessions
+        )
+        let topResultIDs = Set(topResults.map(\.id))
+
+        self.init(
+            topResults: topResults,
+            visibleNeedsAttentionSessions: Self.withoutTopResults(
+                filteredNeedsAttentionSessions,
+                topResultIDs: topResultIDs
+            ),
+            visibleRunningSessions: Self.withoutTopResults(
+                filteredRunningSessions,
+                topResultIDs: topResultIDs
+            ),
+            visibleStoppedSessions: Self.withoutTopResults(
+                filteredStoppedSessions,
+                topResultIDs: topResultIDs
+            ),
+            visibleArchivedSessions: Self.withoutTopResults(
+                filteredArchivedSessions,
+                topResultIDs: topResultIDs
+            ),
+            visibleQuickActions: filteredQuickActions.filter { action in
+                !topResultIDs.contains(GlobalSearchResult.action(action).id)
+            },
+            visibleDeviceActions: filteredDeviceActions.filter { action in
+                !topResultIDs.contains(GlobalSearchResult.action(action).id)
+            },
+            visibleSettingsTargets: filteredSettingsTargets.filter { target in
+                !topResultIDs.contains(GlobalSearchResult.settings(target).id)
+            },
+            hasSessionResults: !filteredNeedsAttentionSessions.isEmpty ||
+                !filteredRunningSessions.isEmpty ||
+                !filteredStoppedSessions.isEmpty ||
+                !filteredArchivedSessions.isEmpty,
+            hasQuickActionResults: !filteredQuickActions.isEmpty,
+            hasDeviceResults: !filteredDeviceActions.isEmpty,
+            hasSettingsResults: !filteredSettingsTargets.isEmpty
+        )
+    }
+
+    private init(
+        topResults: [GlobalSearchResult],
+        visibleNeedsAttentionSessions: [SessionSummary],
+        visibleRunningSessions: [SessionSummary],
+        visibleStoppedSessions: [SessionSummary],
+        visibleArchivedSessions: [SessionSummary],
+        visibleQuickActions: [GlobalSearchAction],
+        visibleDeviceActions: [GlobalSearchAction],
+        visibleSettingsTargets: [SettingsSearchTarget],
+        hasSessionResults: Bool,
+        hasQuickActionResults: Bool,
+        hasDeviceResults: Bool,
+        hasSettingsResults: Bool
+    ) {
+        self.topResults = topResults
+        self.visibleNeedsAttentionSessions = visibleNeedsAttentionSessions
+        self.visibleRunningSessions = visibleRunningSessions
+        self.visibleStoppedSessions = visibleStoppedSessions
+        self.visibleArchivedSessions = visibleArchivedSessions
+        self.visibleQuickActions = visibleQuickActions
+        self.visibleDeviceActions = visibleDeviceActions
+        self.visibleSettingsTargets = visibleSettingsTargets
+        self.hasSessionResults = hasSessionResults
+        self.hasQuickActionResults = hasQuickActionResults
+        self.hasDeviceResults = hasDeviceResults
+        self.hasSettingsResults = hasSettingsResults
+    }
+
+    private static func topResults(
+        searchText: String,
+        selectedScope: SessionSearchScope,
+        filteredAllSessions: [SessionSummary],
+        filteredQuickActions: [GlobalSearchAction],
+        filteredDeviceActions: [GlobalSearchAction],
+        filteredSettingsTargets: [SettingsSearchTarget],
+        needsAttentionSessions: [SessionSummary],
+        stoppedSessions: [SessionSummary]
+    ) -> [GlobalSearchResult] {
+        guard selectedScope == .all else {
+            return []
+        }
+
+        if searchText.isEmpty {
+            return SessionSearchEngine.suggestedTopResults(
+                needsAttentionSessions: needsAttentionSessions,
+                stoppedSessions: stoppedSessions
+            )
+        }
+
+        return SessionSearchEngine.uniqueResults(
+            Array(filteredAllSessions.prefix(3).map(GlobalSearchResult.session)) +
+                Array(filteredQuickActions.prefix(2).map(GlobalSearchResult.action)) +
+                Array(filteredSettingsTargets.prefix(2).map(GlobalSearchResult.settings)) +
+                Array(filteredDeviceActions.prefix(1).map(GlobalSearchResult.action))
+        )
+    }
+
+    private static func spotlightSessionResults(
+        allSessions: [SessionSummary],
+        spotlightResultSessionIDs: [String],
+        searchText: String
+    ) -> [SessionSummary] {
+        guard !searchText.isEmpty else {
+            return []
+        }
+
+        let sessionsByID = allSessions.reduce(into: [String: SessionSummary]()) { sessionsByID, session in
+            if let existingSession = sessionsByID[session.id],
+               !SessionSummary.isNewerOrLowerRef(
+                   leftSession: session,
+                   rightSession: existingSession
+               )
+            {
+                return
+            }
+
+            sessionsByID[session.id] = session
+        }
+        var seenSessionIDs = Set<String>()
+        let sessions = spotlightResultSessionIDs.compactMap { resultID -> SessionSummary? in
+            let sessionID = LooperSessionEntityIdentifier(rawValue: resultID)?.sessionID ?? resultID
+            guard seenSessionIDs.insert(sessionID).inserted else {
+                return nil
+            }
+            return sessionsByID[sessionID]
+        }
+        return sessions.sorted(by: SessionSummary.isNewerOrLowerRef)
+    }
+
+    private static func withoutTopResults(
+        _ sessions: [SessionSummary],
+        topResultIDs: Set<String>
+    ) -> [SessionSummary] {
+        sessions.filter { session in
+            !topResultIDs.contains(GlobalSearchResult.session(session).id)
         }
     }
 }
@@ -174,7 +393,7 @@ enum SessionSearchEngine {
                     session.metadata.kind.label,
                     session.metadata.kind.rawValue,
                     session.metadata.installedPlugins.map(\.name).joined(separator: " "),
-                    session.metadata.sources.map(\.value).joined(separator: " ")
+                    session.metadata.sources.map(\.value).joined(separator: " "),
                 ] + session.assistantClient.searchKeywords + session.metadata.userFacingTags
             )
 
@@ -228,20 +447,30 @@ enum SessionSearchEngine {
         UserDefaults.standard.set(Array(nextQueries.prefix(6)).joined(separator: "\n"), forKey: key)
     }
 
-    @MainActor
-    static func suggestedTopResults(model: CompanionAppModel) -> [GlobalSearchResult] {
-        let suggestedSessions = model.needsAttentionSessions.isEmpty
-            ? model.stoppedSessions
-            : model.needsAttentionSessions
+    static func suggestedTopResults(
+        needsAttentionSessions: [SessionSummary],
+        stoppedSessions: [SessionSummary]
+    ) -> [GlobalSearchResult] {
+        let suggestedSessions = needsAttentionSessions.isEmpty
+            ? stoppedSessions
+            : needsAttentionSessions
         let sessions = suggestedSessions.prefix(2).map(GlobalSearchResult.session)
         let actions: [GlobalSearchResult] = [
             .action(.openDeviceHub),
             .action(.sendTestAlert),
             .settings(.connection),
-            .settings(.continuePrompt)
+            .settings(.continuePrompt),
         ]
 
         return uniqueResults(Array(sessions) + actions)
+    }
+
+    @MainActor
+    static func suggestedTopResults(model: CompanionAppModel) -> [GlobalSearchResult] {
+        suggestedTopResults(
+            needsAttentionSessions: model.needsAttentionSessions,
+            stoppedSessions: model.stoppedSessions
+        )
     }
 
     static func uniqueResults(_ results: [GlobalSearchResult]) -> [GlobalSearchResult] {
@@ -266,7 +495,8 @@ enum SessionSearchEngine {
         }
 
         if let session = scoredSessions(allSessions, matching: query).first,
-           session.score <= SearchMatchScore.prefix {
+           session.score <= SearchMatchScore.prefix
+        {
             return .session(session.session)
         }
 

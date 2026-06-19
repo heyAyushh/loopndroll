@@ -145,9 +145,6 @@ struct HTTPCompanionService: CompanionService {
             bearerToken: bearerToken
         ) {
             do {
-                defer {
-                    realtimeClient.disconnect()
-                }
                 _ = try await realtimeClient.sendSessionPrompt(
                     threadID: id,
                     prompt: prompt,

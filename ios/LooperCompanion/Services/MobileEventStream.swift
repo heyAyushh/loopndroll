@@ -99,9 +99,6 @@ struct MobileEventStreamClient: Sendable {
             bearerToken: bearerToken
         ) {
             do {
-                defer {
-                    realtimeClient.disconnect()
-                }
                 try await realtimeClient.streamMobileEvents { event in
                     await onEvent(MobileStreamEvent(realtimeEvent: event))
                 }
