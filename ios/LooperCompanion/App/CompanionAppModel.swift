@@ -57,7 +57,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var realtimeRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var eventStreamRevision = 0
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
-    @ObservationIgnored private var pendingRealtimeRefreshRevision: String?
     @ObservationIgnored private var pendingRealtimeRefreshSessionIDs: Set<String> = []
     @ObservationIgnored private var snapshotLoadTask: Task<Void, Never>?
     @ObservationIgnored private var nextSnapshotLoadID = 0
@@ -362,13 +361,9 @@ final class CompanionAppModel {
 
         switch event.eventType {
         case .connected:
-            if let revision = CompanionRealtimeSync.normalizedRevision(event.revision),
-               snapshot != nil {
-                lastAppliedRealtimeRevision = revision
-            }
             if CompanionRealtimeSync.shouldRefreshSnapshot(
                 for: event,
-                currentRevision: lastAppliedRealtimeRevision,
+                currentRevision: currentSnapshotRevision,
                 hasSnapshot: snapshot != nil
             ) {
                 scheduleRealtimeRefresh(
@@ -380,7 +375,7 @@ final class CompanionAppModel {
         case .sessionChanged, .promptQueued, .promptDelivered, .lifecycleChanged:
             guard CompanionRealtimeSync.shouldRefreshSnapshot(
                 for: event,
-                currentRevision: lastAppliedRealtimeRevision,
+                currentRevision: currentSnapshotRevision,
                 hasSnapshot: snapshot != nil
             ) else {
                 CompanionDiagnostics.record("events:duplicate-revision-skip")
@@ -402,10 +397,6 @@ final class CompanionAppModel {
         if let threadID = event.threadID {
             pendingRealtimeRefreshSessionIDs.insert(threadID)
         }
-        if let revision = CompanionRealtimeSync.normalizedRevision(event.revision) {
-            pendingRealtimeRefreshRevision = revision
-        }
-
         realtimeRefreshTask?.cancel()
         realtimeRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: CompanionRealtimeSync.snapshotRefreshDebounce)
@@ -418,9 +409,7 @@ final class CompanionAppModel {
             }
 
             let sessionIDs = self.pendingRealtimeRefreshSessionIDs
-            let revision = self.pendingRealtimeRefreshRevision
             self.pendingRealtimeRefreshSessionIDs = []
-            self.pendingRealtimeRefreshRevision = nil
             self.realtimeRefreshTask = nil
 
             await self.refresh()
@@ -430,10 +419,6 @@ final class CompanionAppModel {
             else {
                 CompanionDiagnostics.record("events:stale-coalesced-detail-skip")
                 return
-            }
-
-            if let revision {
-                self.lastAppliedRealtimeRevision = revision
             }
 
             for sessionID in sessionIDs where self.detailBySessionID[sessionID] != nil {
@@ -526,7 +511,6 @@ final class CompanionAppModel {
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
         lastAppliedRealtimeRevision = nil
-        pendingRealtimeRefreshRevision = nil
         pendingRealtimeRefreshSessionIDs = []
         serverHealth = nil
         reachedBaseURL = nil
@@ -795,8 +779,11 @@ final class CompanionAppModel {
     private func cancelRealtimeRefresh() {
         realtimeRefreshTask?.cancel()
         realtimeRefreshTask = nil
-        pendingRealtimeRefreshRevision = nil
         pendingRealtimeRefreshSessionIDs = []
+    }
+
+    private var currentSnapshotRevision: String? {
+        lastAppliedRealtimeRevision ?? CompanionRealtimeSync.normalizedRevision(snapshot?.revision)
     }
 
     private func adoptServerHealthBaseURLsIfNeeded(_ resolvedHealth: ResolvedCompanionServerHealth) {
@@ -1432,6 +1419,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         syncDetailCache(with: visibleSnapshot)
         clearSpotlightIndexForCachedSnapshot()
+        lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1447,6 +1435,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
         syncDetailCache(with: visibleSnapshot)
+        lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
 
         syncSpotlightIndex(with: visibleSnapshot.sessionsAcrossSurfaces)
 

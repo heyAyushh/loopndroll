@@ -66,6 +66,7 @@ pub fn mobile_snapshot(
         .unwrap_or_default();
 
     json!({
+        "revision": snapshot.revision,
         "host": host_summary(base_url, grpc_base_urls, synced_at),
         "globalSettings": mobile_global_settings(session_state),
         "sessions": sessions,

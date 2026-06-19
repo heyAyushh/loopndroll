@@ -790,6 +790,7 @@ public struct GrokBuildHookStatus: Codable, Equatable, Sendable {
 }
 
 public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
+    public let revision: String?
     public let controlPlane: ControlPlaneStatusResponse
     public let devinDesktop: DevinDesktopStatus
     public let grokBuild: GrokBuildStatus?
@@ -855,6 +856,7 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case revision
         case controlPlane = "control_plane"
         case devinDesktop = "devin_desktop"
         case grokBuild = "grok_build"
@@ -871,6 +873,7 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     }
 
     public init(
+        revision: String? = nil,
         controlPlane: ControlPlaneStatusResponse,
         devinDesktop: DevinDesktopStatus,
         grokBuild: GrokBuildStatus? = nil,
@@ -885,6 +888,7 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
         acpTargets: [AcpTargetSummary] = [],
         zed: ZedStatus = .unavailable
     ) {
+        self.revision = revision
         self.controlPlane = controlPlane
         self.devinDesktop = devinDesktop
         self.grokBuild = grokBuild
@@ -903,6 +907,7 @@ public struct DesktopSnapshotResponse: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
+            revision: try container.decodeIfPresent(String.self, forKey: .revision),
             controlPlane: try container.decode(ControlPlaneStatusResponse.self, forKey: .controlPlane),
             devinDesktop: try container.decode(DevinDesktopStatus.self, forKey: .devinDesktop),
             grokBuild: try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild),

@@ -1383,6 +1383,11 @@ async fn mobile_snapshot_uses_rust_auth_and_codex_threads() {
     .await;
 
     assert_eq!(snapshot["host"]["address"], "http://192.168.99.10:8765");
+    assert!(
+        snapshot["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty())
+    );
     assert_eq!(snapshot["sessions"][0]["id"], "thread-child");
     assert_eq!(snapshot["sessions"][1]["id"], "thread-main");
 }

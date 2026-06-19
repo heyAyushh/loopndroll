@@ -13,11 +13,11 @@ enum CompanionRealtimeSync {
             return !hasSnapshot
         }
 
-        guard let revision = event.revision else {
+        guard let revision = normalizedRevision(event.revision) else {
             return true
         }
 
-        return revision != currentRevision
+        return revision != normalizedRevision(currentRevision)
     }
 
     static func normalizedRevision(_ revision: String?) -> String? {

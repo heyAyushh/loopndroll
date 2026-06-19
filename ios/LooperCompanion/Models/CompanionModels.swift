@@ -1798,6 +1798,7 @@ struct DevinDesktopStatus: Codable, Equatable, Sendable {
 }
 
 struct MobileSnapshot: Codable, Sendable {
+    var revision: String?
     var host: HostSummary
     var globalSettings: GlobalSettings
     var sessions: [SessionSummary]
@@ -1808,6 +1809,7 @@ struct MobileSnapshot: Codable, Sendable {
     var grokBuild: GrokBuildStatus?
 
     init(
+        revision: String? = nil,
         host: HostSummary,
         globalSettings: GlobalSettings,
         sessions: [SessionSummary],
@@ -1817,6 +1819,7 @@ struct MobileSnapshot: Codable, Sendable {
         devinDesktop: DevinDesktopStatus? = nil,
         grokBuild: GrokBuildStatus? = nil
     ) {
+        self.revision = revision
         self.host = host
         self.globalSettings = globalSettings
         self.sessions = sessions
@@ -1828,6 +1831,7 @@ struct MobileSnapshot: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case revision
         case host
         case globalSettings
         case sessions
@@ -1840,6 +1844,7 @@ struct MobileSnapshot: Codable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try container.decodeIfPresent(String.self, forKey: .revision)
         host = try container.decode(HostSummary.self, forKey: .host)
         globalSettings = try container.decode(GlobalSettings.self, forKey: .globalSettings)
         sessions = try container.decode([SessionSummary].self, forKey: .sessions)

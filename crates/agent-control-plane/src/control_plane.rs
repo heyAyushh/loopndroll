@@ -326,6 +326,7 @@ pub struct ThreadDetail {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopSnapshot {
+    pub revision: String,
     pub control_plane: ControlPlaneStatus,
     pub thread_count: usize,
     pub active_thread_count: usize,
@@ -1331,7 +1332,10 @@ impl ControlPlane {
         acp_targets.extend(zed_acp_targets(&zed));
         acp_targets.sort_by(|left, right| left.id.cmp(&right.id));
 
+        let revision = self.mobile_snapshot_revision().unwrap_or_default();
+
         Ok(DesktopSnapshot {
+            revision,
             control_plane: control_plane_status,
             thread_count: state.total_thread_count
                 + grok_build.session_count
