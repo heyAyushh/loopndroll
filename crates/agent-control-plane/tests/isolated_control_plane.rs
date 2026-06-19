@@ -14,10 +14,10 @@ use agent_control_plane::grpc::proto::{
     SendSessionPromptRequest, SubscribeEventsRequest, looper_realtime_client::LooperRealtimeClient,
 };
 use agent_control_plane::http::build_router;
-use agent_control_plane::mobile_events::{
+use agent_control_plane::mobile::events::{
     MobileEventInput, MobileEventKind, MobileEventRecord, build_mobile_event, mobile_event_sse_name,
 };
-use agent_control_plane::mobile_session::MobileHookPayload;
+use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -1462,13 +1462,13 @@ async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
     let service = control_plane.mobile_session_service();
     service
         .upsert_notification_route(
-            agent_control_plane::mobile_session::UpsertMobileNotificationRoute {
+            agent_control_plane::mobile::session::UpsertMobileNotificationRoute {
                 id: Some("route-telegram".to_owned()),
                 label: Some("Telegram DM".to_owned()),
                 channel: "telegram".to_owned(),
                 bot_token: Some("bot-token".to_owned()),
                 chat_id: Some("chat-1".to_owned()),
-                ..agent_control_plane::mobile_session::UpsertMobileNotificationRoute::default()
+                ..agent_control_plane::mobile::session::UpsertMobileNotificationRoute::default()
             },
         )
         .expect("upsert notification");

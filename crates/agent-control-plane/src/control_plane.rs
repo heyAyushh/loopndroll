@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -44,10 +46,10 @@ use crate::grok_build::{
     inspect_grok_hooks, register_owned_grok_hooks, unregister_owned_grok_hooks,
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
-use crate::mobile_auth::MobileAuthService;
-use crate::mobile_events::{MobileEventHub, MobileEventInput, build_mobile_event};
-use crate::mobile_push::MobilePushService;
-use crate::mobile_session::MobileSessionService;
+use crate::mobile::auth::MobileAuthService;
+use crate::mobile::events::{MobileEventHub, MobileEventInput, build_mobile_event};
+use crate::mobile::push::MobilePushService;
+use crate::mobile::session::MobileSessionService;
 use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
 use crate::transcript_preview::transcript_preview_for_path;
@@ -58,6 +60,7 @@ const DESKTOP_COMPACTION_FILE_SCAN_LIMIT: usize = 250;
 const DESKTOP_MENU_COMPACTION_LIMIT: usize = 10;
 const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
+const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const ACP_CLIENT_HOST_SESSION_LIMIT: usize = DESKTOP_MENU_THREAD_LIMIT;
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
@@ -154,6 +157,70 @@ pub struct ControlPlane {
     store: EventStore,
     mobile_events: MobileEventHub,
     devin_acp_runtime: DevinAcpRuntime,
+    response_cache: Arc<ControlPlaneResponseCache>,
+}
+
+struct ControlPlaneResponseCache {
+    managed_connections: TimedResponseCache<ManagedConnectionsResponse>,
+    desktop_menu_snapshot: TimedResponseCache<DesktopSnapshot>,
+}
+
+impl ControlPlaneResponseCache {
+    fn new() -> Self {
+        Self {
+            managed_connections: TimedResponseCache::new(),
+            desktop_menu_snapshot: TimedResponseCache::new(),
+        }
+    }
+
+    fn invalidate_desktop_menu_surfaces(&self) {
+        self.managed_connections.invalidate();
+        self.desktop_menu_snapshot.invalidate();
+    }
+}
+
+struct TimedResponseCache<T> {
+    cached: Mutex<Option<CachedResponse<T>>>,
+}
+
+impl<T> TimedResponseCache<T> {
+    fn new() -> Self {
+        Self {
+            cached: Mutex::new(None),
+        }
+    }
+
+    fn invalidate(&self) {
+        if let Ok(mut cached) = self.cached.lock() {
+            *cached = None;
+        }
+    }
+}
+
+impl<T: Clone> TimedResponseCache<T> {
+    fn get_or_refresh(&self, ttl: Duration, refresh: impl FnOnce() -> Result<T>) -> Result<T> {
+        let Ok(mut cached) = self.cached.lock() else {
+            return refresh();
+        };
+        let now = Instant::now();
+        if let Some(snapshot) = cached.as_ref()
+            && now.duration_since(snapshot.observed_at) < ttl
+        {
+            return Ok(snapshot.response.clone());
+        }
+
+        let response = refresh()?;
+        *cached = Some(CachedResponse {
+            response: response.clone(),
+            observed_at: now,
+        });
+        Ok(response)
+    }
+}
+
+struct CachedResponse<T> {
+    response: T,
+    observed_at: Instant,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,6 +387,7 @@ impl ControlPlane {
             store,
             mobile_events: MobileEventHub::new(),
             devin_acp_runtime: DevinAcpRuntime::default(),
+            response_cache: Arc::new(ControlPlaneResponseCache::new()),
         }
     }
 
@@ -343,7 +411,8 @@ impl ControlPlane {
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
-        let state = read_state(&self.config.codex_home)?;
+        let state =
+            read_state_with_thread_limit(&self.config.codex_home, Some(DESKTOP_MENU_THREAD_LIMIT))?;
         let session_state = self.mobile_session_service().state()?;
         let mut thread_signature =
             codex_threads_for_snapshot(&state.threads, Some(DESKTOP_MENU_THREAD_LIMIT))
@@ -392,14 +461,9 @@ impl ControlPlane {
             })
             .collect::<Vec<_>>();
         devin_signature.sort();
-        let codex_active_thread_count = state
-            .threads
-            .iter()
-            .filter(|thread| !thread.archived)
-            .count();
+        let codex_active_thread_count = state.active_thread_count;
         let codex_archived_thread_count = state
-            .threads
-            .len()
+            .total_thread_count
             .saturating_sub(codex_active_thread_count);
         let grok_active_thread_count = grok_sessions
             .iter()
@@ -555,6 +619,14 @@ impl ControlPlane {
     }
 
     pub fn managed_connections_response(&self) -> Result<ManagedConnectionsResponse> {
+        self.response_cache
+            .managed_connections
+            .get_or_refresh(DESKTOP_MENU_RESPONSE_CACHE_TTL, || {
+                self.managed_connections_response_uncached()
+            })
+    }
+
+    fn managed_connections_response_uncached(&self) -> Result<ManagedConnectionsResponse> {
         let status = self.status();
         let mut connections = self.mobile_connections()?;
         connections.extend(self.devin_desktop_connections());
@@ -573,7 +645,8 @@ impl ControlPlane {
     ) -> Result<ManagedConnectionsResponse> {
         self.mobile_auth_service()
             .rename_mobile_connection(connection_id, label)?;
-        self.managed_connections_response()
+        self.response_cache.invalidate_desktop_menu_surfaces();
+        self.managed_connections_response_uncached()
     }
 
     pub fn revoke_mobile_connection(
@@ -582,7 +655,8 @@ impl ControlPlane {
     ) -> Result<ManagedConnectionsResponse> {
         self.mobile_auth_service()
             .revoke_mobile_connection(connection_id)?;
-        self.managed_connections_response()
+        self.response_cache.invalidate_desktop_menu_surfaces();
+        self.managed_connections_response_uncached()
     }
 
     pub fn threads(&self) -> Result<Vec<ThreadRecord>> {
@@ -721,7 +795,7 @@ impl ControlPlane {
         let Some(provider) = self.acp_client_host_provider(client_id) else {
             return Ok(None);
         };
-        Ok(Some(match provider {
+        let response = Some(match provider {
             AcpClientHostProvider::Devin => {
                 let install = install_looper_acp_agent_for_home(
                     &self.config.home_path,
@@ -738,7 +812,9 @@ impl ControlPlane {
                 }
             }
             AcpClientHostProvider::Zed => return Ok(None),
-        }))
+        });
+        self.response_cache.invalidate_desktop_menu_surfaces();
+        Ok(response)
     }
 
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
@@ -766,6 +842,7 @@ impl ControlPlane {
             &crate::runtime::default_server_base_url(),
         )?;
         let status = inspect_devin_desktop_for_home(&self.config.home_path);
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(DevinAcpInstallResponse {
             install,
             bridge: status.acp_bridge,
@@ -816,6 +893,7 @@ impl ControlPlane {
             + unregister_owned_grok_hooks(&self.config.grok_home)?
             + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.set_hooks_auto_registration(false)?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
             action: "unregister-hooks".to_owned(),
             removed_handlers,
@@ -836,6 +914,7 @@ impl ControlPlane {
         let grok_change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
         let claude_change = register_owned_claude_hooks(&self.claude_home(), hook_command)?;
         let settings = self.store.set_hooks_auto_registration(true)?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
             action: "register-hooks".to_owned(),
             removed_handlers: codex_change.removed_handlers
@@ -875,6 +954,7 @@ impl ControlPlane {
             }
         };
         let settings = self.store.set_hooks_auto_registration(true)?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
             action: format!("register-{}-hooks", target.action_slug()),
             removed_handlers,
@@ -890,6 +970,7 @@ impl ControlPlane {
             + unregister_owned_grok_hooks(&self.config.grok_home)?
             + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.service_settings()?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
             action: "unregister-live-hooks".to_owned(),
             removed_handlers,
@@ -909,6 +990,7 @@ impl ControlPlane {
             HookMutationTarget::ClaudeCode => unregister_owned_claude_hooks(&self.claude_home())?,
         };
         let settings = self.store.service_settings()?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
             action: format!("unregister-live-{}-hooks", target.action_slug()),
             removed_handlers,
@@ -1044,6 +1126,19 @@ impl ControlPlane {
     }
 
     pub fn desktop_menu_snapshot(&self) -> Result<DesktopSnapshot> {
+        self.response_cache.desktop_menu_snapshot.get_or_refresh(
+            DESKTOP_MENU_RESPONSE_CACHE_TTL,
+            || {
+                self.desktop_snapshot_with_limits(
+                    Some(DESKTOP_MENU_THREAD_LIMIT),
+                    DESKTOP_MENU_COMPACTION_LIMIT,
+                    DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
+                )
+            },
+        )
+    }
+
+    pub fn desktop_mobile_snapshot(&self) -> Result<DesktopSnapshot> {
         self.desktop_snapshot_with_limits(
             Some(DESKTOP_MENU_THREAD_LIMIT),
             DESKTOP_MENU_COMPACTION_LIMIT,
@@ -2023,5 +2118,52 @@ mod tests {
                 .iter()
                 .any(|connection| connection.id == CLAUDE_CODE_HOOKS_CONNECTION_ID)
         );
+    }
+
+    #[test]
+    fn timed_response_cache_reuses_fresh_response() {
+        let cache = TimedResponseCache::new();
+        let mut refresh_count = 0;
+
+        let first = cache
+            .get_or_refresh(Duration::from_secs(60), || {
+                refresh_count += 1;
+                Ok("first".to_owned())
+            })
+            .expect("first refresh");
+        let second = cache
+            .get_or_refresh(Duration::from_secs(60), || {
+                refresh_count += 1;
+                Ok("second".to_owned())
+            })
+            .expect("cached refresh");
+
+        assert_eq!(refresh_count, 1);
+        assert_eq!(first, "first");
+        assert_eq!(second, "first");
+    }
+
+    #[test]
+    fn timed_response_cache_invalidates_response() {
+        let cache = TimedResponseCache::new();
+        let mut refresh_count = 0;
+
+        let first = cache
+            .get_or_refresh(Duration::from_secs(60), || {
+                refresh_count += 1;
+                Ok("first".to_owned())
+            })
+            .expect("first refresh");
+        cache.invalidate();
+        let second = cache
+            .get_or_refresh(Duration::from_secs(60), || {
+                refresh_count += 1;
+                Ok("second".to_owned())
+            })
+            .expect("second refresh");
+
+        assert_eq!(refresh_count, 2);
+        assert_eq!(first, "first");
+        assert_eq!(second, "second");
     }
 }

@@ -4,59 +4,59 @@
 
 <h1 align="center">Looper</h1>
 
-<p align="center"><strong>Let Codex run until the task is actually done.</strong></p>
+<p align="center"><strong>Keep AI coding agent sessions moving until the task is actually done.</strong></p>
 <p align="center"><a href="https://github.com/lnikell/looper/releases/latest/download/stable-macos-arm64-Looper.dmg">Download</a></p>
 
 https://github.com/user-attachments/assets/1deba634-a305-4686-8654-65f889162932
 
-If you've ever had to send dozens of follow-up messages just to keep Codex running, or felt frustrated when it skipped tests, lint, or typecheck even though you clearly asked for them in Agents.md, this might help.
+If you've ever had to send dozens of follow-up messages just to keep an AI coding agent running, or felt frustrated when it skipped tests, lint, or typecheck even though you clearly asked for them in your project instructions, this might help.
 
 ## With Looper, you can:
 
-- keep Codex running until you stop it
+- keep supported AI coding agent sessions running until you stop them
 - require specific commands at the end of a task, and keep going until they pass
 - get progress updates in Telegram or Slack, and even reply to redirect the work or change the mode
 
 ## How does it work
 
-Looper plugs into Codex through Codex Hooks.
+Looper plugs into local AI coding agent surfaces through hooks, local state, and ACP integrations.
 
-When a chat starts, Looper registers it and remembers the settings for that task.
+When a supported session starts, Looper registers it and remembers the settings for that task.
 
-When Codex tries to stop, Looper gets a chance to decide what should happen next. Depending on the mode you picked, it can:
+When a hook-backed agent session tries to stop, Looper gets a chance to decide what should happen next. Depending on the mode you picked, it can:
 
-- let the chat stop
-- send another prompt and keep Codex going
+- let the session stop
+- send another prompt and keep the agent going
 - run your completion checks first, and keep going if they fail
-- wait for a reply from Telegram and feed that reply back into the same chat
+- wait for a reply from Telegram and feed that reply back into the same session
 
-At the same time, it can send the latest assistant message to Telegram or Slack so you can see progress without sitting in front of Codex the whole time.
+At the same time, it can send the latest assistant message to Telegram or Slack so you can see progress without sitting in front of the agent UI the whole time.
 
-**IMPORTANT:** Looper runs fully locally on your machine. It does not send your chats, prompts, or app data to any Looper server. If you connect Telegram or Slack, you are using **your own bot** or **your own webhook**, under your control.
+**IMPORTANT:** Looper runs fully locally on your machine. It does not send your sessions, prompts, or app data to any Looper server. If you connect Telegram or Slack, you are using **your own bot** or **your own webhook**, under your control.
 
 ## Modes
 
-You can set a mode globally for all chats, or override it per task.
+You can set a mode globally for all sessions, or override it per task.
 
-If no mode is active, Codex stops normally.
+If no mode is active, sessions stop normally.
 
-- **Infinite**: every time Codex stops, Looper sends the default follow-up prompt and keeps the chat going. You can change that default prompt in Settings, or override it for one task by replying to that task in Telegram.
-- **Await Reply**: when Codex stops, Looper waits for your reply in Telegram, then sends that reply back into the same chat.
-- **Completion Checks**: when Codex stops, Looper runs your commands like tests, lint, or typecheck. If any command fails, it tells Codex to keep going until they pass.
-- **Max Turns 1 / 2 / 3**: Looper keeps Codex going for a fixed number of extra turns, then lets it stop.
+- **Infinite**: every time a supported agent session stops, Looper sends the default follow-up prompt and keeps the session going. You can change that default prompt in Settings, or override it for one task by replying to that task in Telegram.
+- **Await Reply**: when a supported agent session stops, Looper waits for your reply in Telegram, then sends that reply back into the same session.
+- **Completion Checks**: when a supported agent session stops, Looper runs your commands like tests, lint, or typecheck. If any command fails, it tells the agent to keep going until they pass.
+- **Max Turns 1 / 2 / 3**: Looper keeps the session going for a fixed number of extra turns, then lets it stop.
 
 This gives you a simple choice: keep pushing automatically, wait for human input, require checks to pass, or allow only a small number of extra turns.
 
 ## Use cases
 
 - **Keep pushing on a messy refactor without making me send "keep going" every 5 minutes**
-  Use **Infinite** when the work is real, but there is no clean automatic way to evaluate "done" yet. This fits tasks like cross-file refactors, bug hunts, and long review-comment cleanup where the next step depends on what Codex finds.
+  Use **Infinite** when the work is real, but there is no clean automatic way to evaluate "done" yet. This fits tasks like cross-file refactors, bug hunts, and long review-comment cleanup where the next step depends on what the agent finds.
 
 - **Make sure `pnpm test` passes before marking the task as done**
-  Use **Completion Checks** when you want Codex to stop only after the repo is actually green. This is for the common case where the agent says it is done, but tests, lint, or typecheck still fail.
+  Use **Completion Checks** when you want the agent to stop only after the repo is actually green. This is for the common case where the agent says it is done, but tests, lint, or typecheck still fail.
 
 - **Send me the result in Telegram and wait for my decision**
-  Use **Await Reply** when Codex reaches a decision point and should wait for you instead of guessing. This works well when you want to review a draft, approve a plan, or redirect the work while you are away from your desk.
+  Use **Await Reply** when an agent reaches a decision point and should wait for you instead of guessing. This works well when you want to review a draft, approve a plan, or redirect the work while you are away from your desk.
 
 ## Telegram Setup
 
@@ -168,11 +168,12 @@ surface, `looper send active <prompt>` targets every active session, and
 scriptable no-op that reports the headless server state; closing the terminal
 surface never stops `looper-server`.
 
-Connections include iPhone pairings, Codex hooks, local Codex app servers,
-Cursor/Superconductor Codex processes, and Devin Desktop itself. Devin support
-uses Devin Desktop as the single source for all Devin-hosted ACP agents and
-sessions, regardless of provider. Devin-spawned Codex servers are still shown as
-Codex runtime children owned by `devin-desktop`. `looper devin bridge` and
+Connections include iPhone pairings, Codex hooks, Claude Code hooks, Grok Build
+hooks, local Codex app servers, Cursor/Superconductor Codex processes, Devin
+Desktop, and ACP targets. Devin support uses Devin Desktop as the single source
+for all Devin-hosted ACP agents and sessions, regardless of provider.
+Devin-spawned Codex servers are still shown as Codex runtime children owned by
+`devin-desktop`. `looper devin bridge` and
 `/desktop/devin/acp-bridge` expose sanitized Devin Desktop agent metadata,
 including `looper devin install`, which registers the Looper websocket ACP agent
 at `/acp/devin`, and `looper devin probe [agent-id]`, the non-executing preflight
@@ -191,12 +192,12 @@ API auth contract.
 ### Menu Bar App
 
 The native menu bar app lives in `macos/LooperMenuBar`. It launches the bundled
-Rust control plane, registers Codex hooks on launch, clears live hooks on quit
+Rust control plane, registers supported hooks on launch, clears live hooks on quit
 without disabling the next launch, and shuts down the local server when you quit
 unless **Detach Server on Quit** is enabled. The status item is a human-visible
 anchor that Looper is present; the menu text shows whether the server is ready,
 needs attention, or unavailable. The menu shows the lifecycle state, iPhone API
-readiness, active chats, Codex servers, automations, and goals
+readiness, active sessions, agent connections, automations, and goals
 from `/desktop/snapshot?profile=menu`. It does not open a separate terminal
 window; use `looper` from your existing terminal for the control surface.
 
@@ -245,7 +246,7 @@ In another terminal:
 xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-If there is no local Codex thread data yet, the dev API returns an empty real snapshot instead of demo sessions.
+If there is no local session data yet, the dev API returns an empty real snapshot instead of demo sessions.
 
 ## Useful Links
 

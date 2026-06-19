@@ -6,10 +6,10 @@ use axum::response::{IntoResponse, Response};
 use time::format_description::well_known::Rfc3339;
 
 use crate::control_plane::ControlPlane;
-use crate::mobile_auth::{
+use crate::mobile::auth::{
     MobileAuthError, MobileAuthorizationCredential, parse_mobile_authorization_header,
 };
-use crate::mobile_network::advertised_mobile_base_urls;
+use crate::mobile::network::advertised_mobile_base_urls;
 
 const AUTHORIZATION_HEADER: &str = "authorization";
 const MOBILE_SESSION_HEADER: &str = "x-looper-mobile-session";
@@ -39,7 +39,7 @@ pub(super) fn authorize_mobile_request(
     headers: &HeaderMap,
 ) -> Result<
     (
-        crate::mobile_auth::MobileAuthService,
+        crate::mobile::auth::MobileAuthService,
         MobileAuthorizationCredential,
     ),
     MobileAuthError,
@@ -58,7 +58,7 @@ pub(super) fn authorize_mobile_api_request(
     headers: &HeaderMap,
 ) -> Result<
     (
-        crate::mobile_auth::MobileAuthService,
+        crate::mobile::auth::MobileAuthService,
         MobileAuthorizationCredential,
     ),
     MobileAuthError,

@@ -11,7 +11,7 @@ Rust, macOS, and iPhone readability pass.
 - `crates/agent-control-plane/src/acp_client_host.rs` is the public facade for
   ACP host summaries. Provider-specific mapping lives in
   `acp_client_host/devin.rs` and `acp_client_host/zed.rs`.
-- `mobile_auth.rs` keeps the connection-code response values in local typed
+- `mobile/auth.rs` keeps the connection-code response values in local typed
   variables instead of reading them back from transient JSON.
 
 ## macOS Menu Bar

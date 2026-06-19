@@ -2,9 +2,9 @@
 
 ## Repository
 
-Looper keeps Codex chats moving after Codex stops. The active product split is:
+Looper keeps AI coding agent sessions moving after supported agents stop. The active product split is:
 
-- `looper-server`: Rust daemon and source of truth for state, hooks, sessions, scheduler, auth, mobile API, persistence, notifications, and events.
+- `looper-server`: Rust daemon and source of truth for state, hooks, sessions, scheduler, auth, mobile API, persistence, notifications, agent integrations, and events.
 - `looper`: primary Rust terminal command for inline attach plus server control, hooks, sessions, settings, notifications, checks, connections, pairing, and shutdown.
 - `looper-cli`: bundled compatibility binary for script callers; product docs and help should prefer `looper`.
 - `macos/LooperMenuBar`: native macOS menu bar client that launches and controls the bundled Rust server; it does not open a separate terminal window.
@@ -42,4 +42,4 @@ Looper keeps Codex chats moving after Codex stops. The active product split is:
 - Start the iPhone-facing API with `pnpm run dev:ios-api`.
 - Run repo checks with `pnpm check`.
 - SQLite control-plane state: `~/Library/Application Support/looper/agent-control-plane.sqlite`.
-- Managed Codex hook/config files touched by the app: `~/.codex/hooks.json` and `~/.codex/config.toml`.
+- Managed hook/config files touched by the app include Codex `~/.codex/hooks.json` and `~/.codex/config.toml`, Claude Code `~/.claude/settings.json`, Grok Build `~/.grok/hooks/looper.json`, and Devin local `~/.config/devin/config.json`.

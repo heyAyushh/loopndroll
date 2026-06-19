@@ -373,9 +373,9 @@ require_branded_siri_dialog_source() {
     exit 1
   fi
 
-  if ! rg -Fq 'Ask current \(.applicationName) session' "${intents_file}" ||
-    ! rg -Fq 'Search \(.applicationName) sessions' "${intents_file}" ||
-    ! rg -Fq 'Set default \(.applicationName) session' "${intents_file}"; then
+  if ! rg -Fq 'Ask the current session in \(.applicationName)' "${intents_file}" ||
+    ! rg -Fq 'Search sessions in \(.applicationName)' "${intents_file}" ||
+    ! rg -Fq 'Set the default session in \(.applicationName)' "${intents_file}"; then
     printf 'error: App Shortcut phrases must put the app name in the natural spoken position\n' >&2
     exit 1
   fi
@@ -418,6 +418,7 @@ xcodebuild -quiet \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "${DERIVED_DATA_DIR}" \
   CODE_SIGNING_ALLOWED=NO \
+  ENABLE_DEBUG_DYLIB=NO \
   ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
   build

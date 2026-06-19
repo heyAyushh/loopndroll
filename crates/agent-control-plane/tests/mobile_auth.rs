@@ -1,4 +1,4 @@
-use agent_control_plane::mobile_auth::{
+use agent_control_plane::mobile::auth::{
     CompleteMobilePasskeyAuthenticationInput, CompleteMobilePasskeyRegistrationInput,
     MobileAuthError, MobileAuthService, mobile_authorization_header,
 };

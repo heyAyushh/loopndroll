@@ -7,14 +7,13 @@ use tonic::Status;
 
 use crate::control_plane::ControlPlane;
 use crate::grpc::proto;
-use crate::mobile_events::{
-    MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
+use crate::mobile::events::{
+    MOBILE_EVENT_CONNECTED_NAME, MobileEvent, MobileEventBroadcast, MobileEventKind,
+    MobileEventRecord, mobile_event_now, snapshot_revision_changed_event,
 };
 
 const EVENT_REPLAY_BATCH_SIZE: usize = 32;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const EVENT_CONNECTED_NAME: &str = "connected";
-const EVENT_SNAPSHOT_REVISION_CHANGED_DETAIL: &str = "snapshot-revision-changed";
 const PROTO_EVENT_KIND_UNSPECIFIED: i32 = 0;
 const PROTO_EVENT_KIND_SESSION_CHANGED: i32 = 1;
 const PROTO_EVENT_KIND_PROMPT_QUEUED: i32 = 2;
@@ -49,11 +48,25 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                                     yield Ok(proto_event_from_record(&record));
                                 }
                                 MobileEventBroadcast::Ephemeral(event) => {
-                                    yield Ok(proto_event_from_mobile_event(&event, ""));
+                                    yield Ok(proto_event_from_mobile_event(&event));
                                 }
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, EVENT_REPLAY_BATCH_SIZE) {
+                                for record in records {
+                                    last_event_cursor = (&record).into();
+                                    yield Ok(proto_event_from_record(&record));
+                                }
+                            }
+                            if let Ok(revision) = control_plane.mobile_snapshot_revision() {
+                                if revision != last_revision {
+                                    last_revision = revision;
+                                    yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
+                                }
+                            }
+                            continue;
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -68,15 +81,7 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                     if let Ok(revision) = control_plane.mobile_snapshot_revision() {
                         if revision != last_revision {
                             last_revision = revision;
-                            yield Ok(proto::MobileEvent {
-                                kind: PROTO_EVENT_KIND_SESSION_CHANGED,
-                                event_name: event_name(MobileEventKind::SessionChanged).to_owned(),
-                                thread_id: String::new(),
-                                prompt_id: String::new(),
-                                detail: EVENT_SNAPSHOT_REVISION_CHANGED_DETAIL.to_owned(),
-                                server_time: mobile_event_now(),
-                                revision: last_revision.clone(),
-                            });
+                            yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
                         }
                     }
                 }
@@ -90,7 +95,7 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
 pub fn connected_event(revision: &str) -> proto::MobileEvent {
     proto::MobileEvent {
         kind: PROTO_EVENT_KIND_UNSPECIFIED,
-        event_name: EVENT_CONNECTED_NAME.to_owned(),
+        event_name: MOBILE_EVENT_CONNECTED_NAME.to_owned(),
         thread_id: String::new(),
         prompt_id: String::new(),
         detail: String::new(),
@@ -99,7 +104,7 @@ pub fn connected_event(revision: &str) -> proto::MobileEvent {
     }
 }
 
-fn proto_event_from_mobile_event(event: &MobileEvent, revision: &str) -> proto::MobileEvent {
+fn proto_event_from_mobile_event(event: &MobileEvent) -> proto::MobileEvent {
     proto::MobileEvent {
         kind: proto_event_kind(event.event_type),
         event_name: event_name(event.event_type).to_owned(),
@@ -107,7 +112,7 @@ fn proto_event_from_mobile_event(event: &MobileEvent, revision: &str) -> proto::
         prompt_id: event.prompt_id.clone().unwrap_or_default(),
         detail: event.detail.clone().unwrap_or_default(),
         server_time: event.server_time.clone(),
-        revision: revision.to_owned(),
+        revision: event.revision.clone().unwrap_or_default(),
     }
 }
 

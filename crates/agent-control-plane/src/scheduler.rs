@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::automations::read_automations;
 use crate::control_plane::ControlPlane;
 use crate::events::AutomationRunRecord;
-use crate::mobile_prompt_delivery::{PromptDispatch, send_non_acp_session_prompt};
+use crate::mobile::prompt_delivery::{PromptDispatch, send_non_acp_session_prompt};
 
 const AUTOMATION_DELIVERY_MODE: &str = "local-prompt-dispatch";
 const AUTOMATION_RESULT_PENDING: &str = "pending";

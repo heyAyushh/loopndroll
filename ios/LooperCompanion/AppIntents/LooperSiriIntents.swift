@@ -672,8 +672,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: OpenLooperSessionIntent(),
             phrases: [
-                "Open a \(.applicationName) session",
-                "Show my \(.applicationName) session"
+                "Open a session in \(.applicationName)",
+                "Show my session in \(.applicationName)"
             ],
             shortTitle: "Open Session",
             systemImageName: "arrow.up.forward.app"
@@ -682,8 +682,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: SummarizeLooperSessionIntent(),
             phrases: [
-                "Summarize a \(.applicationName) session",
-                "What happened in my \(.applicationName) session"
+                "Summarize a session in \(.applicationName)",
+                "What happened in my session in \(.applicationName)"
             ],
             shortTitle: "Summarize Session",
             systemImageName: "text.badge.checkmark"
@@ -692,8 +692,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: SearchLooperSessionsIntent(),
             phrases: [
-                "Search \(.applicationName) sessions",
-                "Find a \(.applicationName) session"
+                "Search sessions in \(.applicationName)",
+                "Find a session in \(.applicationName)"
             ],
             shortTitle: "Search Sessions",
             systemImageName: "magnifyingglass"
@@ -702,8 +702,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: CreateLooperPromptIntent(),
             phrases: [
-                "Create a \(.applicationName) prompt",
-                "Add a prompt with \(.applicationName)"
+                "Create a prompt in \(.applicationName)",
+                "Add a prompt in \(.applicationName)"
             ],
             shortTitle: "Create Prompt",
             systemImageName: "plus.message"
@@ -712,8 +712,9 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: UpdateDefaultLooperSessionIntent(),
             phrases: [
-                "Update default \(.applicationName) session",
-                "Clear default \(.applicationName) session"
+                "Set the default session in \(.applicationName)",
+                "Update the default session in \(.applicationName)",
+                "Clear the default session in \(.applicationName)"
             ],
             shortTitle: "Update Default",
             systemImageName: "pin.slash"
@@ -722,8 +723,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AskDefaultLooperSessionIntent(),
             phrases: [
-                "Ask default \(.applicationName) session",
-                "Tell \(.applicationName)"
+                "Ask the default session in \(.applicationName)",
+                "Tell the default session in \(.applicationName)"
             ],
             shortTitle: "Ask Default",
             systemImageName: "sparkles"
@@ -732,8 +733,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AskCurrentLooperSessionIntent(),
             phrases: [
-                "Ask current \(.applicationName) session",
-                "Tell this \(.applicationName) session"
+                "Ask the current session in \(.applicationName)",
+                "Tell this session in \(.applicationName)"
             ],
             shortTitle: "Ask Current",
             systemImageName: "target"
@@ -742,8 +743,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AskContextualCurrentLooperSessionIntent(),
             phrases: [
-                "Ask current \(.applicationName) session with context",
-                "Tell this \(.applicationName) session with context"
+                "Ask the current session in \(.applicationName) with context",
+                "Tell this session in \(.applicationName) with context"
             ],
             shortTitle: "Ask Context",
             systemImageName: "text.append"
@@ -752,8 +753,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: SuggestLooperPromptIntent(),
             phrases: [
-                "Suggest a \(.applicationName) prompt",
-                "What should I ask \(.applicationName)"
+                "Suggest a prompt in \(.applicationName)",
+                "Suggest what to ask in \(.applicationName)"
             ],
             shortTitle: "Suggest Prompt",
             systemImageName: "quote.bubble"
@@ -762,8 +763,8 @@ struct LooperSiriShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: DeleteLooperSessionsIntent(),
             phrases: [
-                "Delete a \(.applicationName) session",
-                "Remove a \(.applicationName) session"
+                "Delete a session in \(.applicationName)",
+                "Remove a session from \(.applicationName)"
             ],
             shortTitle: "Delete Session",
             systemImageName: "trash"

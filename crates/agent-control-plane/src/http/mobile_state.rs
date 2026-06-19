@@ -3,11 +3,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use crate::control_plane::{ControlPlane, DesktopSnapshot};
-use crate::mobile_api::{mobile_session_detail, mobile_snapshot};
-use crate::mobile_events::{MobileEventInput, MobileEventKind};
-use crate::mobile_network::advertised_mobile_grpc_base_urls;
-use crate::mobile_prompt_delivery::mobile_desktop_snapshot;
-use crate::mobile_session::MobileSessionState;
+use crate::mobile::api::{mobile_session_detail, mobile_snapshot};
+use crate::mobile::events::{MobileEventInput, MobileEventKind};
+use crate::mobile::network::advertised_mobile_grpc_base_urls;
+use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
+use crate::mobile::session::MobileSessionState;
 
 use super::mobile_access::{current_mobile_time, request_advertised_mobile_base_urls};
 use super::responses::{

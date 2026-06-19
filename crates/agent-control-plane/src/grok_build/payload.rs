@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use crate::mobile_session::MobileHookPayload;
+use crate::mobile::session::MobileHookPayload;
 
 const GROK_HOOK_EVENT_ENV: &str = "GROK_HOOK_EVENT";
 const GROK_SESSION_ID_ENV: &str = "GROK_SESSION_ID";

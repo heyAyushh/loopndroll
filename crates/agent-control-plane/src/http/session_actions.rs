@@ -1,5 +1,5 @@
 use crate::control_plane::ControlPlane;
-use crate::mobile_session::MobileSessionError;
+use crate::mobile::session::MobileSessionError;
 
 use super::mobile_state::{emit_mobile_lifecycle_changed, emit_mobile_session_changed};
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::control_plane::{ControlPlane, DesktopSnapshot, DesktopThread};
-use crate::mobile_session::{MobileNotificationRoute, MobileSessionState};
+use crate::mobile::session::{MobileNotificationRoute, MobileSessionState};
 use crate::telegram::{TelegramInboundMessage, TelegramUpdate};
 
 const COMMAND_PREFIX: char = '/';

@@ -8,7 +8,7 @@ the Rust CLI, and the Rust TUI are clients of the Rust HTTP/SSE API.
 ## Rust Owns
 
 - Local server lifecycle, status, shutdown, and event streaming.
-- Codex thread discovery, thread details, desktop snapshots, and capabilities.
+- Supported agent session discovery, session details, desktop snapshots, and capabilities.
 - Hook registration, live-hook unregistration, hook execution, and hook contract metadata.
 - Session settings, per-session overrides, archive/delete/mute, queued prompts, and continuation modes.
 - Completion-check configuration and execution.

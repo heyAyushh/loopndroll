@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +37,9 @@ const DEVIN_SURFACE_CLIENTS: &[&str] = &[DEVIN_CLIENT];
 const GROK_BUILD_SURFACE_CLIENTS: &[&str] = &[GROK_BUILD_CLIENT];
 const CLAUDE_CODE_SURFACE_CLIENTS: &[&str] = &[CLAUDE_CODE_CLIENT];
 const ZED_SURFACE_CLIENTS: &[&str] = &["zed"];
+const ADAPTER_CAPABILITY_CACHE_TTL: Duration = Duration::from_secs(2);
+
+static ADAPTER_CAPABILITY_CACHE: OnceLock<AdapterCapabilityCache> = OnceLock::new();
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -87,7 +92,9 @@ pub enum AssistantRuntimeKind {
 }
 
 pub fn adapter_capabilities() -> Vec<AssistantAdapterCapability> {
-    discover_assistant_adapters()
+    ADAPTER_CAPABILITY_CACHE
+        .get_or_init(|| AdapterCapabilityCache::new(ADAPTER_CAPABILITY_CACHE_TTL))
+        .adapters(discover_assistant_adapters)
 }
 
 pub fn static_adapter_capabilities() -> Vec<AssistantAdapterCapability> {
@@ -469,6 +476,47 @@ fn runtime_only(
     }
 }
 
+struct AdapterCapabilityCache {
+    cached: Mutex<Option<CachedAdapterCapabilities>>,
+    ttl: Duration,
+}
+
+impl AdapterCapabilityCache {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            cached: Mutex::new(None),
+            ttl,
+        }
+    }
+
+    fn adapters(
+        &self,
+        discover: impl FnOnce() -> Vec<AssistantAdapterCapability>,
+    ) -> Vec<AssistantAdapterCapability> {
+        let Ok(mut cached) = self.cached.lock() else {
+            return discover();
+        };
+        let now = Instant::now();
+        if let Some(snapshot) = cached.as_ref()
+            && now.duration_since(snapshot.observed_at) < self.ttl
+        {
+            return snapshot.adapters.clone();
+        }
+
+        let adapters = discover();
+        *cached = Some(CachedAdapterCapabilities {
+            adapters: adapters.clone(),
+            observed_at: now,
+        });
+        adapters
+    }
+}
+
+struct CachedAdapterCapabilities {
+    adapters: Vec<AssistantAdapterCapability>,
+    observed_at: Instant,
+}
+
 #[derive(Debug)]
 struct AdapterDetections<'a> {
     process_commands: &'a [String],
@@ -607,6 +655,57 @@ fn first_executable_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapter_capability_cache_reuses_recent_discovery() {
+        let cache = AdapterCapabilityCache::new(Duration::from_secs(60));
+        let mut discovery_count = 0;
+
+        let first = cache.adapters(|| {
+            discovery_count += 1;
+            vec![test_adapter(AssistantKind::Codex)]
+        });
+        let second = cache.adapters(|| {
+            discovery_count += 1;
+            vec![test_adapter(AssistantKind::Zed)]
+        });
+
+        assert_eq!(discovery_count, 1);
+        assert_eq!(first, second);
+        assert_eq!(second[0].assistant_kind, AssistantKind::Codex);
+    }
+
+    #[test]
+    fn adapter_capability_cache_refreshes_expired_discovery() {
+        let cache = AdapterCapabilityCache::new(Duration::ZERO);
+        let mut discovery_count = 0;
+
+        let first = cache.adapters(|| {
+            discovery_count += 1;
+            vec![test_adapter(AssistantKind::Codex)]
+        });
+        let second = cache.adapters(|| {
+            discovery_count += 1;
+            vec![test_adapter(AssistantKind::Zed)]
+        });
+
+        assert_eq!(discovery_count, 2);
+        assert_ne!(first, second);
+        assert_eq!(second[0].assistant_kind, AssistantKind::Zed);
+    }
+
+    fn test_adapter(assistant_kind: AssistantKind) -> AssistantAdapterCapability {
+        AssistantAdapterCapability {
+            assistant_kind,
+            live_sessions: false,
+            tool_inventory: false,
+            spawn_graph: false,
+            diff_summary: false,
+            auth_capabilities: false,
+            runtimes: Vec::new(),
+            detail: "test".to_owned(),
+        }
+    }
 
     #[test]
     fn infers_grok_build_client_from_grok_session_paths() {

@@ -36,6 +36,11 @@ const CODEX_APP_PROCESS_NEEDLES: &[&str] = &[
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 const ROLLOUT_FILENAME_TIMESTAMP_LENGTH: usize = 19;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+const BOUNDED_ROLLOUT_REFRESH_MULTIPLIER: usize = 4;
+const MIN_BOUNDED_ROLLOUT_REFRESH_CANDIDATES: usize = 64;
+const ROLLOUT_SESSION_META_SCAN_LINE_LIMIT: usize = 2_000;
+const BYTES_PER_KIBIBYTE: u64 = 1_024;
+const ROLLOUT_SESSION_META_SCAN_BYTE_LIMIT: u64 = 256 * BYTES_PER_KIBIBYTE;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneStatus {
@@ -339,7 +344,11 @@ pub fn read_state_with_thread_limit(
     let connection = Connection::open(&state_db)
         .with_context(|| format!("open Codex state DB {}", state_db.display()))?;
     let mut threads = read_threads(&connection, None)?;
-    refresh_thread_rollout_paths(&mut threads, &sources.sessions_root);
+    refresh_thread_rollout_paths(
+        &mut threads,
+        &sources.sessions_root,
+        thread_limit.map(bounded_rollout_refresh_candidate_limit),
+    );
     if let Some(limit) = thread_limit {
         threads = latest_thread_records(threads, limit);
     }
@@ -561,7 +570,17 @@ fn read_threads(connection: &Connection, limit: Option<usize>) -> Result<Vec<Thr
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-fn refresh_thread_rollout_paths(threads: &mut [ThreadRecord], sessions_root: &Path) {
+fn bounded_rollout_refresh_candidate_limit(thread_limit: usize) -> usize {
+    thread_limit
+        .saturating_mul(BOUNDED_ROLLOUT_REFRESH_MULTIPLIER)
+        .max(MIN_BOUNDED_ROLLOUT_REFRESH_CANDIDATES)
+}
+
+fn refresh_thread_rollout_paths(
+    threads: &mut [ThreadRecord],
+    sessions_root: &Path,
+    candidate_limit: Option<usize>,
+) {
     if threads.is_empty() || !sessions_root.is_dir() {
         return;
     }
@@ -572,7 +591,9 @@ fn refresh_thread_rollout_paths(threads: &mut [ThreadRecord], sessions_root: &Pa
         .collect::<BTreeSet<_>>();
     let mut latest_rollouts_by_thread = BTreeMap::<String, RolloutPathCandidate>::new();
 
-    for candidate in rollout_paths_by_freshness(sessions_root) {
+    let candidates = rollout_paths_by_freshness(sessions_root);
+    let candidate_limit = candidate_limit.unwrap_or(candidates.len());
+    for candidate in candidates.into_iter().take(candidate_limit) {
         for session_id in rollout_session_ids(&candidate.path) {
             if !selected_thread_ids.contains(session_id.as_str()) {
                 continue;
@@ -668,9 +689,13 @@ fn rollout_session_ids(path: &Path) -> Vec<String> {
     let Ok(file) = File::open(path) else {
         return Vec::new();
     };
-    let reader = BufReader::new(file);
+    let reader = BufReader::new(file.take(ROLLOUT_SESSION_META_SCAN_BYTE_LIMIT));
     let mut session_ids = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
+    for line in reader
+        .lines()
+        .map_while(Result::ok)
+        .take(ROLLOUT_SESSION_META_SCAN_LINE_LIMIT)
+    {
         let Ok(record) = serde_json::from_str::<RolloutRecord>(&line) else {
             continue;
         };
@@ -1324,7 +1349,7 @@ mod tests {
     use super::{
         CodexServerOwner, LaunchKind, SpawnEdge, ThreadRecord, build_spawn_graph,
         inspect_codex_servers_from_process_lines, latest_matching_file,
-        read_state_with_thread_limit, refresh_thread_rollout_paths,
+        read_state_with_thread_limit, refresh_thread_rollout_paths, rollout_session_ids,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -1407,7 +1432,7 @@ mod tests {
             stale_rollout.display().to_string(),
         )];
 
-        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+        refresh_thread_rollout_paths(&mut threads, tempdir.path(), None);
 
         assert_eq!(
             threads[0].transcript_path.as_deref(),
@@ -1433,7 +1458,7 @@ mod tests {
             stale_rollout.display().to_string(),
         )];
 
-        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+        refresh_thread_rollout_paths(&mut threads, tempdir.path(), None);
 
         assert_eq!(
             threads[0].transcript_path.as_deref(),
@@ -1457,11 +1482,29 @@ mod tests {
             stale_rollout.display().to_string(),
         )];
 
-        refresh_thread_rollout_paths(&mut threads, tempdir.path());
+        refresh_thread_rollout_paths(&mut threads, tempdir.path(), None);
 
         assert_eq!(
             threads[0].transcript_path.as_deref(),
             Some(resumed_rollout.to_str().expect("utf8 path"))
+        );
+    }
+
+    #[test]
+    fn rollout_session_ids_falls_back_to_filename_when_meta_is_after_byte_limit() {
+        let tempdir = tempdir().expect("tempdir");
+        let sessions_root = create_test_sessions_root(tempdir.path());
+        let filename_session_id = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+        let rollout = sessions_root.join(format!(
+            "rollout-2026-06-16T13-05-58-{filename_session_id}.jsonl"
+        ));
+        let oversized_record = "x".repeat(super::ROLLOUT_SESSION_META_SCAN_BYTE_LIMIT as usize + 1);
+        fs::write(&rollout, format!("{oversized_record}\n")).expect("write oversized rollout");
+        append_session_meta_rollout(&rollout, "thread-after-byte-limit");
+
+        assert_eq!(
+            rollout_session_ids(&rollout),
+            vec![filename_session_id.to_owned()]
         );
     }
 

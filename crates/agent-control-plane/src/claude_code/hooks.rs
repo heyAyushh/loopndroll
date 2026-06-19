@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::hook_registration::LOOPER_HOOK_MARKER;
-use crate::mobile_session::MobileHookPayload;
+use crate::mobile::session::MobileHookPayload;
 
 const CLAUDE_SETTINGS_FILE: &str = "settings.json";
 const CLAUDE_THREAD_PREFIX: &str = "claude:";

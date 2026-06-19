@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 
 use crate::control_plane::ControlPlane;
-use crate::mobile_session::{MobileHookPayload, MobileNotificationRoute};
+use crate::mobile::session::{MobileHookPayload, MobileNotificationRoute};
 
 const STOP_HOOK_EVENT: &str = "Stop";
 const SLACK_CHANNEL: &str = "slack";

@@ -2,7 +2,7 @@ use tonic::Status;
 use tonic::metadata::MetadataMap;
 
 use crate::control_plane::ControlPlane;
-use crate::mobile_auth::{MobileAuthError, parse_mobile_authorization_header};
+use crate::mobile::auth::{MobileAuthError, parse_mobile_authorization_header};
 
 const AUTHORIZATION_METADATA: &str = "authorization";
 const MOBILE_SESSION_METADATA: &str = "x-looper-mobile-session";

@@ -18,7 +18,7 @@ use super::{
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities, ThreadRecord};
 use crate::control_plane::DesktopThread;
-use crate::mobile_session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
+use crate::mobile::session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
 const DEVIN_NEXT_ORIGINATOR: &str = "Devin - Next";
 const DEVIN_STABLE_ORIGINATOR: &str = "Devin";

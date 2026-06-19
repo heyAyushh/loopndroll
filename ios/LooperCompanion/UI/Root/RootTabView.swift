@@ -255,7 +255,7 @@ struct RootTabView: View {
                 continue
             }
 
-            await model.refresh()
+            await model.refreshFromFallbackTimer()
         }
     }
 }

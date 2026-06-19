@@ -4,12 +4,12 @@ use serde::Serialize;
 
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot};
-use crate::mobile_api::{
+use crate::mobile::api::{
     PromptDeliveryAction, prompt_delivery_action_for_target,
     prompt_delivery_action_for_visible_target,
 };
-use crate::mobile_events::{MobileEventInput, MobileEventKind};
-use crate::mobile_session::MobileSessionError;
+use crate::mobile::events::{MobileEventInput, MobileEventKind};
+use crate::mobile::session::MobileSessionError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptDispatch {
@@ -109,7 +109,7 @@ pub fn queue_desktop_batch_prompt(
 }
 
 pub fn mobile_desktop_snapshot(control_plane: &ControlPlane) -> anyhow::Result<DesktopSnapshot> {
-    control_plane.desktop_menu_snapshot()
+    control_plane.desktop_mobile_snapshot()
 }
 
 fn dispatch_session_prompt(

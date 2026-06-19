@@ -3,6 +3,8 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::broadcast;
 
 const MOBILE_EVENT_CHANNEL_CAPACITY: usize = 256;
+pub const MOBILE_EVENT_CONNECTED_NAME: &str = "connected";
+pub const SNAPSHOT_REVISION_CHANGED_DETAIL: &str = "snapshot-revision-changed";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -21,6 +23,8 @@ pub struct MobileEvent {
     pub prompt_id: Option<String>,
     pub detail: Option<String>,
     pub server_time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,6 +94,18 @@ pub fn build_mobile_event(input: MobileEventInput) -> MobileEvent {
         prompt_id: input.prompt_id,
         detail: input.detail,
         server_time: mobile_event_now(),
+        revision: None,
+    }
+}
+
+pub fn snapshot_revision_changed_event(revision: String) -> MobileEvent {
+    MobileEvent {
+        event_type: MobileEventKind::SessionChanged,
+        thread_id: None,
+        prompt_id: None,
+        detail: Some(SNAPSHOT_REVISION_CHANGED_DETAIL.to_owned()),
+        server_time: mobile_event_now(),
+        revision: Some(revision),
     }
 }
 

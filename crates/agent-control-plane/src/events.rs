@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::mobile_events::{
+use crate::mobile::events::{
     MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_sse_name,
 };
 
@@ -448,7 +448,7 @@ fn parse_mobile_event_kind(value: &str) -> MobileEventKind {
 #[cfg(test)]
 mod tests {
     use super::{EventStore, MobileEventCursor};
-    use crate::mobile_events::MobileEventKind;
+    use crate::mobile::events::MobileEventKind;
     use rusqlite::{Connection, params};
     use tempfile::tempdir;
 

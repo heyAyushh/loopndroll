@@ -3,6 +3,7 @@ import LooperCompanionCore
 import LooperRealtime
 
 enum MobileEventType: String, Decodable, Sendable {
+    case connected
     case sessionChanged = "session-changed"
     case promptQueued = "prompt-queued"
     case promptDelivered = "prompt-delivered"
@@ -10,6 +11,8 @@ enum MobileEventType: String, Decodable, Sendable {
 
     init(serverValue: String) {
         switch serverValue {
+        case Self.connected.rawValue:
+            self = .connected
         case "session.changed", Self.sessionChanged.rawValue:
             self = .sessionChanged
         case "prompt.queued", Self.promptQueued.rawValue:
@@ -30,23 +33,35 @@ struct MobileStreamEvent: Decodable, Sendable {
     let promptID: String?
     let detail: String?
     let serverTime: String?
+    let revision: String?
 
     enum CodingKeys: String, CodingKey {
         case eventType
+        case eventTypeSnake = "event_type"
         case threadID = "threadId"
+        case threadIDSnake = "thread_id"
         case promptID = "promptId"
+        case promptIDSnake = "prompt_id"
         case detail
         case serverTime
+        case serverTimeSnake = "server_time"
+        case revision
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let rawEventType = try container.decodeIfPresent(String.self, forKey: .eventType) ?? ""
+        let rawEventType = try container.decodeIfPresent(String.self, forKey: .eventType)
+            ?? container.decodeIfPresent(String.self, forKey: .eventTypeSnake)
+            ?? ""
         eventType = MobileEventType(serverValue: rawEventType)
         threadID = try container.decodeIfPresent(String.self, forKey: .threadID)
+            ?? container.decodeIfPresent(String.self, forKey: .threadIDSnake)
         promptID = try container.decodeIfPresent(String.self, forKey: .promptID)
+            ?? container.decodeIfPresent(String.self, forKey: .promptIDSnake)
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime)
+            ?? container.decodeIfPresent(String.self, forKey: .serverTimeSnake)
+        revision = try container.decodeIfPresent(String.self, forKey: .revision)
     }
 
     init(realtimeEvent: LooperRealtimeEvent) {
@@ -55,6 +70,7 @@ struct MobileStreamEvent: Decodable, Sendable {
         promptID = realtimeEvent.promptID
         detail = realtimeEvent.detail
         serverTime = realtimeEvent.serverTime
+        revision = realtimeEvent.revision
     }
 }
 

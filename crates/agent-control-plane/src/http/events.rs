@@ -8,9 +8,9 @@ use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
 
 use crate::control_plane::ControlPlane;
-use crate::mobile_events::{
-    MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
-    mobile_event_sse_name,
+use crate::mobile::events::{
+    MOBILE_EVENT_CONNECTED_NAME, MobileEvent, MobileEventBroadcast, MobileEventRecord,
+    mobile_event_now, mobile_event_sse_name, snapshot_revision_changed_event,
 };
 
 use super::mobile_access::authorize_mobile_api_request;
@@ -74,7 +74,7 @@ fn local_desktop_events_stream(
         .latest_mobile_event_cursor()
         .unwrap_or_default();
     let connected_payload = serde_json::to_string(&serde_json::json!({
-        "event_type": "connected",
+        "event_type": MOBILE_EVENT_CONNECTED_NAME,
         "server_time": mobile_event_now(),
         "revision": last_revision,
     }))
@@ -100,7 +100,21 @@ fn local_desktop_events_stream(
                                 }
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, MOBILE_EVENT_BACKFILL_LIMIT) {
+                                for record in records {
+                                    last_event_cursor = (&record).into();
+                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                                }
+                            }
+                            if let Ok(revision) = control_plane.mobile_snapshot_revision() {
+                                if revision != last_revision {
+                                    last_revision = revision;
+                                    yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
+                                }
+                            }
+                            continue;
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -115,13 +129,7 @@ fn local_desktop_events_stream(
                     if let Ok(revision) = control_plane.mobile_snapshot_revision() {
                         if revision != last_revision {
                             last_revision = revision;
-                            yield Ok::<Event, Infallible>(mobile_sse_event(&MobileEvent {
-                                event_type: MobileEventKind::SessionChanged,
-                                thread_id: None,
-                                prompt_id: None,
-                                detail: Some("snapshot-revision-changed".to_owned()),
-                                server_time: mobile_event_now(),
-                            }));
+                            yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
                         }
                     }
                 }
@@ -146,5 +154,6 @@ fn mobile_sse_event_from_record(record: &MobileEventRecord) -> Event {
         prompt_id: record.prompt_id.clone(),
         detail: record.detail.clone(),
         server_time: mobile_event_now(),
+        revision: None,
     })
 }

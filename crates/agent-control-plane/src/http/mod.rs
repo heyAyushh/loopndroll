@@ -17,17 +17,17 @@ use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
 use crate::devin::LEGACY_LOOPER_ACP_ROUTE;
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
-use crate::mobile_api::mobile_session_detail;
-use crate::mobile_auth::{
+use crate::mobile::api::mobile_session_detail;
+use crate::mobile::auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
 };
-use crate::mobile_network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
-use crate::mobile_prompt_delivery::{
+use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
+use crate::mobile::prompt_delivery::{
     BatchPromptInput, mobile_desktop_snapshot, queue_desktop_batch_prompt, send_session_prompt,
 };
-use crate::mobile_push::MobilePushRegistrationRequest;
-use crate::mobile_session::{
+use crate::mobile::push::MobilePushRegistrationRequest;
+use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
 
@@ -633,20 +633,16 @@ async fn desktop_mobile_connection_rename(
         return response;
     }
 
-    if let Err(error) = control_plane
-        .mobile_auth_service()
-        .rename_mobile_connection(&connection_id, &input.label)
-    {
-        return mobile_auth_error_response(error);
-    }
-
-    match control_plane.managed_connections_response() {
+    match control_plane.rename_mobile_connection(&connection_id, &input.label) {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error.to_string() })),
-        )
-            .into_response(),
+        Err(error) => match error.downcast::<crate::mobile::auth::MobileAuthError>() {
+            Ok(error) => mobile_auth_error_response(error),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        },
     }
 }
 
@@ -659,20 +655,16 @@ async fn desktop_mobile_connection_revoke(
         return response;
     }
 
-    if let Err(error) = control_plane
-        .mobile_auth_service()
-        .revoke_mobile_connection(&connection_id)
-    {
-        return mobile_auth_error_response(error);
-    }
-
-    match control_plane.managed_connections_response() {
+    match control_plane.revoke_mobile_connection(&connection_id) {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error.to_string() })),
-        )
-            .into_response(),
+        Err(error) => match error.downcast::<crate::mobile::auth::MobileAuthError>() {
+            Ok(error) => mobile_auth_error_response(error),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        },
     }
 }
 
@@ -1609,7 +1601,7 @@ fn validate_mobile_siri_target<'a>(
     if !ASSISTANT_SURFACES.contains(&assistant_surface) {
         return Err(MobileSessionError::InvalidAssistantSurface);
     }
-    crate::mobile_api::validate_mobile_prompt_delivery_target(
+    crate::mobile::api::validate_mobile_prompt_delivery_target(
         snapshot,
         session_state,
         session_id,

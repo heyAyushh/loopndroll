@@ -5,9 +5,11 @@ use crate::grpc::auth::authorize_mobile_api_request;
 use crate::grpc::events::{MobileEventStream, mobile_events};
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
-use crate::mobile_api::mobile_session_detail;
-use crate::mobile_prompt_delivery::{PromptDispatch, mobile_desktop_snapshot, send_session_prompt};
-use crate::mobile_session::{ASSISTANT_SURFACES, MobileSessionError};
+use crate::mobile::api::mobile_session_detail;
+use crate::mobile::prompt_delivery::{
+    PromptDispatch, mobile_desktop_snapshot, send_session_prompt,
+};
+use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
 
 const HEALTH_SERVICE_NAME: &str = "looper-realtime";
 const DISPATCH_DELIVERED: &str = "delivered";
@@ -38,7 +40,7 @@ impl LooperRealtime for LooperRealtimeService {
         Ok(Response::new(proto::HealthResponse {
             ok: status.source.health == "healthy",
             service: HEALTH_SERVICE_NAME.to_owned(),
-            server_time: crate::mobile_events::mobile_event_now(),
+            server_time: crate::mobile::events::mobile_event_now(),
         }))
     }
 

@@ -11,10 +11,10 @@ use crate::grok_build::{
     GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
 };
 use crate::http::build_router;
-use crate::mobile_network::{
+use crate::mobile::network::{
     BonjourAdvertisement, DEFAULT_AGENT_CONTROL_PLANE_PORT, default_grpc_listen_address,
 };
-use crate::mobile_session::MobileHookPayload;
+use crate::mobile::session::MobileHookPayload;
 use crate::scheduler::AutomationRunner;
 
 const DEFAULT_STORE_RELATIVE_PATH: &str =
@@ -128,23 +128,23 @@ async fn run_hook_mode_with_input(
     let outcome = service.hook_outcome_for_payload(&payload)?;
     service.record_hook_lifecycle(&payload, outcome.decision.is_some())?;
     if let Some(thread_id) = payload.session_id.as_deref() {
-        control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
-            kind: crate::mobile_events::MobileEventKind::SessionChanged,
+        control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
+            kind: crate::mobile::events::MobileEventKind::SessionChanged,
             thread_id: Some(thread_id.to_owned()),
             prompt_id: None,
             detail: Some(payload.hook_event_name.clone()),
         });
         if let Some(prompt_id) = outcome.delivered_prompt_id.as_deref() {
-            control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
-                kind: crate::mobile_events::MobileEventKind::PromptDelivered,
+            control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
+                kind: crate::mobile::events::MobileEventKind::PromptDelivered,
                 thread_id: Some(thread_id.to_owned()),
                 prompt_id: Some(prompt_id.to_owned()),
                 detail: None,
             });
         }
         if let Some(decision) = outcome.decision.as_ref() {
-            control_plane.emit_mobile_event(crate::mobile_events::MobileEventInput {
-                kind: crate::mobile_events::MobileEventKind::LifecycleChanged,
+            control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
+                kind: crate::mobile::events::MobileEventKind::LifecycleChanged,
                 thread_id: Some(thread_id.to_owned()),
                 prompt_id: None,
                 detail: Some(decision.reason.clone()),

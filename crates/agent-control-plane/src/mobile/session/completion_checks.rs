@@ -280,7 +280,7 @@ fn completion_check_output_summary(output: &std::process::Output) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::completion_check_failure_reason_with_timeout;
-    use crate::mobile_session::MobileCompletionCheck;
+    use crate::mobile::session::MobileCompletionCheck;
     use std::time::Duration;
     use tempfile::tempdir;
 

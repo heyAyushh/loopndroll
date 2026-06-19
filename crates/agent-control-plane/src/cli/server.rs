@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 use super::transport::set_base_url;
-use crate::mobile_network::DEFAULT_AGENT_CONTROL_PLANE_PORT;
+use crate::mobile::network::DEFAULT_AGENT_CONTROL_PLANE_PORT;
 
 const SERVER_BINARY_NAME: &str = "looper-server";
 const SERVER_COMMAND: &str = "serve";

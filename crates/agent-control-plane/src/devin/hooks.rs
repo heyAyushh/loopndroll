@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::hook_registration::LOOPER_HOOK_MARKER;
-use crate::mobile_session::MobileHookPayload;
+use crate::mobile::session::MobileHookPayload;
 
 const DEVIN_CONFIG_RELATIVE_PATH: &str = ".config/devin/config.json";
 const DEVIN_LOCAL_PROVIDER_ID: &str = "devin-cli";

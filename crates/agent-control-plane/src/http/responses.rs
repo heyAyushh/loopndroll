@@ -2,9 +2,9 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use crate::mobile_auth::MobileAuthError;
-use crate::mobile_push::MobilePushError;
-use crate::mobile_session::MobileSessionError;
+use crate::mobile::auth::MobileAuthError;
+use crate::mobile::push::MobilePushError;
+use crate::mobile::session::MobileSessionError;
 use crate::telegram::TelegramError;
 
 pub(super) fn internal_mobile_error_response(message: String) -> Response {

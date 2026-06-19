@@ -54,7 +54,11 @@ final class CompanionAppModel {
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private var mobileEventStreamTask: Task<Void, Never>?
+    @ObservationIgnored private var realtimeRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var eventStreamRevision = 0
+    @ObservationIgnored private var lastAppliedRealtimeRevision: String?
+    @ObservationIgnored private var pendingRealtimeRefreshRevision: String?
+    @ObservationIgnored private var pendingRealtimeRefreshSessionIDs: Set<String> = []
     @ObservationIgnored private var snapshotLoadTask: Task<Void, Never>?
     @ObservationIgnored private var nextSnapshotLoadID = 0
     @ObservationIgnored private var activeSnapshotLoadID = 0
@@ -283,6 +287,7 @@ final class CompanionAppModel {
 
     func stopMobileEventStream() {
         eventStreamRevision += 1
+        cancelRealtimeRefresh()
         mobileEventStreamTask?.cancel()
         mobileEventStreamTask = nil
     }
@@ -356,18 +361,84 @@ final class CompanionAppModel {
         )
 
         switch event.eventType {
+        case .connected:
+            if let revision = CompanionRealtimeSync.normalizedRevision(event.revision),
+               snapshot != nil {
+                lastAppliedRealtimeRevision = revision
+            }
+            if CompanionRealtimeSync.shouldRefreshSnapshot(
+                for: event,
+                currentRevision: lastAppliedRealtimeRevision,
+                hasSnapshot: snapshot != nil
+            ) {
+                scheduleRealtimeRefresh(
+                    event,
+                    streamRevision: streamRevision,
+                    streamConnectionRevision: streamConnectionRevision
+                )
+            }
         case .sessionChanged, .promptQueued, .promptDelivered, .lifecycleChanged:
-            await refresh()
-            guard streamRevision == eventStreamRevision,
-                  streamConnectionRevision == connectionRevision
-            else {
-                CompanionDiagnostics.record("events:stale-detail-skip")
+            guard CompanionRealtimeSync.shouldRefreshSnapshot(
+                for: event,
+                currentRevision: lastAppliedRealtimeRevision,
+                hasSnapshot: snapshot != nil
+            ) else {
+                CompanionDiagnostics.record("events:duplicate-revision-skip")
                 return
             }
-            if let threadID = event.threadID,
-               detailBySessionID[threadID] != nil {
-                let sessionSurface = snapshot?.assistantSurface(containingSessionID: threadID)
-                await refreshSessionDetail(id: threadID, assistantSurface: sessionSurface)
+            scheduleRealtimeRefresh(
+                event,
+                streamRevision: streamRevision,
+                streamConnectionRevision: streamConnectionRevision
+            )
+        }
+    }
+
+    private func scheduleRealtimeRefresh(
+        _ event: MobileStreamEvent,
+        streamRevision: Int,
+        streamConnectionRevision: Int
+    ) {
+        if let threadID = event.threadID {
+            pendingRealtimeRefreshSessionIDs.insert(threadID)
+        }
+        if let revision = CompanionRealtimeSync.normalizedRevision(event.revision) {
+            pendingRealtimeRefreshRevision = revision
+        }
+
+        realtimeRefreshTask?.cancel()
+        realtimeRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: CompanionRealtimeSync.snapshotRefreshDebounce)
+            guard let self,
+                  !Task.isCancelled,
+                  streamRevision == self.eventStreamRevision,
+                  streamConnectionRevision == self.connectionRevision
+            else {
+                return
+            }
+
+            let sessionIDs = self.pendingRealtimeRefreshSessionIDs
+            let revision = self.pendingRealtimeRefreshRevision
+            self.pendingRealtimeRefreshSessionIDs = []
+            self.pendingRealtimeRefreshRevision = nil
+            self.realtimeRefreshTask = nil
+
+            await self.refresh()
+
+            guard streamRevision == self.eventStreamRevision,
+                  streamConnectionRevision == self.connectionRevision
+            else {
+                CompanionDiagnostics.record("events:stale-coalesced-detail-skip")
+                return
+            }
+
+            if let revision {
+                self.lastAppliedRealtimeRevision = revision
+            }
+
+            for sessionID in sessionIDs where self.detailBySessionID[sessionID] != nil {
+                let sessionSurface = self.snapshot?.assistantSurface(containingSessionID: sessionID)
+                await self.refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
             }
         }
     }
@@ -454,6 +525,9 @@ final class CompanionAppModel {
         hasUserSelectedAssistantSurface = false
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
+        lastAppliedRealtimeRevision = nil
+        pendingRealtimeRefreshRevision = nil
+        pendingRealtimeRefreshSessionIDs = []
         serverHealth = nil
         reachedBaseURL = nil
         detailBySessionID = [:]
@@ -707,6 +781,22 @@ final class CompanionAppModel {
 
     func refresh() async {
         await loadSnapshot()
+    }
+
+    func refreshFromFallbackTimer() async {
+        guard mobileEventStreamTask == nil || snapshot == nil else {
+            CompanionDiagnostics.record("root:refresh-skip realtime-active")
+            return
+        }
+
+        await refresh()
+    }
+
+    private func cancelRealtimeRefresh() {
+        realtimeRefreshTask?.cancel()
+        realtimeRefreshTask = nil
+        pendingRealtimeRefreshRevision = nil
+        pendingRealtimeRefreshSessionIDs = []
     }
 
     private func adoptServerHealthBaseURLsIfNeeded(_ resolvedHealth: ResolvedCompanionServerHealth) {
