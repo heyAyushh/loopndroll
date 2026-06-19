@@ -61,6 +61,7 @@ const DESKTOP_MENU_COMPACTION_LIMIT: usize = 10;
 const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
+const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(30);
 const ACP_CLIENT_HOST_SESSION_LIMIT: usize = DESKTOP_MENU_THREAD_LIMIT;
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
@@ -101,6 +102,12 @@ impl AcpClientHostProvider {
     fn supports_install(self) -> bool {
         matches!(self, Self::Devin)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotInspectionMode {
+    Live,
+    CachedMenu,
 }
 
 const ACP_CLIENT_HOST_PROVIDERS: &[AcpClientHostProvider] =
@@ -163,6 +170,8 @@ pub struct ControlPlane {
 struct ControlPlaneResponseCache {
     managed_connections: TimedResponseCache<ManagedConnectionsResponse>,
     desktop_menu_snapshot: TimedResponseCache<DesktopSnapshot>,
+    devin_desktop_status: TimedResponseCache<DevinDesktopStatus>,
+    zed_status: TimedResponseCache<ZedStatus>,
 }
 
 impl ControlPlaneResponseCache {
@@ -170,12 +179,16 @@ impl ControlPlaneResponseCache {
         Self {
             managed_connections: TimedResponseCache::new(),
             desktop_menu_snapshot: TimedResponseCache::new(),
+            devin_desktop_status: TimedResponseCache::new(),
+            zed_status: TimedResponseCache::new(),
         }
     }
 
     fn invalidate_desktop_menu_surfaces(&self) {
         self.managed_connections.invalidate();
         self.desktop_menu_snapshot.invalidate();
+        self.devin_desktop_status.invalidate();
+        self.zed_status.invalidate();
     }
 }
 
@@ -215,6 +228,25 @@ impl<T: Clone> TimedResponseCache<T> {
             observed_at: now,
         });
         Ok(response)
+    }
+
+    fn get_or_refresh_infallible(&self, ttl: Duration, refresh: impl FnOnce() -> T) -> T {
+        let Ok(mut cached) = self.cached.lock() else {
+            return refresh();
+        };
+        let now = Instant::now();
+        if let Some(snapshot) = cached.as_ref()
+            && now.duration_since(snapshot.observed_at) < ttl
+        {
+            return snapshot.response.clone();
+        }
+
+        let response = refresh();
+        *cached = Some(CachedResponse {
+            response: response.clone(),
+            observed_at: now,
+        });
+        response
     }
 }
 
@@ -576,7 +608,7 @@ impl ControlPlane {
     }
 
     fn devin_desktop_connections(&self) -> Vec<ManagedConnection> {
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
+        let status = self.cached_devin_desktop_status();
         let hook_status = inspect_devin_hooks(&self.config.home_path);
         let mut connections = status
             .installations
@@ -602,7 +634,7 @@ impl ControlPlane {
     }
 
     fn zed_connections(&self) -> Vec<ManagedConnection> {
-        let status = inspect_zed_for_home(&self.config.home_path);
+        let status = self.cached_zed_status();
         if !zed_connection_should_render(&status) {
             return Vec::new();
         }
@@ -611,6 +643,22 @@ impl ControlPlane {
 
     pub fn status(&self) -> ControlPlaneStatus {
         inspect_control_plane(&self.config.codex_home)
+    }
+
+    fn cached_devin_desktop_status(&self) -> DevinDesktopStatus {
+        self.response_cache
+            .devin_desktop_status
+            .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
+                inspect_devin_desktop_for_home(&self.config.home_path)
+            })
+    }
+
+    fn cached_zed_status(&self) -> ZedStatus {
+        self.response_cache
+            .zed_status
+            .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
+                inspect_zed_for_home(&self.config.home_path)
+            })
     }
 
     pub fn codex_servers_response(&self) -> CodexServersResponse {
@@ -864,7 +912,7 @@ impl ControlPlane {
     ) -> crate::acp_client_host::AcpClientHost {
         match provider {
             AcpClientHostProvider::Devin => {
-                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let status = self.cached_devin_desktop_status();
                 let sessions = self
                     .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
                     .sessions;
@@ -872,7 +920,7 @@ impl ControlPlane {
                 devin_acp_client_host(&status, &sessions, &runtime)
             }
             AcpClientHostProvider::Zed => {
-                let status = inspect_zed_for_home(&self.config.home_path);
+                let status = self.cached_zed_status();
                 zed_acp_client_host(&status)
             }
         }
@@ -1123,6 +1171,7 @@ impl ControlPlane {
             None,
             DESKTOP_COMPACTION_LIMIT,
             DESKTOP_COMPACTION_FILE_SCAN_LIMIT,
+            SnapshotInspectionMode::Live,
         )
     }
 
@@ -1134,6 +1183,7 @@ impl ControlPlane {
                     Some(DESKTOP_MENU_THREAD_LIMIT),
                     DESKTOP_MENU_COMPACTION_LIMIT,
                     DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
+                    SnapshotInspectionMode::CachedMenu,
                 )
             },
         )
@@ -1144,6 +1194,7 @@ impl ControlPlane {
             Some(DESKTOP_MENU_THREAD_LIMIT),
             DESKTOP_MENU_COMPACTION_LIMIT,
             DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
+            SnapshotInspectionMode::Live,
         )
     }
 
@@ -1152,6 +1203,7 @@ impl ControlPlane {
         thread_limit: Option<usize>,
         compaction_limit: usize,
         compaction_file_scan_limit: usize,
+        inspection_mode: SnapshotInspectionMode,
     ) -> Result<DesktopSnapshot> {
         let bounded_snapshot = thread_limit.is_some();
         let control_plane_status = if bounded_snapshot {
@@ -1326,8 +1378,7 @@ impl ControlPlane {
             Some(_) => static_adapter_capabilities(),
             None => adapter_capabilities(),
         };
-        let devin_desktop = inspect_devin_desktop_for_home(&self.config.home_path);
-        let zed = inspect_zed_for_home(&self.config.home_path);
+        let (devin_desktop, zed) = self.desktop_snapshot_inspections(inspection_mode);
         let mut acp_targets = devin_acp_targets(&devin_desktop);
         acp_targets.extend(zed_acp_targets(&zed));
         acp_targets.sort_by(|left, right| left.id.cmp(&right.id));
@@ -1363,6 +1414,21 @@ impl ControlPlane {
             grok_build,
             compactions,
         })
+    }
+
+    fn desktop_snapshot_inspections(
+        &self,
+        inspection_mode: SnapshotInspectionMode,
+    ) -> (DevinDesktopStatus, ZedStatus) {
+        match inspection_mode {
+            SnapshotInspectionMode::Live => (
+                inspect_devin_desktop_for_home(&self.config.home_path),
+                inspect_zed_for_home(&self.config.home_path),
+            ),
+            SnapshotInspectionMode::CachedMenu => {
+                (self.cached_devin_desktop_status(), self.cached_zed_status())
+            }
+        }
     }
 
     pub fn record_automation_fire(
@@ -2169,5 +2235,24 @@ mod tests {
         assert_eq!(refresh_count, 2);
         assert_eq!(first, "first");
         assert_eq!(second, "second");
+    }
+
+    #[test]
+    fn timed_response_cache_reuses_infallible_response() {
+        let cache = TimedResponseCache::new();
+        let mut refresh_count = 0;
+
+        let first = cache.get_or_refresh_infallible(Duration::from_secs(60), || {
+            refresh_count += 1;
+            "first".to_owned()
+        });
+        let second = cache.get_or_refresh_infallible(Duration::from_secs(60), || {
+            refresh_count += 1;
+            "second".to_owned()
+        });
+
+        assert_eq!(refresh_count, 1);
+        assert_eq!(first, "first");
+        assert_eq!(second, "first");
     }
 }
