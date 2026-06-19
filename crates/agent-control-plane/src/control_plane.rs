@@ -170,6 +170,7 @@ pub struct ControlPlane {
 struct ControlPlaneResponseCache {
     managed_connections: TimedResponseCache<ManagedConnectionsResponse>,
     desktop_menu_snapshot: TimedResponseCache<DesktopSnapshot>,
+    acp_client_hosts: TimedResponseCache<AcpClientHostsResponse>,
     devin_desktop_status: TimedResponseCache<DevinDesktopStatus>,
     zed_status: TimedResponseCache<ZedStatus>,
 }
@@ -179,6 +180,7 @@ impl ControlPlaneResponseCache {
         Self {
             managed_connections: TimedResponseCache::new(),
             desktop_menu_snapshot: TimedResponseCache::new(),
+            acp_client_hosts: TimedResponseCache::new(),
             devin_desktop_status: TimedResponseCache::new(),
             zed_status: TimedResponseCache::new(),
         }
@@ -187,6 +189,7 @@ impl ControlPlaneResponseCache {
     fn invalidate_desktop_menu_surfaces(&self) {
         self.managed_connections.invalidate();
         self.desktop_menu_snapshot.invalidate();
+        self.acp_client_hosts.invalidate();
         self.devin_desktop_status.invalidate();
         self.zed_status.invalidate();
     }
@@ -782,6 +785,14 @@ impl ControlPlane {
     }
 
     pub fn acp_client_hosts_response(&self) -> AcpClientHostsResponse {
+        self.response_cache
+            .acp_client_hosts
+            .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
+                self.acp_client_hosts_response_uncached()
+            })
+    }
+
+    fn acp_client_hosts_response_uncached(&self) -> AcpClientHostsResponse {
         AcpClientHostsResponse {
             hosts: ACP_CLIENT_HOST_PROVIDERS
                 .iter()
@@ -791,10 +802,11 @@ impl ControlPlane {
     }
 
     pub fn acp_client_host_response(&self, client_id: &str) -> Option<AcpClientHostResponse> {
-        let provider = self.acp_client_host_provider(client_id)?;
-        Some(AcpClientHostResponse {
-            host: self.acp_client_host_status(provider),
-        })
+        self.acp_client_hosts_response()
+            .hosts
+            .into_iter()
+            .find(|host| host.id == client_id)
+            .map(|host| AcpClientHostResponse { host })
     }
 
     pub fn acp_client_host_probe_response(
