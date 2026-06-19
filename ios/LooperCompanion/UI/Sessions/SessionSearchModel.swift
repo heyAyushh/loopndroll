@@ -309,17 +309,18 @@ struct SessionSearchResults: Sendable {
             return []
         }
 
-        let sessionsByID = allSessions.reduce(into: [String: SessionSummary]()) { sessionsByID, session in
-            if let existingSession = sessionsByID[session.id],
-               !SessionSummary.isNewerOrLowerRef(
-                   leftSession: session,
-                   rightSession: existingSession
+        let sessionItemsByID = allSessions.reduce(into: [String: SessionFreshnessSortItem]()) { itemsByID, session in
+            let sessionItem = SessionFreshnessSortItem(session: session)
+            if let existingItem = itemsByID[session.id],
+               !SessionFreshnessSortItem.isNewerOrLowerRef(
+                   leftItem: sessionItem,
+                   rightItem: existingItem
                )
             {
                 return
             }
 
-            sessionsByID[session.id] = session
+            itemsByID[session.id] = sessionItem
         }
         var seenSessionIDs = Set<String>()
         let sessions = spotlightResultSessionIDs.compactMap { resultID -> SessionSummary? in
@@ -327,9 +328,9 @@ struct SessionSearchResults: Sendable {
             guard seenSessionIDs.insert(sessionID).inserted else {
                 return nil
             }
-            return sessionsByID[sessionID]
+            return sessionItemsByID[sessionID]?.session
         }
-        return sessions.sorted(by: SessionSummary.isNewerOrLowerRef)
+        return sessions.sortedBySessionFreshness()
     }
 
     private static func withoutTopResults(
@@ -347,6 +348,12 @@ enum CompanionSearchStorage {
 }
 
 enum SessionSearchEngine {
+    private struct ScoredSessionMatch {
+        let session: SessionSummary
+        let score: Int
+        let freshnessSortItem: SessionFreshnessSortItem
+    }
+
     static func normalized(_ searchText: String) -> String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -370,7 +377,7 @@ enum SessionSearchEngine {
             }
         }
 
-        return sessions.compactMap { session in
+        let matches: [ScoredSessionMatch] = sessions.compactMap { session in
             let score = bestMatchScore(
                 query: query,
                 candidates: [
@@ -401,17 +408,25 @@ enum SessionSearchEngine {
                 return nil
             }
 
-            return (session: session, score: score)
+            return ScoredSessionMatch(
+                session: session,
+                score: score,
+                freshnessSortItem: SessionFreshnessSortItem(session: session)
+            )
         }
-        .sorted { lhs, rhs in
+
+        return matches.sorted { lhs, rhs in
             if lhs.score != rhs.score {
                 return lhs.score < rhs.score
             }
 
-            return SessionSummary.isNewerOrLowerRef(
-                leftSession: lhs.session,
-                rightSession: rhs.session
+            return SessionFreshnessSortItem.isNewerOrLowerRef(
+                leftItem: lhs.freshnessSortItem,
+                rightItem: rhs.freshnessSortItem
             )
+        }
+        .map { match in
+            (session: match.session, score: match.score)
         }
     }
 

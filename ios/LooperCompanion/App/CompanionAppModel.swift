@@ -56,6 +56,9 @@ final class CompanionAppModel {
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private let realtimeController = CompanionRealtimeController()
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
+    @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
+    @ObservationIgnored private var nextCachedSnapshotRestoreID = 0
+    @ObservationIgnored private var activeCachedSnapshotRestoreID = 0
     @ObservationIgnored private var snapshotLoadTask: Task<Void, Never>?
     @ObservationIgnored private var nextSnapshotLoadID = 0
     @ObservationIgnored private var activeSnapshotLoadID = 0
@@ -86,17 +89,18 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("model:bundled-connection-activated")
         }
 
-        if !configuredBaseURL.isEmpty {
-            restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
+        let didScheduleCachedSnapshotRestore = !configuredBaseURL.isEmpty
+        if didScheduleCachedSnapshotRestore {
+            scheduleCachedSnapshotRestoreIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
         }
 
         configureStopQuickActions()
         registerNotificationObservers()
         CompanionDiagnostics.lifecycle.info(
-            "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshot=\(self.snapshot != nil, privacy: .public)"
+            "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore, privacy: .public)"
         )
         CompanionDiagnostics.record(
-            "model:init baseURL=\(configuredBaseURL) cachedSnapshot=\(snapshot != nil)"
+            "model:init baseURL=\(configuredBaseURL) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore)"
         )
     }
 
@@ -373,6 +377,7 @@ final class CompanionAppModel {
     ) -> Bool {
         let shouldRestartEventStream = realtimeController.isActive
         connectionRevision += 1
+        cancelCachedSnapshotRestore()
         cancelSnapshotLoad()
         stopMobileEventStream()
         Task {
@@ -405,15 +410,48 @@ final class CompanionAppModel {
         reachedBaseURL = nil
         detailBySessionID = [:]
         errorMessage = nil
-        if let cachedSnapshotRestoreReason,
-           restoreCachedSnapshotIfAvailable(reason: cachedSnapshotRestoreReason)
-        {
-            return
+        if let cachedSnapshotRestoreReason {
+            scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
         }
 
         snapshot = nil
         sessionSections = .empty
         sessionIndex = .empty
+    }
+
+    private func scheduleCachedSnapshotRestoreIfAvailable(reason: String) {
+        cachedSnapshotRestoreTask?.cancel()
+        nextCachedSnapshotRestoreID += 1
+        let restoreID = nextCachedSnapshotRestoreID
+        activeCachedSnapshotRestoreID = restoreID
+        let restoreRevision = connectionRevision
+
+        cachedSnapshotRestoreTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            _ = await self.restoreCachedSnapshotIfAvailable(
+                reason: reason,
+                onlyWhenSnapshotMissing: true,
+                restoreRevision: restoreRevision
+            )
+            self.finishCachedSnapshotRestore(id: restoreID)
+        }
+    }
+
+    private func finishCachedSnapshotRestore(id: Int) {
+        guard id == activeCachedSnapshotRestoreID else {
+            return
+        }
+
+        cachedSnapshotRestoreTask = nil
+    }
+
+    private func cancelCachedSnapshotRestore() {
+        cachedSnapshotRestoreTask?.cancel()
+        cachedSnapshotRestoreTask = nil
+        activeCachedSnapshotRestoreID = 0
     }
 
     private func cancelSnapshotLoad() {
@@ -656,8 +694,16 @@ final class CompanionAppModel {
                 return
             }
 
-            let didRestoreCachedSnapshot = snapshot == nil &&
-                restoreCachedSnapshotIfAvailable(reason: CachedSnapshotRestoreReason.loadFailure)
+            let didRestoreCachedSnapshot: Bool
+            if snapshot == nil {
+                didRestoreCachedSnapshot = await restoreCachedSnapshotIfAvailable(
+                    reason: CachedSnapshotRestoreReason.loadFailure,
+                    onlyWhenSnapshotMissing: true,
+                    restoreRevision: loadRevision
+                )
+            } else {
+                didRestoreCachedSnapshot = false
+            }
             let hasUsableSnapshot = snapshot != nil
             let nextConnectionState = connectionState(for: error)
             connectionState = nextConnectionState
@@ -1311,8 +1357,32 @@ final class CompanionAppModel {
     }
 
     @discardableResult
-    private func restoreCachedSnapshotIfAvailable(reason: String) -> Bool {
-        guard let cachedSnapshot = CompanionSnapshotCache.load() else {
+    private func restoreCachedSnapshotIfAvailable(
+        reason: String,
+        onlyWhenSnapshotMissing: Bool,
+        restoreRevision: Int
+    ) async -> Bool {
+        if onlyWhenSnapshotMissing, snapshot != nil {
+            CompanionDiagnostics.record("snapshot:cache-restore-skip reason=\(reason) existingSnapshot=true")
+            return false
+        }
+
+        guard let cachedSnapshot = await CompanionSnapshotCache.load() else {
+            return false
+        }
+
+        guard !Task.isCancelled else {
+            CompanionDiagnostics.record("snapshot:cache-restore-cancelled reason=\(reason)")
+            return false
+        }
+
+        guard restoreRevision == connectionRevision else {
+            CompanionDiagnostics.record("snapshot:cache-restore-stale-skip reason=\(reason)")
+            return false
+        }
+
+        if onlyWhenSnapshotMissing, snapshot != nil {
+            CompanionDiagnostics.record("snapshot:cache-restore-skip reason=\(reason) existingSnapshot=true")
             return false
         }
 

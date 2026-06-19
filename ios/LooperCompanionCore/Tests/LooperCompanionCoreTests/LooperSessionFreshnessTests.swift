@@ -34,6 +34,25 @@ struct LooperSessionFreshnessTests {
         #expect(fractionalActivitySortsFirst)
     }
 
+    @Test("Precomputed activity sort keys preserve freshness ordering")
+    func activitySortKeysPreserveFreshnessOrdering() {
+        let fractionalActivityKey = LooperSessionFreshness.activitySortKey(
+            lastActivityAt: "2026-06-16T08:02:00.250Z",
+            ref: "S2"
+        )
+        let wholeSecondActivityKey = LooperSessionFreshness.activitySortKey(
+            lastActivityAt: "2026-06-16T08:02:00Z",
+            ref: "S1"
+        )
+
+        #expect(
+            LooperSessionFreshness.isNewerActivityOrLowerReference(
+                leftKey: fractionalActivityKey,
+                rightKey: wholeSecondActivityKey
+            )
+        )
+    }
+
     @Test("Activity ordering falls back to lower reference on ties")
     func activityOrderingFallsBackToLowerReference() {
         let lowerRefSortsFirst = LooperSessionFreshness.isNewerActivityOrLowerReference(

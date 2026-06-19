@@ -67,6 +67,10 @@ struct PinballGameView: UIViewRepresentable {
         private var keyboardObservers: [NSObjectProtocol] = []
 
         func setBaseSurfaces(_ surfaces: [PinballSurface]) {
+            guard baseSurfaces != surfaces else {
+                return
+            }
+
             baseSurfaces = surfaces
             applySurfaces()
         }
@@ -96,8 +100,7 @@ struct PinballGameView: UIViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     Task { @MainActor in
-                        self?.keyboardSurface = nil
-                        self?.applySurfaces()
+                        self?.clearKeyboardSurfaceIfNeeded()
                     }
                 },
             ]
@@ -121,24 +124,36 @@ struct PinballGameView: UIViewRepresentable {
         private func updateKeyboardSurface(frame keyboardFrame: CGRect?) {
             guard let keyboardFrame,
                   let screenBounds = scene?.view?.window?.screen.bounds ?? scene?.view?.window?.bounds else {
-                keyboardSurface = nil
-                applySurfaces()
+                clearKeyboardSurfaceIfNeeded()
                 return
             }
 
             let visibleFrame = keyboardFrame.intersection(screenBounds)
             guard visibleFrame.height > KeyboardSurface.hiddenInset, visibleFrame.width > KeyboardSurface.hiddenInset else {
-                keyboardSurface = nil
-                applySurfaces()
+                clearKeyboardSurfaceIfNeeded()
                 return
             }
 
-            keyboardSurface = PinballSurface(
+            let nextKeyboardSurface = PinballSurface(
                 id: KeyboardSurface.id,
                 frame: visibleFrame,
                 cornerRadius: KeyboardSurface.cornerRadius,
                 material: .soft
             )
+            guard keyboardSurface != nextKeyboardSurface else {
+                return
+            }
+
+            keyboardSurface = nextKeyboardSurface
+            applySurfaces()
+        }
+
+        private func clearKeyboardSurfaceIfNeeded() {
+            guard keyboardSurface != nil else {
+                return
+            }
+
+            keyboardSurface = nil
             applySurfaces()
         }
 
@@ -241,7 +256,12 @@ private struct PinballSurfaceCollector: ViewModifier {
 
     func body(content: Content) -> some View {
         content.onPreferenceChange(PinballSurfacePreferenceKey.self) { nextSurfaces in
-            surfaces = PinballSurfaceNormalizer.normalized(nextSurfaces)
+            let normalizedSurfaces = PinballSurfaceNormalizer.normalized(nextSurfaces)
+            guard surfaces != normalizedSurfaces else {
+                return
+            }
+
+            surfaces = normalizedSurfaces
         }
     }
 }

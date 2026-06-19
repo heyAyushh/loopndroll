@@ -71,7 +71,7 @@ struct SessionSpotlightRecord: Equatable, Sendable {
 
 enum SessionSpotlightIndexingPolicy {
     static func indexableSessions(from sessions: [SessionSummary]) -> [SessionSummary] {
-        let sortedSessions = uniqueSessionsByID(sessions).sorted(by: SessionSummary.isNewerOrLowerRef)
+        let sortedSessions = uniqueSessionsByID(sessions).sortedBySessionFreshness()
         var currentSessions: [SessionSummary] = []
         var stoppedSessions: [SessionSummary] = []
 
@@ -84,7 +84,7 @@ enum SessionSpotlightIndexingPolicy {
         }
 
         return (currentSessions + stoppedSessions.prefix(SessionDisplayPolicy.collapsedSectionLimit))
-            .sorted(by: SessionSummary.isNewerOrLowerRef)
+            .sortedBySessionFreshness()
     }
 
     private static func shouldIndex(_ session: SessionSummary) -> Bool {
