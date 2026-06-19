@@ -25,7 +25,7 @@ use crate::claude_code::{
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    inspect_control_plane, read_state, read_state_with_thread_limit,
+    inspect_control_plane, read_state, read_state_with_thread_limit, read_thread_revision_state,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
@@ -447,27 +447,26 @@ impl ControlPlane {
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
-        let state =
-            read_state_with_thread_limit(&self.config.codex_home, Some(DESKTOP_MENU_THREAD_LIMIT))?;
+        let state = read_thread_revision_state(&self.config.codex_home, DESKTOP_MENU_THREAD_LIMIT)?;
         let session_state = self.mobile_session_service().state()?;
-        let mut thread_signature =
-            codex_threads_for_snapshot(&state.threads, Some(DESKTOP_MENU_THREAD_LIMIT))
-                .iter()
-                .map(|thread| {
-                    let transcript_modified_at_ms = thread
-                        .transcript_path
-                        .as_deref()
-                        .and_then(|path| metadata_modified_at_ms(Path::new(path)))
-                        .unwrap_or_default();
-                    format!(
-                        "{}:{}:{}:{}",
-                        thread.thread_id,
-                        thread.updated_at_ms.unwrap_or_default(),
-                        transcript_modified_at_ms,
-                        thread.archived
-                    )
-                })
-                .collect::<Vec<_>>();
+        let mut thread_signature = state
+            .threads
+            .iter()
+            .map(|thread| {
+                let transcript_modified_at_ms = thread
+                    .transcript_path
+                    .as_deref()
+                    .and_then(|path| metadata_modified_at_ms(Path::new(path)))
+                    .unwrap_or_default();
+                format!(
+                    "{}:{}:{}:{}",
+                    thread.thread_id,
+                    thread.updated_at_ms.unwrap_or_default(),
+                    transcript_modified_at_ms,
+                    thread.archived
+                )
+            })
+            .collect::<Vec<_>>();
         thread_signature.sort();
         let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
         let mut grok_signature = grok_sessions

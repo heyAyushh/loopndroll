@@ -227,6 +227,21 @@ pub struct StateData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadRevisionState {
+    pub threads: Vec<ThreadRevisionRecord>,
+    pub total_thread_count: usize,
+    pub active_thread_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadRevisionRecord {
+    pub thread_id: String,
+    pub transcript_path: Option<String>,
+    pub updated_at_ms: Option<i64>,
+    pub archived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpawnEdge {
     pub parent_thread_id: String,
     pub child_thread_id: String,
@@ -324,6 +339,29 @@ pub fn inspect_hooks(codex_home: &Path) -> HookStatus {
 
 pub fn read_state(codex_home: &Path) -> Result<StateData> {
     read_state_with_thread_limit(codex_home, None)
+}
+
+pub fn read_thread_revision_state(
+    codex_home: &Path,
+    thread_limit: usize,
+) -> Result<ThreadRevisionState> {
+    let sources = discover_sources(codex_home);
+    let Some(state_db) = sources.state_db else {
+        return Ok(ThreadRevisionState {
+            threads: Vec::new(),
+            total_thread_count: 0,
+            active_thread_count: 0,
+        });
+    };
+    let connection = Connection::open(&state_db)
+        .with_context(|| format!("open Codex state DB {}", state_db.display()))?;
+    let threads = read_thread_revision_records(&connection, thread_limit)?;
+    let (total_thread_count, active_thread_count) = read_thread_counts(&connection)?;
+    Ok(ThreadRevisionState {
+        threads,
+        total_thread_count,
+        active_thread_count,
+    })
 }
 
 pub fn read_state_with_thread_limit(
@@ -564,6 +602,47 @@ fn read_threads(connection: &Connection, limit: Option<usize>) -> Result<Vec<Thr
             agent_path: row.get(12)?,
             created_at_ms: row.get(13)?,
             updated_at_ms: row.get(14)?,
+            archived: archived.unwrap_or(0) != 0,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn read_thread_revision_records(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<ThreadRevisionRecord>> {
+    if !table_exists(connection, "threads")? {
+        return Ok(Vec::new());
+    }
+    let columns = table_columns(connection, "threads")?;
+    let id_column = preferred_column(&columns, &["thread_id", "id"]).unwrap_or("id");
+    let updated_column = preferred_column(&columns, &["updated_at_ms", "updated_at"]);
+    let order_column = updated_column.unwrap_or(id_column);
+    let sql = format!(
+        "select
+            {id} as thread_id,
+            {transcript_path} as transcript_path,
+            {updated} as updated_at_ms,
+            {archived} as archived
+         from threads
+         order by {order} desc
+         limit {limit}",
+        id = quoted_identifier(id_column),
+        transcript_path = nullable_column(&columns, "rollout_path"),
+        updated = updated_column
+            .map(quoted_identifier)
+            .unwrap_or_else(|| "null".to_owned()),
+        archived = nullable_column(&columns, "archived"),
+        order = quoted_identifier(order_column),
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map([], |row| {
+        let archived: Option<i64> = row.get(3)?;
+        Ok(ThreadRevisionRecord {
+            thread_id: row.get(0)?,
+            transcript_path: row.get(1)?,
+            updated_at_ms: row.get(2)?,
             archived: archived.unwrap_or(0) != 0,
         })
     })?;
