@@ -1,6 +1,14 @@
 import Foundation
 
 public enum LooperSessionFreshness {
+    public struct ActivitySortKey: Sendable {
+        fileprivate let date: Date?
+        fileprivate let lastActivityAt: String
+        fileprivate let ref: String
+    }
+
+    private static let parser = LockedISO8601DateParser()
+
     public static func displayTimestamp(lastActivityAt: String) -> String {
         lastActivityAt
     }
@@ -14,10 +22,18 @@ public enum LooperSessionFreshness {
     }
 
     public static func date(from value: String) -> Date? {
-        iso8601Formatter(formatOptions: [.withInternetDateTime, .withFractionalSeconds])
-            .date(from: value) ??
-            iso8601Formatter(formatOptions: [.withInternetDateTime])
-            .date(from: value)
+        parser.date(from: value)
+    }
+
+    public static func activitySortKey(
+        lastActivityAt: String,
+        ref: String
+    ) -> ActivitySortKey {
+        ActivitySortKey(
+            date: date(from: lastActivityAt),
+            lastActivityAt: lastActivityAt,
+            ref: ref
+        )
     }
 
     public static func isNewerActivityOrLowerReference(
@@ -26,25 +42,48 @@ public enum LooperSessionFreshness {
         rightLastActivityAt: String,
         rightRef: String
     ) -> Bool {
-        if let leftDate = date(from: leftLastActivityAt),
-           let rightDate = date(from: rightLastActivityAt),
+        isNewerActivityOrLowerReference(
+            leftKey: activitySortKey(lastActivityAt: leftLastActivityAt, ref: leftRef),
+            rightKey: activitySortKey(lastActivityAt: rightLastActivityAt, ref: rightRef)
+        )
+    }
+
+    public static func isNewerActivityOrLowerReference(
+        leftKey: ActivitySortKey,
+        rightKey: ActivitySortKey
+    ) -> Bool {
+        if let leftDate = leftKey.date,
+           let rightDate = rightKey.date,
            leftDate != rightDate
         {
             return leftDate > rightDate
         }
 
-        if leftLastActivityAt != rightLastActivityAt {
-            return leftLastActivityAt > rightLastActivityAt
+        if leftKey.lastActivityAt != rightKey.lastActivityAt {
+            return leftKey.lastActivityAt > rightKey.lastActivityAt
         }
 
-        return leftRef < rightRef
+        return leftKey.ref < rightKey.ref
+    }
+}
+
+private final class LockedISO8601DateParser: @unchecked Sendable {
+    private let lock = NSLock()
+    private let fractionalFormatter = ISO8601DateFormatter()
+    private let wholeSecondFormatter = ISO8601DateFormatter()
+
+    init() {
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        wholeSecondFormatter.formatOptions = [.withInternetDateTime]
     }
 
-    private static func iso8601Formatter(
-        formatOptions: ISO8601DateFormatter.Options
-    ) -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = formatOptions
-        return formatter
+    func date(from value: String) -> Date? {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+
+        return fractionalFormatter.date(from: value) ??
+            wholeSecondFormatter.date(from: value)
     }
 }

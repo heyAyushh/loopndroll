@@ -13,6 +13,7 @@ struct SessionSearchScreen: View {
     @AppStorage(CompanionSearchStorage.recentQueriesKey) private var recentSearchesStorage = ""
     @State private var searchPath = NavigationPath()
     @State private var isDeviceHubPresented = false
+    @State private var renderedResults = SessionSearchResults.empty
 
     var body: some View {
         NavigationStack(path: $searchPath) {
@@ -47,6 +48,9 @@ struct SessionSearchScreen: View {
             }
             .task(id: searchTaskID) {
                 await performSemanticSearch()
+            }
+            .task(id: searchResultsTaskID) {
+                await updateRenderedSearchResults()
             }
             .task {
                 await searchService.prepareForSearch()
@@ -315,76 +319,52 @@ struct SessionSearchScreen: View {
         "\(selectedScope.rawValue):\(trimmedSearchText)"
     }
 
+    private var searchResultsTaskID: String {
+        [
+            selectedScope.rawValue,
+            trimmedSearchText,
+            model.sessionIndex.identity,
+            spotlightResultIDs.joined(separator: ","),
+        ].joined(separator: "|")
+    }
+
+    private var spotlightResultIDs: [String] {
+        searchService.searchResults.map(\.uniqueIdentifier)
+    }
+
+    @MainActor
+    private func updateRenderedSearchResults() async {
+        let searchText = trimmedSearchText
+        let currentScope = selectedScope
+        let allSessions = model.sessionIndex.allSessions
+        let needsAttentionSessions = model.needsAttentionSessions
+        let runningSessions = model.runningSessions
+        let stoppedSessions = model.stoppedSessions
+        let archivedSessions = model.archivedSessions
+        let spotlightResultSessionIDs = spotlightResultIDs
+
+        let nextResults = await Task.detached(priority: .userInitiated) {
+            SessionSearchResults(
+                searchText: searchText,
+                selectedScope: currentScope,
+                allSessions: allSessions,
+                needsAttentionSessions: needsAttentionSessions,
+                runningSessions: runningSessions,
+                stoppedSessions: stoppedSessions,
+                archivedSessions: archivedSessions,
+                spotlightResultSessionIDs: spotlightResultSessionIDs
+            )
+        }.value
+
+        guard !Task.isCancelled else {
+            return
+        }
+
+        renderedResults = nextResults
+    }
+
     private var allSessions: [SessionSummary] {
-        model.snapshot?.sessionsAcrossSurfaces ?? []
-    }
-
-    private var localSessionResults: [SessionSummary] {
-        SessionSearchEngine.sessions(allSessions, matching: trimmedSearchText)
-    }
-
-    private var spotlightSessionResults: [SessionSummary] {
-        guard !trimmedSearchText.isEmpty else {
-            return []
-        }
-
-        let sessionsByID = allSessions.reduce(into: [String: SessionSummary]()) { sessionsByID, session in
-            if let existingSession = sessionsByID[session.id] {
-                if SessionSummary.isNewerOrLowerRef(
-                    leftSession: session,
-                    rightSession: existingSession
-                ) {
-                    sessionsByID[session.id] = session
-                }
-            } else {
-                sessionsByID[session.id] = session
-            }
-        }
-        var seenSessionIDs = Set<String>()
-        let sessions = searchService.searchResults.compactMap { result -> SessionSummary? in
-            let sessionID = LooperSessionEntityIdentifier(rawValue: result.uniqueIdentifier)?.sessionID
-                ?? result.uniqueIdentifier
-            guard seenSessionIDs.insert(sessionID).inserted else {
-                return nil
-            }
-            return sessionsByID[sessionID]
-        }
-        return sessions.sorted(by: SessionSummary.isNewerOrLowerRef)
-    }
-
-    private var filteredAllSessions: [SessionSummary] {
-        var combined = spotlightSessionResults
-        let spotlightIDs = Set(spotlightSessionResults.map(\.id))
-        combined.append(contentsOf: localSessionResults.filter { !spotlightIDs.contains($0.id) })
-        return combined
-    }
-
-    private var filteredNeedsAttentionSessions: [SessionSummary] {
-        filteredSessions(from: model.needsAttentionSessions)
-    }
-
-    private var filteredRunningSessions: [SessionSummary] {
-        filteredSessions(from: model.runningSessions)
-    }
-
-    private var filteredStoppedSessions: [SessionSummary] {
-        filteredSessions(from: model.stoppedSessions)
-    }
-
-    private var filteredArchivedSessions: [SessionSummary] {
-        filteredSessions(from: model.archivedSessions)
-    }
-
-    private var filteredSettingsTargets: [SettingsSearchTarget] {
-        SessionSearchEngine.settingsTargets(for: trimmedSearchText)
-    }
-
-    private var filteredQuickActions: [GlobalSearchAction] {
-        SessionSearchEngine.actions(in: .quickActions, for: trimmedSearchText)
-    }
-
-    private var filteredDeviceActions: [GlobalSearchAction] {
-        SessionSearchEngine.actions(in: .device, for: trimmedSearchText)
+        model.sessionIndex.allSessions
     }
 
     private var recentSearches: [String] {
@@ -392,58 +372,35 @@ struct SessionSearchScreen: View {
     }
 
     private var topResults: [GlobalSearchResult] {
-        guard selectedScope == .all else {
-            return []
-        }
-
-        if trimmedSearchText.isEmpty {
-            return SessionSearchEngine.suggestedTopResults(model: model)
-        }
-
-        return SessionSearchEngine.uniqueResults(
-            Array(filteredAllSessions.prefix(3).map(GlobalSearchResult.session)) +
-                Array(filteredQuickActions.prefix(2).map(GlobalSearchResult.action)) +
-                Array(filteredSettingsTargets.prefix(2).map(GlobalSearchResult.settings)) +
-                Array(filteredDeviceActions.prefix(1).map(GlobalSearchResult.action))
-        )
-    }
-
-    private var topResultIDs: Set<String> {
-        Set(topResults.map(\.id))
+        renderedResults.topResults
     }
 
     private var visibleNeedsAttentionSessions: [SessionSummary] {
-        withoutTopResults(filteredNeedsAttentionSessions)
+        renderedResults.visibleNeedsAttentionSessions
     }
 
     private var visibleRunningSessions: [SessionSummary] {
-        withoutTopResults(filteredRunningSessions)
+        renderedResults.visibleRunningSessions
     }
 
     private var visibleStoppedSessions: [SessionSummary] {
-        withoutTopResults(filteredStoppedSessions)
+        renderedResults.visibleStoppedSessions
     }
 
     private var visibleArchivedSessions: [SessionSummary] {
-        withoutTopResults(filteredArchivedSessions)
+        renderedResults.visibleArchivedSessions
     }
 
     private var visibleQuickActions: [GlobalSearchAction] {
-        filteredQuickActions.filter { action in
-            !topResultIDs.contains(GlobalSearchResult.action(action).id)
-        }
+        renderedResults.visibleQuickActions
     }
 
     private var visibleDeviceActions: [GlobalSearchAction] {
-        filteredDeviceActions.filter { action in
-            !topResultIDs.contains(GlobalSearchResult.action(action).id)
-        }
+        renderedResults.visibleDeviceActions
     }
 
     private var visibleSettingsTargets: [SettingsSearchTarget] {
-        filteredSettingsTargets.filter { target in
-            !topResultIDs.contains(GlobalSearchResult.settings(target).id)
-        }
+        renderedResults.visibleSettingsTargets
     }
 
     private var shouldShowSessionResults: Bool {
@@ -468,14 +425,11 @@ struct SessionSearchScreen: View {
         }
 
         return (shouldShowSessionResults && (
-            !filteredNeedsAttentionSessions.isEmpty ||
-                !filteredRunningSessions.isEmpty ||
-                !filteredStoppedSessions.isEmpty ||
-                !filteredArchivedSessions.isEmpty
+            renderedResults.hasSessionResults
         )) ||
-            (shouldShowQuickActionResults && !filteredQuickActions.isEmpty) ||
-            (shouldShowDeviceResults && !filteredDeviceActions.isEmpty) ||
-            (shouldShowSettingsResults && !filteredSettingsTargets.isEmpty) ||
+            (shouldShowQuickActionResults && renderedResults.hasQuickActionResults) ||
+            (shouldShowDeviceResults && renderedResults.hasDeviceResults) ||
+            (shouldShowSettingsResults && renderedResults.hasSettingsResults) ||
             !topResults.isEmpty
     }
 
@@ -485,16 +439,6 @@ struct SessionSearchScreen: View {
         }
 
         return "Try a session ref, a setting like Continue Prompt, or an action like Send Test Alert."
-    }
-
-    private func filteredSessions(from sessions: [SessionSummary]) -> [SessionSummary] {
-        SessionSearchEngine.sessions(sessions, matching: trimmedSearchText)
-    }
-
-    private func withoutTopResults(_ sessions: [SessionSummary]) -> [SessionSummary] {
-        sessions.filter { session in
-            !topResultIDs.contains(GlobalSearchResult.session(session).id)
-        }
     }
 
     private func runSearchAction(_ action: GlobalSearchAction) {

@@ -1617,12 +1617,41 @@ extension SessionSummary {
         leftSession: SessionSummary,
         rightSession: SessionSummary
     ) -> Bool {
-        LooperSessionFreshness.isNewerActivityOrLowerReference(
-            leftLastActivityAt: leftSession.lastActivityAt,
-            leftRef: leftSession.ref,
-            rightLastActivityAt: rightSession.lastActivityAt,
-            rightRef: rightSession.ref
+        SessionFreshnessSortItem.isNewerOrLowerRef(
+            leftItem: SessionFreshnessSortItem(session: leftSession),
+            rightItem: SessionFreshnessSortItem(session: rightSession)
         )
+    }
+}
+
+struct SessionFreshnessSortItem {
+    let session: SessionSummary
+    private let activitySortKey: LooperSessionFreshness.ActivitySortKey
+
+    init(session: SessionSummary) {
+        self.session = session
+        activitySortKey = LooperSessionFreshness.activitySortKey(
+            lastActivityAt: session.lastActivityAt,
+            ref: session.ref
+        )
+    }
+
+    static func isNewerOrLowerRef(
+        leftItem: SessionFreshnessSortItem,
+        rightItem: SessionFreshnessSortItem
+    ) -> Bool {
+        LooperSessionFreshness.isNewerActivityOrLowerReference(
+            leftKey: leftItem.activitySortKey,
+            rightKey: rightItem.activitySortKey
+        )
+    }
+}
+
+extension Sequence where Element == SessionSummary {
+    func sortedBySessionFreshness() -> [SessionSummary] {
+        map(SessionFreshnessSortItem.init)
+            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
+            .map(\.session)
     }
 }
 
@@ -1884,22 +1913,25 @@ struct MobileSnapshot: Codable, Sendable {
     }
 
     var sessionsAcrossSurfaces: [SessionSummary] {
-        var sessionsByID: [String: SessionSummary] = [:]
+        var sessionItemsByID: [String: SessionFreshnessSortItem] = [:]
         for surface in CompanionAssistantSurface.allCases {
             for session in sessions(for: surface) {
-                if let existingSession = sessionsByID[session.id] {
-                    if SessionSummary.isNewerOrLowerRef(
-                        leftSession: session,
-                        rightSession: existingSession
+                let sessionItem = SessionFreshnessSortItem(session: session)
+                if let existingItem = sessionItemsByID[session.id] {
+                    if SessionFreshnessSortItem.isNewerOrLowerRef(
+                        leftItem: sessionItem,
+                        rightItem: existingItem
                     ) {
-                        sessionsByID[session.id] = session
+                        sessionItemsByID[session.id] = sessionItem
                     }
                 } else {
-                    sessionsByID[session.id] = session
+                    sessionItemsByID[session.id] = sessionItem
                 }
             }
         }
-        return sessionsByID.values.sorted(by: SessionSummary.isNewerOrLowerRef)
+        return sessionItemsByID.values
+            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
+            .map(\.session)
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
@@ -1918,6 +1950,90 @@ struct MobileSnapshot: Codable, Sendable {
                 session.id == sessionID
             }
         }
+    }
+}
+
+struct SessionIndex: Equatable, Sendable {
+    static let empty = SessionIndex(
+        allSessions: [],
+        sessionsByID: [:],
+        surfaceBySessionID: [:],
+        identity: "empty"
+    )
+
+    let allSessions: [SessionSummary]
+    private let sessionsByID: [String: SessionSummary]
+    private let surfaceBySessionID: [String: CompanionAssistantSurface]
+    let identity: String
+
+    init(snapshot: MobileSnapshot) {
+        var sessionsByID: [String: SessionSummary] = [:]
+        var sessionItemsByID: [String: SessionFreshnessSortItem] = [:]
+        var surfaceBySessionID: [String: CompanionAssistantSurface] = [:]
+
+        for surface in CompanionAssistantSurface.allCases {
+            for session in snapshot.sessions(for: surface) {
+                let sessionItem = SessionFreshnessSortItem(session: session)
+                if let existingItem = sessionItemsByID[session.id],
+                   !SessionFreshnessSortItem.isNewerOrLowerRef(
+                       leftItem: sessionItem,
+                       rightItem: existingItem
+                   )
+                {
+                    continue
+                }
+
+                sessionsByID[session.id] = session
+                sessionItemsByID[session.id] = sessionItem
+                surfaceBySessionID[session.id] = surface
+            }
+        }
+
+        let allSessions = sessionItemsByID.values
+            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
+            .map(\.session)
+        self.init(
+            allSessions: allSessions,
+            sessionsByID: sessionsByID,
+            surfaceBySessionID: surfaceBySessionID,
+            identity: Self.identity(snapshot: snapshot, sessions: allSessions)
+        )
+    }
+
+    private init(
+        allSessions: [SessionSummary],
+        sessionsByID: [String: SessionSummary],
+        surfaceBySessionID: [String: CompanionAssistantSurface],
+        identity: String
+    ) {
+        self.allSessions = allSessions
+        self.sessionsByID = sessionsByID
+        self.surfaceBySessionID = surfaceBySessionID
+        self.identity = identity
+    }
+
+    func session(withID sessionID: String) -> SessionSummary? {
+        sessionsByID[sessionID]
+    }
+
+    func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
+        surfaceBySessionID[sessionID]
+    }
+
+    private static func identity(snapshot: MobileSnapshot, sessions: [SessionSummary]) -> String {
+        let revision = snapshot.revision?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? "no-revision"
+        let sessionFingerprints = sessions.map { session in
+            [
+                session.id,
+                session.status.rawValue,
+                session.lastActivityAt,
+                session.lastMessageAt ?? "",
+                session.isArchived ? "archived" : "visible",
+            ].joined(separator: ":")
+        }
+        return ([revision, String(sessions.count)] + sessionFingerprints).joined(separator: "|")
     }
 }
 
@@ -1943,7 +2059,7 @@ struct SessionSections: Sendable {
         var needsAttention: [SessionSummary] = []
         var archived: [SessionSummary] = []
 
-        for session in sessions.sorted(by: Self.isNewerOrLowerRef) {
+        for session in sessions.sortedBySessionFreshness() {
             if session.isArchived {
                 archived.append(session)
                 continue
@@ -1976,12 +2092,6 @@ struct SessionSections: Sendable {
         needsAttention.count
     }
 
-    private static func isNewerOrLowerRef(
-        leftSession: SessionSummary,
-        rightSession: SessionSummary
-    ) -> Bool {
-        SessionSummary.isNewerOrLowerRef(leftSession: leftSession, rightSession: rightSession)
-    }
 }
 
 enum SessionTimestampParser {

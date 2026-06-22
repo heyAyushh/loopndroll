@@ -4,7 +4,13 @@ enum CompanionSnapshotCache {
     private static let snapshotKey = "looper.cachedMobileSnapshot.v1"
     private static let snapshotFilename = "mobile-snapshot-cache.json"
 
-    static func load() -> MobileSnapshot? {
+    static func load() async -> MobileSnapshot? {
+        await Task.detached(priority: .userInitiated) {
+            loadFromDisk()
+        }.value
+    }
+
+    private static func loadFromDisk() -> MobileSnapshot? {
         let url = snapshotURL()
 
         if FileManager.default.fileExists(atPath: url.path) {
