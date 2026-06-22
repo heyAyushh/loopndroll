@@ -2,6 +2,13 @@
 
 Date: 2026-06-22
 Primary simulator: iPhone 17 Pro, iOS 27.0
+Confirmed toolchain: Xcode 27 beta at
+`/Applications/Xcode-beta.app/Contents/Developer` (`Xcode 27.0`, build
+`27A5194q`).
+
+Details stale: default `/Applications/Xcode.app` platform details are not the
+current Looper iOS proof path. Treat Xcode 27 beta plus the iOS 27 simulator as
+the confirmed local toolchain/simulator pair for this matrix.
 
 This inventory maps the user-visible Looper iOS companion and macOS menu bar
 controls to the strongest proof available in this goal pass. Simulator-only
