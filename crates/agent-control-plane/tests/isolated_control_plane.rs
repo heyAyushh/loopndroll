@@ -1,3 +1,4 @@
+// allow: SIZE_OK — integration-test harness root owns shared fixtures while scenario groups are split under tests/isolated_control_plane/.
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -22,9 +23,13 @@ use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use rusqlite::Connection;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
 use tower::ServiceExt;
 
 const MOBILE_SNAPSHOT_VISIBLE_THREAD_LIMIT: usize = 12;
@@ -38,6 +43,15 @@ const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
 const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
 const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
 const SSE_CONNECTED_EVENT_TIMEOUT_SECONDS: u64 = 5;
+
+#[path = "isolated_control_plane/acp_hosts/mod.rs"]
+mod acp_hosts;
+#[path = "isolated_control_plane/hooks_routes.rs"]
+mod hooks_routes;
+#[path = "isolated_control_plane/mobile_classification.rs"]
+mod mobile_classification;
+#[path = "isolated_control_plane/mobile_events.rs"]
+mod mobile_events;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
@@ -63,7 +77,7 @@ target_thread_id = "thread-main"
 
     let status = request_json(&router, "/status/control-plane").await;
     assert_eq!(status["hooks"]["owner"], "looper-rust");
-    assert_eq!(status["hooks"]["enabled"], true);
+    assert_eq!(status["hooks"]["enabled"], serde_json::json!(true));
     assert_eq!(status["hooks"]["registered_events"][0], "SessionStart");
     assert!(status["codex_servers"].is_array());
 
@@ -79,11 +93,29 @@ target_thread_id = "thread-main"
 
     let automations = request_json(&router, "/automations").await;
     assert_eq!(automations["automations"][0]["id"], "daily-review");
-    assert_eq!(automations["automations"][0]["target_known"], true);
+    assert_eq!(
+        automations["automations"][0]["target_known"],
+        serde_json::json!(true)
+    );
 
     let hook_contract = request_json(&router, "/integrations/hook/contract").await;
-    assert_eq!(hook_contract["profile"], "agent-control-plane-local-relay");
-    assert_eq!(hook_contract["payload_policy"]["raw_prompts"], false);
+    assert_eq!(
+        hook_contract["profile"],
+        "agent-control-plane-local-hook-command-relay"
+    );
+    assert_eq!(
+        hook_contract["ingress"]["path"],
+        "managed local hook command"
+    );
+    assert_eq!(
+        hook_contract["ingress"]["auth"],
+        "local-user-owned-config-file"
+    );
+    assert_eq!(hook_contract["ingress"]["signature_header"], "not-used");
+    assert_eq!(
+        hook_contract["payload_policy"]["raw_prompts"],
+        serde_json::json!(false)
+    );
     assert_eq!(
         hook_contract["payload_policy"]["opaque_session_handles"],
         true
@@ -150,6 +182,19 @@ async fn desktop_snapshot_reads_latest_assistant_preview() {
                 "type": "response_item",
                 "payload": {
                     "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "First user prompt for Handoff."
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
                     "role": "assistant",
                     "content": [
                         {
@@ -188,6 +233,10 @@ async fn desktop_snapshot_reads_latest_assistant_preview() {
     assert_eq!(
         main_thread["assistant_preview"],
         "Latest assistant preview for Handoff."
+    );
+    assert_eq!(
+        main_thread["first_user_prompt"],
+        "First user prompt for Handoff."
     );
 }
 
@@ -277,17 +326,23 @@ private_notes = "do not sync this private goal body"
     assert_eq!(goals["goals"][0]["id"], "ship-looper");
     assert_eq!(goals["goals"][0]["status"], "pursuing");
     assert_eq!(goals["goals"][0]["lifecycle"], "pursuing");
-    assert_eq!(goals["goals"][0]["target_known"], true);
-    assert_eq!(goals["goals"][0]["sync_safe"], true);
+    assert_eq!(goals["goals"][0]["target_known"], serde_json::json!(true));
+    assert_eq!(goals["goals"][0]["sync_safe"], serde_json::json!(true));
     assert_ne!(goals["goals"][0]["content_hash"], "");
     let plural_goals = request_json(&router, "/goals").await;
     assert_eq!(plural_goals["goals"][0]["id"], "ship-looper");
 
     let manifest = request_json(&router, "/sync/manifest").await;
     assert_eq!(manifest["schema_version"], 1);
-    assert_eq!(manifest["privacy"]["raw_goal_bodies"], false);
-    assert_eq!(manifest["privacy"]["raw_automation_prompts"], false);
-    assert_eq!(manifest["privacy"]["credentials"], false);
+    assert_eq!(
+        manifest["privacy"]["raw_goal_bodies"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        manifest["privacy"]["raw_automation_prompts"],
+        serde_json::json!(false)
+    );
+    assert_eq!(manifest["privacy"]["credentials"], serde_json::json!(false));
     assert_eq!(manifest["goals"][0]["id"], "ship-looper");
     assert_eq!(manifest["automations"][0]["id"], "daily-review");
     assert_eq!(manifest["threads"][0]["thread_id"], "thread-child");
@@ -360,6 +415,17 @@ async fn codex_goal_database_marks_running_goal_on_session() {
         "Make Looper understand running goals",
         "active",
     );
+    fixture.write_automation(
+        "daily-review",
+        r#"
+id = "daily-review"
+kind = "heartbeat"
+name = "Daily Review"
+status = "ACTIVE"
+rrule = "FREQ=HOURLY;INTERVAL=1"
+target_thread_id = "thread-main"
+"#,
+    );
     let router = build_router(fixture.control_plane());
 
     let goals = request_json(&router, "/goals").await;
@@ -371,9 +437,9 @@ async fn codex_goal_database_marks_running_goal_on_session() {
         .expect("sqlite goal");
     assert_eq!(goal["source_kind"], "sqlite");
     assert_eq!(goal["status"], "pursuing");
-    assert_eq!(goal["running"], true);
+    assert_eq!(goal["running"], serde_json::json!(true));
     assert_eq!(goal["target_thread_id"], "thread-main");
-    assert_eq!(goal["target_known"], true);
+    assert_eq!(goal["target_known"], serde_json::json!(true));
     assert_eq!(goal["tokens_used"], GOAL_FIXTURE_TOKENS_USED);
 
     let snapshot = request_json(&router, "/desktop/snapshot").await;
@@ -384,7 +450,7 @@ async fn codex_goal_database_marks_running_goal_on_session() {
         .find(|thread| thread["thread_id"] == "thread-main")
         .expect("thread-main");
     assert_eq!(thread["goal"]["id"], "goal-main");
-    assert_eq!(thread["goal"]["running"], true);
+    assert_eq!(thread["goal"]["running"], serde_json::json!(true));
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
@@ -396,9 +462,42 @@ async fn codex_goal_database_marks_running_goal_on_session() {
         None,
     )
     .await;
+    let mobile_revision = mobile_snapshot["revision"]
+        .as_str()
+        .expect("mobile revision");
+    assert!(mobile_revision.contains("goals=goal-main"));
+    assert!(mobile_revision.contains("automations=daily-review"));
+    assert_eq!(
+        mobile_snapshot["workStatus"]["goalCount"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["runningGoalCount"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["automationCount"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["activeAutomationCount"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["coveredAutomationCount"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["runningGoals"][0]["targetThreadId"],
+        "thread-main"
+    );
+    assert_eq!(
+        mobile_snapshot["workStatus"]["activeAutomations"][0]["controlPlaneCovered"],
+        serde_json::json!(true)
+    );
     let session = mobile_snapshot_session(&mobile_snapshot, "thread-main");
     assert_eq!(session["goal"]["id"], "goal-main");
-    assert_eq!(session["goal"]["running"], true);
+    assert_eq!(session["goal"]["running"], serde_json::json!(true));
 
     let manifest = request_json(&router, "/sync/manifest").await;
     let sync_goal = manifest["goals"]
@@ -407,7 +506,7 @@ async fn codex_goal_database_marks_running_goal_on_session() {
         .iter()
         .find(|goal| goal["id"] == "goal-main")
         .expect("sync sqlite goal");
-    assert_eq!(sync_goal["running"], true);
+    assert_eq!(sync_goal["running"], serde_json::json!(true));
     assert_eq!(sync_goal["tokens_used"], GOAL_FIXTURE_TOKENS_USED);
 }
 
@@ -532,6 +631,13 @@ async fn compaction_events_are_exposed_as_local_hook_events() {
             .iter()
             .any(|event| event["event_type"] == "codex.context_compacted")
     );
+    assert!(
+        hook_contract["events"]
+            .as_array()
+            .expect("hook events")
+            .iter()
+            .all(|event| event["source"] != "cloud-relay")
+    );
 }
 
 #[tokio::test]
@@ -545,7 +651,10 @@ async fn unregister_hooks_removes_only_owned_rust_handlers() {
     assert_eq!(response["action"], "unregister-hooks");
     assert_eq!(response["removed_handlers"], 4);
     assert_eq!(response["installed_handlers"], 0);
-    assert_eq!(response["hooks_auto_registration"], false);
+    assert_eq!(
+        response["hooks_auto_registration"],
+        serde_json::json!(false)
+    );
     assert_eq!(response["status"]["hooks"]["owner"], "unknown");
 
     let hooks_json = fs::read_to_string(fixture.codex_home.join("hooks.json")).expect("hooks");
@@ -573,8 +682,11 @@ async fn register_hooks_installs_owned_rust_handlers() {
     assert_eq!(response["action"], "register-hooks");
     assert_eq!(response["removed_handlers"], 0);
     assert_eq!(response["installed_handlers"], 12);
-    assert_eq!(response["hooks_auto_registration"], true);
-    assert_eq!(response["status"]["hooks"]["enabled"], true);
+    assert_eq!(response["hooks_auto_registration"], serde_json::json!(true));
+    assert_eq!(
+        response["status"]["hooks"]["enabled"],
+        serde_json::json!(true)
+    );
     assert_eq!(response["status"]["hooks"]["owner"], "looper-rust");
 
     let hooks_json = fs::read_to_string(fixture.codex_home.join("hooks.json")).expect("hooks");
@@ -624,7 +736,7 @@ async fn targeted_hook_register_and_clear_only_touch_selected_source() {
     assert_eq!(response["action"], "register-grok-build-hooks");
     assert_eq!(response["removed_handlers"], 0);
     assert_eq!(response["installed_handlers"], 3);
-    assert_eq!(response["hooks_auto_registration"], true);
+    assert_eq!(response["hooks_auto_registration"], serde_json::json!(true));
 
     let grok_hooks_path = fixture.grok_home().join("hooks/looper.json");
     let grok_hooks_json = fs::read_to_string(&grok_hooks_path).expect("grok hooks");
@@ -643,10 +755,31 @@ async fn targeted_hook_register_and_clear_only_touch_selected_source() {
     assert_eq!(clear_response["action"], "unregister-live-grok-build-hooks");
     assert_eq!(clear_response["removed_handlers"], 3);
     assert_eq!(clear_response["installed_handlers"], 0);
-    assert_eq!(clear_response["hooks_auto_registration"], true);
+    assert_eq!(
+        clear_response["hooks_auto_registration"],
+        serde_json::json!(true)
+    );
 
-    let cleared_grok_hooks_json = fs::read_to_string(grok_hooks_path).expect("cleared grok hooks");
+    let cleared_grok_hooks_json = fs::read_to_string(&grok_hooks_path).expect("cleared grok hooks");
     assert!(!cleared_grok_hooks_json.contains("agent-control-plane"));
+
+    let register_again_response =
+        request_json_with_method(&router, Method::POST, "/hooks/grok/register").await;
+    assert_eq!(register_again_response["installed_handlers"], 3);
+
+    let unregister_response =
+        request_json_with_method(&router, Method::POST, "/hooks/grok/unregister").await;
+    assert_eq!(unregister_response["action"], "unregister-grok-build-hooks");
+    assert_eq!(unregister_response["removed_handlers"], 3);
+    assert_eq!(unregister_response["installed_handlers"], 0);
+    assert_eq!(
+        unregister_response["hooks_auto_registration"],
+        serde_json::json!(false)
+    );
+
+    let unregistered_grok_hooks_json =
+        fs::read_to_string(&grok_hooks_path).expect("unregistered grok hooks");
+    assert!(!unregistered_grok_hooks_json.contains("agent-control-plane"));
 }
 
 #[tokio::test]
@@ -657,12 +790,22 @@ async fn unknown_hook_target_is_rejected() {
     let response = request_with_options(
         &router,
         Method::POST,
-        "/hooks/devin/register",
+        "/hooks/unknown/register",
         &[],
         Some("127.0.0.1:49152".parse().expect("loopback socket")),
     )
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let unregister_response = request_with_options(
+        &router,
+        Method::POST,
+        "/hooks/unknown/unregister",
+        &[],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+    assert_eq!(unregister_response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -676,26 +819,20 @@ async fn hook_mutation_routes_reject_remote_callers() {
     for path in [
         "/hooks/clear",
         "/hooks/register",
+        "/hooks/codex/register",
+        "/hooks/devin/register",
         "/hooks/grok/register",
+        "/hooks/claude/register",
         "/hooks/unregister",
+        "/hooks/codex/unregister",
+        "/hooks/devin/unregister",
+        "/hooks/grok/unregister",
+        "/hooks/claude/unregister",
         "/hooks/unregister-live",
+        "/hooks/codex/unregister-live",
+        "/hooks/devin/unregister-live",
         "/hooks/grok/unregister-live",
-    ] {
-        let response = request_with_options(&router, Method::POST, path, &[], remote_socket).await;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
-    }
-}
-
-#[tokio::test]
-async fn acp_install_routes_reject_remote_callers() {
-    let fixture = IsolatedCodexFixture::new();
-    let router = build_router(fixture.control_plane());
-    let remote_socket = Some("192.168.99.25:49152".parse().expect("remote socket"));
-
-    for path in [
-        "/desktop/devin/acp-bridge/install",
-        "/desktop/acp-client-hosts/devin/install",
-        "/desktop/acp-client-hosts/zed/install",
+        "/hooks/claude/unregister-live",
     ] {
         let response = request_with_options(&router, Method::POST, path, &[], remote_socket).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
@@ -711,7 +848,7 @@ async fn live_unregister_preserves_auto_registration_for_next_launch() {
 
     let response = request_json_with_method(&router, Method::POST, "/hooks/unregister-live").await;
     assert_eq!(response["action"], "unregister-live-hooks");
-    assert_eq!(response["hooks_auto_registration"], true);
+    assert_eq!(response["hooks_auto_registration"], serde_json::json!(true));
     assert_eq!(response["removed_handlers"], 3);
     assert_eq!(response["installed_handlers"], 0);
 
@@ -720,7 +857,10 @@ async fn live_unregister_preserves_auto_registration_for_next_launch() {
 
     let register_response =
         request_json_with_method(&router, Method::POST, "/hooks/register").await;
-    assert_eq!(register_response["hooks_auto_registration"], true);
+    assert_eq!(
+        register_response["hooks_auto_registration"],
+        serde_json::json!(true)
+    );
     assert_eq!(register_response["installed_handlers"], 12);
     assert_eq!(register_response["status"]["hooks"]["owner"], "looper-rust");
 }
@@ -739,7 +879,7 @@ async fn mobile_health_prefers_reachable_request_host() {
     )
     .await;
 
-    assert_eq!(response["ok"], true);
+    assert_eq!(response["ok"], serde_json::json!(true));
     assert_eq!(response["baseURL"], "http://192.168.99.10:8765");
     assert_eq!(response["baseURLs"][0], "http://192.168.99.10:8765");
 }
@@ -786,7 +926,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     fixture.write_config_toml(true);
     fixture.write_devin_next_settings();
     fixture.write_zed_settings();
-    let control_plane = fixture.control_plane();
+    let control_plane = fixture.control_plane_with_running_zed();
     let pairing_token = control_plane
         .mobile_auth_service()
         .issue_pairing_token()
@@ -978,8 +1118,8 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
             .iter()
             .any(|target| target["id"] == "zed:looper"
                 && target["client"] == "zed"
-                && target["ready"] == false
-                && target["status"] == "read-only"
+                && target["ready"] == true
+                && target["status"] == "ready"
                 && target["launch"]["methods"]
                     .as_array()
                     .expect("launch methods")
@@ -1000,7 +1140,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     .await;
     assert_eq!(acp_probe["probe"]["status"], "ready");
     assert_eq!(acp_probe["probe"]["agent_id"], "codex");
-    assert_eq!(acp_probe["probe"]["ready"], true);
+    assert_eq!(acp_probe["probe"]["ready"], serde_json::json!(true));
     assert_eq!(acp_probe["probe"]["probe_kind"], "launch-preflight");
     let probe_action = acp_probe["bridge"]["actions"]
         .as_array()
@@ -1041,7 +1181,18 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     assert_eq!(zed_acp_host["agents"][0]["id"], "looper");
     assert_eq!(
         zed_acp_host["agents"][0]["control_level"],
-        "visibility-only"
+        "agent-configured"
+    );
+    assert_eq!(zed_acp_host["agents"][0]["supports_sessions"], true);
+    assert_eq!(zed_acp_host["agents"][0]["supports_prompt"], true);
+    assert_eq!(zed_acp_host["agents"][0]["supports_cancel"], true);
+    assert!(
+        zed_acp_host["actions"]
+            .as_array()
+            .expect("zed actions")
+            .iter()
+            .any(|action| action["id"] == "install"
+                && action["path"] == "/desktop/acp-client-hosts/zed/install")
     );
     assert!(
         zed_acp_host["actions"]
@@ -1093,14 +1244,12 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     )
     .await;
     assert_eq!(zed_generic_probe["host"]["id"], "zed");
-    assert_eq!(zed_generic_probe["probe"]["status"], "blocked");
-    assert_eq!(
-        zed_generic_probe["probe"]["probe_kind"],
-        "read-only-visibility"
-    );
+    assert_eq!(zed_generic_probe["probe"]["status"], "ready");
+    assert_eq!(zed_generic_probe["probe"]["probe_kind"], "looper-stdio");
+    assert_eq!(zed_generic_probe["probe"]["ready"], true);
     assert_eq!(zed_generic_probe["probe"]["agent_id"], "looper");
 
-    let zed_install = request_with_options(
+    let zed_install = request_json_with_options(
         &router,
         Method::POST,
         "/desktop/acp-client-hosts/zed/install",
@@ -1108,7 +1257,37 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         loopback_socket,
     )
     .await;
-    assert_eq!(zed_install.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(zed_install["install"]["installed_agent_id"], "codex");
+    assert_eq!(zed_install["install"]["preferred_agent"], "codex");
+
+    let missing_acp_host = request_with_options(
+        &router,
+        Method::GET,
+        "/desktop/acp-client-hosts/unknown",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(missing_acp_host.status(), StatusCode::NOT_FOUND);
+    let missing_acp_probe = request_with_body_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/unknown/probe",
+        serde_json::to_vec(&serde_json::json!({ "agentId": "looper" })).expect("probe body"),
+        &[(axum::http::header::CONTENT_TYPE, "application/json")],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(missing_acp_probe.status(), StatusCode::NOT_FOUND);
+    let missing_acp_install = request_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/unknown/install",
+        &[],
+        loopback_socket,
+    )
+    .await;
+    assert_eq!(missing_acp_install.status(), StatusCode::NOT_FOUND);
 
     let generic_acp_probe = request_json_body_with_options(
         &router,
@@ -1214,7 +1393,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
         .find(|connection| connection["id"] == pairing_token.id)
         .expect("revoked mobile");
     assert_eq!(revoked_mobile["status"], "revoked");
-    assert_eq!(revoked_mobile["can_revoke"], false);
+    assert_eq!(revoked_mobile["can_revoke"], serde_json::json!(false));
 }
 
 #[tokio::test]
@@ -1456,7 +1635,10 @@ target_thread_id = "thread-main"
                 .expect("thread id")
                 .starts_with("thread-extra-"))
     );
-    assert_eq!(snapshot["automations"][0]["target_known"], true);
+    assert_eq!(
+        snapshot["automations"][0]["target_known"],
+        serde_json::json!(true)
+    );
 }
 
 #[tokio::test]
@@ -1520,6 +1702,10 @@ async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
         "Telegram DM"
     );
     assert_eq!(
+        snapshot["globalSettings"]["defaultNotificationTargetIds"],
+        serde_json::json!(["macos", "route-telegram"])
+    );
+    assert_eq!(
         snapshot["globalSettings"]["completionCheckLabel"],
         "Cargo checks"
     );
@@ -1538,7 +1724,10 @@ async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
     .await;
     assert_eq!(detail["notificationIds"][0], "route-telegram");
     assert_eq!(detail["completionCheckID"], "check-cargo");
-    assert_eq!(detail["completionCheckWaitForReply"], false);
+    assert_eq!(
+        detail["completionCheckWaitForReply"],
+        serde_json::json!(false)
+    );
     assert_eq!(detail["availableNotifications"][0]["id"], "route-telegram");
     assert_eq!(detail["availableCompletionChecks"][0]["id"], "check-cargo");
 }
@@ -1550,6 +1739,19 @@ async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
     let transcript_path = fixture.write_transcript(
         "thread-main.jsonl",
         &[
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "First prompt belongs in details."
+                        }
+                    ]
+                }
+            }),
             serde_json::json!({
                 "type": "response_item",
                 "payload": {
@@ -1596,11 +1798,19 @@ async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
         detail["latestAssistantMessage"],
         "Latest assistant reply from transcript."
     );
+    assert_eq!(detail["title"], "Main task");
+    assert_eq!(
+        detail["firstUserPrompt"],
+        "First prompt belongs in details."
+    );
     assert_eq!(
         detail["assistantPreview"],
         "Latest assistant reply from transcript."
     );
-    assert_eq!(detail["metadata"]["transcriptAvailable"], true);
+    assert_eq!(
+        detail["metadata"]["transcriptAvailable"],
+        serde_json::json!(true)
+    );
     assert!(
         detail["metadata"]["sources"]
             .as_array()
@@ -1951,7 +2161,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
     )
     .await;
     let archived_session = mobile_snapshot_session(&archived_snapshot, "thread-main");
-    assert_eq!(archived_session["isArchived"], true);
+    assert_eq!(archived_session["isArchived"], serde_json::json!(true));
     assert_eq!(archived_session["status"], "archived");
 
     let deleted_snapshot = request_json_with_options(
@@ -2357,6 +2567,11 @@ async fn desktop_and_mobile_snapshots_include_claude_code_sessions() {
         claude_thread["assistant_preview"],
         "Claude session is visible."
     );
+    assert_eq!(claude_thread["title"], serde_json::Value::Null);
+    assert_eq!(
+        claude_thread["first_user_prompt"],
+        "Build native Claude support"
+    );
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
@@ -2406,6 +2621,7 @@ async fn desktop_snapshot_includes_grok_sessions() {
         .expect("grok session thread");
     assert_eq!(grok_thread["source"], "grok-build");
     assert_eq!(grok_thread["title"], "Ship Grok hooks");
+    assert_eq!(grok_thread["first_user_prompt"], "Build Grok hooks");
 }
 
 #[tokio::test]
@@ -2426,6 +2642,7 @@ async fn desktop_snapshot_includes_devin_sessions() {
     assert_eq!(devin_thread["source"], "devin-desktop");
     assert_eq!(devin_thread["originator"], "Devin - Next");
     assert_eq!(devin_thread["assistant_preview"], "Hello from Devin");
+    assert_eq!(devin_thread["first_user_prompt"], "Fix Devin support");
     assert_eq!(
         devin_thread["capabilities"]["assistant_kind"],
         "devin-desktop"
@@ -3039,27 +3256,6 @@ async fn devin_mobile_prompt_rejects_stopped_local_devin_hook_delivery() {
 }
 
 #[tokio::test]
-async fn devin_acp_attach_route_is_not_supported() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    fixture.write_devin_next_settings();
-    let router = build_router(fixture.control_plane());
-    let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
-
-    let attach_response = request_with_body_options(
-        &router,
-        Method::POST,
-        "/desktop/devin/acp-bridge/attach",
-        serde_json::to_vec(&serde_json::json!({ "agentId": "codex" })).expect("json body"),
-        &[(axum::http::header::CONTENT_TYPE, "application/json")],
-        loopback,
-    )
-    .await;
-
-    assert_eq!(attach_response.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
 async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -3144,7 +3340,26 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     )
     .await;
     assert_eq!(global["globalCompletionCheckId"], "check-test");
-    assert_eq!(global["globalCompletionCheckWaitForReply"], true);
+    assert_eq!(
+        global["globalCompletionCheckWaitForReply"],
+        serde_json::json!(true)
+    );
+
+    let notification_targets = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/settings/default-notification-targets",
+        serde_json::json!({
+            "notificationTargetIds": ["macos", "route-slack"]
+        }),
+        &[],
+        loopback,
+    )
+    .await;
+    assert_eq!(
+        notification_targets["defaultNotificationTargetIds"],
+        serde_json::json!(["macos", "route-slack"])
+    );
 
     let session = request_json_body_with_options(
         &router,
@@ -3169,7 +3384,10 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
         loopback,
     )
     .await;
-    assert_eq!(archived["sessions"]["thread-main"]["archived"], true);
+    assert_eq!(
+        archived["sessions"]["thread-main"]["archived"],
+        serde_json::json!(true)
+    );
 
     record_thread_active(&control_plane, "thread-child");
     let prompted = request_json_body_with_options(
@@ -3251,7 +3469,10 @@ async fn mobile_push_registration_is_stored_in_rust() {
         desktop_push_devices["devices"][0]["state"],
         "stored-awaiting-provider"
     );
-    assert_eq!(desktop_push_devices["devices"][0]["canTest"], false);
+    assert_eq!(
+        desktop_push_devices["devices"][0]["canTest"],
+        serde_json::json!(false)
+    );
 
     let desktop_test_response = request_json_body_with_options(
         &router,
@@ -3262,7 +3483,7 @@ async fn mobile_push_registration_is_stored_in_rust() {
         Some("127.0.0.1:49152".parse().expect("loopback socket")),
     )
     .await;
-    assert_eq!(desktop_test_response["delivered"], false);
+    assert_eq!(desktop_test_response["delivered"], serde_json::json!(false));
     assert_ne!(desktop_test_response["message"], "");
 
     let test_response = request_json_body_with_options(
@@ -3275,7 +3496,7 @@ async fn mobile_push_registration_is_stored_in_rust() {
     )
     .await;
 
-    assert_eq!(test_response["delivered"], false);
+    assert_eq!(test_response["delivered"], serde_json::json!(false));
     assert_ne!(test_response["message"], "");
 }
 
@@ -3741,6 +3962,16 @@ done
     }
 
     fn control_plane(&self) -> ControlPlane {
+        self.control_plane_with_zed_processes(Vec::new())
+    }
+
+    fn control_plane_with_running_zed(&self) -> ControlPlane {
+        self.control_plane_with_zed_processes(vec![
+            "/Applications/Zed.app/Contents/MacOS/zed --foreground".to_owned(),
+        ])
+    }
+
+    fn control_plane_with_zed_processes(&self, zed_process_commands: Vec<String>) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(self.codex_resume_stub().display().to_string()),
@@ -3748,6 +3979,7 @@ done
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             home_path: self.temp_dir.path().to_path_buf(),
+            zed_process_commands: Some(zed_process_commands),
         })
     }
 
@@ -3801,26 +4033,39 @@ done
     }
 
     fn write_zed_settings(&self) {
+        self.write_zed_settings_value(serde_json::json!({
+            "agent_servers": {
+                "looper": {
+                    "type": "custom",
+                    "command": "looper",
+                    "args": ["acp", "stdio", "zed"],
+                    "env": {
+                        "TOKEN": "zed-secret-token"
+                    }
+                }
+            }
+        }));
+    }
+
+    fn write_zed_settings_without_command(&self) {
+        self.write_zed_settings_value(serde_json::json!({
+            "agent_servers": {
+                "looper": {
+                    "type": "custom",
+                    "args": ["acp", "stdio", "zed"],
+                    "env": {
+                        "TOKEN": "zed-secret-token"
+                    }
+                }
+            }
+        }));
+    }
+
+    fn write_zed_settings_value(&self, settings: serde_json::Value) {
         let settings_path = self.temp_dir.path().join(".zed/settings.json");
         fs::create_dir_all(settings_path.parent().expect("zed settings parent"))
             .expect("create zed settings parent");
-        fs::write(
-            settings_path,
-            serde_json::json!({
-                "agent_servers": {
-                    "looper": {
-                        "type": "custom",
-                        "command": "looper",
-                        "args": ["acp", "stdio"],
-                        "env": {
-                            "TOKEN": "zed-secret-token"
-                        }
-                    }
-                }
-            })
-            .to_string(),
-        )
-        .expect("write zed settings");
+        fs::write(settings_path, settings.to_string()).expect("write zed settings");
     }
 
     fn write_devin_next_session(&self) {
@@ -3847,6 +4092,34 @@ done
         fs::write(
             events_path.join("event-1.ndjson"),
             [
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "Fix "
+                        },
+                        "_meta": {
+                            "cognition.ai/streamingMessageId": "user-1"
+                        }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "Devin support"
+                        },
+                        "_meta": {
+                            "cognition.ai/streamingMessageId": "user-1"
+                        }
+                    }
+                })
+                .to_string(),
                 serde_json::json!({
                     "providerId": "devin-cli",
                     "notification": {
@@ -3930,7 +4203,7 @@ done
                     serde_json::to_vec(&serde_json::json!({
                         "acp/devin-cli/brindle-cadet": {
                             "uuid": "event-1",
-                            "eventCount": 3,
+                            "eventCount": 5,
                             "lastUpdated": DEVIN_FIXTURE_EVENT_UPDATED_AT_MS
                         }
                     }))
@@ -4107,6 +4380,23 @@ trusted_hash = "sha256:user"
         )
         .expect("write grok summary");
         fs::write(session_dir.join("updates.jsonl"), "{}\n").expect("write grok updates");
+        fs::write(
+            session_dir.join("chat_history.jsonl"),
+            [
+                serde_json::json!({
+                    "type": "user",
+                    "content": "Build Grok hooks"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "assistant",
+                    "content": "Grok hooks are visible."
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write grok chat history");
         fs::write(
             self.grok_home().join("active_sessions.json"),
             serde_json::json!([{

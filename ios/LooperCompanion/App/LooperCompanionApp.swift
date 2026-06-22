@@ -12,8 +12,9 @@ struct LooperApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
+        Self.prepareUITestStateIfNeeded()
         _authenticator = State(initialValue: CompanionAppAuthenticator())
-        _model = State(initialValue: CompanionAppModel(environment: .live()))
+        _model = State(initialValue: CompanionAppModel(environment: Self.environment()))
     }
 
     var body: some Scene {
@@ -51,6 +52,49 @@ struct LooperApp: App {
 
     private var appearanceMode: CompanionAppearanceMode {
         CompanionAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
+    }
+
+    private static func environment() -> CompanionEnvironment {
+        #if DEBUG
+        if UITestLaunchArguments.isMockModeEnabled {
+            return CompanionEnvironment(service: MockCompanionService())
+        }
+        #endif
+
+        return .live()
+    }
+
+    private static func prepareUITestStateIfNeeded() {
+        #if DEBUG
+        guard UITestLaunchArguments.isMockModeEnabled else {
+            return
+        }
+
+        if UITestLaunchArguments.shouldResetState {
+            let defaults = UserDefaults.standard
+            defaults.removeObject(forKey: OnboardingState.completionStorageKey)
+            defaults.removeObject(forKey: QuickActionSettings.storageKey)
+            defaults.removeObject(forKey: "appearanceMode")
+            defaults.removeObject(forKey: PinballSettingsKeys.isGameEnabled)
+            defaults.removeObject(forKey: PinballSettingsKeys.isDebugOverlayEnabled)
+            defaults.removeObject(forKey: CompanionConfiguration.connectionRoutePreferenceKey)
+            defaults.removeObject(forKey: CompanionSearchStorage.recentQueriesKey)
+        }
+
+        if UITestLaunchArguments.shouldEnablePinball {
+            UserDefaults.standard.set(true, forKey: PinballSettingsKeys.isGameEnabled)
+        }
+
+        if UITestLaunchArguments.shouldShowOnboarding {
+            UserDefaults.standard.set(false, forKey: OnboardingState.completionStorageKey)
+        } else {
+            UserDefaults.standard.set(true, forKey: OnboardingState.completionStorageKey)
+        }
+
+        if UITestLaunchArguments.shouldSeedRecentSearches {
+            UserDefaults.standard.set("looper", forKey: CompanionSearchStorage.recentQueriesKey)
+        }
+        #endif
     }
 
     private func handleContinuationActivity(_ activity: NSUserActivity) {

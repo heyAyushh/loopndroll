@@ -23,6 +23,9 @@ const APNS_SUCCESS_STATUS: u16 = 200;
 const APNS_TEST_BODY: &str = "Remote notifications are working.";
 const APNS_TEST_SUBTITLE: &str = "TestFlight push ready";
 const APNS_TEST_TITLE: &str = "Looper";
+const APNS_SESSION_STOP_KIND: &str = "session-stop";
+const APNS_SESSION_STOP_SUBTITLE: &str = "Session stopped";
+const APNS_SESSION_STOP_TITLE: &str = "Looper";
 const APNS_TOPIC_HEADER: &str = "apns-topic";
 const APNS_PRIORITY_HEADER: &str = "apns-priority";
 const APNS_PUSH_TYPE_HEADER: &str = "apns-push-type";
@@ -328,6 +331,42 @@ create index if not exists mobile_push_devices_token_idx
         })
     }
 
+    pub async fn send_session_stop_pushes(
+        &self,
+        thread_id: &str,
+        message: &str,
+    ) -> MobilePushResult<usize> {
+        let thread_id =
+            normalized_required(thread_id).ok_or(MobilePushError::MissingRequiredValues)?;
+        let message = normalized_required(message).ok_or(MobilePushError::MissingRequiredValues)?;
+        self.initialize()?;
+        let Some(provider_config) = self.load_apns_provider_config()? else {
+            return Ok(0);
+        };
+
+        let mut delivered_count = 0;
+        for device in self.enabled_devices()? {
+            if !provider_is_ready_for_device(
+                Some(&provider_config),
+                &device.bundle_id,
+                &device.environment,
+            ) {
+                continue;
+            }
+            let response = send_apns_alert(
+                &provider_config,
+                &device.device_token,
+                &session_stop_push_message(&thread_id, &message),
+            )
+            .await?;
+            self.update_delivery_result(&device.installation_id, &response)?;
+            if response.ok {
+                delivered_count += 1;
+            }
+        }
+        Ok(delivered_count)
+    }
+
     pub fn registered_devices(&self) -> MobilePushResult<Vec<MobilePushDeviceSummary>> {
         self.initialize()?;
         let provider_config = self.load_apns_provider_config()?;
@@ -414,6 +453,29 @@ create index if not exists mobile_push_devices_token_idx
                 },
             )
             .optional()
+            .map_err(MobilePushError::Store)
+    }
+
+    fn enabled_devices(&self) -> MobilePushResult<Vec<StoredPushDevice>> {
+        let connection = Connection::open(&self.store_path)?;
+        let mut statement = connection.prepare(
+            "select installation_id, device_token, bundle_id, environment, push_enabled
+             from mobile_push_devices
+             where push_enabled = ?1
+             order by registered_at desc, installation_id asc",
+        )?;
+        let rows = statement.query_map([ENABLED_FLAG], |row| {
+            let environment = environment_from_str(&row.get::<_, String>(3)?)
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            Ok(StoredPushDevice {
+                installation_id: row.get(0)?,
+                device_token: row.get(1)?,
+                bundle_id: row.get(2)?,
+                environment,
+                push_enabled: row.get::<_, i64>(4)? == ENABLED_FLAG,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
             .map_err(MobilePushError::Store)
     }
 
@@ -697,6 +759,19 @@ fn test_push_message(device: &StoredPushDevice) -> ApnsAlertMessage {
     }
 }
 
+fn session_stop_push_message(thread_id: &str, message: &str) -> ApnsAlertMessage {
+    ApnsAlertMessage {
+        title: APNS_SESSION_STOP_TITLE.to_owned(),
+        subtitle: APNS_SESSION_STOP_SUBTITLE.to_owned(),
+        body: message.to_owned(),
+        thread_id: thread_id.to_owned(),
+        user_info: json!({
+            "notificationKind": APNS_SESSION_STOP_KIND,
+            "sessionId": thread_id,
+        }),
+    }
+}
+
 fn provider_is_ready_for_device(
     config: Option<&ApnsProviderConfig>,
     bundle_id: &str,
@@ -869,6 +944,28 @@ mod tests {
         assert_eq!(response.message, PUSH_PROVIDER_MISSING_MESSAGE);
     }
 
+    #[tokio::test]
+    async fn session_stop_push_reports_zero_without_provider() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let service = MobilePushService::new(temp_dir.path().join("control-plane.sqlite"));
+        service
+            .register_device(MobilePushRegistrationRequest {
+                installation_id: "install-1".to_owned(),
+                device_token: "token-1".to_owned(),
+                bundle_id: "dev.looper.app.ios".to_owned(),
+                environment: MobilePushEnvironment::Development,
+                device_name: None,
+            })
+            .expect("register");
+
+        let delivered = service
+            .send_session_stop_pushes("thread-1", "ready")
+            .await
+            .expect("session stop pushes");
+
+        assert_eq!(delivered, 0);
+    }
+
     #[test]
     fn apns_body_preserves_alert_and_user_info() {
         let body = apns_body(&ApnsAlertMessage {
@@ -885,6 +982,18 @@ mod tests {
         assert_eq!(body["aps"]["alert"]["title"], "Title");
         assert_eq!(body["aps"]["sound"], APNS_SOUND_DEFAULT);
         assert_eq!(body["notificationKind"], "test");
+        assert_eq!(body["sessionId"], "thread-1");
+    }
+
+    #[test]
+    fn session_stop_push_body_preserves_session_context() {
+        let body = apns_body(&session_stop_push_message("thread-1", "Done."));
+
+        assert_eq!(body["aps"]["alert"]["title"], APNS_SESSION_STOP_TITLE);
+        assert_eq!(body["aps"]["alert"]["subtitle"], APNS_SESSION_STOP_SUBTITLE);
+        assert_eq!(body["aps"]["alert"]["body"], "Done.");
+        assert_eq!(body["aps"]["thread-id"], "thread-1");
+        assert_eq!(body["notificationKind"], APNS_SESSION_STOP_KIND);
         assert_eq!(body["sessionId"], "thread-1");
     }
 }

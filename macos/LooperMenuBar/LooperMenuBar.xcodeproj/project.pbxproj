@@ -22,11 +22,15 @@
 		99F7D7D81D7C784D1983B5EF /* looper-server in CopyFiles */ = {isa = PBXBuildFile; fileRef = 060F24CC3357705E8AD2E9C3 /* looper-server */; };
 		A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA18D48629D32130B01944A /* LooperMenuContent.swift */; };
 		A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */; };
+		A45F981DA29777D65DFAB0A6 /* LooperDiagnosticsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */; };
 		A461015CF3FED94D759CF3BF /* LooperLifecycleCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */; };
 		A4644EE00CD1836A0B2604FE /* looper-cli in CopyFiles */ = {isa = PBXBuildFile; fileRef = AB38C2B27A76F7414EB67661 /* looper-cli */; };
 		A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */; };
+		AE5D7B9554852AF48FEF4A67 /* LooperDiagnosticsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8414FFD10C5DCAAF9F91E32 /* LooperDiagnosticsContent.swift */; };
 		B2EAD78BECB44A3651139391 /* looper in CopyFiles */ = {isa = PBXBuildFile; fileRef = 064C6B683AB182FF0C614500 /* looper */; };
 		B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */; };
+		E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */; };
+		EF37339ED81D19FD868EB2C2 /* DesktopThreadDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */; };
 		F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */; };
 /* End PBXBuildFile section */
 
@@ -65,13 +69,17 @@
 		2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameResolver.swift; sourceTree = "<group>"; };
 		3F302E4B2186B4A0767D4C3A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
 		60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHotkeyOption.swift; sourceTree = "<group>"; };
+		7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleNetworkPattern.swift; sourceTree = "<group>"; };
 		758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRoutePreference.swift; sourceTree = "<group>"; };
 		7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperThreadOpenTarget.swift; sourceTree = "<group>"; };
 		81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHoldDuration.swift; sourceTree = "<group>"; };
 		85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHumanStatus.swift; sourceTree = "<group>"; };
 		8EA18D48629D32130B01944A /* LooperMenuContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperMenuContent.swift; sourceTree = "<group>"; };
 		96F0764C78BFDF2404A48C88 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopThreadDisplayText.swift; sourceTree = "<group>"; };
 		AB38C2B27A76F7414EB67661 /* looper-cli */ = {isa = PBXFileReference; name = "looper-cli"; path = "../../crates/agent-control-plane/target/release/looper-cli"; sourceTree = "<group>"; };
+		C8414FFD10C5DCAAF9F91E32 /* LooperDiagnosticsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperDiagnosticsContent.swift; sourceTree = "<group>"; };
+		CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperDiagnosticsWindowController.swift; sourceTree = "<group>"; };
 		CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperLifecycleCoordinator.swift; sourceTree = "<group>"; };
 		D88BB63063D6A6E7F55C1B64 /* MenuRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuRefreshCoordinator.swift; sourceTree = "<group>"; };
 		D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperContinuationActivityPublisher.swift; sourceTree = "<group>"; };
@@ -142,7 +150,9 @@
 			isa = PBXGroup;
 			children = (
 				EC95A31F2D4930D634B76ED1 /* ControlPlaneClient.swift */,
+				978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */,
 				03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */,
+				C8414FFD10C5DCAAF9F91E32 /* LooperDiagnosticsContent.swift */,
 				81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */,
 				60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */,
 				85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */,
@@ -152,6 +162,7 @@
 				D88BB63063D6A6E7F55C1B64 /* MenuRefreshCoordinator.swift */,
 				758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */,
 				2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */,
+				7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */,
 			);
 			path = LooperMenuBarCore;
 			sourceTree = "<group>";
@@ -169,6 +180,7 @@
 			children = (
 				08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */,
 				D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */,
+				CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */,
 				0CDDFFC62E1D5559E52E031C /* main.swift */,
 			);
 			path = LooperMenuBar;
@@ -361,7 +373,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A811778BE665665254F8492B /* ControlPlaneClient.swift in Sources */,
+				EF37339ED81D19FD868EB2C2 /* DesktopThreadDisplayText.swift in Sources */,
 				686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */,
+				AE5D7B9554852AF48FEF4A67 /* LooperDiagnosticsContent.swift in Sources */,
 				F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */,
 				3E3A1C04CCA435FAC88CFA55 /* LooperHandoffHotkeyOption.swift in Sources */,
 				5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */,
@@ -371,6 +385,7 @@
 				085DA2DD962A12011A477017 /* MenuRefreshCoordinator.swift in Sources */,
 				1D30DC9BAD7A8BAEC9086C40 /* MobileRoutePreference.swift in Sources */,
 				B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */,
+				E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -380,6 +395,7 @@
 			files = (
 				29287F400758C02F8450BB7B /* DesktopEventStreamCoordinator.swift in Sources */,
 				8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */,
+				A45F981DA29777D65DFAB0A6 /* LooperDiagnosticsWindowController.swift in Sources */,
 				17C600371FFAD51B82BD7530 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

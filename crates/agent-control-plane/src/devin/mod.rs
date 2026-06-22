@@ -1,11 +1,12 @@
+// allow: SIZE_OK — Devin desktop facade preserves public inspection/install API while provider modules own deeper behavior.
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::acp_targets::AcpTarget;
+use crate::acp::targets::AcpTarget;
 
 mod acp;
 mod bridge;
@@ -15,10 +16,11 @@ mod registry;
 mod sessions;
 
 pub use self::acp::{
-    DevinAcpDeliveredPrompt, DevinAcpRuntime, DevinAcpRuntimeSession, DevinAcpRuntimeStatus,
-    LEGACY_LOOPER_ACP_ROUTE, LOOPER_ACP_AGENT_ID, LOOPER_ACP_AGENT_NAME, LOOPER_ACP_ROUTE,
-    acp_session_id_for_public_thread_id, public_thread_id_for_acp_session,
-    websocket_url_for_base_url,
+    DevinAcpControlCancelResponse, DevinAcpControlError, DevinAcpControlPromptResponse,
+    DevinAcpControlSessionResponse, DevinAcpDeliveredPrompt, DevinAcpRuntime,
+    DevinAcpRuntimeSession, DevinAcpRuntimeStatus, LEGACY_LOOPER_ACP_ROUTE, LOOPER_ACP_AGENT_ID,
+    LOOPER_ACP_AGENT_NAME, LOOPER_ACP_ROUTE, acp_session_id_for_public_thread_id,
+    public_thread_id_for_acp_session, websocket_url_for_base_url,
 };
 pub use self::bridge::{
     DevinAcpBridgeAction, DevinAcpBridgeAgent, DevinAcpBridgeProbe, DevinAcpBridgeStatus,
@@ -267,7 +269,10 @@ fn upsert_looper_registry_agent(path: &Path, websocket_url: &str) -> Result<()> 
         Value::Array(agents) => agents,
         _ => {
             *agents_value = Value::Array(Vec::new());
-            agents_value.as_array_mut().expect("agents array")
+            let Value::Array(agents) = agents_value else {
+                return Err(anyhow!("failed to normalize Devin ACP agents registry"));
+            };
+            agents
         }
     };
     if let Some(existing) = agents
@@ -305,9 +310,10 @@ fn enable_looper_acp_agent(path: &Path) -> Result<()> {
         Value::Object(enabled_agents) => enabled_agents,
         _ => {
             *enabled_agents_value = Value::Object(Map::new());
-            enabled_agents_value
-                .as_object_mut()
-                .expect("enabled agents object")
+            let Value::Object(enabled_agents) = enabled_agents_value else {
+                return Err(anyhow!("failed to normalize Devin ACP enabled agents"));
+            };
+            enabled_agents
         }
     };
     enabled_agents.insert(LOOPER_ACP_AGENT_ID.to_owned(), Value::Bool(true));
@@ -433,13 +439,13 @@ mod tests {
         assert_eq!(next.preferred_agent.as_deref(), Some("codex"));
         assert_eq!(next.enabled_agents, vec!["codex", "grok-build"]);
         assert_eq!(status.acp_registry.agents[0].id, "codex");
-        assert_eq!(status.acp_registry.agents[0].launch_configured, true);
+        assert!(status.acp_registry.agents[0].launch_configured);
         assert_eq!(
             status.acp_bridge.control_level,
             DevinAcpControlLevel::AgentConfigured
         );
-        assert_eq!(status.acp_bridge.agents[0].enabled, true);
-        assert_eq!(status.acp_bridge.agents[0].preferred, true);
+        assert!(status.acp_bridge.agents[0].enabled);
+        assert!(status.acp_bridge.agents[0].preferred);
 
         let json = serde_json::to_string(&status).expect("serialize status");
         assert!(!json.contains("SECRET_TOKEN"));
@@ -518,13 +524,16 @@ mod tests {
         );
 
         let settings = read_json_object(&settings_path).expect("settings");
-        assert_eq!(settings["devin.acp.enabled"], true);
+        assert_eq!(settings["devin.acp.enabled"], serde_json::json!(true));
         assert_eq!(settings["devin.acp.preferredAgent"], LOOPER_ACP_AGENT_ID);
         assert_eq!(
             settings["devin.acp.enabledAgents"][LOOPER_ACP_AGENT_ID],
             true
         );
-        assert_eq!(settings["devin.acp.enabledAgents"]["codex"], true);
+        assert_eq!(
+            settings["devin.acp.enabledAgents"]["codex"],
+            serde_json::json!(true)
+        );
 
         let status = inspect_devin_desktop_with_processes(home, &[]);
         let looper_status = status

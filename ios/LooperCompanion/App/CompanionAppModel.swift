@@ -40,11 +40,13 @@ final class CompanionAppModel {
     private(set) var isSavingDefaultPrompt = false
     private(set) var mutatingSessionIDs: Set<String> = []
     var pendingOpenSessionID: String?
+    var pendingSettingsTarget: SettingsSearchTarget?
     private(set) var sessionSections = SessionSections.empty
     var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
     private(set) var sessionIndex = SessionIndex.empty
 
     @ObservationIgnored private var service: any CompanionService
+    @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
@@ -56,6 +58,7 @@ final class CompanionAppModel {
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private let realtimeController = CompanionRealtimeController()
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
+    @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
     @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
     @ObservationIgnored private var nextCachedSnapshotRestoreID = 0
     @ObservationIgnored private var activeCachedSnapshotRestoreID = 0
@@ -78,11 +81,13 @@ final class CompanionAppModel {
         remotePushRegistrar: RemotePushRegistrar = .shared,
         spotlightIndexer: SessionSpotlightIndexer = .shared
     ) {
+        reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.remotePushRegistrar = remotePushRegistrar
         self.spotlightIndexer = spotlightIndexer
 
-        let didActivateBundledConnection = CompanionConfiguration.activateBundledConnectionIfNeeded()
+        let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
+            CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         if didActivateBundledConnection {
@@ -155,18 +160,34 @@ final class CompanionAppModel {
 
     var connectivitySummary: String {
         if connectionState == .connected, snapshot != nil {
-            if let connectionRoutePresentation {
-                return "\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)."
-            }
-
-            if let serverHealth, serverHealth.ok {
-                return "API running at \(serverHealth.baseURL)."
-            }
-
-            return "Connected and ready to monitor sessions."
+            return connectedStatusSummary
         }
 
         return connectionState.summary
+    }
+
+    private var connectedStatusSummary: String {
+        var parts: [String] = []
+
+        if let connectionRoutePresentation {
+            parts.append("\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)")
+        } else if let serverHealth, serverHealth.ok {
+            parts.append("API running at \(serverHealth.baseURL)")
+        }
+
+        if let workSummary = snapshot?.workStatus.displaySummary {
+            parts.append(workSummary)
+        }
+
+        if let coverageSummary = snapshot?.workStatus.coverageSummary {
+            parts.append(coverageSummary)
+        }
+
+        if let lastSyncedAt = snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+            parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
+        }
+
+        return parts.isEmpty ? "Connected and ready to monitor sessions." : "\(parts.joined(separator: " · "))."
     }
 
     var connectionRoutePresentation: CompanionConnectionRoutePresentation? {
@@ -259,7 +280,7 @@ final class CompanionAppModel {
     }
 
     func prepareForActiveState() async {
-        if CompanionConfiguration.activateBundledConnectionIfNeeded() {
+        if reloadsServiceFromStoredConnection, CompanionConfiguration.activateBundledConnectionIfNeeded() {
             CompanionDiagnostics.lifecycle.info("Bundled connection changed during active-state preparation")
             _ = resetConnectionStateForStoredConnection(
                 clearsSnapshotCache: false,
@@ -268,7 +289,9 @@ final class CompanionAppModel {
         }
 
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        service = CompanionEnvironment.live().service
+        if reloadsServiceFromStoredConnection {
+            service = CompanionEnvironment.live().service
+        }
         CompanionDiagnostics.lifecycle.info(
             "Preparing active state baseURL=\(self.configuredBaseURL, privacy: .public) hasSnapshot=\(self.snapshot != nil, privacy: .public)"
         )
@@ -384,12 +407,12 @@ final class CompanionAppModel {
             await RealtimeCompanionClientFactory.invalidateCachedConnections()
         }
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        service = CompanionEnvironment.live().service
         selectedAssistantSurface = .defaultSurface
         hasUserSelectedAssistantSurface = false
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
         lastAppliedRealtimeRevision = nil
+        hasValidatedCurrentSnapshotWithHTTP = false
         hasPendingSnapshotLoad = false
         serverHealth = nil
         reachedBaseURL = nil
@@ -401,7 +424,13 @@ final class CompanionAppModel {
             CompanionSnapshotCache.clear()
         }
 
-        resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
+        if reloadsServiceFromStoredConnection {
+            configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
+            service = CompanionEnvironment.live().service
+            resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
+        } else {
+            resetSnapshotState(cachedSnapshotRestoreReason: nil)
+        }
         return shouldRestartEventStream
     }
 
@@ -485,6 +514,14 @@ final class CompanionAppModel {
 
     func enableLocalNotifications() async {
         configureStopQuickActions()
+        #if DEBUG
+        if UITestLaunchArguments.isMockModeEnabled {
+            localNotificationStatus = .authorized
+            Haptics.success()
+            return
+        }
+        #endif
+
         localNotificationStatus = await notificationManager.requestAuthorizationIfNeeded()
 
         if canSendLocalNotifications {
@@ -836,6 +873,10 @@ final class CompanionAppModel {
     }
 
     func handleOpenURL(_ url: URL) async {
+        if openSettingsTarget(from: url) {
+            return
+        }
+
         if await connectFromMacURL(url) {
             return
         }
@@ -879,6 +920,22 @@ final class CompanionAppModel {
         ) ?? selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
         pendingOpenSessionID = sessionID
         await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
+    }
+
+    func consumePendingSettingsTarget() -> SettingsSearchTarget? {
+        let target = pendingSettingsTarget
+        pendingSettingsTarget = nil
+        return target
+    }
+
+    private func openSettingsTarget(from url: URL) -> Bool {
+        guard let target = LooperSettingsDeepLink.target(from: url) else {
+            return false
+        }
+
+        pendingSettingsTarget = target
+        CompanionDiagnostics.record("settings-url:target target=\(target.rawValue)")
+        return true
     }
 
     private func connectFromMacURL(_ url: URL) async -> Bool {
@@ -1399,6 +1456,7 @@ final class CompanionAppModel {
         syncDetailCache(with: visibleSnapshot)
         clearSpotlightIndexForCachedSnapshot()
         lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
+        hasValidatedCurrentSnapshotWithHTTP = false
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1415,17 +1473,30 @@ final class CompanionAppModel {
         CompanionSnapshotCache.save(visibleSnapshot)
         syncDetailCache(with: visibleSnapshot)
         lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
+        hasValidatedCurrentSnapshotWithHTTP = true
 
         syncSpotlightIndex(with: sessionIndex.allSessions)
-
-        guard shouldUseLocalFallbackNotifications else {
-            return
-        }
-
-        await notificationManager.deliverStopNotifications(
+        scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
         )
+    }
+
+    private func scheduleLocalFallbackNotificationsIfNeeded(
+        previousSnapshot: MobileSnapshot?,
+        currentSnapshot: MobileSnapshot
+    ) {
+        guard shouldUseLocalFallbackNotifications, let previousSnapshot else {
+            return
+        }
+
+        let notificationManager = notificationManager
+        Task { @MainActor in
+            await notificationManager.deliverStopNotifications(
+                previousSnapshot: previousSnapshot,
+                currentSnapshot: currentSnapshot
+            )
+        }
     }
 
     private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
@@ -1738,11 +1809,17 @@ final class CompanionAppModel {
 
 extension CompanionAppModel: CompanionRealtimeControllerDelegate {
     var realtimeCurrentSnapshotRevision: String? {
-        currentSnapshotRevision
+        CompanionRealtimeSync.revisionForRealtimeGate(
+            currentRevision: currentSnapshotRevision,
+            hasValidatedSnapshotWithHTTP: hasValidatedCurrentSnapshotWithHTTP
+        )
     }
 
     var realtimeHasSnapshot: Bool {
-        snapshot != nil
+        CompanionRealtimeSync.hasRealtimeValidatedSnapshot(
+            hasSnapshot: snapshot != nil,
+            hasValidatedSnapshotWithHTTP: hasValidatedCurrentSnapshotWithHTTP
+        )
     }
 
     func handleRealtimeStreamFailure(_ error: Error) {
@@ -1761,6 +1838,12 @@ extension CompanionAppModel: CompanionRealtimeControllerDelegate {
             state: nextConnectionState,
             hasUsableSnapshot: snapshot != nil
         ) ? nil : error.localizedDescription
+        if snapshot != nil, !hasValidatedCurrentSnapshotWithHTTP {
+            CompanionDiagnostics.record("events:stream-failed-refresh-cached-snapshot")
+            Task { @MainActor [weak self] in
+                await self?.refresh()
+            }
+        }
     }
 
     func refreshRealtimeSnapshotAndLoadedDetails(for sessionIDs: Set<String>) async {

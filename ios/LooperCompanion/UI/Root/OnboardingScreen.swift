@@ -4,12 +4,6 @@ enum OnboardingState {
     static let completionStorageKey = "looper.hasCompletedOnboarding.v1"
 }
 
-private enum OnboardingLayout {
-    static let bottomBarSpacing: CGFloat = 12
-    static let bottomBarHorizontalPadding: CGFloat = 20
-    static let bottomBarVerticalPadding: CGFloat = 16
-}
-
 struct OnboardingScreen: View {
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
@@ -28,9 +22,7 @@ struct OnboardingScreen: View {
     }
 
     private var canFinishSetup: Bool {
-        hasAuthenticatedMacLink &&
-            model.connectionState == .connected &&
-            model.snapshot != nil
+        hasAuthenticatedMacLink && model.connectionState.allowsOnboardingCompletion
     }
 
     var body: some View {
@@ -40,12 +32,10 @@ struct OnboardingScreen: View {
                 localNetworkSection
                 notificationsSection
                 faceIDSection
+                completionSection
             }
             .navigationTitle("Set Up looper")
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom) {
-                bottomBar
-            }
             .task {
                 await model.prepareForActiveState()
                 await localNetworkAccess.checkAccess()
@@ -57,6 +47,12 @@ struct OnboardingScreen: View {
                     Button("Done") {
                         focusedField = nil
                     }
+                    .accessibilityIdentifier("onboarding.keyboard-done")
+                }
+            }
+            .fullScreenCover(isPresented: $isOrbScannerPresented) {
+                OrbScannerScreen { orbID in
+                    try await connectUsingOrbID(orbID)
                 }
             }
         }
@@ -111,11 +107,6 @@ struct OnboardingScreen: View {
         } header: {
             Text("Mac Login")
         }
-        .fullScreenCover(isPresented: $isOrbScannerPresented) {
-            OrbScannerScreen { orbID in
-                try await connectUsingOrbID(orbID)
-            }
-        }
     }
 
     private var localNetworkSection: some View {
@@ -130,6 +121,7 @@ struct OnboardingScreen: View {
                 Label("Enable Local Network", systemImage: localNetworkAccess.status.symbolName)
             }
             .disabled(localNetworkAccess.isChecking)
+            .accessibilityIdentifier("onboarding.local-network")
 
             if localNetworkAccess.isChecking {
                 ProgressView("Checking Local Network")
@@ -139,6 +131,7 @@ struct OnboardingScreen: View {
                 Button("Open iOS Settings") {
                     localNetworkAccess.openAppSettings()
                 }
+                .accessibilityIdentifier("onboarding.open-ios-settings")
             }
 
             Text(localNetworkAccess.status.summary)
@@ -182,6 +175,7 @@ struct OnboardingScreen: View {
                 Label("Face ID Unlock", systemImage: "faceid")
             }
             .disabled(!hasAuthenticatedMacLink || isUpdatingFaceIDUnlock || authenticator.isAuthenticating)
+            .accessibilityIdentifier("onboarding.face-id-unlock")
 
             if authenticator.isAuthenticating {
                 ProgressView("Waiting for Face ID")
@@ -196,26 +190,28 @@ struct OnboardingScreen: View {
             Text(authenticator.faceIDStatusMessage)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("onboarding.face-id-status")
         } header: {
             Text("Security")
         }
     }
 
-    private var bottomBar: some View {
-        VStack(spacing: OnboardingLayout.bottomBarSpacing) {
+    private var completionSection: some View {
+        Section {
             Button {
                 finishSetup()
             } label: {
                 Label("Start Using looper", systemImage: "arrow.right.circle.fill")
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(!canFinishSetup)
+            .accessibilityLabel("Start Using looper")
+            .accessibilityIdentifier("onboarding.start")
+        } header: {
+            Text("Finish")
         }
-        .padding(.horizontal, OnboardingLayout.bottomBarHorizontalPadding)
-        .padding(.vertical, OnboardingLayout.bottomBarVerticalPadding)
-        .background(.bar)
     }
 
     private func connectUsingDeviceCode() {
@@ -302,6 +298,17 @@ struct OnboardingScreen: View {
 
 private enum OnboardingField: Hashable {
     case connectionCode
+}
+
+private extension ConnectivityState {
+    var allowsOnboardingCompletion: Bool {
+        switch self {
+        case .connecting, .connected, .offline, .locked:
+            return true
+        case .unauthorized, .unpaired:
+            return false
+        }
+    }
 }
 
 #Preview {

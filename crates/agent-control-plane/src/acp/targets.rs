@@ -93,15 +93,11 @@ fn collect_launch_metadata(value: &Value, methods: &mut BTreeSet<String>) -> boo
 }
 
 fn is_launch_metadata_key(key: &str) -> bool {
-    ACP_LAUNCH_METADATA_KEYS
-        .iter()
-        .any(|launch_key| *launch_key == key)
+    ACP_LAUNCH_METADATA_KEYS.contains(&key)
 }
 
 fn is_launch_method_key(key: &str) -> bool {
-    ACP_LAUNCH_METHOD_KEYS
-        .iter()
-        .any(|launch_key| *launch_key == key)
+    ACP_LAUNCH_METHOD_KEYS.contains(&key)
 }
 
 fn sanitized_launch_method(key: &str) -> String {
@@ -132,7 +128,7 @@ mod tests {
 
         let parsed = inspect_launch_metadata(&agent);
 
-        assert_eq!(parsed.configured, true);
+        assert!(parsed.configured);
         assert_eq!(parsed.methods, vec!["npx"]);
         assert!(
             !serde_json::to_string(&parsed)
@@ -154,7 +150,7 @@ mod tests {
 
         let parsed = inspect_launch_metadata(&agent_server);
 
-        assert_eq!(parsed.configured, true);
+        assert!(parsed.configured);
         assert_eq!(parsed.methods, vec!["command"]);
         assert!(
             !serde_json::to_string(&parsed)

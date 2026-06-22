@@ -16,12 +16,15 @@ mod schema;
 mod session_overrides;
 mod settings;
 
-pub use self::notifications::build_telegram_bot_url;
+pub use self::notifications::{
+    NOTIFICATION_TARGET_IPHONE, NOTIFICATION_TARGET_MACOS, build_telegram_bot_url,
+};
 
 pub(crate) use self::normalization::ASSISTANT_SURFACES;
 use self::normalization::{ENABLED_FLAG, normalized_assistant_surface, normalized_preset};
 use self::queries::{
-    read_completion_checks, read_notifications, read_session_lifecycle, read_session_notifications,
+    read_completion_checks, read_default_notification_target_ids, read_notifications,
+    read_session_lifecycle, read_session_notifications,
 };
 use self::schema::initialize_store;
 use self::settings::MobileSettingsRow;
@@ -42,6 +45,7 @@ pub struct MobileSessionState {
     pub scope: String,
     pub global_preset: Option<String>,
     pub global_notification_id: Option<String>,
+    pub default_notification_target_ids: Vec<String>,
     pub global_completion_check_id: Option<String>,
     pub global_completion_check_wait_for_reply: bool,
     pub assistant_surface: String,
@@ -258,6 +262,8 @@ impl MobileSessionService {
             .iter()
             .map(|notification| notification.id.clone())
             .collect::<BTreeSet<_>>();
+        let default_notification_target_ids =
+            read_default_notification_target_ids(&connection, &known_notification_ids)?;
         let known_completion_check_ids = completion_checks
             .iter()
             .map(|completion_check| completion_check.id.clone())
@@ -311,6 +317,7 @@ impl MobileSessionService {
             global_notification_id: settings
                 .global_notification_id
                 .filter(|id| known_notification_ids.contains(id)),
+            default_notification_target_ids,
             global_completion_check_id: settings
                 .global_completion_check_id
                 .filter(|id| known_completion_check_ids.contains(id)),

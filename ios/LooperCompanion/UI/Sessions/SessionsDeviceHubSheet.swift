@@ -47,6 +47,7 @@ struct SessionsToolbarOrbButton: View {
 struct SessionsDeviceHubSheet: View {
     let model: CompanionAppModel
 
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var isOrbScannerPresented = false
 
@@ -141,6 +142,7 @@ struct SessionsDeviceHubSheet: View {
                     } label: {
                         Label("Scan Mac Orb", systemImage: "viewfinder.circle")
                     }
+                    .accessibilityIdentifier("device-hub.scan-orb")
                 }
                 .listRowBackground(Color.clear)
 
@@ -164,6 +166,7 @@ struct SessionsDeviceHubSheet: View {
                             Image(systemName: alertActionSystemImageName)
                         }
                     }
+                    .accessibilityIdentifier("device-hub.alert-action")
                 }
                 .listRowBackground(Color.clear)
             }
@@ -172,6 +175,14 @@ struct SessionsDeviceHubSheet: View {
             .background(Color.clear)
             .navigationTitle("This iPhone")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("device-hub.done")
+                }
+            }
         }
         .fullScreenCover(isPresented: $isOrbScannerPresented) {
             OrbScannerScreen { orbID in

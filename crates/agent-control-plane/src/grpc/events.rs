@@ -45,7 +45,8 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                             match event {
                                 MobileEventBroadcast::Persisted(record) => {
                                     last_event_cursor = (&record).into();
-                                    yield Ok(proto_event_from_record(&record));
+                                    let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                                    yield Ok(proto_event_from_record(&record, revision));
                                 }
                                 MobileEventBroadcast::Ephemeral(event) => {
                                     yield Ok(proto_event_from_mobile_event(&event));
@@ -56,14 +57,15 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                             if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, EVENT_REPLAY_BATCH_SIZE) {
                                 for record in records {
                                     last_event_cursor = (&record).into();
-                                    yield Ok(proto_event_from_record(&record));
+                                    let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                                    yield Ok(proto_event_from_record(&record, revision));
                                 }
                             }
-                            if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-                                if revision != last_revision {
-                                    last_revision = revision;
-                                    yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
-                                }
+                            if let Ok(revision) = control_plane.mobile_snapshot_revision()
+                                && revision != last_revision
+                            {
+                                last_revision = revision;
+                                yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
                             }
                             continue;
                         }
@@ -74,15 +76,16 @@ pub fn mobile_events(control_plane: ControlPlane) -> MobileEventStream {
                     if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, EVENT_REPLAY_BATCH_SIZE) {
                         for record in records {
                             last_event_cursor = (&record).into();
-                            yield Ok(proto_event_from_record(&record));
+                            let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                            yield Ok(proto_event_from_record(&record, revision));
                         }
                     }
 
-                    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-                        if revision != last_revision {
-                            last_revision = revision;
-                            yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
-                        }
+                    if let Ok(revision) = control_plane.mobile_snapshot_revision()
+                        && revision != last_revision
+                    {
+                        last_revision = revision;
+                        yield Ok(proto_event_from_mobile_event(&snapshot_revision_changed_event(last_revision.clone())));
                     }
                 }
             }
@@ -116,7 +119,10 @@ fn proto_event_from_mobile_event(event: &MobileEvent) -> proto::MobileEvent {
     }
 }
 
-fn proto_event_from_record(record: &MobileEventRecord) -> proto::MobileEvent {
+fn proto_event_from_record(
+    record: &MobileEventRecord,
+    revision: Option<String>,
+) -> proto::MobileEvent {
     proto::MobileEvent {
         kind: proto_event_kind(record.event_type),
         event_name: event_name(record.event_type).to_owned(),
@@ -124,8 +130,17 @@ fn proto_event_from_record(record: &MobileEventRecord) -> proto::MobileEvent {
         prompt_id: record.prompt_id.clone().unwrap_or_default(),
         detail: record.detail.clone().unwrap_or_default(),
         server_time: mobile_event_now(),
-        revision: String::new(),
+        revision: revision.unwrap_or_default(),
     }
+}
+
+fn current_snapshot_revision(
+    control_plane: &ControlPlane,
+    last_revision: &mut String,
+) -> Option<String> {
+    let revision = control_plane.mobile_snapshot_revision().ok()?;
+    *last_revision = revision.clone();
+    Some(revision)
 }
 
 fn proto_event_kind(kind: MobileEventKind) -> i32 {

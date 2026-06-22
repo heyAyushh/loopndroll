@@ -1,3 +1,4 @@
+// allow: SIZE_OK — legacy control-plane facade kept as the public coordinator while new ACP responsibilities live in control_plane/acp_hosts/.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -5,14 +6,21 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 
-use crate::acp_client_host::{
+use crate::acp::client_host::{
     AcpClientHostInstallResponse, AcpClientHostProbeResponse, AcpClientHostResponse,
     AcpClientHostsResponse, DEVIN_ACP_CLIENT_HOST_ID, ZED_ACP_CLIENT_HOST_ID,
     acp_client_host_install, acp_client_host_probe, devin_acp_client_host, zed_acp_client_host,
-    zed_acp_client_host_probe,
+    zed_acp_client_host_install, zed_acp_client_host_probe,
 };
-use crate::acp_targets::AcpTarget;
+use crate::acp::runtime::{
+    LOCAL_CONTROL_CONNECTION_ID, LooperAcpControlCancelResponse, LooperAcpControlError,
+    LooperAcpControlPromptResponse, LooperAcpControlSessionResponse, LooperAcpObservedSession,
+    LooperAcpRuntime, LooperAcpRuntimeSession, public_agent_id_for_client_agent_id,
+};
+use crate::acp::targets::AcpTarget;
 use crate::assistant::{
     AssistantAdapterCapability, AssistantKind, adapter_capabilities, static_adapter_capabilities,
 };
@@ -29,9 +37,10 @@ use crate::codex::{
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
-    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpRuntime, DevinAcpRuntimeSession,
-    DevinAcpRuntimeStatus, DevinDesktopStatus, DevinHookOwner, DevinHookStatus,
-    DevinInstallationStatus, DevinSessionDiscovery, DevinSessionDiscoveryError,
+    DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlCancelResponse, DevinAcpControlError,
+    DevinAcpControlPromptResponse, DevinAcpControlSessionResponse, DevinAcpRuntime,
+    DevinAcpRuntimeSession, DevinAcpRuntimeStatus, DevinDesktopStatus, DevinHookOwner,
+    DevinHookStatus, DevinInstallationStatus, DevinSessionDiscovery, DevinSessionDiscoveryError,
     build_acp_bridge_probe, devin_acp_targets, devin_connection_detail, devin_session_capabilities,
     devin_session_to_desktop_thread, devin_session_to_thread_record,
     discover_devin_sessions_with_previews, discover_devin_sessions_without_previews,
@@ -39,7 +48,7 @@ use crate::devin::{
     inspect_devin_desktop_for_home, inspect_devin_hooks, install_looper_acp_agent_for_home,
     register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
-use crate::events::{AutomationRunRecord, EventStore};
+use crate::events::{AutomationRunInput, AutomationRunRecord, EventStore};
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
     GrokHookOwner, GrokHookStatus, discover_grok_sessions, grok_session_to_desktop_thread,
@@ -47,13 +56,26 @@ use crate::grok_build::{
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
 use crate::mobile::auth::MobileAuthService;
-use crate::mobile::events::{MobileEventHub, MobileEventInput, build_mobile_event};
+use crate::mobile::events::{
+    MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
+};
 use crate::mobile::push::MobilePushService;
-use crate::mobile::session::MobileSessionService;
+use crate::mobile::session::{MobileSessionService, MobileSessionState};
 use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
 use crate::transcript_preview::transcript_preview_for_path;
-use crate::zed::{ZED_CLIENT_ID, ZedStatus, inspect_zed_for_home, zed_acp_targets};
+use crate::zed::{
+    ZED_CLIENT_ID, ZED_CLIENT_NAME, ZedStatus, inspect_zed_for_home,
+    inspect_zed_for_home_with_processes, install_looper_zed_acp_agent_for_home, zed_acp_targets,
+};
+
+mod acp_hosts;
+use acp_hosts::{
+    ACP_CLIENT_HOST_SESSION_LIMIT, AcpClientHostProvider, active_zed_acp_runtime_session_count,
+    devin_acp_runtime_session_capabilities, devin_acp_runtime_session_to_desktop_thread,
+    zed_acp_connection, zed_acp_runtime_session_capabilities,
+    zed_acp_runtime_session_to_desktop_thread,
+};
 
 const DESKTOP_COMPACTION_LIMIT: usize = 50;
 const DESKTOP_COMPACTION_FILE_SCAN_LIMIT: usize = 250;
@@ -62,7 +84,6 @@ const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(300);
-const ACP_CLIENT_HOST_SESSION_LIMIT: usize = DESKTOP_MENU_THREAD_LIMIT;
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
@@ -81,37 +102,12 @@ const CLAUDE_CODE_HOOKS_CONNECTION_ID: &str = "claude-code-hooks";
 const CLAUDE_CODE_HOOKS_CONNECTION_LABEL: &str = "Claude Code hooks";
 const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
     "Claude Code hooks in ~/.claude/settings.json; running-session prompts are delivered on Stop.";
-const ZED_ACP_CONNECTION_ID: &str = "zed-acp";
-const ZED_ACP_CONNECTION_LABEL: &str = "Zed ACP";
-const ZED_ACP_CONNECTION_ACTION_HINT: &str = "Zed External Agents are configured in ~/.zed/settings.json or ~/.config/zed/settings.json agent_servers; Looper reads settings only.";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AcpClientHostProvider {
-    Devin,
-    Zed,
-}
-
-impl AcpClientHostProvider {
-    fn id(self) -> &'static str {
-        match self {
-            Self::Devin => DEVIN_ACP_CLIENT_HOST_ID,
-            Self::Zed => ZED_ACP_CLIENT_HOST_ID,
-        }
-    }
-
-    fn supports_install(self) -> bool {
-        matches!(self, Self::Devin)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SnapshotInspectionMode {
     Live,
     CachedMenu,
 }
 
-const ACP_CLIENT_HOST_PROVIDERS: &[AcpClientHostProvider] =
-    &[AcpClientHostProvider::Devin, AcpClientHostProvider::Zed];
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -125,6 +121,7 @@ const GROK_BUILD_HOOKS_CONNECTION_LABEL: &str = "Grok Build hooks";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookMutationTarget {
     Codex,
+    Devin,
     GrokBuild,
     ClaudeCode,
 }
@@ -133,6 +130,7 @@ impl HookMutationTarget {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "codex" => Some(Self::Codex),
+            "devin" | "devin-local" => Some(Self::Devin),
             "grok" | "grok-build" => Some(Self::GrokBuild),
             "claude" | "claude-code" => Some(Self::ClaudeCode),
             _ => None,
@@ -142,6 +140,7 @@ impl HookMutationTarget {
     fn action_slug(self) -> &'static str {
         match self {
             Self::Codex => "codex",
+            Self::Devin => "devin",
             Self::GrokBuild => "grok-build",
             Self::ClaudeCode => "claude-code",
         }
@@ -156,6 +155,7 @@ pub struct ControlPlaneConfig {
     pub store_path: PathBuf,
     pub hook_command: Option<String>,
     pub home_path: PathBuf,
+    pub zed_process_commands: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -164,6 +164,7 @@ pub struct ControlPlane {
     store: EventStore,
     mobile_events: MobileEventHub,
     devin_acp_runtime: DevinAcpRuntime,
+    zed_acp_runtime: LooperAcpRuntime,
     response_cache: Arc<ControlPlaneResponseCache>,
 }
 
@@ -409,6 +410,7 @@ pub struct DesktopThread {
     pub updated_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub first_user_prompt: Option<String>,
     pub runtime_status: Option<String>,
     pub archived: bool,
     pub goal: Option<ThreadGoalSummary>,
@@ -423,6 +425,7 @@ impl ControlPlane {
             store,
             mobile_events: MobileEventHub::new(),
             devin_acp_runtime: DevinAcpRuntime::default(),
+            zed_acp_runtime: LooperAcpRuntime::new(ZED_CLIENT_ID),
             response_cache: Arc::new(ControlPlaneResponseCache::new()),
         }
     }
@@ -435,8 +438,19 @@ impl ControlPlane {
         &self.devin_acp_runtime
     }
 
+    pub fn acp_runtime_for_client(&self, client_id: &str) -> Option<&LooperAcpRuntime> {
+        match self.acp_client_host_provider(client_id)? {
+            AcpClientHostProvider::Devin => Some(&self.devin_acp_runtime),
+            AcpClientHostProvider::Zed => Some(&self.zed_acp_runtime),
+        }
+    }
+
     pub fn emit_mobile_event(&self, input: MobileEventInput) {
-        let event = build_mobile_event(input);
+        let mut event = build_mobile_event(input);
+        event.revision = self
+            .mobile_snapshot_revision()
+            .ok()
+            .filter(|revision| !revision.is_empty());
         match self.store.record_mobile_event(&event) {
             Ok(record) => self.mobile_events.publish_persisted(record),
             Err(error) => {
@@ -495,7 +509,39 @@ impl ControlPlane {
                 )
             })
             .collect::<Vec<_>>();
+        let devin_acp_runtime = self.devin_acp_runtime.status();
+        devin_signature.extend(devin_acp_runtime.sessions.iter().map(|session| {
+            format!(
+                "runtime:{}:{}:{}:{}",
+                session.session_id,
+                session.updated_at_ms,
+                session.cancelled,
+                session
+                    .latest_assistant_message
+                    .as_deref()
+                    .unwrap_or_default()
+            )
+        }));
         devin_signature.sort();
+        let zed_acp_runtime = self.zed_acp_runtime.status();
+        let mut zed_signature = zed_acp_runtime
+            .sessions
+            .iter()
+            .map(|session| {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    session.public_thread_id,
+                    session.updated_at_ms,
+                    session.cancelled,
+                    session.cwd.as_deref().unwrap_or_default(),
+                    session
+                        .latest_assistant_message
+                        .as_deref()
+                        .unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>();
+        zed_signature.sort();
         let codex_active_thread_count = state.active_thread_count;
         let codex_archived_thread_count = state
             .total_thread_count
@@ -528,24 +574,93 @@ impl ControlPlane {
             .filter(|session| session.running)
             .count();
         let devin_archived_thread_count = devin_discovery.archived_count;
+        let mut known_thread_ids = state
+            .threads
+            .iter()
+            .map(|thread| thread.thread_id.clone())
+            .collect::<BTreeSet<_>>();
+        known_thread_ids.extend(
+            grok_sessions
+                .iter()
+                .map(|session| session.session_id.clone()),
+        );
+        known_thread_ids.extend(
+            claude_sessions
+                .iter()
+                .map(|session| session.thread_id.clone()),
+        );
+        known_thread_ids.extend(
+            devin_discovery
+                .sessions
+                .iter()
+                .map(|session| session.thread_id.clone()),
+        );
+        known_thread_ids.extend(
+            devin_acp_runtime
+                .sessions
+                .iter()
+                .map(|session| session.public_thread_id.clone()),
+        );
+        known_thread_ids.extend(
+            zed_acp_runtime
+                .sessions
+                .iter()
+                .map(|session| session.public_thread_id.clone()),
+        );
+        let mut goal_signature = read_goals(&self.config.codex_home, &known_thread_ids)?
+            .into_iter()
+            .map(|goal| {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    goal.id,
+                    goal.target_thread_id.unwrap_or_default(),
+                    goal.running,
+                    goal.updated_at_ms.unwrap_or_default(),
+                    goal.content_hash
+                )
+            })
+            .collect::<Vec<_>>();
+        goal_signature.sort();
+        let mut automation_signature = read_automations(&self.config.codex_home)?
+            .into_iter()
+            .map(|automation| automation.to_summary(&known_thread_ids))
+            .map(|automation| {
+                format!(
+                    "{}:{}:{:?}:{}:{}",
+                    automation.id,
+                    automation.target_thread_id.unwrap_or_default(),
+                    automation.status,
+                    automation.rrule,
+                    automation.control_plane_covered
+                )
+            })
+            .collect::<Vec<_>>();
+        automation_signature.sort();
         let queued_prompt_count = session_state
             .sessions
             .values()
             .filter(|session| !session.deleted)
             .count();
+        let mobile_state_revision = mobile_session_state_revision(&session_state);
         Ok(format!(
-            "threads={}:grok={}:devin={}:claude={}:active={}:archived={}:overrides={}:surface={}",
+            "threads={}:grok={}:devin={}:zed={}:claude={}:goals={}:automations={}:active={}:archived={}:overrides={}:surface={}:mobile-state={}",
             thread_signature.join("|"),
             grok_signature.join("|"),
             devin_signature.join("|"),
+            zed_signature.join("|"),
             claude_signature.join("|"),
+            goal_signature.join("|"),
+            automation_signature.join("|"),
             codex_active_thread_count
                 + grok_active_thread_count
                 + devin_active_thread_count
+                + devin_acp_runtime.sessions.len()
+                + active_zed_acp_runtime_session_count(&zed_acp_runtime.sessions)
                 + claude_active_thread_count,
             codex_archived_thread_count + devin_archived_thread_count,
             queued_prompt_count,
-            session_state.assistant_surface
+            session_state.assistant_surface,
+            mobile_state_revision
         ))
     }
 
@@ -659,8 +774,17 @@ impl ControlPlane {
         self.response_cache
             .zed_status
             .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
-                inspect_zed_for_home(&self.config.home_path)
+                self.inspect_zed_status()
             })
+    }
+
+    fn inspect_zed_status(&self) -> ZedStatus {
+        match self.config.zed_process_commands.as_deref() {
+            Some(process_commands) => {
+                inspect_zed_for_home_with_processes(&self.config.home_path, process_commands)
+            }
+            None => inspect_zed_for_home(&self.config.home_path),
+        }
     }
 
     pub fn codex_servers_response(&self) -> CodexServersResponse {
@@ -770,171 +894,17 @@ impl ControlPlane {
 
     pub fn zed_response(&self) -> ZedResponse {
         ZedResponse {
-            status: inspect_zed_for_home(&self.config.home_path),
+            status: self.inspect_zed_status(),
         }
     }
 
     fn acp_targets(&self) -> Vec<AcpTarget> {
         let devin_status = inspect_devin_desktop_for_home(&self.config.home_path);
-        let zed_status = inspect_zed_for_home(&self.config.home_path);
+        let zed_status = self.inspect_zed_status();
         let mut targets = devin_acp_targets(&devin_status);
         targets.extend(zed_acp_targets(&zed_status));
         targets.sort_by(|left, right| left.id.cmp(&right.id));
         targets
-    }
-
-    pub fn acp_client_hosts_response(&self) -> AcpClientHostsResponse {
-        self.response_cache
-            .acp_client_hosts
-            .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
-                self.acp_client_hosts_response_uncached()
-            })
-    }
-
-    fn acp_client_hosts_response_uncached(&self) -> AcpClientHostsResponse {
-        AcpClientHostsResponse {
-            hosts: ACP_CLIENT_HOST_PROVIDERS
-                .iter()
-                .map(|provider| self.acp_client_host_status(*provider))
-                .collect(),
-        }
-    }
-
-    pub fn acp_client_host_response(&self, client_id: &str) -> Option<AcpClientHostResponse> {
-        self.acp_client_hosts_response()
-            .hosts
-            .into_iter()
-            .find(|host| host.id == client_id)
-            .map(|host| AcpClientHostResponse { host })
-    }
-
-    pub fn acp_client_host_probe_response(
-        &self,
-        client_id: &str,
-        agent_id: Option<&str>,
-    ) -> Option<AcpClientHostProbeResponse> {
-        let provider = self.acp_client_host_provider(client_id)?;
-        Some(match provider {
-            AcpClientHostProvider::Devin => {
-                let status = inspect_devin_desktop_for_home(&self.config.home_path);
-                let probe =
-                    build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id);
-                let runtime = self.devin_acp_runtime.status();
-                let sessions = self
-                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
-                    .sessions;
-                AcpClientHostProbeResponse {
-                    host: devin_acp_client_host(&status, &sessions, &runtime),
-                    probe: acp_client_host_probe(probe),
-                }
-            }
-            AcpClientHostProvider::Zed => {
-                let status = inspect_zed_for_home(&self.config.home_path);
-                AcpClientHostProbeResponse {
-                    host: zed_acp_client_host(&status),
-                    probe: zed_acp_client_host_probe(&status, agent_id),
-                }
-            }
-        })
-    }
-
-    pub fn acp_client_host_exists(&self, client_id: &str) -> bool {
-        self.acp_client_host_provider(client_id).is_some()
-    }
-
-    pub fn acp_client_host_install_supported(&self, client_id: &str) -> bool {
-        self.acp_client_host_provider(client_id)
-            .map(AcpClientHostProvider::supports_install)
-            .unwrap_or(false)
-    }
-
-    pub fn install_acp_client_host_response(
-        &self,
-        client_id: &str,
-    ) -> Result<Option<AcpClientHostInstallResponse>> {
-        let Some(provider) = self.acp_client_host_provider(client_id) else {
-            return Ok(None);
-        };
-        let response = Some(match provider {
-            AcpClientHostProvider::Devin => {
-                let install = install_looper_acp_agent_for_home(
-                    &self.config.home_path,
-                    &crate::runtime::default_server_base_url(),
-                )?;
-                let status = inspect_devin_desktop_for_home(&self.config.home_path);
-                let runtime = self.devin_acp_runtime.status();
-                let sessions = self
-                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
-                    .sessions;
-                AcpClientHostInstallResponse {
-                    host: devin_acp_client_host(&status, &sessions, &runtime),
-                    install: acp_client_host_install(provider.id(), install),
-                }
-            }
-            AcpClientHostProvider::Zed => return Ok(None),
-        });
-        self.response_cache.invalidate_desktop_menu_surfaces();
-        Ok(response)
-    }
-
-    pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
-        DevinAcpBridgeResponse {
-            bridge: inspect_devin_desktop_for_home(&self.config.home_path).acp_bridge,
-            runtime: self.devin_acp_runtime.status(),
-        }
-    }
-
-    pub fn devin_acp_bridge_probe_response(
-        &self,
-        agent_id: Option<&str>,
-    ) -> DevinAcpBridgeProbeResponse {
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
-        DevinAcpBridgeProbeResponse {
-            probe: build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id),
-            bridge: status.acp_bridge,
-            runtime: self.devin_acp_runtime.status(),
-        }
-    }
-
-    pub fn install_devin_acp_bridge_response(&self) -> Result<DevinAcpInstallResponse> {
-        let install = install_looper_acp_agent_for_home(
-            &self.config.home_path,
-            &crate::runtime::default_server_base_url(),
-        )?;
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
-        self.response_cache.invalidate_desktop_menu_surfaces();
-        Ok(DevinAcpInstallResponse {
-            install,
-            bridge: status.acp_bridge,
-            runtime: self.devin_acp_runtime.status(),
-        })
-    }
-
-    fn acp_client_host_provider(&self, client_id: &str) -> Option<AcpClientHostProvider> {
-        ACP_CLIENT_HOST_PROVIDERS
-            .iter()
-            .copied()
-            .find(|provider| provider.id() == client_id)
-    }
-
-    fn acp_client_host_status(
-        &self,
-        provider: AcpClientHostProvider,
-    ) -> crate::acp_client_host::AcpClientHost {
-        match provider {
-            AcpClientHostProvider::Devin => {
-                let status = self.cached_devin_desktop_status();
-                let sessions = self
-                    .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
-                    .sessions;
-                let runtime = self.devin_acp_runtime.status();
-                devin_acp_client_host(&status, &sessions, &runtime)
-            }
-            AcpClientHostProvider::Zed => {
-                let status = self.cached_zed_status();
-                zed_acp_client_host(&status)
-            }
-        }
     }
 
     pub fn compactions(&self) -> Result<Vec<CompactionEvent>> {
@@ -1004,6 +974,10 @@ impl ControlPlane {
                 let change = register_owned_hooks(&self.config.codex_home, hook_command)?;
                 (change.removed_handlers, change.installed_handlers)
             }
+            HookMutationTarget::Devin => {
+                let change = register_owned_devin_hooks(&self.config.home_path, hook_command)?;
+                (change.removed_handlers, change.installed_handlers)
+            }
             HookMutationTarget::GrokBuild => {
                 let change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
                 (change.removed_handlers, change.installed_handlers)
@@ -1019,6 +993,22 @@ impl ControlPlane {
             action: format!("register-{}-hooks", target.action_slug()),
             removed_handlers,
             installed_handlers,
+            hooks_auto_registration: settings.hooks_auto_registration,
+            status: self.status(),
+        })
+    }
+
+    pub fn unregister_hooks_for_target(
+        &self,
+        target: HookMutationTarget,
+    ) -> Result<HookMutationResponse> {
+        let removed_handlers = self.unregister_owned_hooks_for_target(target)?;
+        let settings = self.store.set_hooks_auto_registration(false)?;
+        self.response_cache.invalidate_desktop_menu_surfaces();
+        Ok(HookMutationResponse {
+            action: format!("unregister-{}-hooks", target.action_slug()),
+            removed_handlers,
+            installed_handlers: 0,
             hooks_auto_registration: settings.hooks_auto_registration,
             status: self.status(),
         })
@@ -1044,11 +1034,7 @@ impl ControlPlane {
         &self,
         target: HookMutationTarget,
     ) -> Result<HookMutationResponse> {
-        let removed_handlers = match target {
-            HookMutationTarget::Codex => unregister_owned_hooks(&self.config.codex_home)?,
-            HookMutationTarget::GrokBuild => unregister_owned_grok_hooks(&self.config.grok_home)?,
-            HookMutationTarget::ClaudeCode => unregister_owned_claude_hooks(&self.claude_home())?,
-        };
+        let removed_handlers = self.unregister_owned_hooks_for_target(target)?;
         let settings = self.store.service_settings()?;
         self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(HookMutationResponse {
@@ -1058,6 +1044,15 @@ impl ControlPlane {
             hooks_auto_registration: settings.hooks_auto_registration,
             status: self.status(),
         })
+    }
+
+    fn unregister_owned_hooks_for_target(&self, target: HookMutationTarget) -> Result<usize> {
+        match target {
+            HookMutationTarget::Codex => unregister_owned_hooks(&self.config.codex_home),
+            HookMutationTarget::Devin => unregister_owned_devin_hooks(&self.config.home_path),
+            HookMutationTarget::GrokBuild => unregister_owned_grok_hooks(&self.config.grok_home),
+            HookMutationTarget::ClaudeCode => unregister_owned_claude_hooks(&self.claude_home()),
+        }
     }
 
     pub fn thread_detail(&self, thread_id: &str) -> Result<Option<ThreadDetail>> {
@@ -1103,6 +1098,18 @@ impl ControlPlane {
                 })
         {
             return Ok(devin_acp_runtime_session_capabilities(&session));
+        }
+
+        if let Some(session) = self
+            .zed_acp_runtime
+            .status()
+            .sessions
+            .into_iter()
+            .find(|session| {
+                session.public_thread_id == thread_id || session.session_id == thread_id
+            })
+        {
+            return Ok(zed_acp_runtime_session_capabilities(&session));
         }
 
         if let Some(session) = discover_grok_sessions(&self.config.grok_home)
@@ -1247,6 +1254,15 @@ impl ControlPlane {
                 let latest_transcript_activity_at_ms = transcript_preview
                     .as_ref()
                     .and_then(|preview| preview.latest_activity_at_ms);
+                let assistant_preview = transcript_preview.as_ref().and_then(|preview| {
+                    preview
+                        .latest_assistant_message
+                        .as_ref()
+                        .map(|message| message.text.clone())
+                });
+                let first_user_prompt = transcript_preview
+                    .as_ref()
+                    .and_then(|preview| preview.first_user_prompt.clone());
                 let updated_at_ms = latest_millis([
                     thread.updated_at_ms,
                     transcript_modified_at_ms,
@@ -1271,9 +1287,8 @@ impl ControlPlane {
                     created_at_ms: thread.created_at_ms,
                     updated_at_ms,
                     latest_message_at_ms,
-                    assistant_preview: transcript_preview.and_then(|preview| {
-                        preview.latest_assistant_message.map(|message| message.text)
-                    }),
+                    assistant_preview,
+                    first_user_prompt,
                     runtime_status: None,
                     archived: thread.archived,
                     goal: None,
@@ -1311,6 +1326,12 @@ impl ControlPlane {
             limited_items(&devin_acp_runtime.sessions, thread_limit)
                 .map(devin_acp_runtime_session_to_desktop_thread),
         );
+        let zed_acp_runtime = self.zed_acp_runtime.status();
+        let mut zed_acp_threads = limited_items(&zed_acp_runtime.sessions, thread_limit)
+            .map(zed_acp_runtime_session_to_desktop_thread)
+            .collect::<Vec<_>>();
+        merge_zed_acp_threads_with_codex_transcripts(&mut zed_acp_threads, &desktop_threads);
+        desktop_threads.extend(zed_acp_threads);
         dedupe_desktop_threads_by_id(&mut desktop_threads);
         desktop_threads.sort_by(|left, right| {
             desktop_thread_activity_ms(right).cmp(&desktop_thread_activity_ms(left))
@@ -1348,6 +1369,12 @@ impl ControlPlane {
                 .iter()
                 .map(|session| session.public_thread_id.clone()),
         );
+        known_thread_ids.extend(
+            zed_acp_runtime
+                .sessions
+                .iter()
+                .map(|session| session.public_thread_id.clone()),
+        );
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
         attach_goals_to_desktop_threads(&mut desktop_threads, &goals);
         if bounded_snapshot {
@@ -1367,11 +1394,14 @@ impl ControlPlane {
             .filter(|session| session.running)
             .count();
         let devin_acp_active_thread_count = devin_acp_runtime.sessions.len();
+        let zed_acp_active_thread_count =
+            active_zed_acp_runtime_session_count(&zed_acp_runtime.sessions);
         let active_thread_count = codex_active_thread_count
             + grok_active_thread_count
             + claude_active_thread_count
             + devin_active_thread_count
-            + devin_acp_active_thread_count;
+            + devin_acp_active_thread_count
+            + zed_acp_active_thread_count;
         let archived_thread_count = codex_archived_thread_count + devin_archived_thread_count;
         let sync_manifest = if bounded_snapshot {
             SyncManifest::metadata_only(&control_plane_status, &[], &[], &[], &BTreeMap::new())?
@@ -1403,7 +1433,8 @@ impl ControlPlane {
                 + grok_build.session_count
                 + claude_sessions.len()
                 + devin_total_count
-                + devin_acp_runtime.sessions.len(),
+                + devin_acp_runtime.sessions.len()
+                + zed_acp_runtime.sessions.len(),
             active_thread_count,
             archived_thread_count,
             threads: desktop_threads,
@@ -1434,7 +1465,7 @@ impl ControlPlane {
         match inspection_mode {
             SnapshotInspectionMode::Live => (
                 inspect_devin_desktop_for_home(&self.config.home_path),
-                inspect_zed_for_home(&self.config.home_path),
+                self.inspect_zed_status(),
             ),
             SnapshotInspectionMode::CachedMenu => {
                 (self.cached_devin_desktop_status(), self.cached_zed_status())
@@ -1444,23 +1475,9 @@ impl ControlPlane {
 
     pub fn record_automation_fire(
         &self,
-        automation_id: &str,
-        target_thread_id: Option<&str>,
-        scheduled_at_ms: i64,
-        fired_at_ms: i64,
-        delivery_mode: &str,
-        result: &str,
-        detail: Option<&str>,
+        input: AutomationRunInput<'_>,
     ) -> Result<Option<AutomationRunRecord>> {
-        self.store.record_automation_run(
-            automation_id,
-            target_thread_id,
-            scheduled_at_ms,
-            fired_at_ms,
-            delivery_mode,
-            result,
-            detail,
-        )
+        self.store.record_automation_run(input)
     }
 
     pub fn update_automation_fire_result(
@@ -1695,40 +1712,6 @@ fn zed_connection_should_render(status: &ZedStatus) -> bool {
     status.installed || status.running || status.settings_exists || !status.acp_targets.is_empty()
 }
 
-fn zed_acp_connection(status: &ZedStatus) -> ManagedConnection {
-    let connection_status = if status.running {
-        "connected"
-    } else if status.settings_exists || !status.acp_targets.is_empty() {
-        "configured"
-    } else if status.installed {
-        "installed"
-    } else {
-        "missing"
-    };
-    ManagedConnection {
-        id: ZED_ACP_CONNECTION_ID.to_owned(),
-        kind: ZED_CLIENT_ID.to_owned(),
-        label: ZED_ACP_CONNECTION_LABEL.to_owned(),
-        status: connection_status.to_owned(),
-        subtitle: Some(format!(
-            "{} ACP target{}",
-            status.acp_target_count,
-            if status.acp_target_count == 1 {
-                ""
-            } else {
-                "s"
-            }
-        )),
-        detail: Some(status.summary.clone()),
-        created_at: None,
-        last_used_at: None,
-        revoked_at: None,
-        can_rename: false,
-        can_revoke: false,
-        action_hint: Some(ZED_ACP_CONNECTION_ACTION_HINT.to_owned()),
-    }
-}
-
 fn devin_hook_connection(status: &DevinHookStatus) -> ManagedConnection {
     ManagedConnection {
         id: DEVIN_HOOKS_CONNECTION_ID.to_owned(),
@@ -1751,37 +1734,6 @@ fn devin_hook_owner_label(owner: &DevinHookOwner) -> String {
         DevinHookOwner::LooperRust => "looper Rust".to_owned(),
         DevinHookOwner::Unknown => "Unknown owner".to_owned(),
         DevinHookOwner::None => "Not registered".to_owned(),
-    }
-}
-
-fn devin_acp_runtime_session_to_desktop_thread(session: &DevinAcpRuntimeSession) -> DesktopThread {
-    DesktopThread {
-        thread_id: session.public_thread_id.clone(),
-        title: Some("Looper ACP".to_owned()),
-        cwd: session.cwd.clone(),
-        transcript_path: None,
-        source: Some("devin-desktop".to_owned()),
-        originator: Some("Devin Next".to_owned()),
-        model: None,
-        reasoning_effort: None,
-        git_sha: None,
-        git_branch: None,
-        cli_version: None,
-        agent_nickname: Some("Looper".to_owned()),
-        agent_role: Some("looper".to_owned()),
-        agent_path: None,
-        created_at_ms: Some(session.created_at_ms),
-        updated_at_ms: Some(session.updated_at_ms),
-        latest_message_at_ms: Some(session.updated_at_ms),
-        assistant_preview: session.latest_assistant_message.clone(),
-        runtime_status: Some(if session.cancelled {
-            "stopped".to_owned()
-        } else {
-            "active".to_owned()
-        }),
-        archived: false,
-        goal: None,
-        capabilities: devin_acp_runtime_session_capabilities(session),
     }
 }
 
@@ -1846,6 +1798,9 @@ fn merge_desktop_thread(mut preferred: DesktopThread, fallback: DesktopThread) -
     if preferred.assistant_preview.is_none() {
         preferred.assistant_preview = fallback.assistant_preview;
     }
+    if preferred.first_user_prompt.is_none() {
+        preferred.first_user_prompt = fallback.first_user_prompt;
+    }
     if preferred.transcript_path.is_none() {
         preferred.transcript_path = fallback.transcript_path;
     }
@@ -1855,6 +1810,93 @@ fn merge_desktop_thread(mut preferred: DesktopThread, fallback: DesktopThread) -
     preferred
 }
 
+fn merge_zed_acp_threads_with_codex_transcripts(
+    zed_threads: &mut [DesktopThread],
+    existing_threads: &[DesktopThread],
+) {
+    for zed_thread in zed_threads {
+        let Some(agent_id) = zed_public_agent_id_from_thread_id(&zed_thread.thread_id) else {
+            continue;
+        };
+        if agent_id != "codex" {
+            continue;
+        }
+        let Some(codex_thread) =
+            matching_codex_thread_for_zed_acp_thread(zed_thread, existing_threads)
+        else {
+            continue;
+        };
+        merge_codex_transcript_into_zed_acp_thread(zed_thread, codex_thread);
+    }
+}
+
+fn matching_codex_thread_for_zed_acp_thread<'a>(
+    zed_thread: &DesktopThread,
+    existing_threads: &'a [DesktopThread],
+) -> Option<&'a DesktopThread> {
+    let zed_cwd = normalized_path_text(zed_thread.cwd.as_deref())?;
+    existing_threads
+        .iter()
+        .filter(|thread| thread.capabilities.assistant_kind == AssistantKind::Codex)
+        .filter(|thread| !thread.archived)
+        .filter(|thread| {
+            normalized_path_text(thread.cwd.as_deref()).as_deref() == Some(zed_cwd.as_str())
+        })
+        .max_by_key(|thread| desktop_thread_activity_ms(thread))
+}
+
+fn merge_codex_transcript_into_zed_acp_thread(
+    zed_thread: &mut DesktopThread,
+    codex_thread: &DesktopThread,
+) {
+    zed_thread.title = codex_thread
+        .title
+        .clone()
+        .or_else(|| zed_thread.title.clone());
+    zed_thread.transcript_path = codex_thread.transcript_path.clone();
+    zed_thread.model = codex_thread.model.clone();
+    zed_thread.reasoning_effort = codex_thread.reasoning_effort.clone();
+    zed_thread.git_sha = codex_thread.git_sha.clone();
+    zed_thread.git_branch = codex_thread.git_branch.clone();
+    zed_thread.cli_version = codex_thread.cli_version.clone();
+    zed_thread.agent_path = codex_thread.agent_path.clone();
+    zed_thread.created_at_ms =
+        latest_millis([zed_thread.created_at_ms, codex_thread.created_at_ms]);
+    zed_thread.updated_at_ms =
+        latest_millis([zed_thread.updated_at_ms, codex_thread.updated_at_ms]);
+    zed_thread.latest_message_at_ms = latest_millis([
+        zed_thread.latest_message_at_ms,
+        codex_thread.latest_message_at_ms,
+    ]);
+    zed_thread.assistant_preview = codex_thread
+        .assistant_preview
+        .clone()
+        .or_else(|| zed_thread.assistant_preview.clone());
+    zed_thread.first_user_prompt = codex_thread
+        .first_user_prompt
+        .clone()
+        .or_else(|| zed_thread.first_user_prompt.clone());
+}
+
+fn normalized_path_text(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    (!value.is_empty()).then(|| value.trim_end_matches('/').to_owned())
+}
+
+fn zed_public_agent_id_from_thread_id(thread_id: &str) -> Option<&str> {
+    let remainder = thread_id.strip_prefix("zed:")?;
+    remainder.split(':').next()
+}
+
+fn zed_public_agent_title(agent_id: &str) -> String {
+    match agent_id {
+        "codex" => "Codex".to_owned(),
+        "codex-direct" => "Codex Direct".to_owned(),
+        "looper" => "Looper".to_owned(),
+        _ => agent_id.to_owned(),
+    }
+}
+
 fn latest_millis(values: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
     values.into_iter().flatten().max()
 }
@@ -1862,32 +1904,6 @@ fn latest_millis(values: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
 fn attach_goals_to_desktop_threads(threads: &mut [DesktopThread], goals: &[GoalSummary]) {
     for thread in threads {
         thread.goal = goal_for_thread(goals, &thread.thread_id);
-    }
-}
-
-fn devin_acp_runtime_session_capabilities(session: &DevinAcpRuntimeSession) -> ThreadCapabilities {
-    ThreadCapabilities {
-        thread_id: session.public_thread_id.clone(),
-        assistant_kind: AssistantKind::DevinDesktop,
-        tools: Vec::new(),
-        mcp_tools: Vec::new(),
-        app_tools: Vec::new(),
-        automation_tools: Vec::new(),
-        spawn: SpawnGraph {
-            parent_thread_id: None,
-            root_thread_id: session.public_thread_id.clone(),
-            children: Vec::new(),
-            launch_kind: LaunchKind::Main,
-        },
-        diff: DiffSummary {
-            git_branch: None,
-            git_sha: None,
-            produced_file_changes: false,
-            paths: Vec::new(),
-        },
-        agent_nickname: Some("Looper".to_owned()),
-        agent_role: Some("looper".to_owned()),
-        agent_path: None,
     }
 }
 
@@ -2029,6 +2045,90 @@ fn metadata_modified_at_ms(path: &Path) -> Option<i64> {
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     let millis = duration.as_millis();
     i64::try_from(millis).ok()
+}
+
+fn mobile_session_state_revision(state: &MobileSessionState) -> String {
+    let session_overrides = state
+        .sessions
+        .iter()
+        .map(|(thread_id, override_state)| {
+            json!({
+                "threadId": thread_id,
+                "preset": override_state.preset,
+                "archived": override_state.archived,
+                "muted": override_state.muted,
+                "deleted": override_state.deleted,
+                "deletedAt": override_state.deleted_at,
+                "notificationIds": override_state.notification_ids,
+                "completionCheckId": override_state.completion_check_id,
+                "completionCheckWaitForReply": override_state.completion_check_wait_for_reply,
+            })
+        })
+        .collect::<Vec<_>>();
+    let lifecycle = state
+        .lifecycle
+        .iter()
+        .map(|(thread_id, lifecycle)| {
+            json!({
+                "threadId": thread_id,
+                "status": lifecycle.status,
+                "updatedAt": lifecycle.updated_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    let notifications = state
+        .notifications
+        .iter()
+        .map(|notification| {
+            json!({
+                "id": notification.id,
+                "label": notification.label,
+                "channel": notification.channel,
+                "hasWebhookUrl": notification.webhook_url.is_some(),
+                "hasChatId": notification.chat_id.is_some(),
+                "hasBotToken": notification.bot_token.is_some(),
+                "hasBotUrl": notification.bot_url.is_some(),
+                "chatUsername": notification.chat_username,
+                "chatDisplayName": notification.chat_display_name,
+            })
+        })
+        .collect::<Vec<_>>();
+    let completion_checks = state
+        .completion_checks
+        .iter()
+        .map(|check| {
+            json!({
+                "id": check.id,
+                "label": check.label,
+                "commandsHash": revision_hash(&check.commands.join("\n")),
+            })
+        })
+        .collect::<Vec<_>>();
+    let fingerprint = json!({
+        "defaultPromptHash": revision_hash(&state.default_prompt),
+        "scope": state.scope,
+        "globalPreset": state.global_preset,
+        "globalNotificationId": state.global_notification_id,
+        "defaultNotificationTargetIds": state.default_notification_target_ids,
+        "globalCompletionCheckId": state.global_completion_check_id,
+        "globalCompletionCheckWaitForReply": state.global_completion_check_wait_for_reply,
+        "assistantSurface": state.assistant_surface,
+        "siriDefaultThreadId": state.siri_default_thread_id,
+        "siriDefaultAssistantSurface": state.siri_default_assistant_surface,
+        "siriCurrentThreadId": state.siri_current_thread_id,
+        "siriCurrentAssistantSurface": state.siri_current_assistant_surface,
+        "siriCurrentUpdatedAtMs": state.siri_current_updated_at_ms,
+        "notifications": notifications,
+        "completionChecks": completion_checks,
+        "sessions": session_overrides,
+        "lifecycle": lifecycle,
+    });
+    revision_hash(&fingerprint.to_string())
+}
+
+fn revision_hash(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -2178,6 +2278,7 @@ mod tests {
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
             home_path: fixture_dir.path().to_path_buf(),
+            zed_process_commands: Some(Vec::new()),
         });
 
         let connections = control_plane

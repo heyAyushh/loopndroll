@@ -74,21 +74,26 @@ struct DiffLine: Identifiable {
     }
 }
 
-struct DiffBlockView: View {
-    let language: String?
-    let diff: String
-    private let lines: [DiffLine]
-    private let changeCount: DiffChangeCount
+struct RenderedDiffBlock {
+    let lines: [DiffLine]
+    fileprivate let changeCount: DiffChangeCount
+}
 
-    init(language: String?, diff: String) {
-        self.language = language
-        self.diff = diff
-        lines = diff.components(separatedBy: .newlines)
+enum DiffBlockParser {
+    static func parse(language: String?, diff: String) -> RenderedDiffBlock? {
+        guard isDiff(language: language, code: diff) else {
+            return nil
+        }
+
+        let lines = diff.components(separatedBy: .newlines)
             .enumerated()
             .map { offset, rawLine in
                 DiffLine(id: offset, rawLine: rawLine)
             }
-        changeCount = Self.countChanges(in: lines)
+        return RenderedDiffBlock(
+            lines: lines,
+            changeCount: countChanges(in: lines)
+        )
     }
 
     static func isDiff(language: String?, code: String) -> Bool {
@@ -101,30 +106,6 @@ struct DiffBlockView: View {
             code.hasPrefix("@@") ||
             code.contains("\ndiff --git ") ||
             code.hasPrefix("diff --git ")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "plusminus")
-                Text("Diff")
-                Spacer()
-                Text("\(changeCount.additions) additions")
-                Text("\(changeCount.removals) removals")
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-
-            ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(lines) { line in
-                        DiffLineRow(line: line)
-                    }
-                }
-                .padding(.vertical, 6)
-            }
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-        }
     }
 
     private static func countChanges(in lines: [DiffLine]) -> DiffChangeCount {
@@ -141,7 +122,39 @@ struct DiffBlockView: View {
     }
 }
 
-private struct DiffChangeCount {
+struct DiffBlockView: View {
+    private let renderedDiff: RenderedDiffBlock
+
+    init(renderedDiff: RenderedDiffBlock) {
+        self.renderedDiff = renderedDiff
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "plusminus")
+                Text("Diff")
+                Spacer()
+                Text("\(renderedDiff.changeCount.additions) additions")
+                Text("\(renderedDiff.changeCount.removals) removals")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(renderedDiff.lines) { line in
+                        DiffLineRow(line: line)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+fileprivate struct DiffChangeCount {
     var additions: Int
     var removals: Int
 }

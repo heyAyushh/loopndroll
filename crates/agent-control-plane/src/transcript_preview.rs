@@ -1,3 +1,4 @@
+// allow: SIZE_OK — transcript preview scanner keeps tail/full-scan fallback and timestamp extraction in one consistency boundary.
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -6,6 +7,7 @@ use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const ASSISTANT_MESSAGE_MAX_CHARS: usize = 600;
+const FIRST_USER_PROMPT_MAX_CHARS: usize = 600;
 const RESPONSE_ITEM_RECORD_TYPE: &str = "response_item";
 const EVENT_MESSAGE_RECORD_TYPE: &str = "event_msg";
 const MESSAGE_PAYLOAD_TYPE: &str = "message";
@@ -33,6 +35,7 @@ const TIMESTAMP_FIELD_NAMES: &[&str] = &[
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TranscriptPreview {
     pub latest_assistant_message: Option<AssistantMessagePreview>,
+    pub first_user_prompt: Option<String>,
     pub latest_activity_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
 }
@@ -50,10 +53,14 @@ pub fn latest_assistant_message_for_path(transcript_path: &Path) -> Option<Strin
 }
 
 pub fn transcript_preview_for_path(transcript_path: &Path) -> Option<TranscriptPreview> {
-    transcript_preview_from_tail(transcript_path).or_else(|| {
+    let mut preview = transcript_preview_from_tail(transcript_path).or_else(|| {
         let file = File::open(transcript_path).ok()?;
         transcript_preview_from_reader(BufReader::new(file))
-    })
+    })?;
+    if preview.first_user_prompt.is_none() {
+        preview.first_user_prompt = first_user_prompt_from_path(transcript_path);
+    }
+    Some(preview)
 }
 
 fn transcript_preview_from_tail(transcript_path: &Path) -> Option<TranscriptPreview> {
@@ -87,13 +94,19 @@ fn transcript_preview_from_reader(reader: impl BufRead) -> Option<TranscriptPrev
         {
             preview.latest_message_at_ms = Some(created_at_ms);
         }
-        if record.role == ASSISTANT_ROLE {
-            if let Some(text) = record.text {
-                preview.latest_assistant_message = Some(AssistantMessagePreview {
-                    text: truncate_text(&text, ASSISTANT_MESSAGE_MAX_CHARS),
-                    created_at_ms: record.created_at_ms,
-                });
-            }
+        if record.role == USER_ROLE
+            && preview.first_user_prompt.is_none()
+            && let Some(text) = record.text.as_deref()
+        {
+            preview.first_user_prompt = Some(truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS));
+        }
+        if record.role == ASSISTANT_ROLE
+            && let Some(text) = record.text.as_deref()
+        {
+            preview.latest_assistant_message = Some(AssistantMessagePreview {
+                text: truncate_text(text, ASSISTANT_MESSAGE_MAX_CHARS),
+                created_at_ms: record.created_at_ms,
+            });
         }
     }
 
@@ -143,6 +156,24 @@ fn transcript_preview_from_reversed_lines<'a>(
     .then_some(preview)
 }
 
+fn first_user_prompt_from_path(transcript_path: &Path) -> Option<String> {
+    let file = File::open(transcript_path).ok()?;
+    first_user_prompt_from_reader(BufReader::new(file))
+}
+
+fn first_user_prompt_from_reader(reader: impl BufRead) -> Option<String> {
+    reader.lines().map_while(Result::ok).find_map(|line| {
+        let record = message_record_from_transcript_line(&line)?;
+        if record.role != USER_ROLE {
+            return None;
+        }
+        record
+            .text
+            .as_deref()
+            .map(|text| truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS))
+    })
+}
+
 struct TranscriptMessageRecord {
     role: String,
     text: Option<String>,
@@ -164,13 +195,13 @@ fn response_item_message_record(value: &Value) -> Option<TranscriptMessageRecord
         return None;
     }
     let role = payload.get("role").and_then(Value::as_str)?.to_owned();
-    let text = if role == ASSISTANT_ROLE {
+    let text = if matches!(role.as_str(), ASSISTANT_ROLE | USER_ROLE) {
         payload.get("content").and_then(content_text)
     } else {
         None
     };
     let created_at_ms =
-        timestamp_millis_from_object(&value).or_else(|| timestamp_millis_from_object(payload));
+        timestamp_millis_from_object(value).or_else(|| timestamp_millis_from_object(payload));
 
     Some(TranscriptMessageRecord {
         role,
@@ -186,11 +217,28 @@ fn user_event_message_record(value: &Value) -> Option<TranscriptMessageRecord> {
     }
     let created_at_ms =
         timestamp_millis_from_object(value).or_else(|| timestamp_millis_from_object(payload));
+    let text = user_event_text(payload);
     Some(TranscriptMessageRecord {
         role: USER_ROLE.to_owned(),
-        text: None,
+        text,
         created_at_ms,
     })
+}
+
+fn user_event_text(payload: &Value) -> Option<String> {
+    ["message", "text", "content"]
+        .into_iter()
+        .find_map(|field_name| payload.get(field_name).and_then(message_text_value))
+}
+
+fn message_text_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str().and_then(normalized_optional_string) {
+        return Some(text);
+    }
+    value
+        .get("content")
+        .and_then(content_text)
+        .or_else(|| content_text(value))
 }
 
 fn content_text(content: &Value) -> Option<String> {
@@ -307,6 +355,12 @@ mod tests {
             latest_assistant_message_for_path(&transcript_path).as_deref(),
             Some("new tail message")
         );
+        assert_eq!(
+            transcript_preview_for_path(&transcript_path)
+                .and_then(|preview| preview.first_user_prompt)
+                .as_deref(),
+            Some("latest prompt")
+        );
     }
 
     #[test]
@@ -351,6 +405,7 @@ mod tests {
         );
         assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_860_000));
         assert_eq!(preview.latest_message_at_ms, Some(1_781_596_860_000));
+        assert_eq!(preview.first_user_prompt.as_deref(), Some("new user"));
     }
 
     #[test]
@@ -393,6 +448,7 @@ mod tests {
 
         assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_860_000));
         assert_eq!(preview.latest_message_at_ms, Some(1_781_596_860_000));
+        assert_eq!(preview.first_user_prompt.as_deref(), Some("new user"));
     }
 
     #[test]
@@ -418,6 +474,7 @@ mod tests {
         let preview = transcript_preview_for_path(&transcript_path).expect("preview");
         assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_860_321));
         assert_eq!(preview.latest_message_at_ms, Some(1_781_596_860_321));
+        assert_eq!(preview.first_user_prompt.as_deref(), Some("fractional"));
     }
 
     fn assistant_record(text: &str) -> String {

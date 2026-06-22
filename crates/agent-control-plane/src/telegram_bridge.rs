@@ -316,11 +316,25 @@ fn notification_routes_for_thread<'a>(
     thread_id: &str,
     state: &'a MobileSessionState,
 ) -> Vec<&'a MobileNotificationRoute> {
+    let known_route_ids = state
+        .notifications
+        .iter()
+        .map(|notification| notification.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     let ids = state
         .sessions
         .get(thread_id)
         .map(|session| session.notification_ids.clone())
         .filter(|ids| !ids.is_empty())
+        .or_else(|| {
+            let route_ids = state
+                .default_notification_target_ids
+                .iter()
+                .filter(|target_id| known_route_ids.contains(*target_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            (!route_ids.is_empty()).then_some(route_ids)
+        })
         .or_else(|| state.global_notification_id.clone().map(|id| vec![id]))
         .unwrap_or_default();
     state

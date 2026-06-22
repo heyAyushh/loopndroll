@@ -5,7 +5,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::normalization::{
     normalized_option, normalized_optional, normalized_required, now_iso_string,
 };
-use super::schema::MOBILE_SESSION_NOTIFICATIONS_TABLE;
+use super::schema::{
+    MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE, MOBILE_SESSION_NOTIFICATIONS_TABLE,
+};
 use super::{
     MobileNotificationRoute, MobileSessionError, MobileSessionResult, MobileSessionService,
     MobileSessionState, UpsertMobileNotificationRoute,
@@ -13,6 +15,8 @@ use super::{
 
 pub(super) const NOTIFICATION_CHANNEL_SLACK: &str = "slack";
 pub(super) const NOTIFICATION_CHANNEL_TELEGRAM: &str = "telegram";
+pub const NOTIFICATION_TARGET_IPHONE: &str = "iphone";
+pub const NOTIFICATION_TARGET_MACOS: &str = "macos";
 
 const TELEGRAM_API_ORIGIN: &str = "https://api.telegram.org";
 const TELEGRAM_SEND_MESSAGE_METHOD: &str = "sendMessage";
@@ -81,6 +85,12 @@ impl MobileSessionService {
             params![&id],
         )?;
         transaction.execute(
+            &format!(
+                "delete from {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE} where target_id = ?1"
+            ),
+            params![&id],
+        )?;
+        transaction.execute(
             "update mobile_settings
              set global_notification_id = null,
                  updated_at = ?2
@@ -97,10 +107,38 @@ impl MobileSessionService {
     ) -> MobileSessionResult<()> {
         let notification_id = self.valid_notification_id(notification_id)?;
         self.initialize()?;
-        Connection::open(&self.store_path)?.execute(
+        let mut connection = Connection::open(&self.store_path)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
             "update mobile_settings set global_notification_id = ?1, updated_at = ?2 where id = 1",
-            params![notification_id, now_iso_string()?],
+            params![&notification_id, now_iso_string()?],
         )?;
+        write_default_notification_targets(
+            &transaction,
+            legacy_global_notification_targets(notification_id.as_deref()),
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn set_default_notification_targets(
+        &self,
+        target_ids: &[String],
+    ) -> MobileSessionResult<()> {
+        let target_ids = self.valid_notification_target_ids(target_ids)?;
+        self.initialize()?;
+        let mut connection = Connection::open(&self.store_path)?;
+        let transaction = connection.transaction()?;
+        write_default_notification_targets(&transaction, target_ids.iter().map(String::as_str))?;
+        let global_notification_id = target_ids
+            .iter()
+            .find(|target_id| !is_builtin_notification_target(target_id))
+            .cloned();
+        transaction.execute(
+            "update mobile_settings set global_notification_id = ?1, updated_at = ?2 where id = 1",
+            params![global_notification_id, now_iso_string()?],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -136,12 +174,20 @@ impl MobileSessionService {
         thread_id: &str,
     ) -> MobileSessionResult<Vec<MobileNotificationRoute>> {
         let state = self.state()?;
-        let selected_ids = notification_ids_for_thread(thread_id, &state);
+        let selected_ids = route_ids_for_thread(thread_id, &state);
         Ok(state
             .notifications
             .into_iter()
             .filter(|route| selected_ids.contains(&route.id))
             .collect())
+    }
+
+    pub fn notification_target_ids_for_thread(
+        &self,
+        thread_id: &str,
+    ) -> MobileSessionResult<Vec<String>> {
+        let state = self.state()?;
+        Ok(notification_target_ids_for_thread(thread_id, &state))
     }
 
     pub fn telegram_bot_tokens(&self) -> MobileSessionResult<Vec<String>> {
@@ -292,6 +338,36 @@ impl MobileSessionService {
         }
         Ok(valid_ids)
     }
+
+    fn valid_notification_target_ids(
+        &self,
+        target_ids: &[String],
+    ) -> MobileSessionResult<Vec<String>> {
+        let known_notification_ids = self
+            .state()?
+            .notifications
+            .into_iter()
+            .map(|notification| notification.id)
+            .collect::<BTreeSet<_>>();
+        let mut valid_ids = Vec::new();
+        for target_id in target_ids {
+            let Some(target_id) = normalized_optional(target_id) else {
+                continue;
+            };
+            if !is_builtin_notification_target(&target_id)
+                && !known_notification_ids.contains(&target_id)
+            {
+                return Err(MobileSessionError::NotificationNotFound);
+            }
+            if !valid_ids.contains(&target_id) {
+                valid_ids.push(target_id);
+            }
+        }
+        if valid_ids.is_empty() {
+            valid_ids.push(NOTIFICATION_TARGET_MACOS.to_owned());
+        }
+        Ok(valid_ids)
+    }
 }
 
 pub fn build_telegram_bot_url(bot_token: &str) -> String {
@@ -306,17 +382,87 @@ pub(super) fn telegram_token_from_bot_url(bot_url: Option<&str>) -> Option<Strin
         .and_then(normalized_optional)
 }
 
-pub(super) fn notification_ids_for_thread(
-    thread_id: &str,
-    state: &MobileSessionState,
-) -> Vec<String> {
+fn route_ids_for_thread(thread_id: &str, state: &MobileSessionState) -> Vec<String> {
+    let known_route_ids = state
+        .notifications
+        .iter()
+        .map(|notification| notification.id.clone())
+        .collect::<BTreeSet<_>>();
     state
         .sessions
         .get(thread_id)
         .map(|override_state| override_state.notification_ids.clone())
         .filter(|ids| !ids.is_empty())
+        .or_else(|| {
+            let route_ids = state
+                .default_notification_target_ids
+                .iter()
+                .filter(|target_id| known_route_ids.contains(*target_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            (!route_ids.is_empty()).then_some(route_ids)
+        })
         .or_else(|| state.global_notification_id.clone().map(|id| vec![id]))
         .unwrap_or_default()
+}
+
+fn notification_target_ids_for_thread(thread_id: &str, state: &MobileSessionState) -> Vec<String> {
+    let Some(override_ids) = state
+        .sessions
+        .get(thread_id)
+        .map(|override_state| override_state.notification_ids.clone())
+        .filter(|ids| !ids.is_empty())
+    else {
+        return state.default_notification_target_ids.clone();
+    };
+
+    let mut target_ids = state
+        .default_notification_target_ids
+        .iter()
+        .filter(|target_id| is_builtin_notification_target(target_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    target_ids.extend(override_ids);
+    dedupe_preserving_order(target_ids)
+}
+
+pub(super) fn is_builtin_notification_target(target_id: &str) -> bool {
+    matches!(
+        target_id,
+        NOTIFICATION_TARGET_IPHONE | NOTIFICATION_TARGET_MACOS
+    )
+}
+
+fn dedupe_preserving_order(target_ids: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    target_ids
+        .into_iter()
+        .filter(|target_id| seen.insert(target_id.clone()))
+        .collect()
+}
+
+fn legacy_global_notification_targets(notification_id: Option<&str>) -> impl Iterator<Item = &str> {
+    std::iter::once(NOTIFICATION_TARGET_MACOS).chain(notification_id.into_iter())
+}
+
+fn write_default_notification_targets<'a>(
+    connection: &Connection,
+    target_ids: impl IntoIterator<Item = &'a str>,
+) -> MobileSessionResult<()> {
+    connection.execute(
+        &format!("delete from {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE}"),
+        [],
+    )?;
+    for target_id in target_ids {
+        connection.execute(
+            &format!(
+                "insert or ignore into {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE} (target_id)
+                 values (?1)"
+            ),
+            [target_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn normalized_notification_channel(channel: &str) -> MobileSessionResult<String> {

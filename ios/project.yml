@@ -55,11 +55,50 @@ targets:
         CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Release.entitlements
         LOOPER_API_BASE_URL: ""
         LOOPER_API_BASE_URLS: ""
+  LooperCompanionTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: LooperCompanionTests
+    dependencies:
+      - target: LooperCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.ios.tests
+        PRODUCT_NAME: LooperCompanionTests
+        DEVELOPMENT_TEAM: Z5454ZPPUX
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Looper.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Looper"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  LooperCompanionUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: LooperCompanionUITests
+    dependencies:
+      - target: LooperCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.ios.uitests
+        PRODUCT_NAME: LooperCompanionUITests
+        DEVELOPMENT_TEAM: Z5454ZPPUX
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   LooperCompanion:
     build:
       targets:
         LooperCompanion: all
+        LooperCompanionTests: [test]
+        LooperCompanionUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - LooperCompanionTests
+        - LooperCompanionUITests
     run:
       config: Debug
     profile:

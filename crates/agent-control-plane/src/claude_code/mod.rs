@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Claude session discovery boundary keeps filesystem scan, transcript parsing, and bounded previews consistent.
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -36,6 +37,7 @@ const FAST_TAIL_BYTE_LIMIT: u64 = 128 * 1024;
 const NANOS_PER_MILLISECOND: i128 = 1_000_000;
 const CLAUDE_TRANSCRIPT_PATH_MARKER: &str = "/.claude/";
 const JSONL_PATH_SUFFIX: &str = ".jsonl";
+const TITLE_FIELD_NAMES: &[&str] = &["title", "summary", "sessionTitle", "session_title"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeSessionRecord {
@@ -48,6 +50,7 @@ pub struct ClaudeSessionRecord {
     pub updated_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub first_user_prompt: Option<String>,
     pub running: bool,
 }
 
@@ -57,6 +60,7 @@ struct ClaudeSessionDraft {
     cwd: Option<String>,
     created_at_ms: Option<i64>,
     updated_at_ms: Option<i64>,
+    title: Option<String>,
     first_user_message: Option<String>,
     latest_assistant_message: Option<String>,
 }
@@ -193,15 +197,10 @@ fn select_recent_claude_session_candidates(
             selected.push(candidate.clone());
         }
     }
-    let mut recent_candidate_count = 0;
-    for candidate in candidates {
-        if recent_candidate_count >= session_limit {
-            break;
-        }
+    for candidate in candidates.into_iter().take(session_limit) {
         if selected_paths.insert(candidate.path.clone()) {
             selected.push(candidate);
         }
-        recent_candidate_count += 1;
     }
     selected
 }
@@ -232,6 +231,7 @@ pub fn claude_session_to_desktop_thread(session: &ClaudeSessionRecord) -> Deskto
         updated_at_ms: session.updated_at_ms,
         latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        first_user_prompt: session.first_user_prompt.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
         goal: None,
@@ -287,13 +287,14 @@ fn read_claude_session_file(
     Ok(Some(ClaudeSessionRecord {
         session_id,
         thread_id,
-        title: draft.first_user_message.map(compact_summary),
+        title: draft.title.map(compact_summary),
         cwd: draft.cwd,
         transcript_path: path.to_path_buf(),
         created_at_ms: draft.created_at_ms,
         updated_at_ms,
         latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
+        first_user_prompt: draft.first_user_message.map(compact_summary),
         running,
     }))
 }
@@ -315,13 +316,14 @@ fn read_claude_session_file_fast(
     Ok(Some(ClaudeSessionRecord {
         session_id,
         thread_id,
-        title: draft.first_user_message.map(compact_summary),
+        title: draft.title.map(compact_summary),
         cwd: draft.cwd,
         transcript_path: path.to_path_buf(),
         created_at_ms: draft.created_at_ms,
         updated_at_ms,
         latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
+        first_user_prompt: draft.first_user_message.map(compact_summary),
         running,
     }))
 }
@@ -337,7 +339,11 @@ fn read_claude_session_front(path: &Path, draft: &mut ClaudeSessionDraft) -> Res
             continue;
         };
         update_claude_session_draft(draft, &value);
-        if draft.first_user_message.is_some() && draft.session_id.is_some() && draft.cwd.is_some() {
+        if draft.first_user_message.is_some()
+            && draft.session_id.is_some()
+            && draft.cwd.is_some()
+            && draft.title.is_some()
+        {
             break;
         }
     }
@@ -405,12 +411,21 @@ fn update_claude_session_metadata(draft: &mut ClaudeSessionDraft, value: &Value)
     if draft.cwd.is_none() {
         draft.cwd = string_field(value, "cwd");
     }
+    if draft.title.is_none() {
+        draft.title = session_title_field(value);
+    }
     if let Some(timestamp_ms) =
         string_field(value, "timestamp").and_then(|value| parse_rfc3339_ms(&value))
     {
         draft.created_at_ms = draft.created_at_ms.or(Some(timestamp_ms));
         draft.updated_at_ms = draft.updated_at_ms.max(Some(timestamp_ms));
     }
+}
+
+fn session_title_field(value: &Value) -> Option<String> {
+    TITLE_FIELD_NAMES
+        .iter()
+        .find_map(|field_name| string_field(value, field_name))
 }
 
 fn message_text(value: &Value) -> Option<String> {
@@ -555,19 +570,24 @@ mod tests {
         write_claude_transcript(
             &project_dir,
             "session-1",
+            Some("Native Claude task"),
             "Build Claude support",
             "Claude support is visible.",
         );
 
         let sessions = discover_claude_sessions_with_processes(
             &claude_home,
-            &[format!("claude --resume session-1")],
+            &["claude --resume session-1".to_owned()],
         )
         .expect("sessions");
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].thread_id, "claude:session-1");
-        assert_eq!(sessions[0].title.as_deref(), Some("Build Claude support"));
+        assert_eq!(sessions[0].title.as_deref(), Some("Native Claude task"));
+        assert_eq!(
+            sessions[0].first_user_prompt.as_deref(),
+            Some("Build Claude support")
+        );
         assert_eq!(
             sessions[0].assistant_preview.as_deref(),
             Some("Claude support is visible.")
@@ -593,6 +613,7 @@ mod tests {
         write_claude_transcript(
             &project_dir,
             "older-session",
+            Some("Older Claude title"),
             "Older Claude request",
             "Older Claude response",
         );
@@ -600,6 +621,7 @@ mod tests {
         write_claude_transcript(
             &project_dir,
             "newer-session",
+            Some("Newer Claude title"),
             "Newer Claude request",
             "Newer Claude response",
         );
@@ -610,7 +632,11 @@ mod tests {
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "newer-session");
-        assert_eq!(sessions[0].title.as_deref(), Some("Newer Claude request"));
+        assert_eq!(sessions[0].title.as_deref(), Some("Newer Claude title"));
+        assert_eq!(
+            sessions[0].first_user_prompt.as_deref(),
+            Some("Newer Claude request")
+        );
         assert_eq!(
             sessions[0].assistant_preview.as_deref(),
             Some("Newer Claude response")
@@ -626,6 +652,7 @@ mod tests {
         let active_transcript = write_claude_transcript(
             &project_dir,
             "active-session",
+            None,
             "Active Claude request",
             "Active Claude response",
         );
@@ -633,6 +660,7 @@ mod tests {
         write_claude_transcript(
             &project_dir,
             "newer-session",
+            None,
             "Newer Claude request",
             "Newer Claude response",
         );
@@ -661,12 +689,16 @@ mod tests {
     fn write_claude_transcript(
         project_dir: &Path,
         session_id: &str,
+        title: Option<&str>,
         user_message: &str,
         assistant_message: &str,
     ) -> PathBuf {
         let transcript_path = project_dir.join(format!("{session_id}.jsonl"));
+        let title_field = title
+            .map(|title| format!(r#","title":"{title}""#))
+            .unwrap_or_default();
         let content = format!(
-            r#"{{"type":"user","sessionId":"{session_id}","cwd":"/tmp/project","timestamp":"2026-06-08T10:00:00.000Z","message":{{"role":"user","content":"{user_message}"}}}}
+            r#"{{"type":"user","sessionId":"{session_id}","cwd":"/tmp/project","timestamp":"2026-06-08T10:00:00.000Z"{title_field},"message":{{"role":"user","content":"{user_message}"}}}}
 {{"type":"assistant","sessionId":"{session_id}","cwd":"/tmp/project","timestamp":"2026-06-08T10:00:01.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"{assistant_message}"}}]}}}}
 "#
         );

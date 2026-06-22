@@ -37,6 +37,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     private var lastSceneSize: CGSize = .zero
     private var latestSurfaces: [PinballSurface] = []
     private var latestSurfaceIDs = Set<String>()
+    private var surfacesNeedSync = true
 
     var isDebugOverlayEnabled = false {
         didSet {
@@ -79,6 +80,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
+        surfacesNeedSync = true
         rebuildWorldIfNeeded(force: true)
     }
 
@@ -98,6 +100,10 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
             return
         }
 
+        guard surfaces != latestSurfaces else {
+            return
+        }
+
         let nextSurfaceIDs = Set(surfaces.map(\.id))
         if nextSurfaceIDs != latestSurfaceIDs {
             debugOverlay.clearInteractionOutlines()
@@ -105,6 +111,7 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
 
         latestSurfaceIDs = nextSurfaceIDs
         latestSurfaces = surfaces
+        surfacesNeedSync = true
         syncRenderedSurfaces()
     }
 
@@ -470,21 +477,21 @@ final class GameScene: SKScene, @preconcurrency SKPhysicsContactDelegate {
     }
 
     private func syncRenderedSurfaces() {
-        guard size != .zero else {
+        guard surfacesNeedSync, size != .zero else {
             return
         }
+        surfacesNeedSync = false
 
-        let activeIDs = Set(latestSurfaces.map(\.id))
+        let usableSurfaces = latestSurfaces.filter { surface in
+            surface.frame.width > 2 && surface.frame.height > 2
+        }
+        let activeIDs = Set(usableSurfaces.map(\.id))
         for (id, node) in surfaceNodes where !activeIDs.contains(id) {
             node.removeFromParent()
             surfaceNodes[id] = nil
         }
 
-        for surface in latestSurfaces {
-            guard surface.frame.width > 2, surface.frame.height > 2 else {
-                continue
-            }
-
+        for surface in usableSurfaces {
             let node = surfaceNodes[surface.id] ?? SKNode()
             node.name = "ui-\(surface.id)"
             if node.parent == nil {

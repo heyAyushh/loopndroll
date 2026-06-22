@@ -21,6 +21,34 @@
                ReferencedContainer = "container:LooperCompanion.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "34D254D8F98B31AA515229F5"
+               BuildableName = "LooperCompanionTests.xctest"
+               BlueprintName = "LooperCompanionTests"
+               ReferencedContainer = "container:LooperCompanion.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "6BA2BE776CEA543E71F2F0F4"
+               BuildableName = "LooperCompanionUITests.xctest"
+               BlueprintName = "LooperCompanionUITests"
+               ReferencedContainer = "container:LooperCompanion.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -39,7 +67,31 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "34D254D8F98B31AA515229F5"
+               BuildableName = "LooperCompanionTests.xctest"
+               BlueprintName = "LooperCompanionTests"
+               ReferencedContainer = "container:LooperCompanion.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "6BA2BE776CEA543E71F2F0F4"
+               BuildableName = "LooperCompanionUITests.xctest"
+               BlueprintName = "LooperCompanionUITests"
+               ReferencedContainer = "container:LooperCompanion.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

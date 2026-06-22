@@ -13,21 +13,27 @@
 		0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */; };
 		0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */; };
 		13C3246C36D7054C424ACD3F /* LooperSiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */; };
+		1B102E499D134E2327B3DEAA /* NotificationDestinationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */; };
+		1C888B1B6FDC51811EFF8999 /* NotificationDestinationPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */; };
 		20A4F5E4BBBC0282AF2AEEBD /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */; };
 		293C8235B895D87F362AFB95 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78346AF56F5D457B05954C0B /* SettingsScreen.swift */; };
+		2A34AE718CDCD08514A6AE44 /* PinballSettingsKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = E617D40EED3319CDBD4B375F /* PinballSettingsKeys.swift */; };
 		2D482EE05EA391F40E13CF7B /* PinballDebugOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */; };
 		2F0E0A2FC5EA825688BECDD4 /* OrbCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */; };
 		31D8991779D663FED6D9E1BC /* CompanionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC1A0190D9046B11D3FCC6B /* CompanionTheme.swift */; };
 		3234EEB1D3D23E9E2A761B89 /* MazeGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B6BD373F060250BF3162655 /* MazeGameView.swift */; };
 		33DF27F8906D2044B08B53BF /* CompanionRealtimeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F59A21138D6F1F2F8B1124C0 /* CompanionRealtimeSync.swift */; };
+		36B70CA75F4ECD1400AEB7D0 /* CompanionRealtimeSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D320C50CEEE04B7C3D33CB26 /* CompanionRealtimeSyncTests.swift */; };
 		374B7D9C4BF732FB1BB93C94 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E6662FF1A21320CE35B28AF /* Haptics.swift */; };
 		38E8E8C03E05F340AFE5B061 /* SessionSearchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02652A178B2079D63BC929D /* SessionSearchScreen.swift */; };
 		3A526A3DBB71006AAAC58C17 /* GameScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = D525E23B82E5CD10CC90FDC3 /* GameScene.swift */; };
 		3AE7B647FFE2E6529D655E38 /* MotionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80DC6E68627D2DF8604A322B /* MotionController.swift */; };
 		3D4F937914550297AEEC1BC3 /* LooperRealtime in Frameworks */ = {isa = PBXBuildFile; productRef = 4DA44BA34CBFEA3F1050C46E /* LooperRealtime */; };
 		3D5A7809C8C19205CAEE478D /* AssistantClientGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD847E9AD9142AA0F82C325D /* AssistantClientGlyph.swift */; };
+		477018ADC22B0FD35932DC41 /* SessionSummaryTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */; };
 		4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */; };
 		4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2489ABFC353256268974517A /* MockCompanionService.swift */; };
+		550A7CF2EDFB91BD86928A53 /* LooperCompanionControlFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */; };
 		5824EF8E8A99FBA17624BCAA /* RealtimeCompanionClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */; };
 		5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */; };
 		614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */; };
@@ -72,9 +78,27 @@
 		DE616458E53567DBD195D43B /* MobileEventStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D3020C638B40E714B24B381 /* MobileEventStream.swift */; };
 		DEADABB2FAB9574917ACDCB3 /* LooperCompanionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4A1CE795142C8C486736E592 /* LooperCompanionCore */; };
 		E2EAF24D303EE6B8D48B349B /* LooperSiriSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */; };
+		EAA54213C4FE63B54944CF58 /* UITestLaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97689277AC6F86ED5E681D2D /* UITestLaunchArguments.swift */; };
 		F8CEA95579671A21AF796C46 /* SessionSearchRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37F135BB1B061C9ACFE9DCD /* SessionSearchRows.swift */; };
 		F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1B4CF83C84F91C05F5BB7C60 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7142F25756133A2B39C55DB4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7CBCFA6E5D4C16F49B195F2B;
+			remoteInfo = LooperCompanion;
+		};
+		F68EB7BBFFA6CA77A65FA752 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7142F25756133A2B39C55DB4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7CBCFA6E5D4C16F49B195F2B;
+			remoteInfo = LooperCompanion;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsCategories.swift; sourceTree = "<group>"; };
@@ -85,7 +109,9 @@
 		159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionPasskeyAuthenticationClient.swift; sourceTree = "<group>"; };
 		19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriIntents.swift; sourceTree = "<group>"; };
 		1AE006F2F407024A15E4727F /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationRow.swift; sourceTree = "<group>"; };
 		2489ABFC353256268974517A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
+		2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCompanionControlFlowUITests.swift; sourceTree = "<group>"; };
 		2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Release.entitlements; sourceTree = "<group>"; };
 		2E6662FF1A21320CE35B28AF /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		33D26D1804CDCE3146E4985A /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
@@ -99,9 +125,11 @@
 		4B853A44BD4EC54518692819 /* CompanionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionModels.swift; sourceTree = "<group>"; };
 		4D6DADF770C736556DE619E8 /* HapticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManager.swift; sourceTree = "<group>"; };
 		4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballDebugOverlay.swift; sourceTree = "<group>"; };
+		5596E2F00F71A1D4FBC8A7DB /* LooperCompanionUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LooperCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56C79B6AF7BC32D952CE288D /* CompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionService.swift; sourceTree = "<group>"; };
 		57284556E78E9BB265560A6A /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
 		5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotCache.swift; sourceTree = "<group>"; };
+		5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationPresentationTests.swift; sourceTree = "<group>"; };
 		61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionMobileSessionStore.swift; sourceTree = "<group>"; };
 		62FF4BF9B2F8F7856941F6C2 /* codex-logo.mp4 */ = {isa = PBXFileReference; path = "codex-logo.mp4"; sourceTree = "<group>"; };
 		64992FB2DA134F019F69163E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
@@ -122,6 +150,7 @@
 		87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Debug.entitlements; sourceTree = "<group>"; };
 		9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeGeneration.swift; sourceTree = "<group>"; };
 		95DECA57A9C3520B2610DF89 /* SessionDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailScreen.swift; sourceTree = "<group>"; };
+		97689277AC6F86ED5E681D2D /* UITestLaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchArguments.swift; sourceTree = "<group>"; };
 		9B53B1A0B059EE4D0710267A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9B6BD373F060250BF3162655 /* MazeGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeGameView.swift; sourceTree = "<group>"; };
 		9FCDE85806224DF019E36874 /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
@@ -135,16 +164,20 @@
 		B652E921D017E22E586FFDED /* LooperCompanionCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperCompanionCore; path = LooperCompanionCore; sourceTree = SOURCE_ROOT; };
 		B9D9AC6F0B6668F69F4314D1 /* StatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPill.swift; sourceTree = "<group>"; };
 		C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDeviceHubSheet.swift; sourceTree = "<group>"; };
+		C908F2696CD222D37561EB90 /* LooperCompanionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LooperCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CF358D2391C7291C45B052B8 /* CompanionDevicePasskeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionDevicePasskeyStore.swift; sourceTree = "<group>"; };
 		CF3944B1E9ABDAD59BD37452 /* RemotePushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePushRegistrar.swift; sourceTree = "<group>"; };
 		D19E934D92F2115337B79EB6 /* CompanionAppAuthenticator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppAuthenticator.swift; sourceTree = "<group>"; };
+		D320C50CEEE04B7C3D33CB26 /* CompanionRealtimeSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRealtimeSyncTests.swift; sourceTree = "<group>"; };
 		D525E23B82E5CD10CC90FDC3 /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
 		DB14C4FA82BF7D389C6F98E1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E26E5665E69C8705992001B8 /* SessionSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchModel.swift; sourceTree = "<group>"; };
 		E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballGameView.swift; sourceTree = "<group>"; };
+		E617D40EED3319CDBD4B375F /* PinballSettingsKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballSettingsKeys.swift; sourceTree = "<group>"; };
 		EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionEnvironment.swift; sourceTree = "<group>"; };
 		EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewFixtures.swift; sourceTree = "<group>"; };
 		F02652A178B2079D63BC929D /* SessionSearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchScreen.swift; sourceTree = "<group>"; };
+		F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummaryTimingTests.swift; sourceTree = "<group>"; };
 		F59A21138D6F1F2F8B1124C0 /* CompanionRealtimeSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRealtimeSync.swift; sourceTree = "<group>"; };
 		FC260B4728D2B8FA011C6F93 /* codex-logo-dark-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "codex-logo-dark-poster.png"; sourceTree = "<group>"; };
 		FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkAccessMonitor.swift; sourceTree = "<group>"; };
@@ -179,6 +212,14 @@
 			path = Pinball;
 			sourceTree = "<group>";
 		};
+		155466AAA3EB4282D4BC87E1 /* LooperCompanionUITests */ = {
+			isa = PBXGroup;
+			children = (
+				2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */,
+			);
+			path = LooperCompanionUITests;
+			sourceTree = "<group>";
+		};
 		28DFFCD51B447E38915A6DC1 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
@@ -202,6 +243,7 @@
 			isa = PBXGroup;
 			children = (
 				AD847E9AD9142AA0F82C325D /* AssistantClientGlyph.swift */,
+				1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */,
 				B9D9AC6F0B6668F69F4314D1 /* StatusPill.swift */,
 			);
 			path = Common;
@@ -211,6 +253,8 @@
 			isa = PBXGroup;
 			children = (
 				155542B6D3718553CC20717F /* LooperCompanion.app */,
+				C908F2696CD222D37561EB90 /* LooperCompanionTests.xctest */,
+				5596E2F00F71A1D4FBC8A7DB /* LooperCompanionUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -239,6 +283,16 @@
 				64992FB2DA134F019F69163E /* RootTabView.swift */,
 			);
 			path = Root;
+			sourceTree = "<group>";
+		};
+		6FBDD0A0DB1F2E386DBB1019 /* LooperCompanionTests */ = {
+			isa = PBXGroup;
+			children = (
+				D320C50CEEE04B7C3D33CB26 /* CompanionRealtimeSyncTests.swift */,
+				5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */,
+				F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */,
+			);
+			path = LooperCompanionTests;
 			sourceTree = "<group>";
 		};
 		744173B7F70D09504251A3FA /* AppIntents */ = {
@@ -337,6 +391,8 @@
 			isa = PBXGroup;
 			children = (
 				E020333B7121030F5C46068D /* LooperCompanion */,
+				6FBDD0A0DB1F2E386DBB1019 /* LooperCompanionTests */,
+				155466AAA3EB4282D4BC87E1 /* LooperCompanionUITests */,
 				28DFFCD51B447E38915A6DC1 /* Packages */,
 				513C913E5CBD442859FEA513 /* Frameworks */,
 				3C0A80A8DF771FB019C9DC4F /* Products */,
@@ -396,8 +452,10 @@
 				2E6662FF1A21320CE35B28AF /* Haptics.swift */,
 				FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */,
 				A181613E2D3F61BA7CED0659 /* LocalNotificationManager.swift */,
+				E617D40EED3319CDBD4B375F /* PinballSettingsKeys.swift */,
 				EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */,
 				CF3944B1E9ABDAD59BD37452 /* RemotePushRegistrar.swift */,
+				97689277AC6F86ED5E681D2D /* UITestLaunchArguments.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -405,6 +463,42 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		34D254D8F98B31AA515229F5 /* LooperCompanionTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 45D88147CC7AB97DDAC0D3F5 /* Build configuration list for PBXNativeTarget "LooperCompanionTests" */;
+			buildPhases = (
+				6E8BB1D3C8E38E41457EAA17 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DC9FEC050A73557705F39C3B /* PBXTargetDependency */,
+			);
+			name = LooperCompanionTests;
+			packageProductDependencies = (
+			);
+			productName = LooperCompanionTests;
+			productReference = C908F2696CD222D37561EB90 /* LooperCompanionTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		6BA2BE776CEA543E71F2F0F4 /* LooperCompanionUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ACC22C126C08F6E3D4F9B1D9 /* Build configuration list for PBXNativeTarget "LooperCompanionUITests" */;
+			buildPhases = (
+				9FB2FC0FBABD9E06703EA476 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0807A2F7940399E50EC5A43F /* PBXTargetDependency */,
+			);
+			name = LooperCompanionUITests;
+			packageProductDependencies = (
+			);
+			productName = LooperCompanionUITests;
+			productReference = 5596E2F00F71A1D4FBC8A7DB /* LooperCompanionUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		7CBCFA6E5D4C16F49B195F2B /* LooperCompanion */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2B57DF95CA95A8C0454D7783 /* Build configuration list for PBXNativeTarget "LooperCompanion" */;
@@ -436,6 +530,15 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					34D254D8F98B31AA515229F5 = {
+						DevelopmentTeam = Z5454ZPPUX;
+						ProvisioningStyle = Automatic;
+					};
+					6BA2BE776CEA543E71F2F0F4 = {
+						DevelopmentTeam = Z5454ZPPUX;
+						ProvisioningStyle = Automatic;
+						TestTargetID = 7CBCFA6E5D4C16F49B195F2B;
+					};
 					7CBCFA6E5D4C16F49B195F2B = {
 						DevelopmentTeam = Z5454ZPPUX;
 						ProvisioningStyle = Automatic;
@@ -462,6 +565,8 @@
 			projectRoot = "";
 			targets = (
 				7CBCFA6E5D4C16F49B195F2B /* LooperCompanion */,
+				34D254D8F98B31AA515229F5 /* LooperCompanionTests */,
+				6BA2BE776CEA543E71F2F0F4 /* LooperCompanionUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -484,6 +589,16 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		6E8BB1D3C8E38E41457EAA17 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				36B70CA75F4ECD1400AEB7D0 /* CompanionRealtimeSyncTests.swift in Sources */,
+				1C888B1B6FDC51811EFF8999 /* NotificationDestinationPresentationTests.swift in Sources */,
+				477018ADC22B0FD35932DC41 /* SessionSummaryTimingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		73F5552B7230CDE405CA8B81 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -521,11 +636,13 @@
 				DE616458E53567DBD195D43B /* MobileEventStream.swift in Sources */,
 				4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */,
 				3AE7B647FFE2E6529D655E38 /* MotionController.swift in Sources */,
+				1B102E499D134E2327B3DEAA /* NotificationDestinationRow.swift in Sources */,
 				8B6CB0A811613F054EFD021B /* OnboardingScreen.swift in Sources */,
 				DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */,
 				4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */,
 				2D482EE05EA391F40E13CF7B /* PinballDebugOverlay.swift in Sources */,
 				0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */,
+				2A34AE718CDCD08514A6AE44 /* PinballSettingsKeys.swift in Sources */,
 				5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */,
 				5824EF8E8A99FBA17624BCAA /* RealtimeCompanionClientFactory.swift in Sources */,
 				98B40F9B225EEFDE1AFFE537 /* RemotePushRegistrar.swift in Sources */,
@@ -544,10 +661,32 @@
 				A075E99DA429033BC81CF2D6 /* SpotlightSearchService.swift in Sources */,
 				C7FDB71A399DED377B511A0F /* StatusPill.swift in Sources */,
 				93130249F7C31EC788DCD5E9 /* UIBodySynchronizer.swift in Sources */,
+				EAA54213C4FE63B54944CF58 /* UITestLaunchArguments.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9FB2FC0FBABD9E06703EA476 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				550A7CF2EDFB91BD86928A53 /* LooperCompanionControlFlowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0807A2F7940399E50EC5A43F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7CBCFA6E5D4C16F49B195F2B /* LooperCompanion */;
+			targetProxy = F68EB7BBFFA6CA77A65FA752 /* PBXContainerItemProxy */;
+		};
+		DC9FEC050A73557705F39C3B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7CBCFA6E5D4C16F49B195F2B /* LooperCompanion */;
+			targetProxy = 1B4CF83C84F91C05F5BB7C60 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		60D83E814B5149C38098C24A /* Release */ = {
@@ -633,6 +772,27 @@
 			};
 			name = Release;
 		};
+		761DA15A67BC4322EA6B0E43 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios.tests;
+				PRODUCT_NAME = LooperCompanionTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Looper.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Looper";
+			};
+			name = Debug;
+		};
 		7B208A3822647D0103B5DA28 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -696,6 +856,69 @@
 			};
 			name = Debug;
 		};
+		8D3D1D1401D12B7FDFD733B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios.uitests;
+				PRODUCT_NAME = LooperCompanionUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LooperCompanion;
+			};
+			name = Debug;
+		};
+		96DC10665741015A522FC1ED /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios.uitests;
+				PRODUCT_NAME = LooperCompanionUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LooperCompanion;
+			};
+			name = Release;
+		};
+		F2CE5BE89C9F6B941C5FFE9B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z5454ZPPUX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.looper.app.ios.tests;
+				PRODUCT_NAME = LooperCompanionTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Looper.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Looper";
+			};
+			name = Release;
+		};
 		F4C9095E07E1694E1A218937 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -735,11 +958,29 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		45D88147CC7AB97DDAC0D3F5 /* Build configuration list for PBXNativeTarget "LooperCompanionTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				761DA15A67BC4322EA6B0E43 /* Debug */,
+				F2CE5BE89C9F6B941C5FFE9B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		981ECBB889F3998E7E702FCB /* Build configuration list for PBXProject "LooperCompanion" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7B208A3822647D0103B5DA28 /* Debug */,
 				74C2D17975D26DCD63F6691B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ACC22C126C08F6E3D4F9B1D9 /* Build configuration list for PBXNativeTarget "LooperCompanionUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8D3D1D1401D12B7FDFD733B8 /* Debug */,
+				96DC10665741015A522FC1ED /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

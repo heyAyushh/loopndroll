@@ -5,6 +5,7 @@ struct SettingsScreen: View {
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
     var initialSearchTarget: SettingsSearchTarget? = nil
+    var initialSearchRequestID = 0
     var embedsInNavigationStack = true
 
     @Environment(\.openURL) private var openURL
@@ -16,14 +17,15 @@ struct SettingsScreen: View {
     @AppStorage(CompanionConfiguration.connectionRoutePreferenceKey) private var connectionRoutePreferenceRawValue =
         CompanionConnectionRoutePreference.defaultPreference.rawValue
     @AppStorage(OnboardingState.completionStorageKey) private var hasCompletedOnboarding = false
-    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = false
-    @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
+    @AppStorage(PinballSettingsKeys.isGameEnabled) private var isPinballGameEnabled = false
+    @AppStorage(PinballSettingsKeys.isDebugOverlayEnabled) private var isPinballDebugOverlayEnabled = false
     @State private var draftPrompt = ""
     @State private var isConnecting = false
     @State private var isOrbScannerPresented = false
     @State private var isUpdatingFaceIDUnlock = false
     @State private var localNetworkAccess = LocalNetworkAccessMonitor()
     @State private var scrollTarget: SettingsSearchTarget?
+    @State private var settingsPath = NavigationPath()
     @FocusState private var focusedInput: SettingsInput?
 
     private var selectedQuickActions: Set<QuickActionOption> {
@@ -67,13 +69,20 @@ struct SettingsScreen: View {
     var body: some View {
         Group {
             if embedsInNavigationStack {
-                NavigationStack {
-                    settingsContent
+                NavigationStack(path: $settingsPath) {
+                    settingsContentWithDestinations
                 }
             } else {
-                settingsContent
+                settingsContentWithDestinations
             }
         }
+    }
+
+    private var settingsContentWithDestinations: some View {
+        settingsContent
+            .navigationDestination(for: SettingsSearchTarget.self) { target in
+                settingsDestination(for: target)
+            }
     }
 
     private var settingsContent: some View {
@@ -100,6 +109,7 @@ struct SettingsScreen: View {
                     savePrompt()
                 }
                 .disabled(!isPromptDirty || model.isSavingDefaultPrompt)
+                .accessibilityIdentifier("settings.save")
             }
 
             ToolbarItemGroup(placement: .keyboard) {
@@ -108,6 +118,7 @@ struct SettingsScreen: View {
                 Button("Done") {
                     focusedInput = nil
                 }
+                .accessibilityIdentifier("settings.keyboard-done")
             }
         }
         .task(id: model.snapshot?.globalSettings.defaultPrompt) {
@@ -115,8 +126,8 @@ struct SettingsScreen: View {
                 draftPrompt = defaultPrompt
             }
         }
-        .task(id: initialSearchTarget) {
-            scrollToSearchTarget(initialSearchTarget)
+        .task(id: initialSearchTaskID) {
+            openSettingsTarget(initialSearchTarget)
         }
         .refreshable {
             await model.prepareForActiveState()
@@ -162,6 +173,7 @@ struct SettingsScreen: View {
                 Label("Local Network Access", systemImage: localNetworkAccess.status.symbolName)
             }
             .disabled(localNetworkAccess.isChecking)
+            .accessibilityIdentifier("settings.local-network-access")
 
             Text(localNetworkAccess.status.summary)
                 .font(.footnote)
@@ -177,6 +189,7 @@ struct SettingsScreen: View {
                 } label: {
                     Label("Open iOS Settings", systemImage: "gear")
                 }
+                .accessibilityIdentifier("settings.open-ios-settings")
             }
 
             tailscaleRows
@@ -192,6 +205,7 @@ struct SettingsScreen: View {
                     connectUsingDeviceCode()
                     focusedInput = nil
                 }
+                .accessibilityIdentifier("settings.connection-code")
 
             Button {
                 connectUsingDeviceCode()
@@ -199,6 +213,7 @@ struct SettingsScreen: View {
                 Label("Login with Device Code", systemImage: "link.badge.plus")
             }
             .disabled(isConnecting || draftConnectionCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("settings.login-device-code")
 
             Button {
                 isOrbScannerPresented = true
@@ -206,12 +221,14 @@ struct SettingsScreen: View {
                 Label("Scan Mac Orb", systemImage: "viewfinder.circle")
             }
             .disabled(isConnecting)
+            .accessibilityIdentifier("settings.scan-mac-orb")
 
             Button {
                 hasCompletedOnboarding = false
             } label: {
                 Label("Run Setup Again", systemImage: "arrow.clockwise")
             }
+            .accessibilityIdentifier("settings.run-setup-again")
 
             if isConnecting {
                 ProgressView("Connecting")
@@ -272,6 +289,7 @@ struct SettingsScreen: View {
         } label: {
             Label("Open Tailscale in App Store", systemImage: "arrow.up.forward.app")
         }
+        .accessibilityIdentifier("settings.open-tailscale")
     }
 
     private var continuePromptSection: some View {
@@ -280,6 +298,7 @@ struct SettingsScreen: View {
                 .font(.body)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
                 .focused($focusedInput, equals: .continuePrompt)
+                .accessibilityIdentifier("settings.default-prompt-editor")
         } header: {
             Text("Continue Prompt")
         } footer: {
@@ -299,6 +318,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .accessibilityIdentifier("settings.quick-action.\(action.rawValue)")
             }
         } header: {
             Text("Stop Quick Actions")
@@ -324,6 +344,7 @@ struct SettingsScreen: View {
                     isUpdatingFaceIDUnlock ||
                     authenticator.isAuthenticating
             )
+            .accessibilityIdentifier("settings.face-id-unlock")
 
             if !CompanionConfiguration.hasAuthenticatedConnection() {
                 Text("Login with a Mac device code before enabling Face ID Unlock.")
@@ -334,12 +355,14 @@ struct SettingsScreen: View {
             Text(authenticator.faceIDStatusMessage)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("settings.face-id-status")
 
             if authenticator.isFaceIDUnlockEnabled {
                 Button("Lock Now") {
                     authenticator.lockIfNeeded()
                 }
                 .disabled(!authenticator.isUnlocked)
+                .accessibilityIdentifier("settings.lock-now")
             }
 
             if authenticator.isAuthenticating {
@@ -350,6 +373,7 @@ struct SettingsScreen: View {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(.red)
+                    .accessibilityIdentifier("settings.face-id-error")
             }
         } header: {
             Text("App Security")
@@ -373,8 +397,10 @@ struct SettingsScreen: View {
     private var pinballSection: some View {
         Section {
             Toggle("Pinball", isOn: $isPinballGameEnabled)
+                .accessibilityIdentifier("settings.pinball.enabled")
             Toggle("Physics Debug Overlay", isOn: $isPinballDebugOverlayEnabled)
                 .disabled(!isPinballGameEnabled)
+                .accessibilityIdentifier("settings.pinball.debug-overlay")
             NavigationLink("Maze") {
                 SettingsMazeScreen()
             }
@@ -390,10 +416,12 @@ struct SettingsScreen: View {
             NavigationLink("Notification Routes") {
                 SettingsRoutesScreen(model: model)
             }
+            .accessibilityIdentifier("settings.notification-routes")
 
             NavigationLink("Completion Checks") {
                 SettingsCompletionChecksScreen(model: model)
             }
+            .accessibilityIdentifier("settings.completion-checks")
         }
     }
 
@@ -517,6 +545,49 @@ struct SettingsScreen: View {
         }
     }
 
+    @ViewBuilder
+    private func settingsDestination(for target: SettingsSearchTarget) -> some View {
+        switch target {
+        case .notificationRoutes:
+            SettingsRoutesScreen(model: model)
+        case .completionChecks:
+            SettingsCompletionChecksScreen(model: model)
+        case .connection, .continuePrompt, .stopQuickActions, .security:
+            SettingsScreen(
+                model: model,
+                authenticator: authenticator,
+                initialSearchTarget: target,
+                initialSearchRequestID: initialSearchRequestID,
+                embedsInNavigationStack: false
+            )
+        }
+    }
+
+    private var initialSearchTaskID: String {
+        [
+            initialSearchTarget?.rawValue ?? "none",
+            String(initialSearchRequestID),
+        ].joined(separator: ":")
+    }
+
+    private func openSettingsTarget(_ target: SettingsSearchTarget?) {
+        switch target {
+        case .notificationRoutes, .completionChecks:
+            guard embedsInNavigationStack, let target else {
+                scrollTarget = nil
+                return
+            }
+            settingsPath = NavigationPath()
+            settingsPath.append(target)
+            scrollTarget = nil
+        case .connection, .continuePrompt, .stopQuickActions, .security:
+            settingsPath = NavigationPath()
+            scrollToSearchTarget(target)
+        case nil:
+            scrollTarget = nil
+        }
+    }
+
     private func savePrompt() {
         Task {
             await model.saveDefaultPrompt(draftPrompt)
@@ -576,7 +647,7 @@ struct SettingsRoutesScreen: View {
         List {
             if let notifications = model.snapshot?.notifications, !notifications.isEmpty {
                 ForEach(notifications) { notification in
-                    LabeledContent(notification.label, value: notification.channel.capitalized)
+                    NotificationDestinationRow(destination: notification)
                 }
             } else {
                 ContentUnavailableView(

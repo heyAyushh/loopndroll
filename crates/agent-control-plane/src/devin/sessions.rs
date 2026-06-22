@@ -42,6 +42,13 @@ const DEVIN_LOCAL_PROVIDER_ID: &str = "devin-cli";
 const DEVIN_ACP_PROVIDER_SUFFIX: &str = "-acp";
 const SESSION_UPDATE_KEY: &str = "sessionUpdate";
 const AGENT_MESSAGE_CHUNK_UPDATE: &str = "agent_message_chunk";
+const USER_MESSAGE_UPDATE_TYPES: &[&str] = &[
+    "user_message",
+    "user_message_chunk",
+    "client_message",
+    "client_message_chunk",
+    "user_prompt",
+];
 const TEXT_CONTENT_TYPE: &str = "text";
 const CONTENT_TEXT_KEY: &str = "text";
 const CONTENT_TYPE_KEY: &str = "type";
@@ -63,6 +70,7 @@ pub struct DevinSessionRecord {
     pub updated_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub first_user_prompt: Option<String>,
     pub archived: bool,
 }
 
@@ -258,6 +266,7 @@ pub fn devin_session_to_desktop_thread(session: &DevinSessionRecord) -> DesktopT
         updated_at_ms: session.updated_at_ms,
         latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        first_user_prompt: session.first_user_prompt.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: session.archived,
         goal: None,
@@ -457,6 +466,13 @@ fn session_record_from_metadata(
                 .and_then(latest_assistant_message_from_event_log)
         })
         .flatten();
+    let first_user_prompt = include_assistant_preview
+        .then(|| {
+            transcript_path
+                .as_deref()
+                .and_then(first_user_prompt_from_event_log)
+        })
+        .flatten();
 
     DevinSessionRecord {
         thread_id: public_thread_id_for_metadata_session(&session.session_id, &session.provider_id),
@@ -474,6 +490,7 @@ fn session_record_from_metadata(
         updated_at_ms,
         latest_message_at_ms: updated_at_ms,
         assistant_preview,
+        first_user_prompt,
         archived,
     }
 }
@@ -539,6 +556,54 @@ fn latest_assistant_message_from_event_log(event_log_path: &Path) -> Option<Stri
         .and_then(|message_id| messages_by_id.remove(&message_id))
         .map(|message| message.trim().to_owned())
         .filter(|message| !message.is_empty())
+}
+
+fn first_user_prompt_from_event_log(event_log_path: &Path) -> Option<String> {
+    let file = File::open(event_log_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut messages_by_id = BTreeMap::<String, String>::new();
+    let mut first_message_id = None;
+
+    for (line_index, line) in reader.lines().map_while(Result::ok).enumerate() {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(notification) = value.get("notification") else {
+            continue;
+        };
+        let Some(session_update) = notification.get(SESSION_UPDATE_KEY).and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if !USER_MESSAGE_UPDATE_TYPES.contains(&session_update) {
+            continue;
+        }
+        let Some(text) = notification.get("content").and_then(text_content) else {
+            continue;
+        };
+        let message_id = streaming_message_id(notification)
+            .unwrap_or_else(|| format!("{MESSAGE_ID_FALLBACK_PREFIX}-{line_index}"));
+        messages_by_id
+            .entry(message_id.clone())
+            .or_default()
+            .push_str(&text);
+        first_message_id.get_or_insert(message_id);
+    }
+
+    first_message_id
+        .and_then(|message_id| messages_by_id.remove(&message_id))
+        .map(|message| message.trim().to_owned())
+        .filter(|message| !message.is_empty())
+}
+
+fn text_content(content: &Value) -> Option<String> {
+    if content.get(CONTENT_TYPE_KEY).and_then(Value::as_str) != Some(TEXT_CONTENT_TYPE) {
+        return None;
+    }
+    content
+        .get(CONTENT_TEXT_KEY)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn streaming_message_id(notification: &Value) -> Option<String> {
@@ -669,6 +734,24 @@ mod tests {
                 serde_json::json!({
                     "providerId": "devin-cli",
                     "notification": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "Fix " },
+                        "_meta": { STREAMING_MESSAGE_ID_META_KEY: "user-1" }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "Devin support" },
+                        "_meta": { STREAMING_MESSAGE_ID_META_KEY: "user-1" }
+                    }
+                })
+                .to_string(),
+                serde_json::json!({
+                    "providerId": "devin-cli",
+                    "notification": {
                         "sessionUpdate": "agent_thought_chunk",
                         "content": { "type": "text", "text": "hidden" },
                         "_meta": { STREAMING_MESSAGE_ID_META_KEY: "thought-1" }
@@ -723,7 +806,7 @@ mod tests {
             serde_json::json!({
                 "acp/devin-cli/brindle-cadet": {
                     "uuid": "event-1",
-                    "eventCount": 3,
+                    "eventCount": 5,
                     "lastUpdated": 1780801814955_i64
                 }
             }),
@@ -739,6 +822,10 @@ mod tests {
         assert_eq!(
             sessions[0].assistant_preview.as_deref(),
             Some("Hello there")
+        );
+        assert_eq!(
+            sessions[0].first_user_prompt.as_deref(),
+            Some("Fix Devin support")
         );
         assert!(
             !sessions[0]
@@ -777,6 +864,7 @@ mod tests {
             "devin:devin-cli:brindle-cadet"
         );
         assert_eq!(recent.sessions[0].assistant_preview, None);
+        assert_eq!(recent.sessions[0].first_user_prompt, None);
     }
 
     #[test]

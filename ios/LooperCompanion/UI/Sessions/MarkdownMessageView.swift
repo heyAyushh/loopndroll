@@ -1,12 +1,13 @@
+import Foundation
 import SwiftUI
 
 enum MessageRenderBlock: Identifiable {
     case markdown(id: Int, text: AttributedString)
-    case code(id: Int, language: String?, text: String)
+    case code(id: Int, language: String?, text: String, renderedDiff: RenderedDiffBlock?)
 
     var id: Int {
         switch self {
-        case let .markdown(id, _), let .code(id, _, _):
+        case let .markdown(id, _), let .code(id, _, _, _):
             return id
         }
     }
@@ -95,12 +96,68 @@ enum MessageRenderBlockParser {
             return
         }
 
-        blocks.append(.code(id: id, language: language, text: text))
+        blocks.append(
+            .code(
+                id: id,
+                language: language,
+                text: text,
+                renderedDiff: DiffBlockParser.parse(language: language, diff: text)
+            )
+        )
         id += 1
     }
 
     private static func renderedText(from markdown: String) -> AttributedString {
         (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+    }
+}
+
+private enum MessageRenderCacheLimit {
+    static let maximumEntries = 48
+}
+
+private final class MessageRenderBlockCache: @unchecked Sendable {
+    static let shared = MessageRenderBlockCache(maximumEntries: MessageRenderCacheLimit.maximumEntries)
+
+    private let lock = NSLock()
+    private let maximumEntries: Int
+    private var blocksByMarkdown: [String: [MessageRenderBlock]] = [:]
+    private var insertionOrder: [String] = []
+
+    init(maximumEntries: Int) {
+        self.maximumEntries = maximumEntries
+    }
+
+    func blocks(for markdown: String) -> [MessageRenderBlock] {
+        lock.lock()
+        if let cachedBlocks = blocksByMarkdown[markdown] {
+            lock.unlock()
+            return cachedBlocks
+        }
+        lock.unlock()
+
+        let parsedBlocks = MessageRenderBlockParser.parse(markdown)
+
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+
+        if let cachedBlocks = blocksByMarkdown[markdown] {
+            return cachedBlocks
+        }
+
+        blocksByMarkdown[markdown] = parsedBlocks
+        insertionOrder.append(markdown)
+        pruneIfNeeded()
+        return parsedBlocks
+    }
+
+    private func pruneIfNeeded() {
+        while insertionOrder.count > maximumEntries {
+            let evictedMarkdown = insertionOrder.removeFirst()
+            blocksByMarkdown[evictedMarkdown] = nil
+        }
     }
 }
 
@@ -110,7 +167,7 @@ struct MarkdownMessageView: View {
 
     init(markdown: String) {
         self.markdown = markdown
-        blocks = MessageRenderBlockParser.parse(markdown)
+        blocks = MessageRenderBlockCache.shared.blocks(for: markdown)
     }
 
     var body: some View {
@@ -119,8 +176,8 @@ struct MarkdownMessageView: View {
                 switch block {
                 case let .markdown(_, text):
                     MarkdownTextBlock(text: text)
-                case let .code(_, language, text):
-                    CodeBlockView(language: language, code: text)
+                case let .code(_, language, text, renderedDiff):
+                    CodeBlockView(language: language, code: text, renderedDiff: renderedDiff)
                 }
             }
         }
@@ -143,14 +200,11 @@ private struct MarkdownTextBlock: View {
 private struct CodeBlockView: View {
     let language: String?
     let code: String
-
-    private var isDiff: Bool {
-        DiffBlockView.isDiff(language: language, code: code)
-    }
+    let renderedDiff: RenderedDiffBlock?
 
     var body: some View {
-        if isDiff {
-            DiffBlockView(language: language, diff: code)
+        if let renderedDiff {
+            DiffBlockView(renderedDiff: renderedDiff)
         } else {
             plainCodeBlock
         }

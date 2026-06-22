@@ -1,3 +1,4 @@
+// allow: SIZE_OK — single-file Grok hook config adapter keeps register/inspect/unregister schema edits atomic.
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -92,10 +93,7 @@ pub fn unregister_owned_grok_hooks(grok_home: &Path) -> Result<usize> {
 
 pub fn inspect_grok_hooks(grok_home: &Path) -> GrokHookStatus {
     let hooks_path = grok_home.join(GROK_HOOKS_DIR).join(LOOPER_GROK_HOOK_FILE);
-    let (registered_events, active_command) = match read_hooks_json(&hooks_path) {
-        Ok(value) => value,
-        Err(_) => (Vec::new(), None),
-    };
+    let (registered_events, active_command) = read_hooks_json(&hooks_path).unwrap_or_default();
     let owner = classify_hook_owner(active_command.as_deref());
     let health = if registered_events.is_empty() {
         "missing"
@@ -235,14 +233,24 @@ fn ensure_nested_hooks_object(document: &mut Value) -> &mut Value {
     if !document.is_object() {
         *document = json!({ "hooks": {} });
     }
-    if document.get("hooks").is_none() {
+    let has_hooks = document
+        .as_object()
+        .map(|document| document.contains_key("hooks"))
+        .unwrap_or(false);
+    if !has_hooks {
         let current_hooks = std::mem::replace(document, json!({ "hooks": {} }));
         document["hooks"] = current_hooks;
     }
-    if !document["hooks"].is_object() {
-        document["hooks"] = json!({});
+    match document {
+        Value::Object(document_object) => {
+            let hooks = document_object.entry("hooks").or_insert_with(|| json!({}));
+            if !hooks.is_object() {
+                *hooks = json!({});
+            }
+            hooks
+        }
+        _ => document,
     }
-    document.get_mut("hooks").expect("hooks object")
 }
 
 fn remove_owned_hooks_from_events(events: &mut Value) -> usize {

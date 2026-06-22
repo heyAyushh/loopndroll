@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::acp_targets::{AcpLaunchMetadata, inspect_launch_metadata};
+use crate::acp::targets::{AcpLaunchMetadata, inspect_launch_metadata};
 
 use super::read_json_object;
 
@@ -84,7 +84,7 @@ mod tests {
 
         let parsed = parse_acp_agent(&agent).expect("agent");
 
-        assert_eq!(parsed.launch_configured, true);
+        assert!(parsed.launch_configured);
         assert_eq!(parsed.launch.methods, vec!["npx"]);
         assert!(
             !serde_json::to_string(&parsed)

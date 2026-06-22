@@ -353,6 +353,47 @@ enum LooperContinuationActivity {
     }
 }
 
+enum LooperSettingsDeepLink {
+    static let scheme = "looper"
+    static let settingsHost = "settings"
+
+    private enum QueryKey {
+        static let target = "target"
+    }
+
+    static func url(for target: SettingsSearchTarget) -> URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = settingsHost
+        components.path = "/\(target.rawValue)"
+        return components.url
+    }
+
+    static func target(from url: URL) -> SettingsSearchTarget? {
+        guard url.scheme == scheme, url.host == settingsHost else {
+            return nil
+        }
+
+        let pathTarget = url.path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .removingPercentEncoding?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        if let pathTarget, let target = SettingsSearchTarget(rawValue: pathTarget) {
+            return target
+        }
+
+        let queryTarget = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == QueryKey.target }?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+
+        return queryTarget.flatMap(SettingsSearchTarget.init(rawValue:))
+    }
+}
+
 struct LooperSiriOpenSessionRequest: Codable, Equatable {
     private static let currentVersion = 1
 
@@ -1316,6 +1357,128 @@ struct SessionGoalSummary: Codable, Hashable, Sendable {
     var updatedAtMs: Int64?
 }
 
+struct MobileWorkStatusGoal: Codable, Hashable, Sendable {
+    var id: String
+    var title: String
+    var status: String
+    var targetThreadId: String?
+    var targetKnown: Bool
+    var updatedAtMs: Int64?
+    var tokensUsed: Int?
+    var tokenBudget: Int?
+    var timeUsedSeconds: Int?
+}
+
+struct MobileWorkStatusAutomation: Codable, Hashable, Sendable {
+    var id: String
+    var kind: String
+    var name: String
+    var status: String
+    var scheduleSummary: String
+    var targetThreadId: String?
+    var targetKnown: Bool
+    var controlPlaneCovered: Bool
+}
+
+struct MobileWorkStatusSummary: Codable, Hashable, Sendable {
+    static let empty = MobileWorkStatusSummary(
+        goalCount: 0,
+        runningGoalCount: 0,
+        automationCount: 0,
+        activeAutomationCount: 0,
+        coveredAutomationCount: 0,
+        runningGoals: [],
+        activeAutomations: []
+    )
+
+    var goalCount: Int
+    var runningGoalCount: Int
+    var automationCount: Int
+    var activeAutomationCount: Int
+    var coveredAutomationCount: Int
+    var runningGoals: [MobileWorkStatusGoal]
+    var activeAutomations: [MobileWorkStatusAutomation]
+
+    private enum CodingKeys: String, CodingKey {
+        case goalCount
+        case runningGoalCount
+        case automationCount
+        case activeAutomationCount
+        case coveredAutomationCount
+        case runningGoals
+        case activeAutomations
+    }
+
+    init(
+        goalCount: Int,
+        runningGoalCount: Int,
+        automationCount: Int,
+        activeAutomationCount: Int,
+        coveredAutomationCount: Int,
+        runningGoals: [MobileWorkStatusGoal],
+        activeAutomations: [MobileWorkStatusAutomation]
+    ) {
+        self.goalCount = goalCount
+        self.runningGoalCount = runningGoalCount
+        self.automationCount = automationCount
+        self.activeAutomationCount = activeAutomationCount
+        self.coveredAutomationCount = coveredAutomationCount
+        self.runningGoals = runningGoals
+        self.activeAutomations = activeAutomations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        goalCount = try container.decodeIfPresent(Int.self, forKey: .goalCount) ?? 0
+        runningGoalCount = try container.decodeIfPresent(Int.self, forKey: .runningGoalCount) ?? 0
+        automationCount = try container.decodeIfPresent(Int.self, forKey: .automationCount) ?? 0
+        activeAutomationCount = try container.decodeIfPresent(Int.self, forKey: .activeAutomationCount) ?? 0
+        coveredAutomationCount = try container.decodeIfPresent(Int.self, forKey: .coveredAutomationCount) ?? 0
+        runningGoals = try container.decodeIfPresent(
+            [MobileWorkStatusGoal].self,
+            forKey: .runningGoals
+        ) ?? []
+        activeAutomations = try container.decodeIfPresent(
+            [MobileWorkStatusAutomation].self,
+            forKey: .activeAutomations
+        ) ?? []
+    }
+
+    var hasRecognizedWork: Bool {
+        runningGoalCount > 0 || activeAutomationCount > 0
+    }
+
+    var displaySummary: String? {
+        let parts = [
+            runningGoalCount > 0 ? Self.countLabel(
+                runningGoalCount,
+                singular: "running goal",
+                plural: "running goals"
+            ) : nil,
+            activeAutomationCount > 0 ? Self.countLabel(
+                activeAutomationCount,
+                singular: "active automation",
+                plural: "active automations"
+            ) : nil,
+        ]
+        .compactMap { $0 }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var coverageSummary: String? {
+        guard activeAutomationCount > 0 else {
+            return nil
+        }
+
+        return "\(coveredAutomationCount.formatted())/\(activeAutomationCount.formatted()) automations covered"
+    }
+
+    private static func countLabel(_ count: Int, singular: String, plural: String) -> String {
+        "\(count.formatted()) \(count == 1 ? singular : plural)"
+    }
+}
+
 enum SessionTaskKind: String, Codable, Sendable {
     case unknown
     case plan
@@ -1364,6 +1527,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     var kind: SessionKind
     var source: String
     var sourceDisplayName: String
+    var assistantKind: String?
+    var originator: String?
     var projectName: String?
     var projectPath: String?
     var taskKind: SessionTaskKind
@@ -1371,6 +1536,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     var gitRepository: GitRepositoryMetadata?
     var pullRequestURL: String?
     var supportsSubagents: Bool
+    var spawn: SessionSpawnMetadata?
     var installedPlugins: [InstalledPluginSummary]
     var sources: [SessionSourceReference]
     var tags: [String]
@@ -1379,6 +1545,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         kind: .instantChat,
         source: "unknown",
         sourceDisplayName: "Unknown",
+        assistantKind: nil,
+        originator: nil,
         projectName: nil,
         projectPath: nil,
         taskKind: .unknown,
@@ -1386,6 +1554,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         gitRepository: nil,
         pullRequestURL: nil,
         supportsSubagents: false,
+        spawn: nil,
         installedPlugins: [],
         sources: [],
         tags: []
@@ -1395,6 +1564,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         case kind
         case source
         case sourceDisplayName
+        case assistantKind
+        case originator
         case projectName
         case projectPath
         case taskKind
@@ -1402,6 +1573,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         case gitRepository
         case pullRequestURL
         case supportsSubagents
+        case spawn
         case installedPlugins
         case sources
         case tags
@@ -1411,6 +1583,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         kind: SessionKind,
         source: String,
         sourceDisplayName: String,
+        assistantKind: String? = nil,
+        originator: String? = nil,
         projectName: String?,
         projectPath: String?,
         taskKind: SessionTaskKind,
@@ -1418,6 +1592,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         gitRepository: GitRepositoryMetadata?,
         pullRequestURL: String?,
         supportsSubagents: Bool,
+        spawn: SessionSpawnMetadata? = nil,
         installedPlugins: [InstalledPluginSummary],
         sources: [SessionSourceReference],
         tags: [String]
@@ -1425,6 +1600,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         self.kind = kind
         self.source = source
         self.sourceDisplayName = sourceDisplayName
+        self.assistantKind = assistantKind
+        self.originator = originator
         self.projectName = projectName
         self.projectPath = projectPath
         self.taskKind = taskKind
@@ -1432,6 +1609,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         self.gitRepository = gitRepository
         self.pullRequestURL = pullRequestURL
         self.supportsSubagents = supportsSubagents
+        self.spawn = spawn
         self.installedPlugins = installedPlugins
         self.sources = sources
         self.tags = tags
@@ -1443,6 +1621,8 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         source = try container.decodeIfPresent(String.self, forKey: .source) ?? "unknown"
         sourceDisplayName = try container.decodeIfPresent(String.self, forKey: .sourceDisplayName) ??
             Self.displayName(forRawSource: source)
+        assistantKind = try container.decodeIfPresent(String.self, forKey: .assistantKind)
+        originator = try container.decodeIfPresent(String.self, forKey: .originator)
         projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
         projectPath = try container.decodeIfPresent(String.self, forKey: .projectPath)
         taskKind = try container.decodeIfPresent(SessionTaskKind.self, forKey: .taskKind) ?? .unknown
@@ -1450,6 +1630,7 @@ struct SessionMetadata: Codable, Hashable, Sendable {
         gitRepository = try container.decodeIfPresent(GitRepositoryMetadata.self, forKey: .gitRepository)
         pullRequestURL = try container.decodeIfPresent(String.self, forKey: .pullRequestURL)
         supportsSubagents = try container.decodeIfPresent(Bool.self, forKey: .supportsSubagents) ?? false
+        spawn = try container.decodeIfPresent(SessionSpawnMetadata.self, forKey: .spawn)
         installedPlugins = try container.decodeIfPresent(
             [InstalledPluginSummary].self,
             forKey: .installedPlugins
@@ -1495,6 +1676,33 @@ struct SessionMetadata: Codable, Hashable, Sendable {
     }
 }
 
+struct SessionSpawnMetadata: Codable, Hashable, Sendable {
+    var parentThreadId: String?
+    var rootThreadId: String?
+    var children: [String]
+    var launchKind: String?
+
+    init(
+        parentThreadId: String? = nil,
+        rootThreadId: String? = nil,
+        children: [String] = [],
+        launchKind: String? = nil
+    ) {
+        self.parentThreadId = parentThreadId
+        self.rootThreadId = rootThreadId
+        self.children = children
+        self.launchKind = launchKind
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        parentThreadId = try container.decodeIfPresent(String.self, forKey: .parentThreadId)
+        rootThreadId = try container.decodeIfPresent(String.self, forKey: .rootThreadId)
+        children = try container.decodeIfPresent([String].self, forKey: .children) ?? []
+        launchKind = try container.decodeIfPresent(String.self, forKey: .launchKind)
+    }
+}
+
 struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var ref: String
@@ -1502,7 +1710,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
     var status: SessionStatus
     var effectiveMode: SessionMode?
     var lastUpdatedAt: String
+    var createdAtMs: Int64?
+    var updatedAtMs: Int64?
+    var latestMessageAtMs: Int64?
+    var lastActivityAtMs: Int64?
     var lastActivityAt: String
+    var lastMessageAtMs: Int64?
     var lastMessageAt: String?
     var assistantPreview: String?
     var isArchived: Bool
@@ -1519,7 +1732,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case status
         case effectiveMode
         case lastUpdatedAt
+        case createdAtMs
+        case updatedAtMs
+        case latestMessageAtMs
+        case lastActivityAtMs
         case lastActivityAt
+        case lastMessageAtMs
         case lastMessageAt
         case assistantPreview
         case isArchived
@@ -1537,7 +1755,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         status: SessionStatus,
         effectiveMode: SessionMode?,
         lastUpdatedAt: String,
+        createdAtMs: Int64? = nil,
+        updatedAtMs: Int64? = nil,
+        latestMessageAtMs: Int64? = nil,
+        lastActivityAtMs: Int64? = nil,
         lastActivityAt: String? = nil,
+        lastMessageAtMs: Int64? = nil,
         lastMessageAt: String? = nil,
         assistantPreview: String?,
         isArchived: Bool,
@@ -1553,7 +1776,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         self.status = status
         self.effectiveMode = effectiveMode
         self.lastUpdatedAt = lastUpdatedAt
+        self.createdAtMs = createdAtMs
+        self.updatedAtMs = updatedAtMs
+        self.latestMessageAtMs = latestMessageAtMs
+        self.lastActivityAtMs = lastActivityAtMs
         self.lastActivityAt = lastActivityAt ?? lastUpdatedAt
+        self.lastMessageAtMs = lastMessageAtMs
         self.lastMessageAt = lastMessageAt
         self.assistantPreview = assistantPreview
         self.isArchived = isArchived
@@ -1572,7 +1800,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         status = try container.decode(SessionStatus.self, forKey: .status)
         effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
         lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
+        createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
+        latestMessageAtMs = try container.decodeIfPresent(Int64.self, forKey: .latestMessageAtMs)
+        lastActivityAtMs = try container.decodeIfPresent(Int64.self, forKey: .lastActivityAtMs)
         lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt) ?? lastUpdatedAt
+        lastMessageAtMs = try container.decodeIfPresent(Int64.self, forKey: .lastMessageAtMs)
         lastMessageAt = try container.decodeIfPresent(String.self, forKey: .lastMessageAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ??
@@ -1589,16 +1822,21 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
 }
 
 extension SessionSummary {
+    private enum Time {
+        static let millisecondsPerSecond: TimeInterval = 1_000
+    }
+
     var lastUpdatedDate: Date? {
-        SessionTimestampParser.date(from: lastUpdatedAt)
+        date(fromMilliseconds: updatedAtMs) ?? SessionTimestampParser.date(from: lastUpdatedAt)
     }
 
     var lastActivityDate: Date? {
-        LooperSessionFreshness.date(from: lastActivityAt)
+        date(fromMilliseconds: lastActivityAtMs) ?? LooperSessionFreshness.date(from: lastActivityAt)
     }
 
     var lastMessageDate: Date? {
-        lastMessageAt.flatMap(LooperSessionFreshness.date)
+        date(fromMilliseconds: lastMessageAtMs ?? latestMessageAtMs) ??
+            lastMessageAt.flatMap(LooperSessionFreshness.date)
     }
 
     var displayFreshnessAt: String {
@@ -1606,21 +1844,44 @@ extension SessionSummary {
     }
 
     var displayFreshnessDate: Date? {
-        LooperSessionFreshness.displayDate(lastActivityAt: lastActivityAt)
+        lastActivityDate ?? LooperSessionFreshness.displayDate(lastActivityAt: lastActivityAt)
     }
 
     var displayFreshnessPrefix: String {
         LooperSessionFreshness.displayPrefix()
     }
 
+    var hasRunningGoal: Bool {
+        goal?.running == true
+    }
+
+    var workStatusLabel: String? {
+        hasRunningGoal ? "Goal running" : nil
+    }
+
     static func isNewerOrLowerRef(
         leftSession: SessionSummary,
         rightSession: SessionSummary
     ) -> Bool {
-        SessionFreshnessSortItem.isNewerOrLowerRef(
+        if let leftActivityMs = leftSession.lastActivityAtMs,
+           let rightActivityMs = rightSession.lastActivityAtMs,
+           leftActivityMs != rightActivityMs
+        {
+            return leftActivityMs > rightActivityMs
+        }
+
+        return SessionFreshnessSortItem.isNewerOrLowerRef(
             leftItem: SessionFreshnessSortItem(session: leftSession),
             rightItem: SessionFreshnessSortItem(session: rightSession)
         )
+    }
+
+    private func date(fromMilliseconds milliseconds: Int64?) -> Date? {
+        guard let milliseconds else {
+            return nil
+        }
+
+        return Date(timeIntervalSince1970: TimeInterval(milliseconds) / Time.millisecondsPerSecond)
     }
 }
 
@@ -1640,7 +1901,7 @@ struct SessionFreshnessSortItem {
         leftItem: SessionFreshnessSortItem,
         rightItem: SessionFreshnessSortItem
     ) -> Bool {
-        LooperSessionFreshness.isNewerActivityOrLowerReference(
+        return LooperSessionFreshness.isNewerActivityOrLowerReference(
             leftKey: leftItem.activitySortKey,
             rightKey: rightItem.activitySortKey
         )
@@ -1649,9 +1910,7 @@ struct SessionFreshnessSortItem {
 
 extension Sequence where Element == SessionSummary {
     func sortedBySessionFreshness() -> [SessionSummary] {
-        map(SessionFreshnessSortItem.init)
-            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
-            .map(\.session)
+        sorted(by: SessionSummary.isNewerOrLowerRef)
     }
 }
 
@@ -1666,6 +1925,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var lastMessageAt: String?
     var assistantPreview: String?
     var latestAssistantMessage: String?
+    var firstUserPrompt: String?
     var isArchived: Bool
     var canSendPrompt: Bool
     var promptDeliveryUnavailableReason: String?
@@ -1689,6 +1949,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case lastMessageAt
         case assistantPreview
         case latestAssistantMessage
+        case firstUserPrompt
         case isArchived
         case canSendPrompt
         case promptDeliveryUnavailableReason
@@ -1713,6 +1974,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         lastMessageAt: String? = nil,
         assistantPreview: String?,
         latestAssistantMessage: String?,
+        firstUserPrompt: String? = nil,
         isArchived: Bool,
         canSendPrompt: Bool = true,
         promptDeliveryUnavailableReason: String? = nil,
@@ -1735,6 +1997,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.lastMessageAt = lastMessageAt
         self.assistantPreview = assistantPreview
         self.latestAssistantMessage = latestAssistantMessage
+        self.firstUserPrompt = firstUserPrompt
         self.isArchived = isArchived
         self.canSendPrompt = canSendPrompt
         self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
@@ -1760,6 +2023,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         lastMessageAt = try container.decodeIfPresent(String.self, forKey: .lastMessageAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
+        firstUserPrompt = try container.decodeIfPresent(String.self, forKey: .firstUserPrompt)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
         canSendPrompt = try container.decodeIfPresent(Bool.self, forKey: .canSendPrompt) ?? true
         promptDeliveryUnavailableReason = try container.decodeIfPresent(
@@ -1834,6 +2098,7 @@ struct MobileSnapshot: Codable, Sendable {
     var surfaceSessions: [String: [SessionSummary]]
     var notifications: [NotificationDestination]
     var completionChecks: [CompletionCheckSummary]
+    var workStatus: MobileWorkStatusSummary
     var devinDesktop: DevinDesktopStatus?
     var grokBuild: GrokBuildStatus?
 
@@ -1845,6 +2110,7 @@ struct MobileSnapshot: Codable, Sendable {
         surfaceSessions: [String: [SessionSummary]] = [:],
         notifications: [NotificationDestination],
         completionChecks: [CompletionCheckSummary],
+        workStatus: MobileWorkStatusSummary = .empty,
         devinDesktop: DevinDesktopStatus? = nil,
         grokBuild: GrokBuildStatus? = nil
     ) {
@@ -1855,6 +2121,7 @@ struct MobileSnapshot: Codable, Sendable {
         self.surfaceSessions = surfaceSessions
         self.notifications = notifications
         self.completionChecks = completionChecks
+        self.workStatus = workStatus
         self.devinDesktop = devinDesktop
         self.grokBuild = grokBuild
     }
@@ -1867,6 +2134,7 @@ struct MobileSnapshot: Codable, Sendable {
         case surfaceSessions
         case notifications
         case completionChecks
+        case workStatus
         case devinDesktop
         case grokBuild
     }
@@ -1889,6 +2157,10 @@ struct MobileSnapshot: Codable, Sendable {
             [CompletionCheckSummary].self,
             forKey: .completionChecks
         ) ?? []
+        workStatus = try container.decodeIfPresent(
+            MobileWorkStatusSummary.self,
+            forKey: .workStatus
+        ) ?? .empty
         devinDesktop = try container.decodeIfPresent(DevinDesktopStatus.self, forKey: .devinDesktop)
         grokBuild = try container.decodeIfPresent(GrokBuildStatus.self, forKey: .grokBuild)
     }
@@ -1913,33 +2185,27 @@ struct MobileSnapshot: Codable, Sendable {
     }
 
     var sessionsAcrossSurfaces: [SessionSummary] {
-        var sessionItemsByID: [String: SessionFreshnessSortItem] = [:]
+        var sessionsByID: [String: SessionSummary] = [:]
         for surface in CompanionAssistantSurface.allCases {
             for session in sessions(for: surface) {
-                let sessionItem = SessionFreshnessSortItem(session: session)
-                if let existingItem = sessionItemsByID[session.id] {
-                    if SessionFreshnessSortItem.isNewerOrLowerRef(
-                        leftItem: sessionItem,
-                        rightItem: existingItem
-                    ) {
-                        sessionItemsByID[session.id] = sessionItem
-                    }
-                } else {
-                    sessionItemsByID[session.id] = sessionItem
+                if let existingSession = sessionsByID[session.id],
+                   !SessionSummary.isNewerOrLowerRef(
+                       leftSession: session,
+                       rightSession: existingSession
+                   )
+                {
+                    continue
                 }
+
+                sessionsByID[session.id] = session
             }
         }
-        return sessionItemsByID.values
-            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
-            .map(\.session)
+        return sessionsByID.values
+            .sorted(by: SessionSummary.isNewerOrLowerRef)
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
-        if let session = sessions.first(where: { session in session.id == sessionID }) {
-            return session
-        }
-
-        return sessionsAcrossSurfaces.first { session in
+        sessionsAcrossSurfaces.first { session in
             session.id == sessionID
         }
     }
@@ -1968,30 +2234,26 @@ struct SessionIndex: Equatable, Sendable {
 
     init(snapshot: MobileSnapshot) {
         var sessionsByID: [String: SessionSummary] = [:]
-        var sessionItemsByID: [String: SessionFreshnessSortItem] = [:]
         var surfaceBySessionID: [String: CompanionAssistantSurface] = [:]
 
         for surface in CompanionAssistantSurface.allCases {
             for session in snapshot.sessions(for: surface) {
-                let sessionItem = SessionFreshnessSortItem(session: session)
-                if let existingItem = sessionItemsByID[session.id],
-                   !SessionFreshnessSortItem.isNewerOrLowerRef(
-                       leftItem: sessionItem,
-                       rightItem: existingItem
+                if let existingSession = sessionsByID[session.id],
+                   !SessionSummary.isNewerOrLowerRef(
+                       leftSession: session,
+                       rightSession: existingSession
                    )
                 {
                     continue
                 }
 
                 sessionsByID[session.id] = session
-                sessionItemsByID[session.id] = sessionItem
                 surfaceBySessionID[session.id] = surface
             }
         }
 
-        let allSessions = sessionItemsByID.values
-            .sorted(by: SessionFreshnessSortItem.isNewerOrLowerRef)
-            .map(\.session)
+        let allSessions = sessionsByID.values
+            .sorted(by: SessionSummary.isNewerOrLowerRef)
         self.init(
             allSessions: allSessions,
             sessionsByID: sessionsByID,
@@ -2030,6 +2292,9 @@ struct SessionIndex: Equatable, Sendable {
                 session.status.rawValue,
                 session.lastActivityAt,
                 session.lastMessageAt ?? "",
+                session.goal?.id ?? "",
+                session.goal?.running == true ? "goal-running" : "goal-idle",
+                String(session.goal?.updatedAtMs ?? 0),
                 session.isArchived ? "archived" : "visible",
             ].joined(separator: ":")
         }
@@ -2074,7 +2339,11 @@ struct SessionSections: Sendable {
                 waiting.append(session)
                 needsAttention.append(session)
             case .stopped:
-                stopped.append(session)
+                if session.hasRunningGoal {
+                    running.append(session)
+                } else {
+                    stopped.append(session)
+                }
             case .archived:
                 archived.append(session)
             }

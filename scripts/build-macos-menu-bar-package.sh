@@ -198,6 +198,8 @@ plutil -insert CFBundleVersion -string "$(git rev-list --count HEAD)" "$plist_pa
 plutil -insert LSMinimumSystemVersion -string "$MACOS_MINIMUM_SYSTEM_VERSION" "$plist_path"
 plutil -insert LSUIElement -bool YES "$plist_path"
 plutil -insert NSHighResolutionCapable -bool YES "$plist_path"
+plutil -insert NSAppleEventsUsageDescription -string "Looper uses Apple Events only when you ask it to control supported desktop apps." "$plist_path"
+plutil -insert NSLocalNetworkUsageDescription -string "Looper uses the local network so the iPhone companion can reach this Mac." "$plist_path"
 plutil -insert NSUserActivityTypes -array "$plist_path"
 plutil -insert NSUserActivityTypes.0 -string "$CONTINUATION_ACTIVITY_TYPE" "$plist_path"
 

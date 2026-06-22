@@ -19,6 +19,8 @@ const ACTIVE_SESSIONS_FILE: &str = "active_sessions.json";
 const SUMMARY_FILE: &str = "summary.json";
 const UPDATES_FILE: &str = "updates.jsonl";
 const CHAT_HISTORY_FILE: &str = "chat_history.jsonl";
+const GROK_ASSISTANT_MESSAGE_TYPE: &str = "assistant";
+const GROK_USER_MESSAGE_TYPE: &str = "user";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GrokSessionRecord {
@@ -29,6 +31,7 @@ pub struct GrokSessionRecord {
     pub updated_at: String,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub first_user_prompt: Option<String>,
     pub running: bool,
 }
 
@@ -144,6 +147,7 @@ pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThr
         updated_at_ms: parse_timestamp_ms(&session.updated_at),
         latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        first_user_prompt: session.first_user_prompt.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
         goal: None,
@@ -193,15 +197,15 @@ fn grok_session_record_from_dir(
         .or(summary.session_summary.clone())
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
+    let chat_history_path = session_dir.join(CHAT_HISTORY_FILE);
     let assistant_preview = summary
         .session_summary
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-        .or_else(|| {
-            latest_assistant_message_from_chat_history(&session_dir.join(CHAT_HISTORY_FILE))
-        });
+        .or_else(|| latest_assistant_message_from_chat_history(&chat_history_path));
+    let first_user_prompt = first_user_message_from_chat_history(&chat_history_path);
     let updated_at = summary
         .last_active_at
         .or(summary.updated_at)
@@ -220,6 +224,7 @@ fn grok_session_record_from_dir(
         latest_message_at_ms: parse_timestamp_ms(&updated_at),
         updated_at,
         assistant_preview,
+        first_user_prompt,
         running,
     }))
 }
@@ -238,20 +243,36 @@ fn latest_assistant_message_from_chat_history(chat_history_path: &Path) -> Optio
     let mut latest_message = None;
     for line in reader.lines().map_while(Result::ok) {
         let value = serde_json::from_str::<Value>(&line).ok()?;
-        if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        if value.get("type").and_then(Value::as_str) != Some(GROK_ASSISTANT_MESSAGE_TYPE) {
             continue;
         }
-        let content = value
-            .get("content")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned);
+        let content = chat_history_message_text(&value);
         if let Some(content) = content {
             latest_message = Some(content);
         }
     }
     latest_message
+}
+
+fn first_user_message_from_chat_history(chat_history_path: &Path) -> Option<String> {
+    let file = fs::File::open(chat_history_path).ok()?;
+    let reader = BufReader::new(file);
+    reader.lines().map_while(Result::ok).find_map(|line| {
+        let value = serde_json::from_str::<Value>(&line).ok()?;
+        if value.get("type").and_then(Value::as_str) != Some(GROK_USER_MESSAGE_TYPE) {
+            return None;
+        }
+        chat_history_message_text(&value)
+    })
+}
+
+fn chat_history_message_text(value: &Value) -> Option<String> {
+    value
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 fn parse_timestamp_ms(value: &str) -> Option<i64> {
@@ -289,6 +310,23 @@ mod tests {
         .expect("write summary");
         fs::write(session_dir.join(UPDATES_FILE), "{}\n").expect("write updates");
         fs::write(
+            session_dir.join(CHAT_HISTORY_FILE),
+            [
+                serde_json::json!({
+                    "type": "user",
+                    "content": "Build Grok Build hooks"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "assistant",
+                    "content": "Grok hooks are visible."
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write chat history");
+        fs::write(
             grok_home.join(ACTIVE_SESSIONS_FILE),
             serde_json::json!([{
                 "session_id": "session-1",
@@ -303,9 +341,17 @@ mod tests {
         assert_eq!(sessions[0].session_id, "session-1");
         assert!(sessions[0].running);
         assert_eq!(sessions[0].title.as_deref(), Some("Grok Build hooks"));
+        assert_eq!(
+            sessions[0].first_user_prompt.as_deref(),
+            Some("Build Grok Build hooks")
+        );
 
         let desktop_thread = grok_session_to_desktop_thread(&sessions[0]);
         assert_eq!(desktop_thread.source.as_deref(), Some("grok-build"));
+        assert_eq!(
+            desktop_thread.first_user_prompt.as_deref(),
+            Some("Build Grok Build hooks")
+        );
         assert_eq!(
             desktop_thread.capabilities.assistant_kind,
             AssistantKind::GrokBuild

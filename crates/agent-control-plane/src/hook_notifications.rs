@@ -1,8 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
+use std::process::Command;
 
 use crate::control_plane::ControlPlane;
-use crate::mobile::session::{MobileHookPayload, MobileNotificationRoute};
+use crate::mobile::session::{
+    MobileHookPayload, MobileNotificationRoute, NOTIFICATION_TARGET_IPHONE,
+    NOTIFICATION_TARGET_MACOS,
+};
 
 const STOP_HOOK_EVENT: &str = "Stop";
 const SLACK_CHANNEL: &str = "slack";
@@ -30,6 +34,29 @@ pub async fn send_stop_notifications(
     let routes = control_plane
         .mobile_session_service()
         .notification_routes_for_thread(&thread_id)?;
+    let target_ids = control_plane
+        .mobile_session_service()
+        .notification_target_ids_for_thread(&thread_id)?;
+    if target_ids
+        .iter()
+        .any(|target_id| target_id == NOTIFICATION_TARGET_MACOS)
+    {
+        if let Err(error) = send_macos_notification(&thread_id, &message) {
+            eprintln!("macOS notification target failed: {error}");
+        }
+    }
+    if target_ids
+        .iter()
+        .any(|target_id| target_id == NOTIFICATION_TARGET_IPHONE)
+    {
+        if let Err(error) = control_plane
+            .mobile_push_service()
+            .send_session_stop_pushes(&thread_id, &message)
+            .await
+        {
+            eprintln!("iPhone notification target failed: {error}");
+        }
+    }
     let client = Client::new();
     for route in routes {
         if let Err(error) = send_route(&client, control_plane, &route, &thread_id, &message).await {
@@ -51,6 +78,28 @@ async fn send_route(
         TELEGRAM_CHANNEL => send_telegram(control_plane, route, thread_id, message).await,
         _ => Ok(()),
     }
+}
+
+fn send_macos_notification(thread_id: &str, message: &str) -> Result<()> {
+    let script = format!(
+        "display notification {} with title {} subtitle {}",
+        apple_script_string(message),
+        apple_script_string("Looper"),
+        apple_script_string(thread_id),
+    );
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .context("send macOS notification")?;
+    if !status.success() {
+        return Err(anyhow!("macOS notification failed with status {status}"));
+    }
+    Ok(())
+}
+
+fn apple_script_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 async fn send_slack(client: &Client, route: &MobileNotificationRoute, message: &str) -> Result<()> {
@@ -111,4 +160,15 @@ fn telegram_message_text(message: &str) -> String {
 fn normalized_optional(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn apple_script_string_escapes_quotes_and_backslashes() {
+        assert_eq!(
+            super::apple_script_string("done \"now\" at C:\\tmp"),
+            "\"done \\\"now\\\" at C:\\\\tmp\""
+        );
+    }
 }

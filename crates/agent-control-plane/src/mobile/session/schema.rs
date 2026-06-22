@@ -9,8 +9,12 @@ pub(super) const MOBILE_SESSION_OVERRIDES_TABLE: &str = "mobile_session_override
 pub(super) const MOBILE_SESSION_RUNTIME_TABLE: &str = "mobile_session_runtime";
 pub(super) const MOBILE_REMOTE_PROMPTS_TABLE: &str = "mobile_remote_prompts";
 pub(super) const MOBILE_SESSION_NOTIFICATIONS_TABLE: &str = "mobile_session_notifications";
+pub(super) const MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE: &str =
+    "mobile_default_notification_targets";
 pub(super) const MOBILE_SESSION_LIFECYCLE_TABLE: &str = "mobile_session_lifecycle";
 pub(super) const MOBILE_LEGACY_IMPORTS_TABLE: &str = "mobile_legacy_imports";
+
+const DEFAULT_NOTIFICATION_TARGET_MACOS: &str = "macos";
 
 const MOBILE_SCHEMA_SQL: &str = r#"
 create table if not exists mobile_settings (
@@ -57,6 +61,10 @@ create table if not exists mobile_session_notifications (
   thread_id text not null,
   notification_id text not null,
   primary key (thread_id, notification_id)
+);
+
+create table if not exists mobile_default_notification_targets (
+  target_id text primary key
 );
 
 create table if not exists mobile_telegram_delivery_receipts (
@@ -217,6 +225,37 @@ pub(super) fn initialize_store(store_path: &Path) -> MobileSessionResult<()> {
         "delivery_mode",
         "text not null default 'once'",
     )?;
+    seed_default_notification_targets(&connection)?;
+    Ok(())
+}
+
+fn seed_default_notification_targets(connection: &Connection) -> MobileSessionResult<()> {
+    connection.execute(
+        &format!(
+            "insert or ignore into {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE} (target_id)
+             values (?1)"
+        ),
+        [DEFAULT_NOTIFICATION_TARGET_MACOS],
+    )?;
+    if let Some(global_notification_id) = connection
+        .query_row(
+            "select global_notification_id
+             from mobile_settings
+             where id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten()
+    {
+        connection.execute(
+            &format!(
+                "insert or ignore into {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE} (target_id)
+                 values (?1)"
+            ),
+            [global_notification_id],
+        )?;
+    }
     Ok(())
 }
 

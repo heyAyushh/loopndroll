@@ -10,7 +10,11 @@ enum CompanionRealtimeSync {
         hasSnapshot: Bool
     ) -> Bool {
         if event.eventType == .connected {
-            return !hasSnapshot
+            guard let revision = normalizedRevision(event.revision) else {
+                return !hasSnapshot
+            }
+
+            return !hasSnapshot || revision != normalizedRevision(currentRevision)
         }
 
         guard let revision = normalizedRevision(event.revision) else {
@@ -26,5 +30,23 @@ enum CompanionRealtimeSync {
             return nil
         }
         return trimmedRevision
+    }
+
+    static func revisionForRealtimeGate(
+        currentRevision: String?,
+        hasValidatedSnapshotWithHTTP: Bool
+    ) -> String? {
+        guard hasValidatedSnapshotWithHTTP else {
+            return nil
+        }
+
+        return normalizedRevision(currentRevision)
+    }
+
+    static func hasRealtimeValidatedSnapshot(
+        hasSnapshot: Bool,
+        hasValidatedSnapshotWithHTTP: Bool
+    ) -> Bool {
+        hasSnapshot && hasValidatedSnapshotWithHTTP
     }
 }

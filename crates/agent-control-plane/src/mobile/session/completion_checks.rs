@@ -1,3 +1,4 @@
+// allow: SIZE_OK — completion-check engine keeps command policy, execution, and persistence semantics together for atomic stop decisions.
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -277,33 +278,6 @@ fn completion_check_output_summary(output: &std::process::Output) -> Option<Stri
     Some(lines[start..].join("\n"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::completion_check_failure_reason_with_timeout;
-    use crate::mobile::session::MobileCompletionCheck;
-    use std::time::Duration;
-    use tempfile::tempdir;
-
-    #[test]
-    fn completion_check_times_out_hanging_command() {
-        let tempdir = tempdir().expect("tempdir");
-        let check = MobileCompletionCheck {
-            id: "hang".to_owned(),
-            label: "Hang".to_owned(),
-            commands: vec!["sleep 5".to_owned()],
-        };
-
-        let reason = completion_check_failure_reason_with_timeout(
-            tempdir.path().to_str().expect("tempdir path"),
-            &check,
-            Duration::from_millis(100),
-        )
-        .expect("timeout failure");
-
-        assert!(reason.contains("timed out"));
-    }
-}
-
 pub(super) fn active_completion_check<'a>(
     thread_id: &str,
     state: &'a MobileSessionState,
@@ -329,4 +303,31 @@ pub(super) fn active_completion_check_wait_for_reply(
         return override_state.completion_check_wait_for_reply;
     }
     state.global_completion_check_wait_for_reply
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_check_failure_reason_with_timeout;
+    use crate::mobile::session::MobileCompletionCheck;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    #[test]
+    fn completion_check_times_out_hanging_command() {
+        let tempdir = tempdir().expect("tempdir");
+        let check = MobileCompletionCheck {
+            id: "hang".to_owned(),
+            label: "Hang".to_owned(),
+            commands: vec!["sleep 5".to_owned()],
+        };
+
+        let reason = completion_check_failure_reason_with_timeout(
+            tempdir.path().to_str().expect("tempdir path"),
+            &check,
+            Duration::from_millis(100),
+        )
+        .expect("timeout failure");
+
+        assert!(reason.contains("timed out"));
+    }
 }

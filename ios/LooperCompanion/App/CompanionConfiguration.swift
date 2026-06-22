@@ -96,6 +96,12 @@ enum CompanionConfiguration {
     }
 
     static func hasAuthenticatedConnection() -> Bool {
+        #if DEBUG
+        if UITestLaunchArguments.isMockModeEnabled {
+            return true
+        }
+        #endif
+
         let connection = resolvedConnection()
         return !connection.baseURLs.isEmpty && connection.bearerToken != nil
     }

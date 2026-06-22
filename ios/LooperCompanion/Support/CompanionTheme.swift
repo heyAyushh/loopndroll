@@ -58,24 +58,9 @@ enum CompanionDiagnostics {
 
     static func record(_ message: String) {
         #if DEBUG
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "\(timestamp) \(message)\n"
-        guard let data = line.data(using: .utf8) else {
-            return
+        Task.detached(priority: .utility) {
+            await DiagnosticsLogWriter.shared.record(message)
         }
-
-        let url = diagnosticsURL()
-        if FileManager.default.fileExists(atPath: url.path),
-           let fileHandle = try? FileHandle(forWritingTo: url) {
-            defer {
-                try? fileHandle.close()
-            }
-            _ = try? fileHandle.seekToEnd()
-            try? fileHandle.write(contentsOf: data)
-            return
-        }
-
-        try? data.write(to: url, options: .atomic)
         #endif
     }
 
@@ -83,6 +68,52 @@ enum CompanionDiagnostics {
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return cacheDirectory.appendingPathComponent(diagnosticsFilename)
     }
+
+    #if DEBUG
+    private actor DiagnosticsLogWriter {
+        static let shared = DiagnosticsLogWriter()
+
+        private let timestampFormatter = ISO8601DateFormatter()
+        private var fileHandle: FileHandle?
+
+        deinit {
+            try? fileHandle?.close()
+        }
+
+        func record(_ message: String) {
+            let timestamp = timestampFormatter.string(from: Date())
+            let line = "\(timestamp) \(message)\n"
+            guard let data = line.data(using: .utf8) else {
+                return
+            }
+
+            do {
+                let fileHandle = try writableFileHandle()
+                try fileHandle.write(contentsOf: data)
+            } catch {
+                CompanionDiagnostics.networking.error(
+                    "Failed to record diagnostics error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        private func writableFileHandle() throws -> FileHandle {
+            if let fileHandle {
+                return fileHandle
+            }
+
+            let url = CompanionDiagnostics.diagnosticsURL()
+            if !FileManager.default.fileExists(atPath: url.path) {
+                _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+
+            let fileHandle = try FileHandle(forWritingTo: url)
+            try fileHandle.seekToEnd()
+            self.fileHandle = fileHandle
+            return fileHandle
+        }
+    }
+    #endif
 }
 
 extension View {

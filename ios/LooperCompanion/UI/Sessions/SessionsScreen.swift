@@ -89,6 +89,7 @@ struct SessionsScreen: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
+                    .accessibilityIdentifier("sessions.open-device-hub")
                 }
             }
             .refreshable {
@@ -97,7 +98,7 @@ struct SessionsScreen: View {
             .onChange(of: model.pendingOpenSessionID) {
                 openPendingSessionIfNeeded()
             }
-            .onChange(of: snapshotSessionIDs) {
+            .onChange(of: model.sessionIndex.identity) {
                 openPendingSessionIfNeeded()
             }
             .task(id: model.pendingOpenSessionID) {
@@ -237,10 +238,6 @@ struct SessionsScreen: View {
         return sessions.prefix(limit)
     }
 
-    private var snapshotSessionIDs: [String] {
-        model.snapshot?.sessionsAcrossSurfaces.map(\.id).sorted() ?? []
-    }
-
     private var recentSectionFooter: String {
         guard model.stoppedSessions.count > SessionDisplayPolicy.collapsedSectionLimit else {
             return "Stopped sessions stay here until archived."
@@ -277,7 +274,7 @@ struct SessionsScreen: View {
 
     private func openPendingSessionIfNeeded() {
         guard let sessionID = model.pendingOpenSessionID,
-              let session = model.snapshot?.session(withID: sessionID)
+              let session = model.sessionIndex.session(withID: sessionID)
         else {
             return
         }

@@ -7,12 +7,14 @@ final class PinballDebugOverlay {
             persistentRoot.isHidden = !isEnabled
             if !isEnabled {
                 persistentRoot.removeAllChildren()
+                persistentOutlinesByNodeID = [:]
             }
         }
     }
 
     private let persistentRoot = SKNode()
     private let interactionRoot = SKNode()
+    private var persistentOutlinesByNodeID: [ObjectIdentifier: PersistentOutline] = [:]
 
     init() {
         persistentRoot.name = "pinball-debug-overlay"
@@ -38,7 +40,7 @@ final class PinballDebugOverlay {
             return
         }
 
-        persistentRoot.removeAllChildren()
+        var activeNodeIDs = Set<ObjectIdentifier>()
         scene.enumerateChildNodes(withName: "//*") { [weak self] node, _ in
             guard let self,
                   node.physicsBody != nil,
@@ -48,7 +50,17 @@ final class PinballDebugOverlay {
                   node.parent !== interactionRoot else {
                 return
             }
-            self.addPersistentOutline(for: node)
+            if let nodeID = self.syncPersistentOutline(for: node) {
+                activeNodeIDs.insert(nodeID)
+            }
+        }
+
+        let staleNodeIDs = persistentOutlinesByNodeID.keys.filter { nodeID in
+            !activeNodeIDs.contains(nodeID)
+        }
+        for nodeID in staleNodeIDs {
+            persistentOutlinesByNodeID[nodeID]?.node.removeFromParent()
+            persistentOutlinesByNodeID[nodeID] = nil
         }
     }
 
@@ -84,41 +96,106 @@ final class PinballDebugOverlay {
         interactionRoot.removeAllChildren()
     }
 
-    private func addPersistentOutline(for node: SKNode) {
-        guard let outline = makeOutline(for: node) else {
-            return
+    private func syncPersistentOutline(for node: SKNode) -> ObjectIdentifier? {
+        guard let signature = outlineSignature(for: node) else {
+            return nil
         }
 
-        outline.strokeColor = .systemMint
-        outline.lineWidth = 1.2
-        outline.alpha = 0.86
-        persistentRoot.addChild(outline)
+        let nodeID = ObjectIdentifier(node)
+
+        let outline: SKShapeNode
+        if let existingOutline = persistentOutlinesByNodeID[nodeID],
+           existingOutline.signature == signature {
+            outline = existingOutline.node
+        } else {
+            persistentOutlinesByNodeID[nodeID]?.node.removeFromParent()
+            outline = makeOutline(for: signature)
+            outline.strokeColor = .systemMint
+            outline.lineWidth = 1.2
+            outline.alpha = 0.86
+            persistentRoot.addChild(outline)
+            persistentOutlinesByNodeID[nodeID] = PersistentOutline(
+                signature: signature,
+                node: outline
+            )
+        }
+
+        applyNodeTransform(node, to: outline)
+        return nodeID
     }
 
     private func makeOutline(for node: SKNode) -> SKShapeNode? {
+        guard let signature = outlineSignature(for: node) else {
+            return nil
+        }
+
+        let outline = makeOutline(for: signature)
+        applyNodeTransform(node, to: outline)
+        return outline
+    }
+
+    private func outlineSignature(for node: SKNode) -> OutlineSignature? {
         let shape = node.userData?["pinballDebugShape"] as? String
-        let outline: SKShapeNode?
 
         switch shape {
         case "circle":
             let radius = node.userData?["pinballDebugRadius"] as? CGFloat ?? 8
-            outline = SKShapeNode(circleOfRadius: radius)
+            return OutlineSignature(
+                shape: .circle,
+                radius: radius,
+                width: 0,
+                height: 0,
+                cornerRadius: 0
+            )
         case "rect":
             let width = node.userData?["pinballDebugWidth"] as? CGFloat ?? 20
             let height = node.userData?["pinballDebugHeight"] as? CGFloat ?? 20
             let cornerRadius = node.userData?["pinballDebugCornerRadius"] as? CGFloat ?? min(width, height) * 0.18
-            outline = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: cornerRadius)
+            return OutlineSignature(
+                shape: .rect,
+                radius: 0,
+                width: width,
+                height: height,
+                cornerRadius: cornerRadius
+            )
         default:
-            outline = nil
-        }
-
-        guard let outline else {
             return nil
         }
+    }
 
+    private func makeOutline(for signature: OutlineSignature) -> SKShapeNode {
+        switch signature.shape {
+        case .circle:
+            return SKShapeNode(circleOfRadius: signature.radius)
+        case .rect:
+            return SKShapeNode(
+                rectOf: CGSize(width: signature.width, height: signature.height),
+                cornerRadius: signature.cornerRadius
+            )
+        }
+    }
+
+    private func applyNodeTransform(_ node: SKNode, to outline: SKShapeNode) {
         outline.position = node.position
         outline.zRotation = node.zRotation
         outline.fillColor = .clear
-        return outline
+    }
+
+    private struct PersistentOutline {
+        let signature: OutlineSignature
+        let node: SKShapeNode
+    }
+
+    private struct OutlineSignature: Equatable {
+        let shape: OutlineShape
+        let radius: CGFloat
+        let width: CGFloat
+        let height: CGFloat
+        let cornerRadius: CGFloat
+    }
+
+    private enum OutlineShape {
+        case circle
+        case rect
     }
 }

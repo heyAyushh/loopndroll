@@ -117,6 +117,10 @@ fn mobile_session_state_owns_mobile_routes_and_checks() {
         Some("route-telegram")
     );
     assert_eq!(
+        state.default_notification_target_ids,
+        vec!["macos".to_owned(), "route-telegram".to_owned()]
+    );
+    assert_eq!(
         state.global_completion_check_id.as_deref(),
         Some("check-tests")
     );
@@ -124,6 +128,94 @@ fn mobile_session_state_owns_mobile_routes_and_checks() {
     assert_eq!(thread.notification_ids, vec!["route-telegram"]);
     assert_eq!(thread.completion_check_id.as_deref(), Some("check-tests"));
     assert!(!thread.completion_check_wait_for_reply);
+}
+
+#[test]
+fn default_notification_targets_drive_route_delivery() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let service = MobileSessionService::new(temp_dir.path().join("control-plane.sqlite"));
+
+    service
+        .upsert_notification_route(UpsertMobileNotificationRoute {
+            id: Some("route-telegram".to_owned()),
+            label: Some("Telegram DM".to_owned()),
+            channel: "telegram".to_owned(),
+            bot_token: Some("bot-token".to_owned()),
+            chat_id: Some("chat-1".to_owned()),
+            ..UpsertMobileNotificationRoute::default()
+        })
+        .expect("upsert telegram");
+    service
+        .upsert_notification_route(UpsertMobileNotificationRoute {
+            id: Some("route-slack".to_owned()),
+            label: Some("Slack".to_owned()),
+            channel: "slack".to_owned(),
+            webhook_url: Some("https://hooks.slack.com/services/test".to_owned()),
+            ..UpsertMobileNotificationRoute::default()
+        })
+        .expect("upsert slack");
+    service
+        .set_default_notification_targets(&[
+            "macos".to_owned(),
+            "iphone".to_owned(),
+            "route-telegram".to_owned(),
+            "route-slack".to_owned(),
+        ])
+        .expect("set targets");
+
+    let state = service.state().expect("state");
+    assert_eq!(
+        state.default_notification_target_ids,
+        vec![
+            "iphone".to_owned(),
+            "macos".to_owned(),
+            "route-slack".to_owned(),
+            "route-telegram".to_owned()
+        ]
+    );
+    assert_eq!(
+        service
+            .notification_target_ids_for_thread("thread-1")
+            .expect("target ids"),
+        vec![
+            "iphone".to_owned(),
+            "macos".to_owned(),
+            "route-slack".to_owned(),
+            "route-telegram".to_owned()
+        ]
+    );
+    assert_eq!(
+        service
+            .notification_routes_for_thread("thread-1")
+            .expect("routes")
+            .into_iter()
+            .map(|route| route.id)
+            .collect::<Vec<_>>(),
+        vec!["route-telegram".to_owned(), "route-slack".to_owned()]
+    );
+
+    service
+        .set_session_notifications("thread-1", &["route-slack".to_owned()])
+        .expect("set thread routes");
+    assert_eq!(
+        service
+            .notification_target_ids_for_thread("thread-1")
+            .expect("thread target ids"),
+        vec![
+            "iphone".to_owned(),
+            "macos".to_owned(),
+            "route-slack".to_owned()
+        ]
+    );
+    assert_eq!(
+        service
+            .notification_routes_for_thread("thread-1")
+            .expect("thread routes")
+            .into_iter()
+            .map(|route| route.id)
+            .collect::<Vec<_>>(),
+        vec!["route-slack".to_owned()]
+    );
 }
 
 #[test]

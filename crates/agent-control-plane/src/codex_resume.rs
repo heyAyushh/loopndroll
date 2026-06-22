@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Codex resume launcher keeps process I/O protocol and resume request parsing in one failure boundary.
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -68,10 +69,10 @@ pub fn resolve_codex_executable(configured_executable: Option<&str>) -> String {
     if let Some(executable) = normalized_executable(configured_executable) {
         return executable;
     }
-    if let Ok(executable) = std::env::var(CODEX_EXECUTABLE_ENV) {
-        if let Some(executable) = normalized_executable(Some(&executable)) {
-            return executable;
-        }
+    if let Ok(executable) = std::env::var(CODEX_EXECUTABLE_ENV)
+        && let Some(executable) = normalized_executable(Some(&executable))
+    {
+        return executable;
     }
     codex_executable_candidates()
         .into_iter()
