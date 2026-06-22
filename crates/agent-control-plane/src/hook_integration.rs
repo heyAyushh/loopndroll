@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::compaction::LOCAL_COMPACTION_EVENT_TYPE;
 
 const HOOK_BRIDGE_VERSION: &str = "2026-04-25";
-const DEFAULT_INGRESS_PATH: &str = "/webhook/agent-control-plane";
-const DEFAULT_EVENT_TOPIC: &str = "agent_control_plane.events";
-const DEFAULT_DLQ_TOPIC: &str = "agent_control_plane.dlq";
+const DEFAULT_INGRESS_PATH: &str = "managed local hook command";
+const DEFAULT_EVENT_TOPIC: &str = "not-applicable-local-command-relay";
+const DEFAULT_DLQ_TOPIC: &str = "not-applicable-local-command-relay";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HookBridgeContract {
@@ -52,13 +52,13 @@ impl HookBridgeContract {
     pub fn default_local_relay() -> Self {
         Self {
             version: HOOK_BRIDGE_VERSION.to_owned(),
-            profile: "agent-control-plane-local-relay".to_owned(),
+            profile: "agent-control-plane-local-hook-command-relay".to_owned(),
             ingress: HookIngressContract {
                 path: DEFAULT_INGRESS_PATH.to_owned(),
-                auth: "hmac-sha256".to_owned(),
-                signature_header: "X-Agent-Control-Plane-Signature-256".to_owned(),
-                timestamp_header: "X-Agent-Control-Plane-Timestamp".to_owned(),
-                delivery_header: "X-Agent-Control-Plane-Delivery".to_owned(),
+                auth: "local-user-owned-config-file".to_owned(),
+                signature_header: "not-used".to_owned(),
+                timestamp_header: "not-used".to_owned(),
+                delivery_header: "not-used".to_owned(),
             },
             topics: HookTopicContract {
                 events: DEFAULT_EVENT_TOPIC.to_owned(),
@@ -81,12 +81,6 @@ impl HookBridgeContract {
                     "metadata-only",
                 ),
                 event("hook.failure_detected", "host-agent", "redacted-diagnostic"),
-                event(
-                    "relay.command_received",
-                    "cloud-relay",
-                    "encrypted-envelope",
-                ),
-                event("relay.command_acknowledged", "host-agent", "receipt-only"),
             ],
             payload_policy: HookPayloadPolicy {
                 raw_transcripts: false,

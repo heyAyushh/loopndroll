@@ -1,8 +1,9 @@
+// allow: SIZE_OK — legacy CLI command facade preserving clap command identity while subcommands are extracted incrementally.
 mod args;
 mod doctor;
 mod output;
-mod server;
-mod transport;
+pub(crate) mod server;
+pub(crate) mod transport;
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ pub async fn run() -> Result<()> {
         return run_terminal_command().await;
     };
 
-    if command_requires_server(&command) {
+    if command_requires_server(&command, &args) {
         ensure_server_ready().await?;
     }
 
@@ -58,6 +59,7 @@ pub async fn run() -> Result<()> {
         "connections" => run_connections_command(&args, format).await,
         "acp" => run_acp_command(&args, format).await,
         "devin" => run_devin_command(&args, format).await,
+        "zed" => run_zed_command(&args, format).await,
         "pairing" => run_pairing_command(&args, format).await,
         "settings" => run_settings_command(&args, format).await,
         "sessions" => run_sessions_command(&args, format).await,
@@ -73,7 +75,10 @@ pub async fn run() -> Result<()> {
     }
 }
 
-fn command_requires_server(command: &str) -> bool {
+fn command_requires_server(command: &str, args: &[String]) -> bool {
+    if matches!(command, "acp" | "zed") && args.first().map(String::as_str) == Some("stdio") {
+        return false;
+    }
     matches!(
         command,
         "status"
@@ -87,6 +92,7 @@ fn command_requires_server(command: &str) -> bool {
             | "connections"
             | "acp"
             | "devin"
+            | "zed"
             | "pairing"
             | "settings"
             | "sessions"
@@ -110,6 +116,9 @@ fn run_menubar_command(args: &[String]) -> Result<()> {
 }
 
 async fn run_acp_command(args: &[String], format: OutputFormat) -> Result<()> {
+    if args.first().map(String::as_str) == Some("stdio") {
+        return run_acp_stdio_command(args).await;
+    }
     ensure_server_ready().await?;
     match args.first().map(String::as_str) {
         Some("targets") | Some("target") => print_get("/desktop/acp-targets", format).await,
@@ -121,6 +130,38 @@ async fn run_acp_command(args: &[String], format: OutputFormat) -> Result<()> {
             print_get(&format!("/desktop/acp-client-hosts/{client_id}"), format).await
         }
         Some("probe") => run_acp_probe_command(args.get(1), args.get(2), format).await,
+        Some("create") | Some("new") => {
+            let Some(client_id) = args.get(1) else {
+                bail!("usage: looper acp create <client-host-id> [cwd]");
+            };
+            let body = serde_json::json!({ "cwd": args.get(2) });
+            post_json(
+                &format!("/desktop/acp-client-hosts/{client_id}/sessions"),
+                body,
+                format,
+            )
+            .await
+        }
+        Some("prompt") if args.len() >= 4 => {
+            let client_id = &args[1];
+            let thread_id = &args[2];
+            post_json(
+                &format!("/desktop/acp-client-hosts/{client_id}/sessions/{thread_id}/prompt"),
+                serde_json::json!({ "prompt": joined_args(&args[3..]) }),
+                format,
+            )
+            .await
+        }
+        Some("cancel") if args.len() >= 3 => {
+            let client_id = &args[1];
+            let thread_id = &args[2];
+            post_json(
+                &format!("/desktop/acp-client-hosts/{client_id}/sessions/{thread_id}/cancel"),
+                Value::Null,
+                format,
+            )
+            .await
+        }
         Some("install") | Some("register") => {
             let Some(client_id) = args.get(1) else {
                 bail!("usage: looper acp install <client-host-id>");
@@ -133,9 +174,16 @@ async fn run_acp_command(args: &[String], format: OutputFormat) -> Result<()> {
             .await
         }
         _ => bail!(
-            "usage: looper acp [hosts|targets|status <client-host-id>|probe <client-host-id> [agent-id]|install <client-host-id>]"
+            "usage: looper acp [hosts|targets|status <client-host-id>|probe <client-host-id> [agent-id]|install <client-host-id>|create <client-host-id> [cwd]|prompt <client-host-id> <thread-id> <text>|cancel <client-host-id> <thread-id>]"
         ),
     }
+}
+
+async fn run_acp_stdio_command(args: &[String]) -> Result<()> {
+    let Some(client_id) = args.get(1) else {
+        bail!("usage: looper acp stdio <client-host-id> [agent-id -- command [args...]]");
+    };
+    crate::acp::stdio::run_stdio_agent(client_id, &args[2..]).await
 }
 
 async fn run_acp_probe_command(
@@ -161,6 +209,30 @@ async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> 
         Some("bridge") | Some("acp") | Some("agents") if args.get(1).is_none() => {
             print_get("/desktop/devin/acp-bridge", format).await
         }
+        Some("create") | Some("new") => {
+            post_json(
+                "/desktop/devin/acp-bridge/sessions",
+                serde_json::json!({ "cwd": args.get(1) }),
+                format,
+            )
+            .await
+        }
+        Some("prompt") if args.len() >= 3 => {
+            post_json(
+                &format!("/desktop/devin/acp-bridge/sessions/{}/prompt", args[1]),
+                serde_json::json!({ "prompt": joined_args(&args[2..]) }),
+                format,
+            )
+            .await
+        }
+        Some("cancel") if args.len() >= 2 => {
+            post_json(
+                &format!("/desktop/devin/acp-bridge/sessions/{}/cancel", args[1]),
+                Value::Null,
+                format,
+            )
+            .await
+        }
         Some("install") | Some("register") => {
             post_json("/desktop/devin/acp-bridge/install", Value::Null, format).await
         }
@@ -170,7 +242,59 @@ async fn run_devin_command(args: &[String], format: OutputFormat) -> Result<()> 
         {
             run_devin_probe_command(args.get(2), format).await
         }
-        _ => bail!("usage: looper devin [status|show|bridge|acp|agents|install|probe [agent-id]]"),
+        _ => bail!(
+            "usage: looper devin [status|show|bridge|acp|agents|install|probe [agent-id]|create [cwd]|prompt <thread-id> <text>|cancel <thread-id>]"
+        ),
+    }
+}
+
+async fn run_zed_command(args: &[String], format: OutputFormat) -> Result<()> {
+    if args.first().map(String::as_str) == Some("stdio") {
+        return crate::acp::stdio::run_stdio_agent("zed", &args[1..]).await;
+    }
+    ensure_server_ready().await?;
+    match args.first().map(String::as_str) {
+        Some("status") | Some("show") | None => {
+            print_get("/desktop/acp-client-hosts/zed", format).await
+        }
+        Some("install") | Some("register") => {
+            post_json("/desktop/acp-client-hosts/zed/install", Value::Null, format).await
+        }
+        Some("probe") => {
+            post_json(
+                "/desktop/acp-client-hosts/zed/probe",
+                acp_probe_body(args.get(1).map(String::as_str)),
+                format,
+            )
+            .await
+        }
+        Some("create") | Some("new") => {
+            post_json(
+                "/desktop/acp-client-hosts/zed/sessions",
+                serde_json::json!({ "cwd": args.get(1) }),
+                format,
+            )
+            .await
+        }
+        Some("prompt") if args.len() >= 3 => {
+            post_json(
+                &format!("/desktop/acp-client-hosts/zed/sessions/{}/prompt", args[1]),
+                serde_json::json!({ "prompt": joined_args(&args[2..]) }),
+                format,
+            )
+            .await
+        }
+        Some("cancel") if args.len() >= 2 => {
+            post_json(
+                &format!("/desktop/acp-client-hosts/zed/sessions/{}/cancel", args[1]),
+                Value::Null,
+                format,
+            )
+            .await
+        }
+        _ => bail!(
+            "usage: looper zed [status|show|install|probe [agent-id]|create [cwd]|prompt <thread-id> <text>|cancel <thread-id>|stdio]"
+        ),
     }
 }
 
@@ -192,10 +316,63 @@ fn acp_probe_body(agent_id: Option<&str>) -> Value {
 
 async fn run_hooks_command(args: &[String], format: OutputFormat) -> Result<()> {
     match args.first().map(String::as_str) {
-        Some("register") => post_json("/hooks/register", Value::Null, format).await,
-        Some("clear") => post_json("/hooks/clear", Value::Null, format).await,
-        Some("unregister-live") => post_json("/hooks/unregister-live", Value::Null, format).await,
-        _ => bail!("usage: looper hooks [register|clear|unregister-live]"),
+        Some("register") => {
+            if let Some(target) = args.get(1) {
+                post_json(
+                    &format!("/hooks/{}/register", hook_target_path_component(target)?),
+                    Value::Null,
+                    format,
+                )
+                .await
+            } else {
+                post_json("/hooks/register", Value::Null, format).await
+            }
+        }
+        Some("clear") | Some("unregister") => {
+            if let Some(target) = args.get(1) {
+                post_json(
+                    &format!("/hooks/{}/unregister", hook_target_path_component(target)?),
+                    Value::Null,
+                    format,
+                )
+                .await
+            } else {
+                let path = if args.first().map(String::as_str) == Some("clear") {
+                    "/hooks/clear"
+                } else {
+                    "/hooks/unregister"
+                };
+                post_json(path, Value::Null, format).await
+            }
+        }
+        Some("unregister-live") => {
+            if let Some(target) = args.get(1) {
+                post_json(
+                    &format!(
+                        "/hooks/{}/unregister-live",
+                        hook_target_path_component(target)?
+                    ),
+                    Value::Null,
+                    format,
+                )
+                .await
+            } else {
+                post_json("/hooks/unregister-live", Value::Null, format).await
+            }
+        }
+        _ => bail!(
+            "usage: looper hooks [register [codex|devin|grok|claude]|unregister [codex|devin|grok|claude]|clear|unregister-live [codex|devin|grok|claude]]"
+        ),
+    }
+}
+
+fn hook_target_path_component(target: &str) -> Result<&'static str> {
+    match target {
+        "codex" => Ok("codex"),
+        "devin" | "devin-local" => Ok("devin"),
+        "grok" | "grok-build" => Ok("grok"),
+        "claude" | "claude-code" => Ok("claude"),
+        _ => bail!("hook target must be codex, devin, grok, or claude"),
     }
 }
 
@@ -687,7 +864,7 @@ fn thread_updated_at_ms(thread: &Value) -> Option<i64> {
 fn print_usage() {
     let _ = writeln!(
         std::io::stderr(),
-        "usage: looper [--json|--table|--format table] [serve|status|snapshot|shutdown|attach|send|wait|detach|hooks|connections|acp|devin|pairing|settings|sessions|notifications|checks|push|doctor|menubar|version]\n       looper              # attach inline, starting looper-server if needed"
+        "usage: looper [--json|--table|--format table] [serve|status|snapshot|shutdown|attach|send|wait|detach|hooks|connections|acp|devin|zed|pairing|settings|sessions|notifications|checks|push|doctor|menubar|version]\n       looper              # attach inline, starting looper-server if needed"
     );
 }
 
@@ -743,5 +920,14 @@ mod tests {
             serde_json::json!({ "agentId": "codex" })
         );
         assert_eq!(acp_probe_body(None), serde_json::json!({}));
+    }
+
+    #[test]
+    fn hook_target_path_component_accepts_owned_hook_sources() {
+        assert_eq!(hook_target_path_component("codex").unwrap(), "codex");
+        assert_eq!(hook_target_path_component("devin-local").unwrap(), "devin");
+        assert_eq!(hook_target_path_component("grok-build").unwrap(), "grok");
+        assert_eq!(hook_target_path_component("claude-code").unwrap(), "claude");
+        assert!(hook_target_path_component("zed").is_err());
     }
 }

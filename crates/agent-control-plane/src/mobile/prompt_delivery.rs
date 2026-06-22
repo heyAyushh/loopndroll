@@ -1,3 +1,4 @@
+// allow: SIZE_OK — mobile prompt delivery boundary owns end-to-end queue/send semantics across Codex, Devin, Claude, and Zed transports.
 use std::collections::BTreeSet;
 
 use serde::Serialize;
@@ -55,7 +56,10 @@ pub fn send_non_acp_session_prompt(
         .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
     let session_state = control_plane.mobile_session_service().state()?;
     let action = prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?;
-    if matches!(action, PromptDeliveryAction::SendDevinAcp { .. }) {
+    if matches!(
+        action,
+        PromptDeliveryAction::SendDevinAcp { .. } | PromptDeliveryAction::SendLooperAcp { .. }
+    ) {
         return Err(MobileSessionError::PromptResumeUnavailable(
             "automation prompt direct ACP delivery is unsupported".to_owned(),
         ));
@@ -149,6 +153,24 @@ fn dispatch_session_prompt_with_action(
                 prompt_id: prompt.id,
             })
         }
+        PromptDeliveryAction::SendLooperAcp {
+            client_id,
+            session_id,
+        } => {
+            let runtime = control_plane
+                .acp_runtime_for_client(&client_id)
+                .ok_or_else(|| {
+                    MobileSessionError::PromptResumeUnavailable(format!(
+                        "ACP client host is unavailable: {client_id}"
+                    ))
+                })?;
+            let delivered = runtime
+                .deliver_mobile_prompt(&session_id, prompt)
+                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+            Ok(PromptDispatch::Delivered {
+                prompt_id: delivered.prompt_id,
+            })
+        }
         PromptDeliveryAction::SendDevinAcp { session_id } => {
             let delivered = control_plane
                 .devin_acp_runtime()
@@ -197,7 +219,7 @@ fn emit_prompt_dispatch(control_plane: &ControlPlane, thread_id: &str, dispatch:
                 kind: MobileEventKind::PromptDelivered,
                 thread_id: Some(thread_id.to_owned()),
                 prompt_id: Some(prompt_id.to_owned()),
-                detail: Some("devin-acp".to_owned()),
+                detail: Some("looper-acp".to_owned()),
             });
             emit_mobile_session_changed(control_plane, Some(thread_id), Some("prompt-delivered"));
         }

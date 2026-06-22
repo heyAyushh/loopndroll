@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Devin hook adapter keeps config mutation, ownership detection, and unregister preservation atomic.
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -93,10 +94,7 @@ pub fn unregister_owned_devin_hooks(home_path: &Path) -> Result<usize> {
 
 pub fn inspect_devin_hooks(home_path: &Path) -> DevinHookStatus {
     let config_path = default_devin_config_path(home_path);
-    let (registered_events, active_command) = match read_hooks_json(&config_path) {
-        Ok(value) => value,
-        Err(_) => (Vec::new(), None),
-    };
+    let (registered_events, active_command) = read_hooks_json(&config_path).unwrap_or_default();
     let owner = classify_hook_owner(active_command.as_deref());
     let health = if registered_events.is_empty() {
         "missing"
@@ -211,10 +209,16 @@ fn ensure_hooks_object(document: &mut Value) -> &mut Value {
     if !document.is_object() {
         *document = json!({});
     }
-    if document.get("hooks").is_none() || !document["hooks"].is_object() {
-        document["hooks"] = json!({});
+    match document {
+        Value::Object(document) => {
+            let hooks = document.entry("hooks").or_insert_with(|| json!({}));
+            if !hooks.is_object() {
+                *hooks = json!({});
+            }
+            hooks
+        }
+        _ => document,
     }
-    document.get_mut("hooks").expect("hooks object")
 }
 
 fn read_hooks_json(path: &Path) -> Result<(Vec<String>, Option<String>)> {

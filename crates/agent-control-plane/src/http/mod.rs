@@ -1,20 +1,24 @@
+// allow: SIZE_OK — legacy Axum route composition root; handlers are being split into focused http/* modules without changing route identity.
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{
     Json, Router,
     routing::{delete, get, post},
 };
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 
-use crate::acp_client_host::DEVIN_ACP_CLIENT_HOST_ID;
+use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
+use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
 use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
-use crate::devin::LEGACY_LOOPER_ACP_ROUTE;
+use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
 use crate::mobile::api::mobile_session_detail;
@@ -50,11 +54,13 @@ use self::mobile_state::{
     missing_mobile_session_rejection, mobile_snapshot_response,
 };
 use self::requests::{
-    AcpClientHostProbeRequest, DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
-    DesktopConnectionRenameRequest, DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest,
-    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionBatchPromptRequest,
-    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
-    MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
+    AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest,
+    DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
+    DesktopConnectionRenameRequest, DesktopDefaultNotificationTargetsRequest,
+    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationRequest,
+    DesktopScopeRequest, DesktopSessionBatchPromptRequest, DesktopSessionNotificationsRequest,
+    DesktopSnapshotQuery, DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest,
+    DevinAcpSessionPromptRequest, MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
     MobileSessionPromptQuery, MobileSessionPromptRequest, MobileSiriCurrentSessionRequest,
@@ -103,10 +109,14 @@ fn system_routes() -> Router<ControlPlane> {
 
 fn acp_routes() -> Router<ControlPlane> {
     Router::new()
-        .route(LEGACY_LOOPER_ACP_ROUTE, get(devin_acp_websocket))
+        .route(
+            LEGACY_LOOPER_ACP_ROUTE,
+            get(devin_acp_websocket).route_layer(middleware::from_fn(desktop_loopback_middleware)),
+        )
         .route(
             "/acp/client-hosts/:client_id",
-            get(acp_client_host_websocket),
+            get(acp_client_host_websocket)
+                .route_layer(middleware::from_fn(desktop_loopback_middleware)),
         )
         .route("/desktop/devin", get(desktop_devin))
         .route("/desktop/zed", get(desktop_zed))
@@ -118,6 +128,18 @@ fn acp_routes() -> Router<ControlPlane> {
         .route(
             "/desktop/devin/acp-bridge/install",
             post(desktop_devin_acp_bridge_install),
+        )
+        .route(
+            "/desktop/devin/acp-bridge/sessions",
+            post(desktop_devin_acp_bridge_session_create),
+        )
+        .route(
+            "/desktop/devin/acp-bridge/sessions/:thread_id/prompt",
+            post(desktop_devin_acp_bridge_session_prompt),
+        )
+        .route(
+            "/desktop/devin/acp-bridge/sessions/:thread_id/cancel",
+            post(desktop_devin_acp_bridge_session_cancel),
         )
         .route("/desktop/acp-client-hosts", get(desktop_acp_client_hosts))
         .route(
@@ -132,6 +154,33 @@ fn acp_routes() -> Router<ControlPlane> {
             "/desktop/acp-client-hosts/:client_id/install",
             post(desktop_acp_client_host_install),
         )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/sessions",
+            post(desktop_acp_client_host_session_create),
+        )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/sessions/observe",
+            post(desktop_acp_client_host_session_observe),
+        )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/sessions/:thread_id/prompt",
+            post(desktop_acp_client_host_session_prompt),
+        )
+        .route(
+            "/desktop/acp-client-hosts/:client_id/sessions/:thread_id/cancel",
+            post(desktop_acp_client_host_session_cancel),
+        )
+}
+
+async fn desktop_loopback_middleware(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    next.run(request).await
 }
 
 fn desktop_connection_routes() -> Router<ControlPlane> {
@@ -172,6 +221,10 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
         .route(
             "/desktop/settings/global-notification",
             post(desktop_global_notification),
+        )
+        .route(
+            "/desktop/settings/default-notification-targets",
+            post(desktop_default_notification_targets),
         )
         .route(
             "/desktop/settings/global-completion-check",
@@ -233,6 +286,7 @@ fn hook_routes() -> Router<ControlPlane> {
         .route("/hooks/register", post(register_hooks))
         .route("/hooks/:target/register", post(register_target_hooks))
         .route("/hooks/unregister", post(unregister_hooks))
+        .route("/hooks/:target/unregister", post(unregister_target_hooks))
         .route("/hooks/unregister-live", post(unregister_live_hooks))
         .route(
             "/hooks/:target/unregister-live",
@@ -408,6 +462,49 @@ async fn desktop_devin_acp_bridge_install(
     }
 }
 
+async fn desktop_devin_acp_bridge_session_create(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DevinAcpSessionCreateRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane.create_devin_acp_control_session_response(input.cwd) {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => acp_client_host_action_unsupported(DEVIN_ACP_CLIENT_HOST_ID, "session create"),
+    }
+}
+
+async fn desktop_devin_acp_bridge_session_prompt(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(thread_id): Path<String>,
+    Json(input): Json<DevinAcpSessionPromptRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane.prompt_devin_acp_control_session_response(&thread_id, &input.prompt) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => devin_acp_control_error_response(error),
+    }
+}
+
+async fn desktop_devin_acp_bridge_session_cancel(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(thread_id): Path<String>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane.cancel_devin_acp_control_session_response(&thread_id) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => devin_acp_control_error_response(error),
+    }
+}
+
 async fn desktop_acp_client_hosts(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     Json(control_plane.acp_client_hosts_response())
 }
@@ -458,6 +555,90 @@ async fn desktop_acp_client_host_install(
     }
 }
 
+async fn desktop_acp_client_host_session_create(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DevinAcpSessionCreateRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    if !control_plane.acp_client_host_exists(&client_id) {
+        return acp_client_host_not_found(&client_id);
+    }
+    match control_plane.create_acp_client_host_control_session_response(&client_id, input.cwd) {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => acp_client_host_action_unsupported(&client_id, "session create"),
+    }
+}
+
+async fn desktop_acp_client_host_session_observe(
+    State(control_plane): State<ControlPlane>,
+    Path(client_id): Path<String>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<AcpClientHostSessionObserveRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    if !control_plane.acp_client_host_exists(&client_id) {
+        return acp_client_host_not_found(&client_id);
+    }
+    let observed = LooperAcpObservedSession {
+        agent_id: input.agent_id,
+        session_id: input.session_id,
+        connection_id: input.connection_id,
+        cwd: input.cwd,
+        latest_user_prompt: input.latest_user_prompt,
+        latest_assistant_message: input.latest_assistant_message,
+        cancelled: input.cancelled,
+    };
+    match control_plane.observe_acp_client_host_session_response(&client_id, observed) {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
+        None => acp_client_host_action_unsupported(&client_id, "session observe"),
+    }
+}
+
+async fn desktop_acp_client_host_session_prompt(
+    State(control_plane): State<ControlPlane>,
+    Path((client_id, thread_id)): Path<(String, String)>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DevinAcpSessionPromptRequest>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    if !control_plane.acp_client_host_exists(&client_id) {
+        return acp_client_host_not_found(&client_id);
+    }
+    match control_plane.prompt_acp_client_host_control_session_response(
+        &client_id,
+        &thread_id,
+        &input.prompt,
+    ) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => devin_acp_control_error_response(error),
+    }
+}
+
+async fn desktop_acp_client_host_session_cancel(
+    State(control_plane): State<ControlPlane>,
+    Path((client_id, thread_id)): Path<(String, String)>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    if !control_plane.acp_client_host_exists(&client_id) {
+        return acp_client_host_not_found(&client_id);
+    }
+    match control_plane.cancel_acp_client_host_control_session_response(&client_id, &thread_id) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => devin_acp_control_error_response(error),
+    }
+}
+
 fn acp_client_host_not_found(client_id: &str) -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -478,31 +659,62 @@ fn acp_client_host_action_unsupported(client_id: &str, action: &str) -> Response
         .into_response()
 }
 
+fn devin_acp_control_error_response(error: DevinAcpControlError) -> Response {
+    let status = match error {
+        DevinAcpControlError::DeliveryUnavailable => StatusCode::BAD_GATEWAY,
+        DevinAcpControlError::PromptRequired => StatusCode::BAD_REQUEST,
+        DevinAcpControlError::SessionNotFound => StatusCode::NOT_FOUND,
+    };
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string() })),
+    )
+        .into_response()
+}
+
 async fn acp_client_host_websocket(
     State(control_plane): State<ControlPlane>,
     Path(client_id): Path<String>,
+    Query(query): Query<AcpClientHostWebsocketQuery>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     websocket: WebSocketUpgrade,
 ) -> Response {
-    if client_id != DEVIN_ACP_CLIENT_HOST_ID {
-        return acp_client_host_not_found(&client_id);
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
     }
+    let Some(runtime) = control_plane.acp_runtime_for_client(&client_id).cloned() else {
+        return acp_client_host_not_found(&client_id);
+    };
     websocket
-        .on_upgrade(move |socket| run_devin_acp_socket(control_plane, socket))
+        .on_upgrade(move |socket| run_acp_socket(runtime, socket, query.agent_id))
         .into_response()
 }
 
 async fn devin_acp_websocket(
     State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     websocket: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    websocket.on_upgrade(move |socket| run_devin_acp_socket(control_plane, socket))
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    let runtime = control_plane.devin_acp_runtime().clone();
+    websocket.on_upgrade(move |socket| run_acp_socket(runtime, socket, None))
 }
 
-async fn run_devin_acp_socket(control_plane: ControlPlane, socket: WebSocket) {
+#[derive(Debug, Default, Deserialize)]
+struct AcpClientHostWebsocketQuery {
+    #[serde(rename = "agentId")]
+    agent_id: Option<String>,
+}
+
+async fn run_acp_socket(runtime: LooperAcpRuntime, socket: WebSocket, agent_id: Option<String>) {
     let (mut socket_sender, mut socket_receiver) = socket.split();
     let (outbound_sender, mut outbound_receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let runtime = control_plane.devin_acp_runtime().clone();
-    let connection_id = runtime.register_connection(outbound_sender.clone());
+    let connection_id = match agent_id {
+        Some(agent_id) => runtime.register_connection_for_agent(agent_id, outbound_sender.clone()),
+        None => runtime.register_connection(outbound_sender.clone()),
+    };
     let writer = tokio::spawn(async move {
         while let Some(message) = outbound_receiver.recv().await {
             if socket_sender.send(Message::Text(message)).await.is_err() {
@@ -794,6 +1006,23 @@ async fn desktop_global_notification(
     match control_plane
         .mobile_session_service()
         .set_global_notification(input.notification_id.as_deref())
+    {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => mobile_session_error_response(error),
+    }
+}
+
+async fn desktop_default_notification_targets(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopDefaultNotificationTargetsRequest>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match control_plane
+        .mobile_session_service()
+        .set_default_notification_targets(&input.notification_target_ids)
     {
         Ok(()) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
@@ -1149,6 +1378,27 @@ async fn register_target_hooks(
     }
 }
 
+async fn unregister_target_hooks(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(target): Path<String>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    let Some(target) = HookMutationTarget::parse(&target) else {
+        return unknown_hook_target_response();
+    };
+    match control_plane.unregister_hooks_for_target(target) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn unregister_live_hooks(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
@@ -1191,7 +1441,7 @@ fn unknown_hook_target_response() -> Response {
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({
-            "error": "hook target must be codex, grok, or claude"
+            "error": "hook target must be codex, devin, grok, or claude"
         })),
     )
         .into_response()
@@ -1308,10 +1558,10 @@ async fn mobile_session_detail_handler(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(assistant_surface) = query.assistant_surface.as_deref() {
-        if !ASSISTANT_SURFACES.contains(&assistant_surface) {
-            return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
-        }
+    if let Some(assistant_surface) = query.assistant_surface.as_deref()
+        && !ASSISTANT_SURFACES.contains(&assistant_surface)
+    {
+        return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
     }
 
     let snapshot = match mobile_desktop_snapshot(&control_plane) {
@@ -1399,10 +1649,10 @@ async fn mobile_session_prompt(
     if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
         return mobile_authorization_error_response(error);
     }
-    if let Some(assistant_surface) = query.assistant_surface.as_deref() {
-        if !ASSISTANT_SURFACES.contains(&assistant_surface) {
-            return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
-        }
+    if let Some(assistant_surface) = query.assistant_surface.as_deref()
+        && !ASSISTANT_SURFACES.contains(&assistant_surface)
+    {
+        return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
     }
     if let Some(response) = missing_mobile_session_rejection(
         &control_plane,

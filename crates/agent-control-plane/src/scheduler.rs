@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::automations::read_automations;
 use crate::control_plane::ControlPlane;
-use crate::events::AutomationRunRecord;
+use crate::events::{AutomationRunInput, AutomationRunRecord};
 use crate::mobile::prompt_delivery::{PromptDispatch, send_non_acp_session_prompt};
 
 const AUTOMATION_DELIVERY_MODE: &str = "local-prompt-dispatch";
@@ -28,15 +28,17 @@ impl AutomationRunner {
             let Some(scheduled_at_ms) = automation.due_scheduled_at_ms(now_ms) else {
                 continue;
             };
-            let Some(record) = self.control_plane.record_automation_fire(
-                &automation.id,
-                automation.target_thread_id.as_deref(),
-                scheduled_at_ms,
-                now_ms,
-                AUTOMATION_DELIVERY_MODE,
-                AUTOMATION_RESULT_PENDING,
-                Some("automation prompt dispatch reserved"),
-            )?
+            let Some(record) = self
+                .control_plane
+                .record_automation_fire(AutomationRunInput {
+                    automation_id: &automation.id,
+                    target_thread_id: automation.target_thread_id.as_deref(),
+                    scheduled_at_ms,
+                    fired_at_ms: now_ms,
+                    delivery_mode: AUTOMATION_DELIVERY_MODE,
+                    result: AUTOMATION_RESULT_PENDING,
+                    detail: Some("automation prompt dispatch reserved"),
+                })?
             else {
                 continue;
             };

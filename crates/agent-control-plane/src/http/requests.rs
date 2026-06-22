@@ -16,6 +16,31 @@ pub(super) struct AcpClientHostProbeRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct DevinAcpSessionCreateRequest {
+    pub(super) cwd: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DevinAcpSessionPromptRequest {
+    pub(super) prompt: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct AcpClientHostSessionObserveRequest {
+    pub(super) agent_id: String,
+    pub(super) session_id: String,
+    pub(super) connection_id: Option<String>,
+    pub(super) cwd: Option<String>,
+    pub(super) latest_user_prompt: Option<String>,
+    pub(super) latest_assistant_message: Option<String>,
+    #[serde(default)]
+    pub(super) cancelled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct MobilePasskeyAuthenticationChallengeRequest {
     pub(super) credential_id: String,
 }
@@ -106,6 +131,12 @@ pub(super) struct MobileSiriCurrentSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub(super) struct DesktopGlobalNotificationRequest {
     pub(super) notification_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DesktopDefaultNotificationTargetsRequest {
+    pub(super) notification_target_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Devin bridge contract keeps registry, launch metadata, and probe readiness mapping together.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -169,7 +170,7 @@ fn bridge_agent(
         control_level,
         supports_sessions: control_level == DevinAcpControlLevel::AgentConfigured,
         supports_prompt: control_level == DevinAcpControlLevel::AgentConfigured,
-        supports_cancel: false,
+        supports_cancel: control_level == DevinAcpControlLevel::AgentConfigured,
         source: ACP_BRIDGE_SOURCE.to_owned(),
     }
 }
@@ -194,15 +195,13 @@ fn bridge_actions(agents: &[DevinAcpBridgeAgent]) -> Vec<DevinAcpBridgeAction> {
         default_agent_id: None,
     }];
     actions.extend(
-        default_probe_agent_id(agents)
-            .map(|default_agent_id| DevinAcpBridgeAction {
-                id: ACP_BRIDGE_PROBE_ACTION_ID.to_owned(),
-                label: ACP_BRIDGE_PROBE_ACTION_LABEL.to_owned(),
-                method: ACP_BRIDGE_PROBE_METHOD.to_owned(),
-                path: ACP_BRIDGE_PROBE_PATH.to_owned(),
-                default_agent_id: Some(default_agent_id),
-            })
-            .into_iter(),
+        default_probe_agent_id(agents).map(|default_agent_id| DevinAcpBridgeAction {
+            id: ACP_BRIDGE_PROBE_ACTION_ID.to_owned(),
+            label: ACP_BRIDGE_PROBE_ACTION_LABEL.to_owned(),
+            method: ACP_BRIDGE_PROBE_METHOD.to_owned(),
+            path: ACP_BRIDGE_PROBE_PATH.to_owned(),
+            default_agent_id: Some(default_agent_id),
+        }),
     );
     actions
 }
@@ -470,7 +469,7 @@ mod tests {
         );
         assert!(status.agents[0].supports_prompt);
         assert!(status.agents[0].supports_sessions);
-        assert!(!status.agents[0].supports_cancel);
+        assert!(status.agents[0].supports_cancel);
         assert!(
             status
                 .actions

@@ -164,7 +164,7 @@ mod tests {
     fn doctor_table_prints_checks() {
         let check = doctor_check("looper-server", false, DOCTOR_STATUS_UNREACHABLE, "offline");
         assert_eq!(check["name"], "looper-server");
-        assert_eq!(check["ok"], false);
+        assert_eq!(check["ok"], serde_json::json!(false));
         assert_eq!(check["status"], DOCTOR_STATUS_UNREACHABLE);
     }
 
@@ -177,7 +177,7 @@ mod tests {
             "grok_hooks": { "health": "healthy" },
         });
         let check = doctor_control_plane_health_check(&health);
-        assert_eq!(check["ok"], false);
+        assert_eq!(check["ok"], serde_json::json!(false));
         assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
     }
 
@@ -191,7 +191,7 @@ mod tests {
             "claude_hooks": { "health": "missing" },
         });
         let check = doctor_control_plane_health_check(&health);
-        assert_eq!(check["ok"], true);
+        assert_eq!(check["ok"], serde_json::json!(true));
         assert_eq!(check["status"], DOCTOR_STATUS_OK);
     }
 
@@ -205,7 +205,7 @@ mod tests {
             "claude_hooks": { "health": "healthy" },
         });
         let check = doctor_control_plane_health_check(&health);
-        assert_eq!(check["ok"], false);
+        assert_eq!(check["ok"], serde_json::json!(false));
         assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
     }
 
@@ -219,7 +219,7 @@ mod tests {
             "claude_hooks": { "health": "configured" },
         });
         let check = doctor_control_plane_health_check(&health);
-        assert_eq!(check["ok"], false);
+        assert_eq!(check["ok"], serde_json::json!(false));
         assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
     }
 
@@ -230,7 +230,7 @@ mod tests {
             "requiresAuthentication": false,
         });
         let check = doctor_mobile_health_check(&health);
-        assert_eq!(check["ok"], false);
+        assert_eq!(check["ok"], serde_json::json!(false));
         assert_eq!(check["status"], DOCTOR_STATUS_UNHEALTHY);
     }
 }

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — mobile network boundary owns advertised URLs, route policy, Tailscale detection, and listener safety together.
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -259,7 +260,7 @@ fn mobile_tailscale_status_from_sources(
 
 async fn discover_tailscale_status() -> Result<TailscaleDiscovery> {
     match discover_tailscale_status_with_localapi().await {
-        Ok(status) => return Ok(status),
+        Ok(status) => Ok(status),
         Err(localapi_error) => match discover_tailscale_status_with_cli().await {
             Ok(status) => Ok(status),
             Err(cli_error) => Err(anyhow!(

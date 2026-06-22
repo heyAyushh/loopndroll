@@ -1,3 +1,4 @@
+// allow: SIZE_OK — event store boundary keeps append, cursor, replay, and serialization semantics in one ordered log module.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -21,6 +22,17 @@ pub struct AutomationRunRecord {
     pub delivery_mode: String,
     pub result: String,
     pub detail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutomationRunInput<'a> {
+    pub automation_id: &'a str,
+    pub target_thread_id: Option<&'a str>,
+    pub scheduled_at_ms: i64,
+    pub fired_at_ms: i64,
+    pub delivery_mode: &'a str,
+    pub result: &'a str,
+    pub detail: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,20 +221,14 @@ create index if not exists mobile_event_log_replay_cursor
 
     pub fn record_automation_run(
         &self,
-        automation_id: &str,
-        target_thread_id: Option<&str>,
-        scheduled_at_ms: i64,
-        fired_at_ms: i64,
-        delivery_mode: &str,
-        result: &str,
-        detail: Option<&str>,
+        input: AutomationRunInput<'_>,
     ) -> Result<Option<AutomationRunRecord>> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
         let existing: Option<String> = connection
             .query_row(
                 "select run_id from automation_runs where automation_id = ?1 and scheduled_at_ms = ?2",
-                params![automation_id, scheduled_at_ms],
+                params![input.automation_id, input.scheduled_at_ms],
                 |row| row.get(0),
             )
             .optional()?;
@@ -232,13 +238,13 @@ create index if not exists mobile_event_log_replay_cursor
 
         let record = AutomationRunRecord {
             run_id: format!("automation-run-{}", uuid::Uuid::new_v4()),
-            automation_id: automation_id.to_owned(),
-            target_thread_id: target_thread_id.map(str::to_owned),
-            scheduled_at_ms,
-            fired_at_ms,
-            delivery_mode: delivery_mode.to_owned(),
-            result: result.to_owned(),
-            detail: detail.map(str::to_owned),
+            automation_id: input.automation_id.to_owned(),
+            target_thread_id: input.target_thread_id.map(str::to_owned),
+            scheduled_at_ms: input.scheduled_at_ms,
+            fired_at_ms: input.fired_at_ms,
+            delivery_mode: input.delivery_mode.to_owned(),
+            result: input.result.to_owned(),
+            detail: input.detail.map(str::to_owned),
         };
         connection.execute(
             "insert into automation_runs (

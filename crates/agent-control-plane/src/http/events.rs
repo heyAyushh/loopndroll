@@ -93,7 +93,8 @@ fn local_desktop_events_stream(
                             match event {
                                 MobileEventBroadcast::Persisted(record) => {
                                     last_event_cursor = (&record).into();
-                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                                    let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record, revision));
                                 }
                                 MobileEventBroadcast::Ephemeral(event) => {
                                     yield Ok::<Event, Infallible>(mobile_sse_event(&event));
@@ -104,14 +105,15 @@ fn local_desktop_events_stream(
                             if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, MOBILE_EVENT_BACKFILL_LIMIT) {
                                 for record in records {
                                     last_event_cursor = (&record).into();
-                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                                    let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                                    yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record, revision));
                                 }
                             }
-                            if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-                                if revision != last_revision {
-                                    last_revision = revision;
-                                    yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
-                                }
+                            if let Ok(revision) = control_plane.mobile_snapshot_revision()
+                                && revision != last_revision
+                            {
+                                last_revision = revision;
+                                yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
                             }
                             continue;
                         }
@@ -122,15 +124,16 @@ fn local_desktop_events_stream(
                     if let Ok(records) = control_plane.store().mobile_events_after(&last_event_cursor, MOBILE_EVENT_BACKFILL_LIMIT) {
                         for record in records {
                             last_event_cursor = (&record).into();
-                            yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record));
+                            let revision = current_snapshot_revision(&control_plane, &mut last_revision);
+                            yield Ok::<Event, Infallible>(mobile_sse_event_from_record(&record, revision));
                         }
                     }
 
-                    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-                        if revision != last_revision {
-                            last_revision = revision;
-                            yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
-                        }
+                    if let Ok(revision) = control_plane.mobile_snapshot_revision()
+                        && revision != last_revision
+                    {
+                        last_revision = revision;
+                        yield Ok::<Event, Infallible>(mobile_sse_event(&snapshot_revision_changed_event(last_revision.clone())));
                     }
                 }
             }
@@ -147,13 +150,22 @@ fn mobile_sse_event(event: &MobileEvent) -> Event {
         .data(payload)
 }
 
-fn mobile_sse_event_from_record(record: &MobileEventRecord) -> Event {
+fn mobile_sse_event_from_record(record: &MobileEventRecord, revision: Option<String>) -> Event {
     mobile_sse_event(&MobileEvent {
         event_type: record.event_type,
         thread_id: record.thread_id.clone(),
         prompt_id: record.prompt_id.clone(),
         detail: record.detail.clone(),
         server_time: mobile_event_now(),
-        revision: None,
+        revision,
     })
+}
+
+fn current_snapshot_revision(
+    control_plane: &ControlPlane,
+    last_revision: &mut String,
+) -> Option<String> {
+    let revision = control_plane.mobile_snapshot_revision().ok()?;
+    *last_revision = revision.clone();
+    Some(revision)
 }

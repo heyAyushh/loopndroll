@@ -1,3 +1,4 @@
+// allow: SIZE_OK — runtime lifecycle boundary centralizes signal, hook, and server shutdown ownership to avoid split-brain process control.
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
@@ -151,25 +152,25 @@ async fn run_hook_mode_with_input(
             });
         }
     }
-    if outcome.decision.is_none() && payload.hook_event_name == STOP_HOOK_EVENT {
-        if let Err(error) =
+    if outcome.decision.is_none()
+        && payload.hook_event_name == STOP_HOOK_EVENT
+        && let Err(error) =
             crate::hook_notifications::send_stop_notifications(&control_plane, &payload).await
-        {
-            eprintln!("stop notification delivery failed: {error}");
-        }
+    {
+        eprintln!("stop notification delivery failed: {error}");
     }
     if let Some(decision) = outcome.decision {
         if context.grok_hook && decision.decision == "block" {
-            if let Some(session_id) = payload.session_id.as_deref() {
-                if let Err(error) = spawn_session_continue(&GrokContinueRequest {
+            if let Some(session_id) = payload.session_id.as_deref()
+                && let Err(error) = spawn_session_continue(&GrokContinueRequest {
                     session_id: session_id.to_owned(),
                     prompt: decision.reason.clone(),
                     cwd: payload.cwd.clone(),
                     grok_executable: None,
                     grok_home: Some(control_plane.grok_home().clone()),
-                }) {
-                    eprintln!("grok session continue failed: {error}");
-                }
+                })
+            {
+                eprintln!("grok session continue failed: {error}");
             }
         } else {
             println!("{}", serde_json::to_string(&decision)?);
@@ -187,6 +188,7 @@ pub fn default_control_plane() -> Result<ControlPlane> {
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),
         home_path,
+        zed_process_commands: None,
     }))
 }
 
@@ -214,9 +216,18 @@ async fn shutdown_signal() {
     {
         use tokio::signal::unix::{SignalKind, signal};
 
-        let mut interrupt = signal(SignalKind::interrupt()).expect("install SIGINT handler");
-        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-        let mut hangup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
+        let Ok(mut interrupt) = signal(SignalKind::interrupt()) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
+        let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
+        let Ok(mut hangup) = signal(SignalKind::hangup()) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
 
         tokio::select! {
             _ = interrupt.recv() => {}
@@ -374,6 +385,7 @@ mod tests {
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some(TEST_HOOK_COMMAND.to_owned()),
             home_path: temp_dir.path().to_path_buf(),
+            zed_process_commands: Some(Vec::new()),
         });
         let context = HookInvocationContext {
             devin_hook: false,

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Claude hook adapter keeps register/inspect/unregister JSON mutation semantics atomic.
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,11 +31,12 @@ pub struct ClaudeHookStatus {
     pub settings_path: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClaudeHookOwner {
     LooperRust,
     Unknown,
+    #[default]
     None,
 }
 
@@ -91,10 +93,7 @@ pub fn unregister_owned_claude_hooks(claude_home: &Path) -> Result<usize> {
 
 pub fn inspect_claude_hooks(claude_home: &Path) -> ClaudeHookStatus {
     let settings_path = default_claude_settings_path(claude_home);
-    let inspection = match read_hooks_json(&settings_path) {
-        Ok(value) => value,
-        Err(_) => ClaudeHooksInspection::default(),
-    };
+    let inspection = read_hooks_json(&settings_path).unwrap_or_default();
     let health = if inspection.registered_events.is_empty() {
         "missing"
     } else if matches!(inspection.owner, ClaudeHookOwner::LooperRust) {
@@ -208,10 +207,16 @@ fn ensure_hooks_object(document: &mut Value) -> &mut Value {
     if !document.is_object() {
         *document = json!({});
     }
-    if document.get("hooks").is_none() || !document["hooks"].is_object() {
-        document["hooks"] = json!({});
+    match document {
+        Value::Object(document) => {
+            let hooks = document.entry("hooks").or_insert_with(|| json!({}));
+            if !hooks.is_object() {
+                *hooks = json!({});
+            }
+            hooks
+        }
+        _ => document,
     }
-    document.get_mut("hooks").expect("hooks object")
 }
 
 #[derive(Default)]
@@ -219,12 +224,6 @@ struct ClaudeHooksInspection {
     registered_events: Vec<String>,
     active_command: Option<String>,
     owner: ClaudeHookOwner,
-}
-
-impl Default for ClaudeHookOwner {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 fn read_hooks_json(path: &Path) -> Result<ClaudeHooksInspection> {

@@ -203,7 +203,7 @@ mod tests {
                     control_level: DevinAcpControlLevel::AgentConfigured,
                     supports_sessions: true,
                     supports_prompt: true,
-                    supports_cancel: false,
+                    supports_cancel: true,
                     source: "devin-acp-registry".to_owned(),
                 }],
             },

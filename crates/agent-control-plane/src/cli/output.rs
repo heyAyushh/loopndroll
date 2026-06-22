@@ -70,26 +70,26 @@ fn print_table(value: &Value) -> Result<()> {
         );
         return Ok(());
     }
-    if let Some(bridge) = value.get("bridge") {
-        if let Some(agents) = bridge.get("agents").and_then(Value::as_array) {
-            println!(
-                "summary\t{}",
-                scalar_text(bridge.get("summary").unwrap_or(&Value::Null))
-            );
-            print_rows(
-                "id\tenabled\tpreferred\tcontrol_level\tlaunch_configured\tname",
-                agents,
-                &[
-                    "id",
-                    "enabled",
-                    "preferred",
-                    "control_level",
-                    "launch_configured",
-                    "name",
-                ],
-            );
-            return Ok(());
-        }
+    if let Some(bridge) = value.get("bridge")
+        && let Some(agents) = bridge.get("agents").and_then(Value::as_array)
+    {
+        println!(
+            "summary\t{}",
+            scalar_text(bridge.get("summary").unwrap_or(&Value::Null))
+        );
+        print_rows(
+            "id\tenabled\tpreferred\tcontrol_level\tlaunch_configured\tname",
+            agents,
+            &[
+                "id",
+                "enabled",
+                "preferred",
+                "control_level",
+                "launch_configured",
+                "name",
+            ],
+        );
+        return Ok(());
     }
     if let Some(probe) = value.get("probe") {
         println!("agent_id\tstatus\tready\tprobe_kind\tdetail");
@@ -101,17 +101,17 @@ fn print_table(value: &Value) -> Result<()> {
             scalar_text(probe.get("probe_kind").unwrap_or(&Value::Null)),
             scalar_text(probe.get("detail").unwrap_or(&Value::Null))
         );
-        if let Some(blockers) = probe.get("blockers").and_then(Value::as_array) {
-            if !blockers.is_empty() {
-                println!(
-                    "blockers\t{}",
-                    blockers
-                        .iter()
-                        .map(scalar_text)
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                );
-            }
+        if let Some(blockers) = probe.get("blockers").and_then(Value::as_array)
+            && !blockers.is_empty()
+        {
+            println!(
+                "blockers\t{}",
+                blockers
+                    .iter()
+                    .map(scalar_text)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
         }
         return Ok(());
     }

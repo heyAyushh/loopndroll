@@ -18,6 +18,7 @@ pub use model::{
     AcpClientHostRegistry, AcpClientHostResponse, AcpClientHostRuntime, AcpClientHostSession,
     AcpClientHostsResponse,
 };
+pub use zed::zed_acp_client_host_install;
 pub use zed::{ZED_ACP_CLIENT_HOST_ID, zed_acp_client_host, zed_acp_client_host_probe};
 
 const ACP_CLIENT_HOSTS_ROUTE: &str = "/desktop/acp-client-hosts";

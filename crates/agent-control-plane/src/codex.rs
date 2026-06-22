@@ -1,3 +1,4 @@
+// allow: SIZE_OK — Codex session inventory boundary coordinates state DB, transcript, rollout, and spawn metadata truth sources.
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -41,6 +42,7 @@ const MIN_BOUNDED_ROLLOUT_REFRESH_CANDIDATES: usize = 64;
 const ROLLOUT_SESSION_META_SCAN_LINE_LIMIT: usize = 2_000;
 const BYTES_PER_KIBIBYTE: u64 = 1_024;
 const ROLLOUT_SESSION_META_SCAN_BYTE_LIMIT: u64 = 256 * BYTES_PER_KIBIBYTE;
+const SESSION_INDEX_FILENAME: &str = "session_index.jsonl";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneStatus {
@@ -152,6 +154,12 @@ struct RolloutPayload {
     id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionIndexRecord {
+    id: Option<String>,
+    thread_name: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SpawnGraph {
     pub parent_thread_id: Option<String>,
@@ -214,6 +222,7 @@ pub struct CodexSources {
     pub state_db: Option<PathBuf>,
     pub logs_db: Option<PathBuf>,
     pub sessions_root: PathBuf,
+    pub session_index: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -254,6 +263,7 @@ pub fn discover_sources(codex_home: &Path) -> CodexSources {
         state_db: latest_matching_file(codex_home, "state_", ".sqlite"),
         logs_db: latest_matching_file(codex_home, "logs_", ".sqlite"),
         sessions_root: codex_home.join("sessions"),
+        session_index: codex_home.join(SESSION_INDEX_FILENAME),
     }
 }
 
@@ -390,6 +400,7 @@ pub fn read_state_with_thread_limit(
     if let Some(limit) = thread_limit {
         threads = latest_thread_records(threads, limit);
     }
+    apply_session_index_titles(&mut threads, &sources.session_index);
     let selected_thread_ids = threads
         .iter()
         .map(|thread| thread.thread_id.clone())
@@ -677,9 +688,9 @@ fn refresh_thread_rollout_paths(
             if !selected_thread_ids.contains(session_id.as_str()) {
                 continue;
             }
-            if !latest_rollouts_by_thread.contains_key(&session_id) {
-                latest_rollouts_by_thread.insert(session_id, candidate.clone());
-            }
+            latest_rollouts_by_thread
+                .entry(session_id)
+                .or_insert_with(|| candidate.clone());
         }
         if latest_rollouts_by_thread.len() == selected_thread_ids.len() {
             break;
@@ -897,6 +908,44 @@ fn transcript_originator_for_path(path: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|originator| !originator.trim().is_empty())
         .map(str::to_owned)
+}
+
+fn apply_session_index_titles(threads: &mut [ThreadRecord], session_index_path: &Path) {
+    if threads.is_empty() {
+        return;
+    }
+    let titles = read_session_index_titles(session_index_path);
+    if titles.is_empty() {
+        return;
+    }
+
+    for thread in threads {
+        if let Some(title) = titles.get(&thread.thread_id) {
+            thread.title = Some(title.clone());
+        }
+    }
+}
+
+fn read_session_index_titles(session_index_path: &Path) -> BTreeMap<String, String> {
+    let Ok(file) = File::open(session_index_path) else {
+        return BTreeMap::new();
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<SessionIndexRecord>(&line).ok())
+        .filter_map(|record| {
+            let id = non_empty_trimmed_string(record.id)?;
+            let title = non_empty_trimmed_string(record.thread_name)?;
+            Some((id, title))
+        })
+        .collect()
+}
+
+fn non_empty_trimmed_string(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 fn read_dynamic_tools(connection: &Connection) -> Result<BTreeMap<String, Vec<DynamicTool>>> {
@@ -1635,6 +1684,97 @@ mod tests {
             state.threads[0].transcript_path.as_deref(),
             Some(resumed_rollout.to_str().expect("utf8 path"))
         );
+    }
+
+    #[test]
+    fn read_state_prefers_codex_session_index_thread_name_over_state_title() {
+        let tempdir = tempdir().expect("tempdir");
+        let state_db = tempdir.path().join("state_1.sqlite");
+        let connection = Connection::open(&state_db).expect("open state db");
+        connection
+            .execute(
+                "create table threads (
+                    id text primary key,
+                    title text,
+                    updated_at_ms integer,
+                    archived integer
+                )",
+                [],
+            )
+            .expect("create threads");
+        connection
+            .execute(
+                "insert into threads (id, title, updated_at_ms, archived)
+                 values (?1, ?2, ?3, 0)",
+                ("thread-1", "first prompt copied into state title", 10_i64),
+            )
+            .expect("insert thread");
+        fs::write(
+            tempdir.path().join(super::SESSION_INDEX_FILENAME),
+            serde_json::json!({
+                "id": "thread-1",
+                "thread_name": "Generated Codex Desktop title"
+            })
+            .to_string()
+                + "\n",
+        )
+        .expect("write session index");
+
+        let state = read_state_with_thread_limit(tempdir.path(), None).expect("read state");
+
+        assert_eq!(state.threads.len(), 1);
+        assert_eq!(
+            state.threads[0].title.as_deref(),
+            Some("Generated Codex Desktop title")
+        );
+    }
+
+    #[test]
+    fn session_index_titles_ignore_blank_and_malformed_rows() {
+        let tempdir = tempdir().expect("tempdir");
+        let state_db = tempdir.path().join("state_1.sqlite");
+        let connection = Connection::open(&state_db).expect("open state db");
+        connection
+            .execute(
+                "create table threads (
+                    id text primary key,
+                    title text,
+                    updated_at_ms integer,
+                    archived integer
+                )",
+                [],
+            )
+            .expect("create threads");
+        connection
+            .execute(
+                "insert into threads (id, title, updated_at_ms, archived)
+                 values (?1, ?2, ?3, 0)",
+                ("thread-1", "state title", 10_i64),
+            )
+            .expect("insert thread");
+        connection
+            .execute(
+                "insert into threads (id, title, updated_at_ms, archived)
+                 values (?1, ?2, ?3, 0)",
+                ("thread-2", "second state title", 9_i64),
+            )
+            .expect("insert second thread");
+        fs::write(
+            tempdir.path().join(super::SESSION_INDEX_FILENAME),
+            [
+                "{\"id\":\"thread-1\",\"thread_name\":\"   \"}",
+                "not-json",
+                "{\"id\":\"thread-2\",\"thread_name\":\"  Indexed title  \"}",
+            ]
+            .join("\n"),
+        )
+        .expect("write session index");
+
+        let state = read_state_with_thread_limit(tempdir.path(), None).expect("read state");
+
+        assert_eq!(state.threads.len(), 2);
+        assert_eq!(state.threads[0].title.as_deref(), Some("state title"));
+        assert_eq!(state.threads[1].title.as_deref(), Some("Indexed title"));
     }
 
     #[test]

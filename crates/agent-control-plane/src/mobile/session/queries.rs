@@ -6,6 +6,8 @@ use super::normalization::{
     normalized_option, normalized_optional, now_iso_string, parse_commands_json,
 };
 use super::notifications::telegram_token_from_bot_url;
+use super::notifications::{NOTIFICATION_TARGET_MACOS, is_builtin_notification_target};
+use super::schema::MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE;
 use super::{
     MobileCompletionCheck, MobileNotificationRoute, MobileSessionError, MobileSessionLifecycle,
     MobileSessionResult,
@@ -130,6 +132,34 @@ pub(super) fn read_session_notifications(
             .push(notification_id);
     }
     Ok(notification_ids_by_thread)
+}
+
+pub(super) fn read_default_notification_target_ids(
+    connection: &Connection,
+    known_notification_ids: &BTreeSet<String>,
+) -> MobileSessionResult<Vec<String>> {
+    let mut statement = connection.prepare(&format!(
+        "select target_id
+         from {MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE}
+         order by target_id asc"
+    ))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut target_ids = Vec::new();
+    for row in rows {
+        let target_id = row?;
+        if !is_builtin_notification_target(&target_id)
+            && !known_notification_ids.contains(&target_id)
+        {
+            continue;
+        }
+        if !target_ids.contains(&target_id) {
+            target_ids.push(target_id);
+        }
+    }
+    if target_ids.is_empty() {
+        target_ids.push(NOTIFICATION_TARGET_MACOS.to_owned());
+    }
+    Ok(target_ids)
 }
 
 pub(super) fn read_session_lifecycle(

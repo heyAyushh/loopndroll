@@ -5,9 +5,17 @@ use crate::devin::{
     devin_thread_identity_from_public_thread_id,
 };
 use crate::mobile::session::{MobileSessionError, MobileSessionState};
+use crate::zed::ZED_CLIENT_ID;
 
 use super::assistant_identity::thread_matches_assistant_surface;
-use super::{ACTIVE_SESSION_STATUS, effective_preset, session_override, session_status};
+use super::availability::{
+    DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON,
+    DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON, INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON,
+    assistant_supports_prompt_delivery,
+};
+use super::overrides::{effective_preset, session_override};
+use super::summary::{ACTIVE_SESSION_STATUS, session_status};
+use super::transport::zed_acp_session_id;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptResumeTarget {
@@ -18,7 +26,13 @@ pub struct PromptResumeTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptDeliveryAction {
     QueueForHook,
-    SendDevinAcp { session_id: String },
+    SendLooperAcp {
+        client_id: String,
+        session_id: String,
+    },
+    SendDevinAcp {
+        session_id: String,
+    },
     ResumeCodex(PromptResumeTarget),
 }
 
@@ -98,7 +112,15 @@ pub(super) fn prompt_delivery_action_for_thread(
         thread.runtime_status.as_deref(),
     );
     if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        return devin_prompt_delivery_action(thread, &status);
+        return devin_prompt_delivery_action(thread, status);
+    }
+    if thread.capabilities.assistant_kind == AssistantKind::Zed {
+        if status != ACTIVE_SESSION_STATUS {
+            return Err(MobileSessionError::PromptDeliveryUnavailableReason(
+                INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON.to_owned(),
+            ));
+        }
+        return zed_prompt_delivery_action(thread);
     }
 
     match status {
@@ -107,97 +129,6 @@ pub(super) fn prompt_delivery_action_for_thread(
             INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON.to_owned(),
         )),
     }
-}
-
-const ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
-    "Archived sessions cannot receive prompts.";
-pub(super) const DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
-    "This Devin provider does not support mobile prompt delivery yet.";
-pub(super) const DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON: &str =
-    "This Devin Local session must be running before Looper can deliver prompts through hooks.";
-pub(super) const INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
-    "This session must be running before Looper can queue prompts.";
-const UNSUPPORTED_PROMPT_DELIVERY_UNAVAILABLE_REASON: &str =
-    "This assistant does not support mobile prompt delivery yet.";
-
-pub(super) struct PromptDeliveryAvailability {
-    pub(super) can_send_prompt: bool,
-    pub(super) unavailable_reason: Option<&'static str>,
-}
-
-fn assistant_supports_prompt_delivery(assistant_kind: &AssistantKind) -> bool {
-    matches!(
-        assistant_kind,
-        AssistantKind::Codex
-            | AssistantKind::DevinDesktop
-            | AssistantKind::GrokBuild
-            | AssistantKind::ClaudeCode
-    )
-}
-
-pub(super) fn prompt_delivery_availability(
-    thread: &DesktopThread,
-    is_archived: bool,
-    status: &str,
-) -> PromptDeliveryAvailability {
-    if is_archived {
-        return PromptDeliveryAvailability {
-            can_send_prompt: false,
-            unavailable_reason: Some(ARCHIVED_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-        };
-    }
-
-    if !assistant_supports_prompt_delivery(&thread.capabilities.assistant_kind) {
-        return PromptDeliveryAvailability {
-            can_send_prompt: false,
-            unavailable_reason: Some(UNSUPPORTED_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-        };
-    }
-    if thread.capabilities.assistant_kind == AssistantKind::DevinDesktop {
-        let Some((transport, _session_id)) = devin_prompt_transport(thread) else {
-            return PromptDeliveryAvailability {
-                can_send_prompt: false,
-                unavailable_reason: Some(DEVIN_PROVIDER_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-            };
-        };
-        match transport {
-            DevinPromptTransport::DevinAcpBridge => {}
-            DevinPromptTransport::DevinHook if status != ACTIVE_SESSION_STATUS => {
-                return PromptDeliveryAvailability {
-                    can_send_prompt: false,
-                    unavailable_reason: Some(
-                        DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON,
-                    ),
-                };
-            }
-            DevinPromptTransport::CodexAppServer | DevinPromptTransport::DevinHook => {}
-        }
-    }
-
-    let requires_active_session = !matches!(
-        thread.capabilities.assistant_kind,
-        AssistantKind::Codex | AssistantKind::DevinDesktop
-    );
-    if requires_active_session && status != ACTIVE_SESSION_STATUS {
-        return PromptDeliveryAvailability {
-            can_send_prompt: false,
-            unavailable_reason: Some(INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON),
-        };
-    }
-
-    PromptDeliveryAvailability {
-        can_send_prompt: true,
-        unavailable_reason: None,
-    }
-}
-
-fn devin_prompt_transport(thread: &DesktopThread) -> Option<(DevinPromptTransport, String)> {
-    let DevinThreadIdentity {
-        provider_id,
-        session_id,
-    } = devin_thread_identity_from_public_thread_id(&thread.thread_id)?;
-    let transport = devin_prompt_transport_for_provider(&provider_id)?;
-    Some((transport, session_id))
 }
 
 fn devin_prompt_delivery_action(
@@ -233,4 +164,15 @@ fn devin_prompt_delivery_action(
             ))
         }
     }
+}
+
+fn zed_prompt_delivery_action(
+    thread: &DesktopThread,
+) -> Result<PromptDeliveryAction, MobileSessionError> {
+    let session_id =
+        zed_acp_session_id(thread).ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
+    Ok(PromptDeliveryAction::SendLooperAcp {
+        client_id: ZED_CLIENT_ID.to_owned(),
+        session_id,
+    })
 }
