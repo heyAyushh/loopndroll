@@ -17,6 +17,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
         #expect(client.acpHostCalls == 1)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
     }
 
@@ -31,6 +33,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
         #expect(client.acpHostCalls == 1)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
 
         _ = await coordinator.refresh(force: true)
@@ -38,6 +42,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 2)
         #expect(client.connectionCalls == 2)
         #expect(client.acpHostCalls == 2)
+        #expect(client.mobileStateCalls == 2)
+        #expect(client.pushDeviceCalls == 2)
         #expect(client.healthCalls == 2)
     }
 
@@ -59,6 +65,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 1)
         #expect(client.connectionCalls == 1)
         #expect(client.acpHostCalls == 1)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
     }
 
@@ -123,6 +131,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.error?.message.contains("timeout") == true)
         #expect(client.connectionCalls == 0)
         #expect(client.acpHostCalls == 0)
+        #expect(client.mobileStateCalls == 0)
+        #expect(client.pushDeviceCalls == 0)
         #expect(client.healthCalls == 0)
     }
 
@@ -183,6 +193,8 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
     private var recordedSnapshotCalls = 0
     private var recordedConnectionCalls = 0
     private var recordedAcpHostCalls = 0
+    private var recordedMobileStateCalls = 0
+    private var recordedPushDeviceCalls = 0
     private var recordedHealthCalls = 0
     private var recordedSnapshotResultOverride: Result<DesktopSnapshotResponse, Error>?
 
@@ -216,6 +228,14 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
 
     var acpHostCalls: Int {
         lock.withLock { recordedAcpHostCalls }
+    }
+
+    var mobileStateCalls: Int {
+        lock.withLock { recordedMobileStateCalls }
+    }
+
+    var pushDeviceCalls: Int {
+        lock.withLock { recordedPushDeviceCalls }
     }
 
     var healthCalls: Int {
@@ -267,6 +287,24 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
         }
         try? await Task.sleep(for: acpHostDelay)
         return try acpHostResult.get()
+    }
+
+    func fetchDesktopMobileState() async throws -> DesktopMobileStateResponse {
+        lock.withLock {
+            recordedMobileStateCalls += 1
+        }
+        return DesktopMobileStateResponse()
+    }
+
+    func fetchDesktopPushDevices() async throws -> DesktopPushDevicesResponse {
+        lock.withLock {
+            recordedPushDeviceCalls += 1
+        }
+        return DesktopPushDevicesResponse()
+    }
+
+    func setDefaultNotificationTargets(_ targetIDs: [String]) async throws -> DesktopMobileStateResponse {
+        DesktopMobileStateResponse(defaultNotificationTargetIDs: targetIDs)
     }
 
     func fetchMobileHealth() async throws -> MobileHealthResponse {

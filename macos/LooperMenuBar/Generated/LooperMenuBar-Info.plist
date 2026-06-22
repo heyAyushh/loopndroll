@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Looper uses Apple Events only when you ask it to control supported desktop apps.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Looper uses the local network so the iPhone companion can reach this Mac.</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>dev.looper.app.continue-session</string>

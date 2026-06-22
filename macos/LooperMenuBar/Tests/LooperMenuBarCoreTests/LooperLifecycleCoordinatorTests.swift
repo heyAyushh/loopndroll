@@ -79,11 +79,20 @@ struct HTTPControlPlaneClientTests {
 
         #expect(client.request(for: .registerHooks).url?.path == "/hooks/register")
         #expect(client.request(for: .registerTargetHooks(.codex)).url?.path == "/hooks/codex/register")
+        #expect(client.request(for: .registerTargetHooks(.devin)).url?.path == "/hooks/devin/register")
         #expect(client.request(for: .registerTargetHooks(.grok)).url?.path == "/hooks/grok/register")
         #expect(client.request(for: .registerTargetHooks(.claude)).url?.path == "/hooks/claude/register")
+        #expect(client.request(for: .unregisterHooks).url?.path == "/hooks/unregister")
+        #expect(client.request(for: .unregisterTargetHooks(.codex)).url?.path == "/hooks/codex/unregister")
+        #expect(client.request(for: .unregisterTargetHooks(.devin)).url?.path == "/hooks/devin/unregister")
+        #expect(client.request(for: .unregisterTargetHooks(.grok)).url?.path == "/hooks/grok/unregister")
+        #expect(client.request(for: .unregisterTargetHooks(.claude)).url?.path == "/hooks/claude/unregister")
         #expect(client.request(for: .unregisterLiveHooks).url?.path == "/hooks/unregister-live")
         #expect(
             client.request(for: .unregisterLiveTargetHooks(.codex)).url?.path == "/hooks/codex/unregister-live"
+        )
+        #expect(
+            client.request(for: .unregisterLiveTargetHooks(.devin)).url?.path == "/hooks/devin/unregister-live"
         )
         #expect(
             client.request(for: .unregisterLiveTargetHooks(.grok)).url?.path == "/hooks/grok/unregister-live"
@@ -114,6 +123,8 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .acpClientHostInstall("devin")).httpMethod == "POST")
         #expect(client.request(for: .registerHooks).httpMethod == "POST")
         #expect(client.request(for: .registerTargetHooks(.codex)).httpMethod == "POST")
+        #expect(client.request(for: .unregisterHooks).httpMethod == "POST")
+        #expect(client.request(for: .unregisterTargetHooks(.codex)).httpMethod == "POST")
         #expect(client.request(for: .unregisterLiveTargetHooks(.codex)).httpMethod == "POST")
         #expect(client.request(for: .devinAcpBridgeInstall).httpMethod == "POST")
         #expect(client.request(for: .shutdown).httpMethod == "POST")
@@ -948,6 +959,18 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
 
     func fetchAcpClientHosts() async throws -> AcpClientHostsResponse {
         AcpClientHostsResponse(hosts: [])
+    }
+
+    func fetchDesktopMobileState() async throws -> DesktopMobileStateResponse {
+        DesktopMobileStateResponse()
+    }
+
+    func fetchDesktopPushDevices() async throws -> DesktopPushDevicesResponse {
+        DesktopPushDevicesResponse()
+    }
+
+    func setDefaultNotificationTargets(_ targetIDs: [String]) async throws -> DesktopMobileStateResponse {
+        DesktopMobileStateResponse(defaultNotificationTargetIDs: targetIDs)
     }
 
     func fetchMobileHealth() async throws -> MobileHealthResponse {

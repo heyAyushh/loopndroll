@@ -77,6 +77,8 @@ targets:
         LSUIElement: true
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
+        NSAppleEventsUsageDescription: Looper uses Apple Events only when you ask it to control supported desktop apps.
+        NSLocalNetworkUsageDescription: Looper uses the local network so the iPhone companion can reach this Mac.
         NSUserActivityTypes:
           - dev.looper.app.continue-session
     entitlements:

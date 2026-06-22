@@ -12,6 +12,8 @@ public struct MenuRefreshResult: Equatable, Sendable {
     public let snapshot: DesktopSnapshotResponse?
     public let connections: DesktopConnectionsResponse?
     public let acpClientHosts: AcpClientHostsResponse?
+    public let mobileState: DesktopMobileStateResponse?
+    public let pushDevices: DesktopPushDevicesResponse?
     public let mobileHealth: MobileHealthResponse?
     public let error: MenuRefreshError?
 
@@ -103,11 +105,15 @@ public actor MenuRefreshCoordinator {
         case let .success(snapshot):
             async let connections = fetchDesktopConnections(client: client)
             async let acpClientHosts = fetchAcpClientHosts(client: client)
+            async let mobileState = fetchDesktopMobileState(client: client)
+            async let pushDevices = fetchDesktopPushDevices(client: client)
             async let health = fetchMobileHealth(client: client)
             return MenuRefreshResult(
                 snapshot: snapshot,
                 connections: await connections,
                 acpClientHosts: await acpClientHosts,
+                mobileState: await mobileState,
+                pushDevices: await pushDevices,
                 mobileHealth: await health,
                 error: nil
             )
@@ -116,6 +122,8 @@ public actor MenuRefreshCoordinator {
                 snapshot: nil,
                 connections: nil,
                 acpClientHosts: nil,
+                mobileState: nil,
+                pushDevices: nil,
                 mobileHealth: nil,
                 error: error
             )
@@ -134,6 +142,14 @@ public actor MenuRefreshCoordinator {
 
     private static func fetchMobileHealth(client: any ControlPlaneClient) async -> MobileHealthResponse? {
         try? await client.fetchMobileHealth()
+    }
+
+    private static func fetchDesktopMobileState(client: any ControlPlaneClient) async -> DesktopMobileStateResponse? {
+        try? await client.fetchDesktopMobileState()
+    }
+
+    private static func fetchDesktopPushDevices(client: any ControlPlaneClient) async -> DesktopPushDevicesResponse? {
+        try? await client.fetchDesktopPushDevices()
     }
 
     private static func fetchDesktopConnections(client: any ControlPlaneClient) async -> DesktopConnectionsResponse? {
