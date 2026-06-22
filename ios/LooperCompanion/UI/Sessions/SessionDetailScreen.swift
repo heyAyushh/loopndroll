@@ -26,6 +26,19 @@ struct SessionDetailScreen: View {
         detail?.latestAssistantMessage ?? session.assistantPreview
     }
 
+    private var currentTitle: String {
+        detail?.title ?? session.title
+    }
+
+    private var firstUserPromptText: String? {
+        guard let prompt = detail?.firstUserPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !prompt.isEmpty
+        else {
+            return nil
+        }
+        return prompt
+    }
+
     private var currentMetadata: SessionMetadata {
         detail?.metadata ?? session.metadata
     }
@@ -93,6 +106,7 @@ struct SessionDetailScreen: View {
                 Button("Done") {
                     focusedInput = nil
                 }
+                .accessibilityIdentifier("session-detail.keyboard-done")
             }
         }
         .task {
@@ -121,6 +135,12 @@ struct SessionDetailScreen: View {
                     }
                 }
             }
+            .accessibilityIdentifier("session-detail.delete-confirm")
+
+            Button("Keep Session") {
+                showingDeleteConfirmation = false
+            }
+                .accessibilityIdentifier("session-detail.delete-cancel")
         } message: {
             Text("This removes the session from the looper list on Mac and iPhone.")
         }
@@ -139,7 +159,14 @@ struct SessionDetailScreen: View {
             } label: {
                 Text("Assistant")
             }
-            LabeledContent("Title", value: session.title)
+            LabeledContent("Title", value: currentTitle)
+            if let firstUserPromptText {
+                LabeledContent("First Prompt") {
+                    Text(firstUserPromptText)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(4)
+                }
+            }
             LabeledContent("Kind", value: currentMetadata.kind.label)
 
             if let projectPath = currentMetadata.projectPath {
@@ -230,14 +257,16 @@ struct SessionDetailScreen: View {
             TextEditor(text: $draftPrompt)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
                 .focused($focusedInput, equals: .prompt)
+                .accessibilityIdentifier("session-detail.prompt-editor")
 
-            ForEach(promptSuggestions, id: \.self) { suggestion in
+            ForEach(Array(promptSuggestions.enumerated()), id: \.element) { index, suggestion in
                 Button {
                     usePromptSuggestion(suggestion)
                 } label: {
                     Label(suggestion, systemImage: "quote.bubble")
                         .lineLimit(2)
                 }
+                .accessibilityIdentifier("session-detail.prompt-suggestion.\(index)")
             }
 
             Button {
@@ -250,6 +279,7 @@ struct SessionDetailScreen: View {
                 }
             }
             .disabled(!canSendPrompt)
+            .accessibilityIdentifier("session-detail.send-prompt")
         } header: {
             Text("Prompt")
         } footer: {
@@ -365,11 +395,13 @@ struct SessionDetailScreen: View {
                 )
             }
             .disabled(isMutatingSession)
+            .accessibilityIdentifier("session-detail.archive-toggle")
 
             Button("Delete Session", role: .destructive) {
                 showingDeleteConfirmation = true
             }
             .disabled(isMutatingSession)
+            .accessibilityIdentifier("session-detail.delete")
 
             if isMutatingSession {
                 ProgressView("Updating Session")

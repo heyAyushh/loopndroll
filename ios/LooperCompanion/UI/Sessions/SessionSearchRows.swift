@@ -32,6 +32,7 @@ struct SearchCommandRow: View {
 
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .companionCardRowSurface()
     }
@@ -67,7 +68,7 @@ struct SearchSessionRow: View {
                     .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                Text("Sessions -> \(session.status.label) -> \(ModelFormatting.sessionFreshness(session))")
+                Text(searchBreadcrumb)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -78,6 +79,18 @@ struct SearchSessionRow: View {
         .contentShape(Rectangle())
         .companionCardRowSurface()
         .looperAppEntityIdentifier(appEntityIdentifier)
+    }
+
+    private var searchBreadcrumb: String {
+        let parts = [
+            "Sessions",
+            session.status.label,
+            session.workStatusLabel,
+            ModelFormatting.sessionFreshness(session),
+        ]
+        .compactMap { $0 }
+
+        return parts.joined(separator: " -> ")
     }
 }
 

@@ -28,14 +28,16 @@ struct RootTabView: View {
     let authenticator: CompanionAppAuthenticator
 
     @AppStorage(OnboardingState.completionStorageKey) private var hasCompletedOnboarding = false
-    @AppStorage("pinballGameEnabled") private var isPinballGameEnabled = false
-    @AppStorage("pinballDebugOverlayEnabled") private var isPinballDebugOverlayEnabled = false
+    @AppStorage(PinballSettingsKeys.isGameEnabled) private var isPinballGameEnabled = false
+    @AppStorage(PinballSettingsKeys.isDebugOverlayEnabled) private var isPinballDebugOverlayEnabled = false
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false
     @State private var selectedTab: RootTab = .sessions
     @State private var pinballSurfaces: [PinballSurface] = []
     @State private var searchText = ""
     @State private var searchScope: SessionSearchScope = .all
+    @State private var settingsTarget: SettingsSearchTarget?
+    @State private var settingsTargetRevision = 0
     @StateObject private var spotlightSearchService = SpotlightSearchService()
 
     var body: some View {
@@ -103,6 +105,9 @@ struct RootTabView: View {
                 selectedTab = .sessions
             }
         }
+        .onChange(of: model.pendingSettingsTarget) { _, target in
+            openPendingSettingsTarget(target)
+        }
         .onChange(of: model.connectionState) { _, connectionState in
             if connectionState == .locked, !authenticator.isUnlocked {
                 authenticator.lockIfNeeded()
@@ -147,7 +152,12 @@ struct RootTabView: View {
             }
 
             Tab("Settings", systemImage: "gearshape", value: RootTab.settings) {
-                SettingsScreen(model: model, authenticator: authenticator)
+                SettingsScreen(
+                    model: model,
+                    authenticator: authenticator,
+                    initialSearchTarget: settingsTarget,
+                    initialSearchRequestID: settingsTargetRevision
+                )
                     .pinballSurfaceCollectionEnabled(shouldCollectPinballSurfaces(for: .settings))
             }
 
@@ -172,6 +182,17 @@ struct RootTabView: View {
             return
         }
         selectedTab = tab
+    }
+
+    private func openPendingSettingsTarget(_ target: SettingsSearchTarget?) {
+        guard let target else {
+            return
+        }
+
+        settingsTarget = target
+        settingsTargetRevision += 1
+        selectedTab = .settings
+        _ = model.consumePendingSettingsTarget()
     }
 
     private var shouldShowOnboarding: Bool {

@@ -73,6 +73,10 @@ struct SessionRow: View {
                     )
                 }
 
+                if let workStatusLabel = session.workStatusLabel {
+                    Label(workStatusLabel, systemImage: "target")
+                }
+
                 if session.metadata.taskKind != .unknown {
                     Label(session.metadata.taskKind.label, systemImage: "tag")
                 }

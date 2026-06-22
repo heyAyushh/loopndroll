@@ -82,6 +82,7 @@ struct AssistantSurfacePicker: View {
                     .buttonStyle(.plain)
                     .disabled(isDisabled)
                     .accessibilityLabel(surface.displayTitle)
+                    .accessibilityIdentifier("assistant.surface.\(surface.rawValue)")
                     .accessibilityAddTraits(selection == surface ? .isSelected : [])
                 }
             }
@@ -89,6 +90,7 @@ struct AssistantSurfacePicker: View {
         }
         .disabled(isDisabled)
         .accessibilityLabel("Assistant")
+        .accessibilityIdentifier("assistant.surface.picker")
     }
 }
 

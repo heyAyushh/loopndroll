@@ -8,6 +8,10 @@ private enum OrbScannerMetrics {
     static let sheetOpenFraction = 0.42
 }
 
+private enum OrbScannerUITestFallback {
+    static let unavailableMessage = "Camera capture is disabled during simulator UI tests."
+}
+
 private enum OrbScanSource: Sendable {
     case camera
     case photos
@@ -196,18 +200,20 @@ struct OrbScannerScreen: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Label("Close scanner", systemImage: "xmark.circle.fill")
+                            .labelStyle(.iconOnly)
                     }
-                    .accessibilityLabel("Close scanner")
+                    .accessibilityIdentifier("scanner.close")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         openControlsSheet()
                     } label: {
-                        Image(systemName: "slider.horizontal.3")
+                        Label("Scanner controls", systemImage: "slider.horizontal.3")
+                            .labelStyle(.iconOnly)
                     }
-                    .accessibilityLabel("Scanner controls")
+                    .accessibilityIdentifier("scanner.controls")
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -243,21 +249,7 @@ struct OrbScannerScreen: View {
 
     private var cameraPreview: some View {
         ZStack {
-            LiveOrbCameraScannerView(
-                isScanningEnabled: isLiveScanningEnabled && !isProcessing && !isResolvingConnection,
-                payloadTransformer: nil,
-                imageDataTransformer: nil,
-                lumaTransformer: { data, width, height in
-                    // The camera delivers 8-bit luma in plane 0 of the pixel buffer, so
-                    // the decoder skips PNG decode + RGB→gray and works on the raw bytes.
-                    try OrbCodeKit.scanOrbID(fromLuma8: data, width: width, height: height)
-                },
-                onValueDetected: handleLiveOrbID,
-                onAvailabilityChange: handleCameraAvailabilityChange,
-                onDiagnosticsChange: handleLiveDiagnosticsChange,
-                resetToken: cameraResetToken
-            )
-            .ignoresSafeArea()
+            liveScannerContent
 
             if isProcessing || isResolvingConnection {
                 ProgressView(isResolvingConnection ? "Connecting to Mac" : "Checking Orb")
@@ -267,6 +259,40 @@ struct OrbScannerScreen: View {
                     .background(.regularMaterial, in: Capsule())
             }
         }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var liveScannerContent: some View {
+        #if DEBUG
+        if UITestLaunchArguments.isMockModeEnabled {
+            Color.black
+                .task {
+                    handleCameraAvailabilityChange(
+                        .unavailable(OrbScannerUITestFallback.unavailableMessage)
+                    )
+                }
+        } else {
+            liveScannerCameraView
+        }
+        #else
+        liveScannerCameraView
+        #endif
+    }
+
+    private var liveScannerCameraView: some View {
+        LiveOrbCameraScannerView(
+            isScanningEnabled: isLiveScanningEnabled && !isProcessing && !isResolvingConnection,
+            payloadTransformer: nil,
+            imageDataTransformer: nil,
+            lumaTransformer: { data, width, height in
+                try OrbCodeKit.scanOrbID(fromLuma8: data, width: width, height: height)
+            },
+            onValueDetected: handleLiveOrbID,
+            onAvailabilityChange: handleCameraAvailabilityChange,
+            onDiagnosticsChange: handleLiveDiagnosticsChange,
+            resetToken: cameraResetToken
+        )
         .ignoresSafeArea()
     }
 
@@ -368,6 +394,7 @@ struct OrbScannerScreen: View {
                     Button("Done") {
                         isControlsSheetPresented = false
                     }
+                    .accessibilityIdentifier("scanner.controls.done")
                 }
 
                 ToolbarItemGroup(placement: .keyboard) {
@@ -376,6 +403,7 @@ struct OrbScannerScreen: View {
                     Button("Done") {
                         isExpectedOrbIDFocused = false
                     }
+                    .accessibilityIdentifier("scanner.controls.keyboard-done")
                 }
             }
         }
@@ -480,6 +508,7 @@ struct OrbScannerScreen: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .accessibilityIdentifier("scanner.upload-image")
 
             Button {
                 isFileImporterPresented = true
@@ -489,6 +518,7 @@ struct OrbScannerScreen: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+            .accessibilityIdentifier("scanner.choose-files")
 
             Text("Upload uses the exact image. Live scan also has to handle glare, focus, angle, and screen refresh.")
                 .font(.footnote)
@@ -517,6 +547,7 @@ struct OrbScannerScreen: View {
                     .thinMaterial,
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
+                .accessibilityIdentifier("scanner.direct-orb-id")
 
             if onOrbIDResolved != nil {
                 Button {
@@ -531,6 +562,7 @@ struct OrbScannerScreen: View {
                         isResolvingConnection ||
                         expectedOrbID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
+                .accessibilityIdentifier("scanner.connect-pasted-orb-id")
             }
 
             Text("Paste an orb_id from the Mac to compare or connect without using the camera.")
@@ -549,6 +581,7 @@ struct OrbScannerScreen: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isResolvingConnection)
+                .accessibilityIdentifier("scanner.connect-orb")
             }
 
             if scanReport != nil || errorMessage != nil || !isLiveScanningEnabled {
@@ -556,12 +589,14 @@ struct OrbScannerScreen: View {
                     resumeLiveScanning()
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("scanner.resume-live-scan")
             }
 
             Button("Reset") {
                 resetScanner()
             }
             .buttonStyle(.bordered)
+            .accessibilityIdentifier("scanner.reset")
         }
     }
 

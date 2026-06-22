@@ -89,6 +89,7 @@ struct SessionsScreen: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open device hub")
+                    .accessibilityIdentifier("sessions.open-device-hub")
                 }
             }
             .refreshable {
