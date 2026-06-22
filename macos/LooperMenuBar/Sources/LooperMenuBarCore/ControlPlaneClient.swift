@@ -777,12 +777,20 @@ public struct NotificationTargetOption: Equatable, Sendable, Identifiable {
   public let id: String
   public let title: String
   public let detail: String?
+  public let systemImageName: String
   public let available: Bool
 
-  public init(id: String, title: String, detail: String? = nil, available: Bool = true) {
+  public init(
+    id: String,
+    title: String,
+    detail: String? = nil,
+    systemImageName: String,
+    available: Bool = true
+  ) {
     self.id = id
     self.title = title
     self.detail = detail?.nilIfBlank
+    self.systemImageName = systemImageName
     self.available = available
   }
 }
@@ -793,6 +801,14 @@ public enum NotificationTargetOptions {
     static let macOS = "macos"
   }
 
+  fileprivate enum SystemImageName {
+    static let bell = "bell.badge"
+    static let iphone = "iphone"
+    static let macOS = "macbook"
+    static let slack = "number"
+    static let telegram = "paperplane.fill"
+  }
+
   public static func build(
     mobileState: DesktopMobileStateResponse?,
     pushDevices: DesktopPushDevicesResponse?
@@ -801,7 +817,8 @@ public enum NotificationTargetOptions {
       NotificationTargetOption(
         id: BuiltInID.macOS,
         title: "macOS",
-        detail: "Local menu bar alerts"
+        detail: "Local menu bar alerts",
+        systemImageName: SystemImageName.macOS
       )
     ]
 
@@ -816,6 +833,7 @@ public enum NotificationTargetOptions {
             devices: available ? pushReadyDevices : pushDevices.devices,
             available: available
           ),
+          systemImageName: SystemImageName.iphone,
           available: available
         )
       )
@@ -841,7 +859,8 @@ public enum NotificationTargetOptions {
     NotificationTargetOption(
       id: notification.id,
       title: notification.label,
-      detail: notification.channel.identifierDisplayTitle
+      detail: notification.channel.identifierDisplayTitle,
+      systemImageName: notification.channel.notificationTargetSystemImageName
     )
   }
 
@@ -1043,6 +1062,17 @@ extension String {
 
   fileprivate var identifierDisplayTitle: String {
     splitIdentifierWords().map(\.displayTitleWord).joined(separator: " ")
+  }
+
+  fileprivate var notificationTargetSystemImageName: String {
+    switch trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "slack":
+      return NotificationTargetOptions.SystemImageName.slack
+    case "telegram":
+      return NotificationTargetOptions.SystemImageName.telegram
+    default:
+      return NotificationTargetOptions.SystemImageName.bell
+    }
   }
 
   fileprivate var displayStatusTitle: String {

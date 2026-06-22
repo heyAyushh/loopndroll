@@ -95,6 +95,7 @@ struct LooperMenuContentTests {
 
     #expect(options.map(\.id) == ["macos"])
     #expect(options.map(\.title) == ["macOS"])
+    #expect(options.map(\.systemImageName) == ["macbook"])
   }
 
   @Test
@@ -130,6 +131,7 @@ struct LooperMenuContentTests {
 
     #expect(options.map(\.id) == ["macos", "iphone", "route-telegram", "route-slack"])
     #expect(options.map(\.title) == ["macOS", "iPhone", "Telegram DM", "Slack Build"])
+    #expect(options.map(\.systemImageName) == ["macbook", "iphone", "paperplane.fill", "number"])
     #expect(options[1].detail == "Ayush iPhone")
     #expect(options[2].detail == "Telegram")
   }

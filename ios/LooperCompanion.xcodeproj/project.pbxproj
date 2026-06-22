@@ -13,6 +13,8 @@
 		0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */; };
 		0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */; };
 		13C3246C36D7054C424ACD3F /* LooperSiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */; };
+		1B102E499D134E2327B3DEAA /* NotificationDestinationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */; };
+		1C888B1B6FDC51811EFF8999 /* NotificationDestinationPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */; };
 		20A4F5E4BBBC0282AF2AEEBD /* HTTPCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */; };
 		293C8235B895D87F362AFB95 /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78346AF56F5D457B05954C0B /* SettingsScreen.swift */; };
 		2A34AE718CDCD08514A6AE44 /* PinballSettingsKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = E617D40EED3319CDBD4B375F /* PinballSettingsKeys.swift */; };
@@ -107,6 +109,7 @@
 		159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionPasskeyAuthenticationClient.swift; sourceTree = "<group>"; };
 		19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperSiriIntents.swift; sourceTree = "<group>"; };
 		1AE006F2F407024A15E4727F /* SessionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRow.swift; sourceTree = "<group>"; };
+		1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationRow.swift; sourceTree = "<group>"; };
 		2489ABFC353256268974517A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
 		2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCompanionControlFlowUITests.swift; sourceTree = "<group>"; };
 		2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Release.entitlements; sourceTree = "<group>"; };
@@ -126,6 +129,7 @@
 		56C79B6AF7BC32D952CE288D /* CompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionService.swift; sourceTree = "<group>"; };
 		57284556E78E9BB265560A6A /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
 		5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotCache.swift; sourceTree = "<group>"; };
+		5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationPresentationTests.swift; sourceTree = "<group>"; };
 		61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionMobileSessionStore.swift; sourceTree = "<group>"; };
 		62FF4BF9B2F8F7856941F6C2 /* codex-logo.mp4 */ = {isa = PBXFileReference; path = "codex-logo.mp4"; sourceTree = "<group>"; };
 		64992FB2DA134F019F69163E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
@@ -239,6 +243,7 @@
 			isa = PBXGroup;
 			children = (
 				AD847E9AD9142AA0F82C325D /* AssistantClientGlyph.swift */,
+				1E1EAEF6253E06B8D7EE6858 /* NotificationDestinationRow.swift */,
 				B9D9AC6F0B6668F69F4314D1 /* StatusPill.swift */,
 			);
 			path = Common;
@@ -284,6 +289,7 @@
 			isa = PBXGroup;
 			children = (
 				D320C50CEEE04B7C3D33CB26 /* CompanionRealtimeSyncTests.swift */,
+				5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */,
 				F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */,
 			);
 			path = LooperCompanionTests;
@@ -588,6 +594,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				36B70CA75F4ECD1400AEB7D0 /* CompanionRealtimeSyncTests.swift in Sources */,
+				1C888B1B6FDC51811EFF8999 /* NotificationDestinationPresentationTests.swift in Sources */,
 				477018ADC22B0FD35932DC41 /* SessionSummaryTimingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -629,6 +636,7 @@
 				DE616458E53567DBD195D43B /* MobileEventStream.swift in Sources */,
 				4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */,
 				3AE7B647FFE2E6529D655E38 /* MotionController.swift in Sources */,
+				1B102E499D134E2327B3DEAA /* NotificationDestinationRow.swift in Sources */,
 				8B6CB0A811613F054EFD021B /* OnboardingScreen.swift in Sources */,
 				DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */,
 				4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */,

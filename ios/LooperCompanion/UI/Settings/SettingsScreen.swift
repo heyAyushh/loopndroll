@@ -647,7 +647,7 @@ struct SettingsRoutesScreen: View {
         List {
             if let notifications = model.snapshot?.notifications, !notifications.isEmpty {
                 ForEach(notifications) { notification in
-                    LabeledContent(notification.label, value: notification.channel.capitalized)
+                    NotificationDestinationRow(destination: notification)
                 }
             } else {
                 ContentUnavailableView(

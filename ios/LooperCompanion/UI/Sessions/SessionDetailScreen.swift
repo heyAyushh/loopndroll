@@ -339,20 +339,11 @@ struct SessionDetailScreen: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(availableNotifications) { notification in
-                    HStack(spacing: 12) {
-                        Label(notification.label, systemImage: channelSymbolName(notification.channel))
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        if detail?.notificationIds.contains(notification.id) == true {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.tint)
-                        } else {
-                            Text(notification.channel.capitalized)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    NotificationDestinationRow(
+                        destination: notification,
+                        isSelected: detail?.notificationIds.contains(notification.id) == true,
+                        showsSelection: true
+                    )
                 }
             }
         }
@@ -491,16 +482,6 @@ struct SessionDetailScreen: View {
         await model.markCurrentSiriSession(session)
     }
 
-    private func channelSymbolName(_ channel: String) -> String {
-        switch channel.lowercased() {
-        case "telegram":
-            return "paperplane"
-        case "slack":
-            return "bubble.left.and.bubble.right"
-        default:
-            return "bell"
-        }
-    }
 }
 
 private enum SessionDetailInput {

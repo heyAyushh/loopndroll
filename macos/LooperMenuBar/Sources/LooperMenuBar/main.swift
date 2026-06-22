@@ -586,6 +586,18 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     menu.addItem(item)
   }
 
+  private func menuSymbolImage(
+    named systemImageName: String,
+    accessibilityDescription: String
+  ) -> NSImage? {
+    let image = NSImage(
+      systemSymbolName: systemImageName,
+      accessibilityDescription: accessibilityDescription
+    )
+    image?.isTemplate = true
+    return image
+  }
+
   @discardableResult
   private func addActionItem(
     _ title: String,
@@ -825,6 +837,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       optionItem.representedObject = option.id
       optionItem.state = selectedTargetIDs.contains(option.id) ? .on : .off
       optionItem.isEnabled = option.available
+      optionItem.image = menuSymbolImage(
+        named: option.systemImageName,
+        accessibilityDescription: option.title
+      )
       if let detail = option.detail {
         setSubtitle(detail, on: optionItem)
       }
