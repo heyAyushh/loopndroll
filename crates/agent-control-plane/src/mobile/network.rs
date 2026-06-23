@@ -104,6 +104,13 @@ pub fn advertised_mobile_grpc_base_urls(http_base_urls: &[String]) -> Vec<String
     )
 }
 
+pub async fn advertised_mobile_pairing_base_urls(preferred_base_url: Option<&str>) -> Vec<String> {
+    let base_urls = advertised_mobile_base_urls(preferred_base_url);
+    let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
+    let tailscale = mobile_tailscale_status(&base_urls, &grpc_base_urls).await;
+    advertised_mobile_pairing_base_urls_from_sources(base_urls, tailscale.base_url)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MobileTailscaleStatus {
     pub available: bool,
@@ -616,6 +623,37 @@ fn advertised_mobile_base_urls_from_sources(
     )
 }
 
+fn advertised_mobile_pairing_base_urls_from_sources(
+    mut base_urls: Vec<String>,
+    tailscale_base_url: Option<String>,
+) -> Vec<String> {
+    let Some(tailscale_base_url) = tailscale_base_url else {
+        return base_urls;
+    };
+
+    let primary_route_is_phone_reachable = base_urls
+        .first()
+        .is_some_and(|base_url| is_mobile_reachable_base_url(base_url));
+
+    if let Some(existing_index) = base_urls
+        .iter()
+        .position(|base_url| base_url == &tailscale_base_url)
+    {
+        if !primary_route_is_phone_reachable && existing_index != 0 {
+            let base_url = base_urls.remove(existing_index);
+            base_urls.insert(0, base_url);
+        }
+        return base_urls;
+    }
+
+    if primary_route_is_phone_reachable {
+        base_urls.push(tailscale_base_url);
+    } else {
+        base_urls.insert(0, tailscale_base_url);
+    }
+    base_urls
+}
+
 fn advertised_mobile_grpc_base_urls_from_sources(
     http_base_urls: &[String],
     grpc_port: u16,
@@ -814,6 +852,9 @@ mod tests {
 
     const TEST_PORT: u16 = 8765;
     const TEST_GRPC_PORT: u16 = 8766;
+    const TEST_LAN_BASE_URL: &str = "http://192.168.1.4:8765";
+    const TEST_LOOPBACK_BASE_URL: &str = "http://127.0.0.1:8765";
+    const TEST_TAILSCALE_BASE_URL: &str = "http://100.119.200.69:8765";
 
     #[test]
     fn advertised_urls_prefer_reachable_request_and_current_interfaces() {
@@ -847,6 +888,42 @@ mod tests {
         assert_eq!(
             urls,
             vec!["http://192.168.1.4:8765", "http://127.0.0.1:8765"]
+        );
+    }
+
+    #[test]
+    fn pairing_urls_add_tailscale_route_for_loopback_only_desktop_requests() {
+        let urls = advertised_mobile_pairing_base_urls_from_sources(
+            vec![TEST_LOOPBACK_BASE_URL.to_owned()],
+            Some(TEST_TAILSCALE_BASE_URL.to_owned()),
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                TEST_TAILSCALE_BASE_URL.to_owned(),
+                TEST_LOOPBACK_BASE_URL.to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn pairing_urls_keep_reachable_primary_route_before_tailscale() {
+        let urls = advertised_mobile_pairing_base_urls_from_sources(
+            vec![
+                TEST_LAN_BASE_URL.to_owned(),
+                TEST_LOOPBACK_BASE_URL.to_owned(),
+            ],
+            Some(TEST_TAILSCALE_BASE_URL.to_owned()),
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                TEST_LAN_BASE_URL.to_owned(),
+                TEST_LOOPBACK_BASE_URL.to_owned(),
+                TEST_TAILSCALE_BASE_URL.to_owned()
+            ]
         );
     }
 

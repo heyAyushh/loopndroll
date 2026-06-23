@@ -48,6 +48,7 @@ use self::handoff::handoff_session_page;
 use self::mobile_access::{
     authorize_mobile_api_request, authorize_mobile_request, current_mobile_time,
     desktop_loopback_rejection, request_advertised_mobile_base_urls,
+    request_advertised_mobile_pairing_base_urls,
 };
 use self::mobile_state::{
     desktop_mobile_state_response, emit_mobile_lifecycle_changed, emit_mobile_session_changed,
@@ -798,12 +799,13 @@ async fn desktop_connections(
 async fn desktop_pairing(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
 
-    let base_urls = request_advertised_mobile_base_urls(&HeaderMap::new());
+    let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
     match control_plane
         .mobile_auth_service()
         .issue_connection_code(base_urls)
@@ -1481,6 +1483,7 @@ async fn mobile_health(headers: HeaderMap) -> impl IntoResponse {
 async fn mobile_connection_code(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if !socket_addr.ip().is_loopback() {
         return (
@@ -1492,7 +1495,7 @@ async fn mobile_connection_code(
             .into_response();
     }
 
-    let base_urls = request_advertised_mobile_base_urls(&HeaderMap::new());
+    let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
     match control_plane
         .mobile_auth_service()
         .issue_connection_code(base_urls)
@@ -1505,6 +1508,7 @@ async fn mobile_connection_code(
 async fn mobile_connection_orb_png(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if !socket_addr.ip().is_loopback() {
         return (
@@ -1516,7 +1520,7 @@ async fn mobile_connection_orb_png(
             .into_response();
     }
 
-    let base_urls = request_advertised_mobile_base_urls(&HeaderMap::new());
+    let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
     match control_plane
         .mobile_auth_service()
         .issue_connection_orb_image(base_urls)
