@@ -4,6 +4,8 @@ private enum ControlTapMetrics {
     static let trailingSwitchWidthFraction: CGFloat = 0.25
     static let maximumTrailingSwitchInset: CGFloat = 44
     static let scopeMenuTimeout: TimeInterval = 4
+    static let springboardPageSwipeLimit = 4
+    static let systemAppPollInterval: TimeInterval = 0.2
     static let textViewLeadingFocusInset: CGFloat = 24
     static let textViewTopFocusInset: CGFloat = 24
     static let keyboardDismissXFraction: CGFloat = 0.5
@@ -14,6 +16,14 @@ private enum ControlTapMetrics {
 
 private enum ControlFlowLaunchArgument {
     static let openOrbScannerOnLaunch = "--open-orb-scanner-on-launch"
+}
+
+private enum SystemAppBundleID {
+    static let siriCandidates = ["com.apple.SiriApp", "com.apple.siri"]
+}
+
+private enum SystemAppSurfaceText {
+    static let siriUpdateInProgress = "Siri Update in Progress"
 }
 
 @MainActor
@@ -310,6 +320,22 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         XCTAssertTrue(waitForText("Search"))
     }
 
+    func testSiriAppSurfaceCanOpenFromSimulator() throws {
+        launchApp()
+        XCTAssertTrue(waitForText("Sessions"))
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let looperIcon = findSpringboardIcon(named: "looper", in: springboard)
+        XCTAssertTrue(looperIcon.exists)
+
+        let siriIcon = findSpringboardIcon(named: "Siri", in: springboard)
+        XCTAssertTrue(siriIcon.exists)
+
+        siriIcon.tap()
+        XCTAssertTrue(waitForSiriSurface(springboard: springboard))
+    }
+
     private func launchApp(showOnboarding: Bool = false, extraArguments: [String] = []) {
         app = XCUIApplication()
         app.terminate()
@@ -342,6 +368,61 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         accessibilitySnapshot.name = "\(name).accessibility.txt"
         accessibilitySnapshot.lifetime = .keepAlways
         add(accessibilitySnapshot)
+    }
+
+    private func findSpringboardIcon(named name: String, in springboard: XCUIApplication) -> XCUIElement {
+        let icon = springboard.icons[name].firstMatch
+        if icon.waitForExistence(timeout: 2) {
+            return icon
+        }
+
+        for _ in 0..<ControlTapMetrics.springboardPageSwipeLimit {
+            springboard.swipeLeft()
+            if icon.waitForExistence(timeout: 2) {
+                return icon
+            }
+        }
+
+        return icon
+    }
+
+    private func waitForSiriSurface(springboard: XCUIApplication, timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            for bundleID in SystemAppBundleID.siriCandidates {
+                let candidate = XCUIApplication(bundleIdentifier: bundleID)
+                if candidate.state == .runningForeground || systemSurfaceShowsSiri(candidate) {
+                    return true
+                }
+
+                if candidate.wait(for: .runningForeground, timeout: ControlTapMetrics.systemAppPollInterval) {
+                    return true
+                }
+            }
+
+            if systemSurfaceShowsSiri(springboard) {
+                return true
+            }
+
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: ControlTapMetrics.systemAppPollInterval))
+        }
+
+        for bundleID in SystemAppBundleID.siriCandidates {
+            let candidate = XCUIApplication(bundleIdentifier: bundleID)
+            if candidate.state == .runningForeground || systemSurfaceShowsSiri(candidate) {
+                return true
+            }
+        }
+
+        if systemSurfaceShowsSiri(springboard) {
+            return true
+        }
+
+        return false
+    }
+
+    private func systemSurfaceShowsSiri(_ application: XCUIApplication) -> Bool {
+        application.staticTexts[SystemAppSurfaceText.siriUpdateInProgress].exists
     }
 
     private func waitForText(

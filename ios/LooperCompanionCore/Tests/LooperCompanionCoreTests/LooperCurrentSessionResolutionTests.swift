@@ -94,6 +94,25 @@ struct LooperCurrentSessionResolutionTests {
         #expect(resolution == nil)
     }
 
+    @Test(
+        "Blank configured session IDs never resolve to an arbitrary candidate",
+        arguments: ["", " ", "\n", "\t"]
+    )
+    func blankConfiguredSessionIDsNeverResolve(blankSessionID: String) {
+        let resolution = LooperCurrentSessionResolution.resolve(
+            currentSessionID: blankSessionID,
+            currentAssistantSurface: devinSurface,
+            defaultSessionID: blankSessionID,
+            defaultAssistantSurface: codexSurface,
+            candidates: [
+                candidate(unrelatedSessionID, surface: codexSurface),
+                candidate(currentSessionID, surface: devinSurface),
+            ]
+        )
+
+        #expect(resolution == nil)
+    }
+
     private func candidate(
         _ sessionID: String,
         surface: String,

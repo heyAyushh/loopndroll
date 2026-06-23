@@ -40,21 +40,21 @@ targets:
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Debug.entitlements
+          LOOPER_API_BASE_URL: ""
+          LOOPER_API_BASE_URLS: ""
+          ENABLE_DEBUG_DYLIB: NO
+        Release:
+          CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Release.entitlements
+          LOOPER_API_BASE_URL: ""
+          LOOPER_API_BASE_URLS: ""
     dependencies:
       - package: LooperCompanionCore
       - package: OrbCodeKit
       - package: LooperRealtime
       - sdk: AppIntents.framework
-    configs:
-      Debug:
-        CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Debug.entitlements
-        LOOPER_API_BASE_URL: ""
-        LOOPER_API_BASE_URLS: ""
-        ENABLE_DEBUG_DYLIB: NO
-      Release:
-        CODE_SIGN_ENTITLEMENTS: LooperCompanion/LooperCompanion.Release.entitlements
-        LOOPER_API_BASE_URL: ""
-        LOOPER_API_BASE_URLS: ""
   LooperCompanionTests:
     type: bundle.unit-test
     platform: iOS

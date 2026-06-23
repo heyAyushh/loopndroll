@@ -12,6 +12,8 @@
 | macOS Xcode build/install | `build-macos-menu-bar-xcode.sh` | Requires XcodeGen and uses Xcode project path. |
 | release | `release-macos.sh` | Reads `.env`, checks `gh`, signing, notarization, dirty tree, artifacts. |
 | iOS gate | `check-ios.sh` | Regenerates project, runs Swift/Xcode checks, validates App Intents metadata. |
+| Xcode 27 beta 2 proof | `prove-xcode27-beta2.sh` | Fetches official release notes, verifies selected beta toolchain/runtime, `devicectl` JSON stdout, Siri surface proof, and guarded AI/debug capabilities. |
+| Siri runtime proof | `prove-ios-siri-runtime.sh` | Builds, installs, launches Looper on an iOS simulator, validates App Intents metadata, opens Siri, and optionally attempts physical iPhone proof. |
 | CLI install | `install-looper-cli.sh` | Installs `looper`, `looper-cli`, `looper-server`; guarded against outside-root prefix. |
 | Swift gRPC generation | `generate-swift-grpc.sh` | Writes generated Swift files from Rust proto. |
 | OrbCode XCFramework | `build-orb-code-ios-package.sh` | Recreates `ios/OrbCodeKit/Frameworks/OrbCodeFFI.xcframework`. |
@@ -38,6 +40,8 @@
 bash scripts/build-macos-menu-bar-package.sh --no-install
 bash scripts/build-macos-menu-bar-xcode.sh --no-install
 bash scripts/check-ios.sh
+bash scripts/prove-xcode27-beta2.sh
+bash scripts/prove-ios-siri-runtime.sh --simulator-only
 bash scripts/install-looper-cli.sh
 bash scripts/release-macos.sh
 bash scripts/generate-swift-grpc.sh

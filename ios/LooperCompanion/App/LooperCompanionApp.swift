@@ -1,3 +1,4 @@
+import AppIntents
 import CoreSpotlight
 import SwiftUI
 import UserNotifications
@@ -12,6 +13,7 @@ struct LooperApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
+        LooperSiriShortcuts.updateAppShortcutParameters()
         Self.prepareUITestStateIfNeeded()
         _authenticator = State(initialValue: CompanionAppAuthenticator())
         _model = State(initialValue: CompanionAppModel(environment: Self.environment()))

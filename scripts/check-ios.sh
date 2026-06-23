@@ -10,6 +10,12 @@ PROJECT_DIFF_BEFORE="${CHECK_DIR}/project.diff.before"
 PROJECT_DIFF_AFTER="${CHECK_DIR}/project.diff.after"
 APP_INTENTS_METADATA="${DERIVED_DATA_DIR}/Build/Products/Debug-iphonesimulator/Looper.app/Metadata.appintents/extract.actionsdata"
 SIRI_CAPABILITY_REPORT="${ROOT_DIR}/.build/siri-ai-capabilities/report.txt"
+KEYCHAIN_ACCESS_GROUP='$(AppIdentifierPrefix)dev.looper.app.ios'
+TEAM_IDENTIFIER='$(DEVELOPMENT_TEAM)'
+KEYCHAIN_ENTITLEMENT_FILES=(
+  "${IOS_DIR}/LooperCompanion/LooperCompanion.Debug.entitlements"
+  "${IOS_DIR}/LooperCompanion/LooperCompanion.Release.entitlements"
+)
 REQUIRED_APP_INTENTS=(
   'SearchLooperSessionsIntent'
   'AskContextualCurrentLooperSessionIntent'
@@ -28,6 +34,9 @@ REQUIRED_APP_QUERY_METADATA=(
 )
 REMOVED_APP_INTENTS=(
   'AskLatestCodexSessionIntent'
+)
+REJECTED_APP_ENUM_METADATA=(
+  'LooperDefaultSessionUpdate'
 )
 MAIN_EXECUTION_APP_INTENTS=(
   'AskLooperSessionIntent'
@@ -88,12 +97,45 @@ require_app_intent_metadata() {
   done
 }
 
+require_keychain_access_group_entitlements() {
+  local entitlement_file
+
+  for entitlement_file in "${KEYCHAIN_ENTITLEMENT_FILES[@]}"; do
+    if ! /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${entitlement_file}" |
+      grep -Fq "${TEAM_IDENTIFIER}"; then
+      printf 'error: %s must include team identifier entitlement %s\n' \
+        "${entitlement_file}" \
+        "${TEAM_IDENTIFIER}" >&2
+      exit 1
+    fi
+
+    if ! /usr/libexec/PlistBuddy -c 'Print :keychain-access-groups' "${entitlement_file}" |
+      grep -Fq "${KEYCHAIN_ACCESS_GROUP}"; then
+      printf 'error: %s must include keychain access group %s\n' \
+        "${entitlement_file}" \
+        "${KEYCHAIN_ACCESS_GROUP}" >&2
+      exit 1
+    fi
+  done
+}
+
 reject_removed_app_intents() {
   local removed_intent
 
   for removed_intent in "${REMOVED_APP_INTENTS[@]}"; do
     if strings "${APP_INTENTS_METADATA}" | grep -q "${removed_intent}"; then
       printf 'error: stale App Intents metadata still contains %s\n' "${removed_intent}" >&2
+      exit 1
+    fi
+  done
+}
+
+reject_private_app_enum_metadata() {
+  local rejected_metadata
+
+  for rejected_metadata in "${REJECTED_APP_ENUM_METADATA[@]}"; do
+    if strings "${APP_INTENTS_METADATA}" | grep -q "${rejected_metadata}"; then
+      printf 'error: private App Intent helper enum leaked into metadata: %s\n' "${rejected_metadata}" >&2
       exit 1
     fi
   done
@@ -190,6 +232,29 @@ require_current_session_resolver_source() {
     END { exit found ? 0 : 1 }
   ' "${support_file}"; then
     printf 'error: currentSiriSessionEntity contains fallback lookup logic outside the resolver\n' >&2
+    exit 1
+  fi
+}
+
+require_app_shortcuts_provider_registration_source() {
+  local app_file="${IOS_DIR}/LooperCompanion/App/LooperCompanionApp.swift"
+
+  if ! rg -q 'import AppIntents' "${app_file}"; then
+    printf 'error: Looper app startup must import AppIntents for shortcut registration\n' >&2
+    exit 1
+  fi
+
+  if ! rg -q 'LooperSiriShortcuts\.updateAppShortcutParameters\(\)' "${app_file}"; then
+    printf 'error: LooperSiriShortcuts must refresh App Shortcut parameters at app startup\n' >&2
+    exit 1
+  fi
+}
+
+require_no_enum_backed_app_shortcut_phrases() {
+  local intents_file="${IOS_DIR}/LooperCompanion/AppIntents/LooperSiriIntents.swift"
+
+  if rg -q ':\s*AppEnum|protocol\s+\w+:\s*AppEnum|enum\s+\w+:\s*AppEnum' "${intents_file}"; then
+    printf 'error: AppShortcut phrase coverage must be extended before adding AppEnum-backed shortcuts\n' >&2
     exit 1
   fi
 }
@@ -388,8 +453,11 @@ if [ ! -s "${SIRI_CAPABILITY_REPORT}" ]; then
   exit 1
 fi
 reject_removed_app_intent_sources
+require_keychain_access_group_entitlements
 require_syncable_entity_source_when_available
 require_current_session_resolver_source
+require_app_shortcuts_provider_registration_source
+require_no_enum_backed_app_shortcut_phrases
 require_main_execution_targets_when_available
 require_siri_search_source_when_available
 require_onscreen_awareness_source_when_available
@@ -427,3 +495,4 @@ require_app_intent_metadata
 require_app_entity_metadata
 require_app_query_metadata
 reject_removed_app_intents
+reject_private_app_enum_metadata
