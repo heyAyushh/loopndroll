@@ -285,6 +285,8 @@ public final class LooperRealtimeClient: Sendable {
     }
 }
 
+extension LooperRealtimeClient: LooperRealtimeStateMiniSyncTransport {}
+
 private final class LooperRealtimeConnectionPool: Sendable {
     private typealias TransportServices = HTTP2ClientTransport.TransportServices
     private typealias ManagedClient = GRPCClient<TransportServices>
