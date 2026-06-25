@@ -10,6 +10,8 @@ const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
 const CLIENT_MUTATION_ID: &str = "mutation-send-session-prompt-1";
 const REQUEST_HASH: &str = "sha256:send-session-prompt-a";
 const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
+const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 1_500;
+const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 
 #[test]
 fn mobile_state_event_log_replays_after_seq_and_detects_gap() {
@@ -838,11 +840,320 @@ async fn grpc_prompt_in_mode_queues_from_session_mini_without_desktop_snapshot()
     wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
 }
 
+#[tokio::test]
+async fn grpc_session_stream_acks_mode_command_before_state_deltas() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, "mini-revision-session-mode", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let mutation_id = "session-stream-mode-ack-first";
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![set_mode_session_frame("await-reply", mutation_id)],
+    )
+    .await;
+
+    let ack = next_session_ack(&mut stream, "mode command ack").await;
+    assert_command_ack(
+        ack.accepted,
+        &ack.client_mutation_id,
+        ack.ack_seq,
+        &ack.entity_id,
+        &ack.revision,
+        &ack.server_time,
+        ack.idempotent_replay,
+        mutation_id,
+    );
+    assert_eq!(ack.error_code, "");
+    assert_eq!(ack.reject_reason, "");
+
+    let delta = next_session_state_delta_matching(&mut stream, "mode command ack delta", |delta| {
+        delta.seq == ack.ack_seq
+    })
+    .await;
+    assert_eq!(delta.entity_id, "thread-main");
+    assert_eq!(state_delta_detail(&delta).as_deref(), Some("command-ack"));
+}
+
+#[tokio::test]
+async fn grpc_session_stream_replays_state_deltas_after_resume_seq() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let first = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input("thread-main", "revision-one", "first"))
+        .expect("record first state delta");
+    let second = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input("thread-main", "revision-two", "second"))
+        .expect("record second state delta");
+    let third = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input("thread-main", "revision-three", "third"))
+        .expect("record third state delta");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(first.seq)],
+    )
+    .await;
+
+    let replayed_second =
+        next_session_state_delta(&mut stream, "second replayed state delta").await;
+    assert_eq!(replayed_second.seq, second.seq);
+    assert_eq!(replayed_second.revision, second.revision);
+    assert_eq!(
+        state_delta_payload_delta(&replayed_second).as_deref(),
+        Some("second")
+    );
+
+    let replayed_third = next_session_state_delta(&mut stream, "third replayed state delta").await;
+    assert_eq!(replayed_third.seq, third.seq);
+    assert_eq!(replayed_third.revision, third.revision);
+    assert_eq!(
+        state_delta_payload_delta(&replayed_third).as_deref(),
+        Some("third")
+    );
+}
+
+#[tokio::test]
+async fn grpc_session_stream_rejects_invalid_command_as_ack_frame() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, "mini-revision-invalid-session-command", 4);
+    let event_count_before = mobile_state_event_count(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![set_mode_session_frame("await-reply", "")],
+    )
+    .await;
+
+    let ack = next_session_ack(&mut stream, "invalid mode command ack").await;
+    assert!(!ack.accepted);
+    assert_eq!(ack.client_mutation_id, "");
+    assert_eq!(ack.entity_id, "thread-main");
+    assert_eq!(ack.ack_seq, 0);
+    assert_eq!(ack.error_code, "invalid_argument");
+    assert!(ack.reject_reason.contains("client_mutation_id"));
+    assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_mode_requires_hot_state_mini_cache_without_snapshot() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    let event_count_before = mobile_state_event_count(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![set_mode_session_frame(
+            "await-reply",
+            "session-stream-mode-cold-mini",
+        )],
+    )
+    .await;
+
+    let ack = next_session_ack(&mut stream, "cold mini mode command ack").await;
+    assert!(!ack.accepted);
+    assert_eq!(ack.client_mutation_id, "session-stream-mode-cold-mini");
+    assert_eq!(ack.entity_id, "thread-main");
+    assert_eq!(ack.ack_seq, 0);
+    assert_eq!(ack.error_code, "failed_precondition");
+    assert!(ack.reject_reason.contains("state mini cache"));
+    assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_replays_duplicate_command_ack() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, "mini-revision-session-duplicate", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let mutation_id = "session-stream-duplicate-mode";
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![
+            set_mode_session_frame("await-reply", mutation_id),
+            set_mode_session_frame("await-reply", mutation_id),
+        ],
+    )
+    .await;
+
+    let first_ack = next_session_ack(&mut stream, "first duplicate command ack").await;
+    assert_command_ack(
+        first_ack.accepted,
+        &first_ack.client_mutation_id,
+        first_ack.ack_seq,
+        &first_ack.entity_id,
+        &first_ack.revision,
+        &first_ack.server_time,
+        first_ack.idempotent_replay,
+        mutation_id,
+    );
+
+    let replayed_ack =
+        next_session_ack_matching(&mut stream, "idempotent replay command ack", |ack| {
+            ack.client_mutation_id == mutation_id && ack.idempotent_replay
+        })
+        .await;
+    assert!(replayed_ack.accepted);
+    assert_eq!(replayed_ack.ack_seq, first_ack.ack_seq);
+    assert_eq!(replayed_ack.revision, first_ack.revision);
+    assert_eq!(replayed_ack.entity_id, first_ack.entity_id);
+    assert_eq!(replayed_ack.error_code, "");
+    assert_eq!(replayed_ack.reject_reason, "");
+}
+
 fn add_mobile_grpc_authorization<T>(request: &mut tonic::Request<T>, authorization: &str) {
     request.metadata_mut().insert(
         "authorization",
         authorization.parse().expect("authorization metadata"),
     );
+}
+
+async fn open_session_stream(
+    client: &mut LooperRealtimeClient<tonic::transport::Channel>,
+    authorization: &str,
+    frames: Vec<ClientFrame>,
+) -> tonic::codec::Streaming<ServerFrame> {
+    let mut request = tonic::Request::new(tokio_stream::iter(frames));
+    add_mobile_grpc_authorization(&mut request, authorization);
+    client
+        .session(request)
+        .await
+        .expect("open session stream")
+        .into_inner()
+}
+
+fn set_mode_session_frame(preset: &str, client_mutation_id: &str) -> ClientFrame {
+    ClientFrame {
+        frame: Some(client_frame::Frame::Command(Command {
+            command: Some(command::Command::SetSessionMode(SetSessionModeRequest {
+                thread_id: "thread-main".to_owned(),
+                preset: preset.to_owned(),
+                client_mutation_id: client_mutation_id.to_owned(),
+            })),
+        })),
+    }
+}
+
+fn resume_session_frame(after_seq: i64) -> ClientFrame {
+    ClientFrame {
+        frame: Some(client_frame::Frame::Resume(Resume { after_seq })),
+    }
+}
+
+async fn next_session_frame(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+) -> ServerFrame {
+    tokio::time::timeout(
+        tokio::time::Duration::from_millis(SESSION_FRAME_TIMEOUT_MILLIS),
+        stream.message(),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {label}"))
+    .expect("session stream frame result")
+    .unwrap_or_else(|| panic!("session stream closed before {label}"))
+}
+
+async fn next_session_ack(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+) -> agent_control_plane::grpc::proto::CommandAck {
+    next_session_ack_matching(stream, label, |_| true).await
+}
+
+async fn next_session_ack_matching(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+    mut matches: impl FnMut(&agent_control_plane::grpc::proto::CommandAck) -> bool,
+) -> agent_control_plane::grpc::proto::CommandAck {
+    for _ in 0..SESSION_FRAME_SCAN_LIMIT {
+        let frame = next_session_frame(stream, label).await;
+        if let Some(server_frame::Frame::Ack(ack)) = frame.frame {
+            if matches(&ack) {
+                return ack;
+            }
+        }
+    }
+    panic!("timed out scanning session stream for {label}");
+}
+
+async fn next_session_state_delta(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+) -> agent_control_plane::grpc::proto::StateMiniDelta {
+    next_session_state_delta_matching(stream, label, |_| true).await
+}
+
+async fn next_session_state_delta_matching(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+    mut matches: impl FnMut(&agent_control_plane::grpc::proto::StateMiniDelta) -> bool,
+) -> agent_control_plane::grpc::proto::StateMiniDelta {
+    for _ in 0..SESSION_FRAME_SCAN_LIMIT {
+        let frame = next_session_frame(stream, label).await;
+        if let Some(server_frame::Frame::StateDelta(delta)) = frame.frame {
+            if matches(&delta) {
+                return delta;
+            }
+        }
+    }
+    panic!("timed out scanning session stream for {label}");
+}
+
+fn state_delta_detail(delta: &agent_control_plane::grpc::proto::StateMiniDelta) -> Option<String> {
+    state_delta_payload_string(delta, "detail")
+}
+
+fn state_delta_payload_delta(
+    delta: &agent_control_plane::grpc::proto::StateMiniDelta,
+) -> Option<String> {
+    state_delta_payload_string(delta, "delta")
+}
+
+fn state_delta_payload_string(
+    delta: &agent_control_plane::grpc::proto::StateMiniDelta,
+    key: &str,
+) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&delta.payload_json)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
 }
 
 async fn set_mode_grpc(

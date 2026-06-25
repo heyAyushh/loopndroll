@@ -1,10 +1,13 @@
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
+use async_stream::stream;
 use futures_core::Stream;
 use tonic::{Request, Response, Status};
 
 use crate::control_plane::ControlPlane;
-use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
+use crate::events::{
+    MobileCommandAckRecord, MobileCommandAckResult, MobileStateEventGap, MobileStateEventRecord,
+};
 use crate::grpc::auth::authorize_mobile_api_request;
 use crate::grpc::events::{MobileEventStream, mobile_events};
 use crate::grpc::proto;
@@ -13,7 +16,10 @@ use crate::mobile::api::{
     mobile_session_detail, session_mini_projection_inputs_with_mode,
     session_mini_records_contain_session,
 };
-use crate::mobile::events::{MobileEventInput, MobileEventKind, mobile_event_now};
+use crate::mobile::events::{
+    MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
+    mobile_event_now, mobile_event_sse_name,
+};
 use crate::mobile::prompt_delivery::{
     accept_session_prompt, dispatch_session_prompt_after_ack, invalidate_delivery_action_cache,
     mobile_desktop_snapshot, prompt_dispatch_fields,
@@ -35,6 +41,11 @@ const MODE_CLEARED_DETAIL: &str = "mode-cleared";
 const MODE_UPDATED_DETAIL: &str = "mode-updated";
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
 const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
+const SESSION_REPLAY_BATCH_SIZE: usize = 128;
+const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+const REJECT_ERROR_CODE_EMPTY_FRAME: &str = "empty_client_frame";
+const REJECT_ERROR_CODE_EMPTY_COMMAND: &str = "empty_command";
 
 type SessionFrameStream =
     Pin<Box<dyn Stream<Item = Result<proto::ServerFrame, Status>> + Send + 'static>>;
@@ -90,6 +101,7 @@ impl LooperRealtime for LooperRealtimeService {
             request.thread_id,
             request.preset,
             &request.client_mutation_id,
+            SessionVisibilityPolicy::AllowSnapshotFallback,
         )?))
     }
 
@@ -137,9 +149,103 @@ impl LooperRealtime for LooperRealtimeService {
         request: Request<tonic::Streaming<proto::ClientFrame>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
         authorize_mobile_api_request(&self.control_plane, request.metadata())?;
-        Err(Status::unimplemented(
-            "duplex Session stream contract is available; server implementation is pending",
-        ))
+        let mut inbound = request.into_inner();
+        let control_plane = self.control_plane.clone();
+        let output = stream! {
+            let mut event_receiver = control_plane.mobile_event_hub().subscribe();
+            let mut last_seq = latest_mobile_state_seq(&control_plane);
+            let mut state_poll = tokio::time::interval_at(
+                tokio::time::Instant::now() + SESSION_STATE_POLL_INTERVAL,
+                SESSION_STATE_POLL_INTERVAL,
+            );
+            state_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut heartbeat = tokio::time::interval_at(
+                tokio::time::Instant::now() + SESSION_HEARTBEAT_INTERVAL,
+                SESSION_HEARTBEAT_INTERVAL,
+            );
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                tokio::select! {
+                    biased;
+
+                    received = inbound.message() => {
+                        match received {
+                            Ok(Some(frame)) => {
+                                match handle_session_client_frame(&control_plane, frame, &mut last_seq) {
+                                    Ok(frames) => {
+                                        for frame in frames {
+                                            yield Ok(frame);
+                                        }
+                                    }
+                                    Err(status) => {
+                                        yield Err(status);
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(status) => {
+                                yield Err(status);
+                                break;
+                            }
+                        }
+                    }
+                    event = event_receiver.recv() => {
+                        match event {
+                            Ok(MobileEventBroadcast::Persisted(record)) => {
+                                yield Ok(mobile_event_record_frame(&control_plane, &record));
+                                match drain_state_delta_frames(&control_plane, &mut last_seq) {
+                                    Ok(frames) => {
+                                        for frame in frames {
+                                            yield Ok(frame);
+                                        }
+                                    }
+                                    Err(status) => {
+                                        yield Err(status);
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(MobileEventBroadcast::Ephemeral(event)) => {
+                                yield Ok(mobile_event_frame(proto_mobile_event_from_event(&event)));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                match drain_state_delta_frames(&control_plane, &mut last_seq) {
+                                    Ok(frames) => {
+                                        for frame in frames {
+                                            yield Ok(frame);
+                                        }
+                                    }
+                                    Err(status) => {
+                                        yield Err(status);
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    _ = state_poll.tick() => {
+                        match drain_state_delta_frames(&control_plane, &mut last_seq) {
+                            Ok(frames) => {
+                                for frame in frames {
+                                    yield Ok(frame);
+                                }
+                            }
+                            Err(status) => {
+                                yield Err(status);
+                                break;
+                            }
+                        }
+                    }
+                    _ = heartbeat.tick() => {
+                        yield Ok(heartbeat_frame(&control_plane));
+                    }
+                }
+            }
+        };
+        Ok(Response::new(Box::pin(output)))
     }
 
     async fn subscribe_mobile_events(
@@ -158,11 +264,306 @@ impl LooperRealtime for LooperRealtimeService {
     }
 }
 
+fn handle_session_client_frame(
+    control_plane: &ControlPlane,
+    frame: proto::ClientFrame,
+    last_seq: &mut i64,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    match frame.frame {
+        Some(proto::client_frame::Frame::Command(command)) => {
+            handle_session_command(control_plane, command, last_seq)
+        }
+        Some(proto::client_frame::Frame::Resume(resume)) => {
+            replay_state_delta_frames(control_plane, resume.after_seq, last_seq)
+        }
+        None => Ok(vec![command_ack_frame(rejected_command_ack(
+            String::new(),
+            String::new(),
+            REJECT_ERROR_CODE_EMPTY_FRAME,
+            "client frame is empty",
+        ))]),
+    }
+}
+
+fn handle_session_command(
+    control_plane: &ControlPlane,
+    command: proto::Command,
+    last_seq: &mut i64,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    match command.command {
+        Some(proto::command::Command::SetSessionMode(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            set_session_mode_command(
+                control_plane,
+                request.thread_id,
+                request.preset,
+                &request.client_mutation_id,
+                SessionVisibilityPolicy::RequireStateMiniCache,
+            )
+            .and_then(command_ack_from_mode_response),
+        ),
+        Some(proto::command::Command::SendSessionPrompt(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            send_session_prompt_command(
+                control_plane,
+                request.thread_id,
+                request.prompt,
+                request.assistant_surface,
+                &request.client_mutation_id,
+            )
+            .and_then(command_ack_from_prompt_response),
+        ),
+        Some(proto::command::Command::SubmitNotificationReply(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            submit_notification_reply_command(
+                control_plane,
+                SubmitNotificationReplyInput {
+                    notification_id: &request.notification_id,
+                    thread_id: &request.thread_id,
+                    prompt: &request.prompt,
+                    assistant_surface: Some(&request.assistant_surface),
+                    client_mutation_id: &request.client_mutation_id,
+                },
+            )
+            .map(notification_reply_response_from_command)
+            .map_err(realtime_command_status)
+            .and_then(command_ack_from_notification_reply_response),
+        ),
+        None => Ok(vec![command_ack_frame(rejected_command_ack(
+            String::new(),
+            String::new(),
+            REJECT_ERROR_CODE_EMPTY_COMMAND,
+            "command frame is empty",
+        ))]),
+    }
+}
+
+fn session_command_frames(
+    control_plane: &ControlPlane,
+    last_seq: &mut i64,
+    client_mutation_id: String,
+    entity_id: String,
+    result: Result<proto::CommandAck, Status>,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    match result {
+        Ok(ack) => {
+            let mut frames = vec![command_ack_frame(ack)];
+            frames.extend(drain_state_delta_frames(control_plane, last_seq)?);
+            Ok(frames)
+        }
+        Err(status) => Ok(vec![command_ack_frame(rejected_command_ack(
+            client_mutation_id,
+            entity_id,
+            status_code_name(status.code()),
+            status.message(),
+        ))]),
+    }
+}
+
+fn command_ack_from_mode_response(
+    response: proto::SetSessionModeResponse,
+) -> Result<proto::CommandAck, Status> {
+    response
+        .ack
+        .ok_or_else(|| Status::internal("set-session-mode response missing command ACK"))
+}
+
+fn command_ack_from_prompt_response(
+    response: proto::SendSessionPromptResponse,
+) -> Result<proto::CommandAck, Status> {
+    response
+        .ack
+        .ok_or_else(|| Status::internal("send-session-prompt response missing command ACK"))
+}
+
+fn command_ack_from_notification_reply_response(
+    response: proto::SubmitNotificationReplyResponse,
+) -> Result<proto::CommandAck, Status> {
+    response
+        .ack
+        .ok_or_else(|| Status::internal("notification-reply response missing command ACK"))
+}
+
+fn replay_state_delta_frames(
+    control_plane: &ControlPlane,
+    after_seq: i64,
+    last_seq: &mut i64,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    let records = control_plane
+        .store()
+        .mobile_state_events_after_seq(after_seq, SESSION_REPLAY_BATCH_SIZE)
+        .map_err(state_replay_status)?;
+    let mut frames = Vec::with_capacity(records.len());
+    for record in records {
+        *last_seq = (*last_seq).max(record.seq);
+        frames.push(state_delta_frame(&record));
+    }
+    *last_seq = (*last_seq).max(after_seq);
+    Ok(frames)
+}
+
+fn drain_state_delta_frames(
+    control_plane: &ControlPlane,
+    last_seq: &mut i64,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    replay_state_delta_frames(control_plane, *last_seq, last_seq)
+}
+
+fn state_replay_status(error: anyhow::Error) -> Status {
+    if let Some(gap) = error.downcast_ref::<MobileStateEventGap>() {
+        return Status::out_of_range(format!(
+            "seq_gap: requested after_seq {} but latest_seq is {}",
+            gap.requested_after_seq, gap.latest_seq
+        ));
+    }
+    Status::internal(error.to_string())
+}
+
+fn command_ack_frame(ack: proto::CommandAck) -> proto::ServerFrame {
+    proto::ServerFrame {
+        frame: Some(proto::server_frame::Frame::Ack(ack)),
+    }
+}
+
+fn rejected_command_ack(
+    client_mutation_id: String,
+    entity_id: String,
+    error_code: &str,
+    reject_reason: &str,
+) -> proto::CommandAck {
+    proto::CommandAck {
+        accepted: false,
+        client_mutation_id,
+        ack_seq: 0,
+        entity_id,
+        revision: String::new(),
+        server_time: mobile_event_now(),
+        idempotent_replay: false,
+        error_code: error_code.to_owned(),
+        reject_reason: reject_reason.to_owned(),
+    }
+}
+
+fn state_delta_frame(record: &MobileStateEventRecord) -> proto::ServerFrame {
+    proto::ServerFrame {
+        frame: Some(proto::server_frame::Frame::StateDelta(
+            proto::StateMiniDelta {
+                seq: record.seq,
+                entity_id: record.entity_id.clone(),
+                kind: proto_event_name(record.kind).to_owned(),
+                revision: record.revision.clone(),
+                server_time: record.server_time.clone(),
+                payload_json: record.payload_json.clone(),
+            },
+        )),
+    }
+}
+
+fn mobile_event_record_frame(
+    control_plane: &ControlPlane,
+    record: &MobileEventRecord,
+) -> proto::ServerFrame {
+    mobile_event_frame(proto::MobileEvent {
+        kind: proto_event_kind(record.event_type),
+        event_name: proto_event_name(record.event_type).to_owned(),
+        thread_id: record.thread_id.clone().unwrap_or_default(),
+        prompt_id: record.prompt_id.clone().unwrap_or_default(),
+        detail: record.detail.clone().unwrap_or_default(),
+        server_time: mobile_event_now(),
+        revision: control_plane.mobile_snapshot_revision().unwrap_or_default(),
+    })
+}
+
+fn mobile_event_frame(event: proto::MobileEvent) -> proto::ServerFrame {
+    proto::ServerFrame {
+        frame: Some(proto::server_frame::Frame::Event(event)),
+    }
+}
+
+fn proto_mobile_event_from_event(event: &MobileEvent) -> proto::MobileEvent {
+    proto::MobileEvent {
+        kind: proto_event_kind(event.event_type),
+        event_name: proto_event_name(event.event_type).to_owned(),
+        thread_id: event.thread_id.clone().unwrap_or_default(),
+        prompt_id: event.prompt_id.clone().unwrap_or_default(),
+        detail: event.detail.clone().unwrap_or_default(),
+        server_time: event.server_time.clone(),
+        revision: event.revision.clone().unwrap_or_default(),
+    }
+}
+
+fn heartbeat_frame(control_plane: &ControlPlane) -> proto::ServerFrame {
+    proto::ServerFrame {
+        frame: Some(proto::server_frame::Frame::Heartbeat(proto::Heartbeat {
+            server_time: mobile_event_now(),
+            latest_seq: latest_mobile_state_seq(control_plane),
+        })),
+    }
+}
+
+fn latest_mobile_state_seq(control_plane: &ControlPlane) -> i64 {
+    control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .unwrap_or_default()
+}
+
+fn proto_event_kind(kind: MobileEventKind) -> i32 {
+    match kind {
+        MobileEventKind::SessionChanged => 1,
+        MobileEventKind::PromptQueued => 2,
+        MobileEventKind::PromptDelivered => 3,
+        MobileEventKind::LifecycleChanged => 4,
+    }
+}
+
+fn proto_event_name(kind: MobileEventKind) -> &'static str {
+    mobile_event_sse_name(kind)
+}
+
+fn status_code_name(code: tonic::Code) -> &'static str {
+    match code {
+        tonic::Code::Ok => "ok",
+        tonic::Code::Cancelled => "cancelled",
+        tonic::Code::Unknown => "unknown",
+        tonic::Code::InvalidArgument => "invalid_argument",
+        tonic::Code::DeadlineExceeded => "deadline_exceeded",
+        tonic::Code::NotFound => "not_found",
+        tonic::Code::AlreadyExists => "already_exists",
+        tonic::Code::PermissionDenied => "permission_denied",
+        tonic::Code::ResourceExhausted => "resource_exhausted",
+        tonic::Code::FailedPrecondition => "failed_precondition",
+        tonic::Code::Aborted => "aborted",
+        tonic::Code::OutOfRange => "out_of_range",
+        tonic::Code::Unimplemented => "unimplemented",
+        tonic::Code::Internal => "internal",
+        tonic::Code::Unavailable => "unavailable",
+        tonic::Code::DataLoss => "data_loss",
+        tonic::Code::Unauthenticated => "unauthenticated",
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SessionVisibilityPolicy {
+    AllowSnapshotFallback,
+    RequireStateMiniCache,
+}
+
 fn set_session_mode_command(
     control_plane: &ControlPlane,
     thread_id: String,
     preset: String,
     client_mutation_id: &str,
+    visibility_policy: SessionVisibilityPolicy,
 ) -> Result<proto::SetSessionModeResponse, Status> {
     let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
     let request_hash = command_request_hash(
@@ -190,7 +591,12 @@ fn set_session_mode_command(
         return Ok(mode_response_from_record(&record, true));
     }
 
-    if let Err(error) = ensure_mobile_session_visible(control_plane, &thread_id, None) {
+    if let Err(error) = ensure_mobile_session_visible_with_policy(
+        control_plane,
+        &thread_id,
+        None,
+        visibility_policy,
+    ) {
         release_command_reservation(
             control_plane,
             COMMAND_KIND_SET_SESSION_MODE,
@@ -428,8 +834,24 @@ fn ensure_mobile_session_visible_from_minis(
         Some(true) => Ok(()),
         Some(false) => Err(Status::not_found("session not found")),
         None => Err(Status::failed_precondition(
-            "state mini cache is required before sending a prompt",
+            "state mini cache is required before sending a session command",
         )),
+    }
+}
+
+fn ensure_mobile_session_visible_with_policy(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+    policy: SessionVisibilityPolicy,
+) -> Result<(), Status> {
+    match policy {
+        SessionVisibilityPolicy::AllowSnapshotFallback => {
+            ensure_mobile_session_visible(control_plane, thread_id, assistant_surface)
+        }
+        SessionVisibilityPolicy::RequireStateMiniCache => {
+            ensure_mobile_session_visible_from_minis(control_plane, thread_id, assistant_surface)
+        }
     }
 }
 
@@ -472,6 +894,8 @@ fn command_ack_from_record(
         revision: json_string(value, "revision"),
         server_time: json_string(value, "serverTime"),
         idempotent_replay,
+        error_code: String::new(),
+        reject_reason: String::new(),
     }
 }
 
@@ -542,6 +966,8 @@ fn notification_reply_response_from_command(
         revision: response.revision.clone(),
         server_time: response.server_time.clone(),
         idempotent_replay: response.idempotent_replay,
+        error_code: String::new(),
+        reject_reason: String::new(),
     };
     proto::SubmitNotificationReplyResponse {
         accepted: response.accepted,

@@ -12,8 +12,9 @@ use agent_control_plane::auth::{
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::grpc::proto::{
-    SendSessionPromptRequest, SetSessionModeRequest, SubmitNotificationReplyRequest,
-    SubscribeEventsRequest, looper_realtime_client::LooperRealtimeClient,
+    ClientFrame, Command, Resume, SendSessionPromptRequest, ServerFrame, SetSessionModeRequest,
+    SubmitNotificationReplyRequest, SubscribeEventsRequest, client_frame, command,
+    looper_realtime_client::LooperRealtimeClient, server_frame,
 };
 use agent_control_plane::http::build_router;
 use agent_control_plane::mobile::api::session_mini_projection_inputs;

@@ -212,43 +212,70 @@ public nonisolated struct Looper_V1_SetSessionModeRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Looper_V1_SetSessionModeResponse: Sendable {
+public nonisolated struct Looper_V1_SetSessionModeResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var accepted: Bool = false
+  public var accepted: Bool {
+    get {_storage._accepted}
+    set {_uniqueStorage()._accepted = newValue}
+  }
 
-  public var threadID: String = String()
+  public var threadID: String {
+    get {_storage._threadID}
+    set {_uniqueStorage()._threadID = newValue}
+  }
 
-  public var preset: String = String()
+  public var preset: String {
+    get {_storage._preset}
+    set {_uniqueStorage()._preset = newValue}
+  }
 
-  public var serverTime: String = String()
+  public var serverTime: String {
+    get {_storage._serverTime}
+    set {_uniqueStorage()._serverTime = newValue}
+  }
 
-  public var clientMutationID: String = String()
+  public var clientMutationID: String {
+    get {_storage._clientMutationID}
+    set {_uniqueStorage()._clientMutationID = newValue}
+  }
 
-  public var ackSeq: Int64 = 0
+  public var ackSeq: Int64 {
+    get {_storage._ackSeq}
+    set {_uniqueStorage()._ackSeq = newValue}
+  }
 
-  public var entityID: String = String()
+  public var entityID: String {
+    get {_storage._entityID}
+    set {_uniqueStorage()._entityID = newValue}
+  }
 
-  public var revision: String = String()
+  public var revision: String {
+    get {_storage._revision}
+    set {_uniqueStorage()._revision = newValue}
+  }
 
-  public var idempotentReplay: Bool = false
+  public var idempotentReplay: Bool {
+    get {_storage._idempotentReplay}
+    set {_uniqueStorage()._idempotentReplay = newValue}
+  }
 
   public var ack: Looper_V1_CommandAck {
-    get {_ack ?? Looper_V1_CommandAck()}
-    set {_ack = newValue}
+    get {_storage._ack ?? Looper_V1_CommandAck()}
+    set {_uniqueStorage()._ack = newValue}
   }
   /// Returns true if `ack` has been explicitly set.
-  public var hasAck: Bool {self._ack != nil}
+  public var hasAck: Bool {_storage._ack != nil}
   /// Clears the value of `ack`. Subsequent reads from it will return its default value.
-  public mutating func clearAck() {self._ack = nil}
+  public mutating func clearAck() {_uniqueStorage()._ack = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _ack: Looper_V1_CommandAck? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Looper_V1_SendSessionPromptRequest: Sendable {
@@ -269,43 +296,70 @@ public nonisolated struct Looper_V1_SendSessionPromptRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Looper_V1_SendSessionPromptResponse: Sendable {
+public nonisolated struct Looper_V1_SendSessionPromptResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var accepted: Bool = false
+  public var accepted: Bool {
+    get {_storage._accepted}
+    set {_uniqueStorage()._accepted = newValue}
+  }
 
-  public var dispatchKind: String = String()
+  public var dispatchKind: String {
+    get {_storage._dispatchKind}
+    set {_uniqueStorage()._dispatchKind = newValue}
+  }
 
-  public var promptID: String = String()
+  public var promptID: String {
+    get {_storage._promptID}
+    set {_uniqueStorage()._promptID = newValue}
+  }
 
-  public var serverTime: String = String()
+  public var serverTime: String {
+    get {_storage._serverTime}
+    set {_uniqueStorage()._serverTime = newValue}
+  }
 
-  public var clientMutationID: String = String()
+  public var clientMutationID: String {
+    get {_storage._clientMutationID}
+    set {_uniqueStorage()._clientMutationID = newValue}
+  }
 
-  public var ackSeq: Int64 = 0
+  public var ackSeq: Int64 {
+    get {_storage._ackSeq}
+    set {_uniqueStorage()._ackSeq = newValue}
+  }
 
-  public var entityID: String = String()
+  public var entityID: String {
+    get {_storage._entityID}
+    set {_uniqueStorage()._entityID = newValue}
+  }
 
-  public var revision: String = String()
+  public var revision: String {
+    get {_storage._revision}
+    set {_uniqueStorage()._revision = newValue}
+  }
 
-  public var idempotentReplay: Bool = false
+  public var idempotentReplay: Bool {
+    get {_storage._idempotentReplay}
+    set {_uniqueStorage()._idempotentReplay = newValue}
+  }
 
   public var ack: Looper_V1_CommandAck {
-    get {_ack ?? Looper_V1_CommandAck()}
-    set {_ack = newValue}
+    get {_storage._ack ?? Looper_V1_CommandAck()}
+    set {_uniqueStorage()._ack = newValue}
   }
   /// Returns true if `ack` has been explicitly set.
-  public var hasAck: Bool {self._ack != nil}
+  public var hasAck: Bool {_storage._ack != nil}
   /// Clears the value of `ack`. Subsequent reads from it will return its default value.
-  public mutating func clearAck() {self._ack = nil}
+  public mutating func clearAck() {_uniqueStorage()._ack = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _ack: Looper_V1_CommandAck? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Looper_V1_SubmitNotificationReplyRequest: Sendable {
@@ -417,6 +471,10 @@ public nonisolated struct Looper_V1_CommandAck: Sendable {
   public var serverTime: String = String()
 
   public var idempotentReplay: Bool = false
+
+  public var errorCode: String = String()
+
+  public var rejectReason: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -921,76 +979,130 @@ nonisolated extension Looper_V1_SetSessionModeResponse: SwiftProtobuf.Message, S
   public static let protoMessageName: String = _protobuf_package + ".SetSessionModeResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}thread_id\0\u{1}preset\0\u{3}server_time\0\u{3}client_mutation_id\0\u{3}ack_seq\0\u{3}entity_id\0\u{1}revision\0\u{3}idempotent_replay\0\u{1}ack\0")
 
+  fileprivate class _StorageClass {
+    var _accepted: Bool = false
+    var _threadID: String = String()
+    var _preset: String = String()
+    var _serverTime: String = String()
+    var _clientMutationID: String = String()
+    var _ackSeq: Int64 = 0
+    var _entityID: String = String()
+    var _revision: String = String()
+    var _idempotentReplay: Bool = false
+    var _ack: Looper_V1_CommandAck? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _accepted = source._accepted
+      _threadID = source._threadID
+      _preset = source._preset
+      _serverTime = source._serverTime
+      _clientMutationID = source._clientMutationID
+      _ackSeq = source._ackSeq
+      _entityID = source._entityID
+      _revision = source._revision
+      _idempotentReplay = source._idempotentReplay
+      _ack = source._ack
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.accepted) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.threadID) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.preset) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.clientMutationID) }()
-      case 6: try { try decoder.decodeSingularInt64Field(value: &self.ackSeq) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.entityID) }()
-      case 8: try { try decoder.decodeSingularStringField(value: &self.revision) }()
-      case 9: try { try decoder.decodeSingularBoolField(value: &self.idempotentReplay) }()
-      case 10: try { try decoder.decodeSingularMessageField(value: &self._ack) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._accepted) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._threadID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._preset) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._serverTime) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._clientMutationID) }()
+        case 6: try { try decoder.decodeSingularInt64Field(value: &_storage._ackSeq) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._entityID) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._revision) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._idempotentReplay) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._ack) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.accepted != false {
-      try visitor.visitSingularBoolField(value: self.accepted, fieldNumber: 1)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._accepted != false {
+        try visitor.visitSingularBoolField(value: _storage._accepted, fieldNumber: 1)
+      }
+      if !_storage._threadID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._threadID, fieldNumber: 2)
+      }
+      if !_storage._preset.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._preset, fieldNumber: 3)
+      }
+      if !_storage._serverTime.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._serverTime, fieldNumber: 4)
+      }
+      if !_storage._clientMutationID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._clientMutationID, fieldNumber: 5)
+      }
+      if _storage._ackSeq != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._ackSeq, fieldNumber: 6)
+      }
+      if !_storage._entityID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._entityID, fieldNumber: 7)
+      }
+      if !_storage._revision.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._revision, fieldNumber: 8)
+      }
+      if _storage._idempotentReplay != false {
+        try visitor.visitSingularBoolField(value: _storage._idempotentReplay, fieldNumber: 9)
+      }
+      try { if let v = _storage._ack {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
     }
-    if !self.threadID.isEmpty {
-      try visitor.visitSingularStringField(value: self.threadID, fieldNumber: 2)
-    }
-    if !self.preset.isEmpty {
-      try visitor.visitSingularStringField(value: self.preset, fieldNumber: 3)
-    }
-    if !self.serverTime.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverTime, fieldNumber: 4)
-    }
-    if !self.clientMutationID.isEmpty {
-      try visitor.visitSingularStringField(value: self.clientMutationID, fieldNumber: 5)
-    }
-    if self.ackSeq != 0 {
-      try visitor.visitSingularInt64Field(value: self.ackSeq, fieldNumber: 6)
-    }
-    if !self.entityID.isEmpty {
-      try visitor.visitSingularStringField(value: self.entityID, fieldNumber: 7)
-    }
-    if !self.revision.isEmpty {
-      try visitor.visitSingularStringField(value: self.revision, fieldNumber: 8)
-    }
-    if self.idempotentReplay != false {
-      try visitor.visitSingularBoolField(value: self.idempotentReplay, fieldNumber: 9)
-    }
-    try { if let v = self._ack {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
-    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Looper_V1_SetSessionModeResponse, rhs: Looper_V1_SetSessionModeResponse) -> Bool {
-    if lhs.accepted != rhs.accepted {return false}
-    if lhs.threadID != rhs.threadID {return false}
-    if lhs.preset != rhs.preset {return false}
-    if lhs.serverTime != rhs.serverTime {return false}
-    if lhs.clientMutationID != rhs.clientMutationID {return false}
-    if lhs.ackSeq != rhs.ackSeq {return false}
-    if lhs.entityID != rhs.entityID {return false}
-    if lhs.revision != rhs.revision {return false}
-    if lhs.idempotentReplay != rhs.idempotentReplay {return false}
-    if lhs._ack != rhs._ack {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._accepted != rhs_storage._accepted {return false}
+        if _storage._threadID != rhs_storage._threadID {return false}
+        if _storage._preset != rhs_storage._preset {return false}
+        if _storage._serverTime != rhs_storage._serverTime {return false}
+        if _storage._clientMutationID != rhs_storage._clientMutationID {return false}
+        if _storage._ackSeq != rhs_storage._ackSeq {return false}
+        if _storage._entityID != rhs_storage._entityID {return false}
+        if _storage._revision != rhs_storage._revision {return false}
+        if _storage._idempotentReplay != rhs_storage._idempotentReplay {return false}
+        if _storage._ack != rhs_storage._ack {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1045,76 +1157,130 @@ nonisolated extension Looper_V1_SendSessionPromptResponse: SwiftProtobuf.Message
   public static let protoMessageName: String = _protobuf_package + ".SendSessionPromptResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}dispatch_kind\0\u{3}prompt_id\0\u{3}server_time\0\u{3}client_mutation_id\0\u{3}ack_seq\0\u{3}entity_id\0\u{1}revision\0\u{3}idempotent_replay\0\u{1}ack\0")
 
+  fileprivate class _StorageClass {
+    var _accepted: Bool = false
+    var _dispatchKind: String = String()
+    var _promptID: String = String()
+    var _serverTime: String = String()
+    var _clientMutationID: String = String()
+    var _ackSeq: Int64 = 0
+    var _entityID: String = String()
+    var _revision: String = String()
+    var _idempotentReplay: Bool = false
+    var _ack: Looper_V1_CommandAck? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _accepted = source._accepted
+      _dispatchKind = source._dispatchKind
+      _promptID = source._promptID
+      _serverTime = source._serverTime
+      _clientMutationID = source._clientMutationID
+      _ackSeq = source._ackSeq
+      _entityID = source._entityID
+      _revision = source._revision
+      _idempotentReplay = source._idempotentReplay
+      _ack = source._ack
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.accepted) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.dispatchKind) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.promptID) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.clientMutationID) }()
-      case 6: try { try decoder.decodeSingularInt64Field(value: &self.ackSeq) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.entityID) }()
-      case 8: try { try decoder.decodeSingularStringField(value: &self.revision) }()
-      case 9: try { try decoder.decodeSingularBoolField(value: &self.idempotentReplay) }()
-      case 10: try { try decoder.decodeSingularMessageField(value: &self._ack) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._accepted) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._dispatchKind) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._promptID) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._serverTime) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._clientMutationID) }()
+        case 6: try { try decoder.decodeSingularInt64Field(value: &_storage._ackSeq) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._entityID) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._revision) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._idempotentReplay) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._ack) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.accepted != false {
-      try visitor.visitSingularBoolField(value: self.accepted, fieldNumber: 1)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._accepted != false {
+        try visitor.visitSingularBoolField(value: _storage._accepted, fieldNumber: 1)
+      }
+      if !_storage._dispatchKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._dispatchKind, fieldNumber: 2)
+      }
+      if !_storage._promptID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._promptID, fieldNumber: 3)
+      }
+      if !_storage._serverTime.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._serverTime, fieldNumber: 4)
+      }
+      if !_storage._clientMutationID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._clientMutationID, fieldNumber: 5)
+      }
+      if _storage._ackSeq != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._ackSeq, fieldNumber: 6)
+      }
+      if !_storage._entityID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._entityID, fieldNumber: 7)
+      }
+      if !_storage._revision.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._revision, fieldNumber: 8)
+      }
+      if _storage._idempotentReplay != false {
+        try visitor.visitSingularBoolField(value: _storage._idempotentReplay, fieldNumber: 9)
+      }
+      try { if let v = _storage._ack {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
     }
-    if !self.dispatchKind.isEmpty {
-      try visitor.visitSingularStringField(value: self.dispatchKind, fieldNumber: 2)
-    }
-    if !self.promptID.isEmpty {
-      try visitor.visitSingularStringField(value: self.promptID, fieldNumber: 3)
-    }
-    if !self.serverTime.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverTime, fieldNumber: 4)
-    }
-    if !self.clientMutationID.isEmpty {
-      try visitor.visitSingularStringField(value: self.clientMutationID, fieldNumber: 5)
-    }
-    if self.ackSeq != 0 {
-      try visitor.visitSingularInt64Field(value: self.ackSeq, fieldNumber: 6)
-    }
-    if !self.entityID.isEmpty {
-      try visitor.visitSingularStringField(value: self.entityID, fieldNumber: 7)
-    }
-    if !self.revision.isEmpty {
-      try visitor.visitSingularStringField(value: self.revision, fieldNumber: 8)
-    }
-    if self.idempotentReplay != false {
-      try visitor.visitSingularBoolField(value: self.idempotentReplay, fieldNumber: 9)
-    }
-    try { if let v = self._ack {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
-    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Looper_V1_SendSessionPromptResponse, rhs: Looper_V1_SendSessionPromptResponse) -> Bool {
-    if lhs.accepted != rhs.accepted {return false}
-    if lhs.dispatchKind != rhs.dispatchKind {return false}
-    if lhs.promptID != rhs.promptID {return false}
-    if lhs.serverTime != rhs.serverTime {return false}
-    if lhs.clientMutationID != rhs.clientMutationID {return false}
-    if lhs.ackSeq != rhs.ackSeq {return false}
-    if lhs.entityID != rhs.entityID {return false}
-    if lhs.revision != rhs.revision {return false}
-    if lhs.idempotentReplay != rhs.idempotentReplay {return false}
-    if lhs._ack != rhs._ack {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._accepted != rhs_storage._accepted {return false}
+        if _storage._dispatchKind != rhs_storage._dispatchKind {return false}
+        if _storage._promptID != rhs_storage._promptID {return false}
+        if _storage._serverTime != rhs_storage._serverTime {return false}
+        if _storage._clientMutationID != rhs_storage._clientMutationID {return false}
+        if _storage._ackSeq != rhs_storage._ackSeq {return false}
+        if _storage._entityID != rhs_storage._entityID {return false}
+        if _storage._revision != rhs_storage._revision {return false}
+        if _storage._idempotentReplay != rhs_storage._idempotentReplay {return false}
+        if _storage._ack != rhs_storage._ack {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1312,7 +1478,7 @@ nonisolated extension Looper_V1_SubmitNotificationReplyResponse: SwiftProtobuf.M
 
 nonisolated extension Looper_V1_CommandAck: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CommandAck"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}client_mutation_id\0\u{3}ack_seq\0\u{3}entity_id\0\u{1}revision\0\u{3}server_time\0\u{3}idempotent_replay\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}client_mutation_id\0\u{3}ack_seq\0\u{3}entity_id\0\u{1}revision\0\u{3}server_time\0\u{3}idempotent_replay\0\u{3}error_code\0\u{3}reject_reason\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1327,6 +1493,8 @@ nonisolated extension Looper_V1_CommandAck: SwiftProtobuf.Message, SwiftProtobuf
       case 5: try { try decoder.decodeSingularStringField(value: &self.revision) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.idempotentReplay) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.errorCode) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.rejectReason) }()
       default: break
       }
     }
@@ -1354,6 +1522,12 @@ nonisolated extension Looper_V1_CommandAck: SwiftProtobuf.Message, SwiftProtobuf
     if self.idempotentReplay != false {
       try visitor.visitSingularBoolField(value: self.idempotentReplay, fieldNumber: 7)
     }
+    if !self.errorCode.isEmpty {
+      try visitor.visitSingularStringField(value: self.errorCode, fieldNumber: 8)
+    }
+    if !self.rejectReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.rejectReason, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1365,6 +1539,8 @@ nonisolated extension Looper_V1_CommandAck: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.revision != rhs.revision {return false}
     if lhs.serverTime != rhs.serverTime {return false}
     if lhs.idempotentReplay != rhs.idempotentReplay {return false}
+    if lhs.errorCode != rhs.errorCode {return false}
+    if lhs.rejectReason != rhs.rejectReason {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

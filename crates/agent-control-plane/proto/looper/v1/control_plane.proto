@@ -118,6 +118,8 @@ message CommandAck {
   string revision = 5;
   string server_time = 6;
   bool idempotent_replay = 7;
+  string error_code = 8;
+  string reject_reason = 9;
 }
 
 message StateMiniDelta {
