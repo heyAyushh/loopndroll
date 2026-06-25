@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 
 private enum LocalFirstMutationError: LocalizedError {
     case modeBarrierRejected
@@ -11,25 +12,14 @@ private enum LocalFirstMutationError: LocalizedError {
     }
 }
 
-enum PendingSessionModeSelection: Sendable {
-    case globalDefault
-    case preset(SessionMode)
-
+private extension ClientModeMutation {
     var mode: SessionMode? {
-        switch self {
-        case .globalDefault:
+        let trimmedPreset = preset.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPreset.isEmpty else {
             return nil
-        case let .preset(mode):
-            return mode
         }
-    }
 
-    init(_ mode: SessionMode?) {
-        if let mode {
-            self = .preset(mode)
-        } else {
-            self = .globalDefault
-        }
+        return SessionMode(rawValue: trimmedPreset)
     }
 }
 
@@ -38,36 +28,22 @@ struct ModeRollbackState: Sendable {
     let detail: SessionDetail?
 }
 
-private struct PendingSessionModeMutation: Sendable {
-    let selection: PendingSessionModeSelection
-    let clientMutationID: String
-    let barrier: LocalFirstMutationBarrier
-
-    var mode: SessionMode? {
-        selection.mode
-    }
-
-    init(
-        mode: SessionMode?,
-        clientMutationID: String
-    ) {
-        selection = PendingSessionModeSelection(mode)
-        self.clientMutationID = clientMutationID
-        barrier = LocalFirstMutationBarrier()
-    }
-}
-
 private struct ModeMutationEnvelope: Sendable {
-    let sessionID: String
-    let selection: PendingSessionModeSelection
-    let clientMutationID: String
-    let barrier: LocalFirstMutationBarrier
+    let mutation: ClientModeMutation
     let connectionRevision: Int
     let rollbackState: ModeRollbackState?
     let service: any CompanionService
 
+    var sessionID: String {
+        mutation.sessionId
+    }
+
+    var clientMutationID: String {
+        mutation.clientMutationId
+    }
+
     var mode: SessionMode? {
-        selection.mode
+        mutation.mode
     }
 }
 
@@ -78,7 +54,7 @@ private struct PromptMutationEnvelope: Sendable {
     let clientMutationID: String
     let connectionRevision: Int
     let service: any CompanionService
-    let pendingModeMutation: PendingSessionModeMutation?
+    let pendingModeMutation: ClientModeMutation?
     let modeBarrierTask: Task<Bool, Never>?
 }
 
@@ -142,15 +118,13 @@ protocol CompanionSessionMutationCoordinatorDelegate: AnyObject {
 @MainActor
 final class CompanionSessionMutationCoordinator {
     private let commandStore: (any CompanionSessionCommandLocalStore)?
+    private let modeMutationQueue = ClientModeMutationQueue()
     private weak var delegate: CompanionSessionMutationCoordinatorDelegate?
 
     private var modeMutationDrainTasksBySessionID: [String: Task<Bool, Never>] = [:]
     private var modeMutationDrainIDBySessionID: [String: String] = [:]
-    private var pendingModeMutationsBySessionID: [String: [PendingSessionModeMutation]] = [:]
     private var modeRollbackStateBySessionID: [String: ModeRollbackState] = [:]
-    private var latestModeMutationBySessionID: [String: PendingSessionModeMutation] = [:]
-    private var latestModeMutationIDBySessionID: [String: String] = [:]
-    private var latestModeMutationBarrierBySessionID: [String: LocalFirstMutationBarrier] = [:]
+    private var modeMutationBarriersByID: [String: LocalFirstMutationBarrier] = [:]
 
     #if DEBUG
     private var modeDrainBeforeFinishHook: (() async -> Void)?
@@ -182,36 +156,83 @@ final class CompanionSessionMutationCoordinator {
         }
 
         let clientMutationID = delegate.sessionMutationMakeClientMutationID()
-        let pendingMutation = PendingSessionModeMutation(
-            mode: preset,
-            clientMutationID: clientMutationID
-        )
+        let barrier = LocalFirstMutationBarrier()
+        let enqueueResult: ClientModeMutationEnqueueResult
+        do {
+            enqueueResult = try modeMutationQueue.enqueueModeMutation(
+                sessionId: sessionID,
+                preset: preset?.rawValue ?? "",
+                clientMutationId: clientMutationID
+            )
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:queue-enqueue-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+            Task {
+                await barrier.resolve(false)
+            }
+            return modeMutationBarrierTask(barrier)
+        }
+
+        modeMutationBarriersByID[clientMutationID] = barrier
         delegate.sessionMutationApplyOptimisticMode(preset, to: sessionID)
         commandStore?.enqueueModeCommand(
             sessionID: sessionID,
             preset: preset,
             clientMutationID: clientMutationID
         )
-        latestModeMutationBySessionID[sessionID] = pendingMutation
-        latestModeMutationIDBySessionID[sessionID] = clientMutationID
-        latestModeMutationBarrierBySessionID[sessionID] = pendingMutation.barrier
 
-        if modeMutationDrainTasksBySessionID[sessionID] != nil {
-            pendingModeMutationsBySessionID[sessionID, default: []].append(pendingMutation)
-            return modeMutationBarrierTask(pendingMutation.barrier)
+        guard enqueueResult.shouldStartDrain else {
+            return modeMutationBarrierTask(barrier)
         }
 
-        guard let envelope = makeModeMutationEnvelope(pendingMutation, sessionID: sessionID) else {
+        startModeMutationDrainIfPossible(enqueueResult.mutation)
+        return modeMutationBarrierTask(barrier)
+    }
+
+    private func startModeMutationDrainIfPossible(_ mutation: ClientModeMutation) {
+        guard let delegate else {
             Task {
-                await pendingMutation.barrier.resolve(false)
+                await resolveModeMutationBarrier(
+                    clientMutationID: mutation.clientMutationId,
+                    accepted: false
+                )
             }
-            return modeMutationBarrierTask(pendingMutation.barrier)
+            return
         }
+
         let drainID = delegate.sessionMutationMakeClientMutationID()
+        do {
+            try modeMutationQueue.startModeDrain(
+                sessionId: mutation.sessionId,
+                drainId: drainID
+            )
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:drain-start-failed sessionID=\(mutation.sessionId) error=\(error.localizedDescription)"
+            )
+            Task {
+                await resolveModeMutationBarrier(
+                    clientMutationID: mutation.clientMutationId,
+                    accepted: false
+                )
+            }
+            return
+        }
+
+        guard let envelope = makeModeMutationEnvelope(mutation) else {
+            Task {
+                await resolveModeMutationBarrier(
+                    clientMutationID: mutation.clientMutationId,
+                    accepted: false
+                )
+            }
+            return
+        }
+
         let drainTask = makeModeMutationDrainTask(first: envelope, drainID: drainID)
-        modeMutationDrainTasksBySessionID[sessionID] = drainTask
-        modeMutationDrainIDBySessionID[sessionID] = drainID
-        return modeMutationBarrierTask(pendingMutation.barrier)
+        modeMutationDrainTasksBySessionID[mutation.sessionId] = drainTask
+        modeMutationDrainIDBySessionID[mutation.sessionId] = drainID
     }
 
     @discardableResult
@@ -240,10 +261,10 @@ final class CompanionSessionMutationCoordinator {
         let clientMutationID = delegate.sessionMutationMakeClientMutationID()
         let service = delegate.sessionMutationService
         let pendingModeMutation = service.supportsModePromptBatch
-            ? latestModeMutationBySessionID[sessionID]
+            ? latestModeMutation(for: sessionID)
             : nil
-        let modeBarrierTask = pendingModeMutation.map {
-            modeMutationBarrierTask($0.barrier)
+        let modeBarrierTask = pendingModeMutation.flatMap { mutation in
+            modeMutationBarriersByID[mutation.clientMutationId].map(modeMutationBarrierTask)
         }
         commandStore?.enqueuePromptCommand(
             sessionID: sessionID,
@@ -270,10 +291,8 @@ final class CompanionSessionMutationCoordinator {
     }
 
     func resolveModeMutationBarriers(_ accepted: Bool) async {
-        let barriers = Array(latestModeMutationBarrierBySessionID.values)
-            + pendingModeMutationsBySessionID.values.flatMap { mutations in
-                mutations.map(\.barrier)
-            }
+        let barriers = Array(modeMutationBarriersByID.values)
+        modeMutationBarriersByID = [:]
         for barrier in barriers {
             await barrier.resolve(accepted)
         }
@@ -286,11 +305,14 @@ final class CompanionSessionMutationCoordinator {
         await resolveModeMutationBarriers(accepted)
         modeMutationDrainTasksBySessionID = [:]
         modeMutationDrainIDBySessionID = [:]
-        pendingModeMutationsBySessionID = [:]
         modeRollbackStateBySessionID = [:]
-        latestModeMutationBySessionID = [:]
-        latestModeMutationIDBySessionID = [:]
-        latestModeMutationBarrierBySessionID = [:]
+        do {
+            try modeMutationQueue.clear()
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:queue-clear-failed error=\(error.localizedDescription)"
+            )
+        }
     }
 
     #if DEBUG
@@ -307,6 +329,14 @@ final class CompanionSessionMutationCoordinator {
         }
     }
 
+    private func resolveModeMutationBarrier(
+        clientMutationID: String,
+        accepted: Bool
+    ) async {
+        let barrier = modeMutationBarriersByID.removeValue(forKey: clientMutationID)
+        await barrier?.resolve(accepted)
+    }
+
     private func makeModeMutationDrainTask(
         first envelope: ModeMutationEnvelope,
         drainID: String
@@ -316,7 +346,10 @@ final class CompanionSessionMutationCoordinator {
             var didAcceptLatestMutation = true
             while !Task.isCancelled, let currentEnvelope = nextEnvelope {
                 let didAcceptMutation = await self?.sendModeMutation(currentEnvelope) ?? false
-                await currentEnvelope.barrier.resolve(didAcceptMutation)
+                await self?.resolveModeMutationBarrier(
+                    clientMutationID: currentEnvelope.clientMutationID,
+                    accepted: didAcceptMutation
+                )
                 if !didAcceptMutation {
                     didAcceptLatestMutation = false
                     break
@@ -324,7 +357,10 @@ final class CompanionSessionMutationCoordinator {
                 nextEnvelope = await self?.nextModeMutationEnvelope(for: currentEnvelope.sessionID)
             }
             if Task.isCancelled, let unresolvedEnvelope = nextEnvelope {
-                await unresolvedEnvelope.barrier.resolve(false)
+                await self?.resolveModeMutationBarrier(
+                    clientMutationID: unresolvedEnvelope.clientMutationID,
+                    accepted: false
+                )
             }
             #if DEBUG
             await self?.runModeDrainBeforeFinishHookIfNeeded()
@@ -335,16 +371,25 @@ final class CompanionSessionMutationCoordinator {
     }
 
     private func nextModeMutationEnvelope(for sessionID: String) async -> ModeMutationEnvelope? {
-        guard var pendingMutations = pendingModeMutationsBySessionID[sessionID],
-              !pendingMutations.isEmpty
-        else {
+        let nextMutation: ClientModeMutationOption
+        do {
+            nextMutation = try modeMutationQueue.takeNextModeMutation(sessionId: sessionID)
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:next-mutation-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
             return nil
         }
 
-        let mutation = pendingMutations.removeFirst()
-        pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty ? nil : pendingMutations
-        guard let envelope = makeModeMutationEnvelope(mutation, sessionID: sessionID) else {
-            await mutation.barrier.resolve(false)
+        guard nextMutation.hasMutation else {
+            return nil
+        }
+
+        guard let envelope = makeModeMutationEnvelope(nextMutation.mutation) else {
+            await resolveModeMutationBarrier(
+                clientMutationID: nextMutation.mutation.clientMutationId,
+                accepted: false
+            )
             return nil
         }
         return envelope
@@ -356,25 +401,29 @@ final class CompanionSessionMutationCoordinator {
             return
         }
 
+        let finish: ClientModeMutationDrainFinish
+        do {
+            finish = try modeMutationQueue.finishModeDrain(sessionId: sessionID, drainId: drainID)
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:drain-finish-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+            return
+        }
+
+        guard !finish.isStale else {
+            CompanionDiagnostics.record("mode:stale-drain-finish-skip sessionID=\(sessionID)")
+            return
+        }
+
         modeMutationDrainTasksBySessionID[sessionID] = nil
         modeMutationDrainIDBySessionID[sessionID] = nil
-        guard let nextEnvelope = await nextModeMutationEnvelope(for: sessionID) else {
+        if finish.shouldClearRollback {
             modeRollbackStateBySessionID[sessionID] = nil
-            latestModeMutationBySessionID[sessionID] = nil
-            latestModeMutationIDBySessionID[sessionID] = nil
-            latestModeMutationBarrierBySessionID[sessionID] = nil
-            return
         }
-
-        guard let delegate else {
-            await nextEnvelope.barrier.resolve(false)
-            return
+        if finish.hasNextMutation {
+            startModeMutationDrainIfPossible(finish.nextMutation)
         }
-
-        let nextDrainID = delegate.sessionMutationMakeClientMutationID()
-        let drainTask = makeModeMutationDrainTask(first: nextEnvelope, drainID: nextDrainID)
-        modeMutationDrainTasksBySessionID[sessionID] = drainTask
-        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
     }
 
     #if DEBUG
@@ -388,23 +437,43 @@ final class CompanionSessionMutationCoordinator {
     }
     #endif
 
-    private func makeModeMutationEnvelope(
-        _ mutation: PendingSessionModeMutation,
-        sessionID: String
-    ) -> ModeMutationEnvelope? {
+    private func makeModeMutationEnvelope(_ mutation: ClientModeMutation) -> ModeMutationEnvelope? {
         guard let delegate else {
             return nil
         }
 
         return ModeMutationEnvelope(
-            sessionID: sessionID,
-            selection: mutation.selection,
-            clientMutationID: mutation.clientMutationID,
-            barrier: mutation.barrier,
+            mutation: mutation,
             connectionRevision: delegate.sessionMutationConnectionRevision,
-            rollbackState: modeRollbackStateBySessionID[sessionID],
+            rollbackState: modeRollbackStateBySessionID[mutation.sessionId],
             service: delegate.sessionMutationService
         )
+    }
+
+    private func latestModeMutation(for sessionID: String) -> ClientModeMutation? {
+        do {
+            let latest = try modeMutationQueue.latestModeMutation(sessionId: sessionID)
+            return latest.hasMutation ? latest.mutation : nil
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:latest-mutation-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+            return nil
+        }
+    }
+
+    private func isLatestModeMutation(_ envelope: ModeMutationEnvelope) -> Bool {
+        do {
+            return try modeMutationQueue.isLatestModeMutation(
+                sessionId: envelope.sessionID,
+                clientMutationId: envelope.clientMutationID
+            )
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:latest-check-failed sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
+            )
+            return false
+        }
     }
 
     private func sendModeMutation(_ envelope: ModeMutationEnvelope) async -> Bool {
@@ -444,7 +513,7 @@ final class CompanionSessionMutationCoordinator {
             return false
         }
 
-        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
+        guard isLatestModeMutation(envelope) else {
             CompanionDiagnostics.record("mode:mutation-superseded-skip sessionID=\(envelope.sessionID)")
             return true
         }
@@ -468,7 +537,7 @@ final class CompanionSessionMutationCoordinator {
             return false
         }
 
-        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
+        guard isLatestModeMutation(envelope) else {
             CompanionDiagnostics.record(
                 "mode:mutation-superseded-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
             )
@@ -488,7 +557,7 @@ final class CompanionSessionMutationCoordinator {
                 let result = try await envelope.service.sendSessionPromptAfterMode(
                     id: envelope.sessionID,
                     modePreset: pendingModeMutation.mode,
-                    modeClientMutationID: pendingModeMutation.clientMutationID,
+                    modeClientMutationID: pendingModeMutation.clientMutationId,
                     prompt: envelope.prompt,
                     assistantSurface: envelope.assistantSurface,
                     promptClientMutationID: envelope.clientMutationID
@@ -531,11 +600,11 @@ final class CompanionSessionMutationCoordinator {
 
     private func handleModePromptBatchSuccess(
         _ result: CompanionModePromptBatchResult,
-        pendingModeMutation: PendingSessionModeMutation,
+        pendingModeMutation: ClientModeMutation,
         envelope: PromptMutationEnvelope
     ) async -> Bool {
         commandStore?.markCommandDelivered(
-            result.mode.clientMutationID ?? pendingModeMutation.clientMutationID
+            result.mode.clientMutationID ?? pendingModeMutation.clientMutationId
         )
         await finishModeMutationDeliveredByBatch(
             pendingModeMutation,
@@ -545,50 +614,39 @@ final class CompanionSessionMutationCoordinator {
     }
 
     private func finishModeMutationDeliveredByBatch(
-        _ mutation: PendingSessionModeMutation,
+        _ mutation: ClientModeMutation,
         sessionID: String
     ) async {
-        await mutation.barrier.resolve(true)
-
-        if var pendingMutations = pendingModeMutationsBySessionID[sessionID] {
-            pendingMutations.removeAll { pendingMutation in
-                pendingMutation.clientMutationID == mutation.clientMutationID
-            }
-            pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty
-                ? nil
-                : pendingMutations
-        }
-
-        let batchedMutationWasLatest =
-            latestModeMutationIDBySessionID[sessionID] == mutation.clientMutationID
-        if batchedMutationWasLatest {
-            latestModeMutationBySessionID[sessionID] = nil
-            latestModeMutationIDBySessionID[sessionID] = nil
-            latestModeMutationBarrierBySessionID[sessionID] = nil
-        }
-
-        modeMutationDrainTasksBySessionID[sessionID]?.cancel()
-        modeMutationDrainTasksBySessionID[sessionID] = nil
-        modeMutationDrainIDBySessionID[sessionID] = nil
-
-        guard let nextEnvelope = await nextModeMutationEnvelope(for: sessionID) else {
-            if batchedMutationWasLatest {
-                modeRollbackStateBySessionID[sessionID] = nil
-            }
-            return
-        }
-
-        guard let delegate else {
-            await nextEnvelope.barrier.resolve(false)
-            return
-        }
-
-        let nextDrainID = delegate.sessionMutationMakeClientMutationID()
-        modeMutationDrainTasksBySessionID[sessionID] = makeModeMutationDrainTask(
-            first: nextEnvelope,
-            drainID: nextDrainID
+        await resolveModeMutationBarrier(
+            clientMutationID: mutation.clientMutationId,
+            accepted: true
         )
-        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
+
+        let finish: ClientModeMutationBatchFinish
+        do {
+            finish = try modeMutationQueue.finishBatchedModeMutation(
+                sessionId: sessionID,
+                clientMutationId: mutation.clientMutationId
+            )
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:batch-finish-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+            return
+        }
+
+        if finish.shouldCancelActiveDrain {
+            modeMutationDrainTasksBySessionID[sessionID]?.cancel()
+            modeMutationDrainTasksBySessionID[sessionID] = nil
+            modeMutationDrainIDBySessionID[sessionID] = nil
+        }
+
+        if finish.shouldClearRollback {
+            modeRollbackStateBySessionID[sessionID] = nil
+        }
+        if finish.hasNextMutation {
+            startModeMutationDrainIfPossible(finish.nextMutation)
+        }
     }
 
     private func handlePromptMutationSuccess(

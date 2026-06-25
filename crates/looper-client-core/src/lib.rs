@@ -5,6 +5,7 @@ mod command_batch;
 mod error;
 mod mobile_snapshot;
 mod model;
+mod mutation_queue;
 mod snapshot_reducer;
 mod transport;
 
@@ -17,6 +18,10 @@ pub use model::{
     ClientCommandMetadata, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
     ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
     ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+};
+pub use mutation_queue::{
+    ClientModeMutation, ClientModeMutationBatchFinish, ClientModeMutationDrainFinish,
+    ClientModeMutationEnqueueResult, ClientModeMutationOption, ClientModeMutationQueue,
 };
 pub use snapshot_reducer::{
     ClientDetailCacheProjection, ClientDetailModeProjection, ClientOptimisticModeProjection,

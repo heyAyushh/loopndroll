@@ -521,6 +521,210 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
+public protocol ClientModeMutationQueueProtocol: AnyObject, Sendable {
+
+    func clear() throws
+
+    func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String) throws  -> ClientModeMutationEnqueueResult
+
+    func finishBatchedModeMutation(sessionId: String, clientMutationId: String) throws  -> ClientModeMutationBatchFinish
+
+    func finishModeDrain(sessionId: String, drainId: String) throws  -> ClientModeMutationDrainFinish
+
+    func isLatestModeMutation(sessionId: String, clientMutationId: String) throws  -> Bool
+
+    func latestModeMutation(sessionId: String) throws  -> ClientModeMutationOption
+
+    func startModeDrain(sessionId: String, drainId: String) throws
+
+    func takeNextModeMutation(sessionId: String) throws  -> ClientModeMutationOption
+
+}
+open class ClientModeMutationQueue: ClientModeMutationQueueProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_looper_client_core_fn_clone_clientmodemutationqueue(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_looper_client_core_fn_constructor_clientmodemutationqueue_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_looper_client_core_fn_free_clientmodemutationqueue(handle, $0) }
+    }
+
+
+
+
+open func clear()throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_clear(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+open func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String)throws  -> ClientModeMutationEnqueueResult  {
+    return try  FfiConverterTypeClientModeMutationEnqueueResult_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_enqueue_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(preset),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func finishBatchedModeMutation(sessionId: String, clientMutationId: String)throws  -> ClientModeMutationBatchFinish  {
+    return try  FfiConverterTypeClientModeMutationBatchFinish_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_finish_batched_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func finishModeDrain(sessionId: String, drainId: String)throws  -> ClientModeMutationDrainFinish  {
+    return try  FfiConverterTypeClientModeMutationDrainFinish_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_finish_mode_drain(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(drainId),$0
+    )
+})
+}
+
+open func isLatestModeMutation(sessionId: String, clientMutationId: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_is_latest_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func latestModeMutation(sessionId: String)throws  -> ClientModeMutationOption  {
+    return try  FfiConverterTypeClientModeMutationOption_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_latest_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),$0
+    )
+})
+}
+
+open func startModeDrain(sessionId: String, drainId: String)throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_start_mode_drain(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(drainId),$0
+    )
+}
+}
+
+open func takeNextModeMutation(sessionId: String)throws  -> ClientModeMutationOption  {
+    return try  FfiConverterTypeClientModeMutationOption_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_clientmodemutationqueue_take_next_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutationQueue: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ClientModeMutationQueue
+
+    public static func lift(_ handle: UInt64) throws -> ClientModeMutationQueue {
+        return ClientModeMutationQueue(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ClientModeMutationQueue) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutationQueue {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ClientModeMutationQueue, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationQueue_lift(_ handle: UInt64) throws -> ClientModeMutationQueue {
+    return try FfiConverterTypeClientModeMutationQueue.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationQueue_lower(_ value: ClientModeMutationQueue) -> UInt64 {
+    return FfiConverterTypeClientModeMutationQueue.lower(value)
+}
+
+
+
+
+
+
 public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func applyCommandAck(ack: ClientCommandAck) throws  -> ClientStateSnapshot
@@ -1295,6 +1499,300 @@ public func FfiConverterTypeClientMobileSnapshotProjection_lift(_ buf: RustBuffe
 #endif
 public func FfiConverterTypeClientMobileSnapshotProjection_lower(_ value: ClientMobileSnapshotProjection) -> RustBuffer {
     return FfiConverterTypeClientMobileSnapshotProjection.lower(value)
+}
+
+
+public struct ClientModeMutation: Equatable, Hashable {
+    public var sessionId: String
+    public var preset: String
+    public var clientMutationId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, preset: String, clientMutationId: String) {
+        self.sessionId = sessionId
+        self.preset = preset
+        self.clientMutationId = clientMutationId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientModeMutation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutation {
+        return
+            try ClientModeMutation(
+                sessionId: FfiConverterString.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientModeMutation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutation_lift(_ buf: RustBuffer) throws -> ClientModeMutation {
+    return try FfiConverterTypeClientModeMutation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutation_lower(_ value: ClientModeMutation) -> RustBuffer {
+    return FfiConverterTypeClientModeMutation.lower(value)
+}
+
+
+public struct ClientModeMutationBatchFinish: Equatable, Hashable {
+    public var wasLatest: Bool
+    public var shouldCancelActiveDrain: Bool
+    public var shouldClearRollback: Bool
+    public var hasNextMutation: Bool
+    public var nextMutation: ClientModeMutation
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(wasLatest: Bool, shouldCancelActiveDrain: Bool, shouldClearRollback: Bool, hasNextMutation: Bool, nextMutation: ClientModeMutation) {
+        self.wasLatest = wasLatest
+        self.shouldCancelActiveDrain = shouldCancelActiveDrain
+        self.shouldClearRollback = shouldClearRollback
+        self.hasNextMutation = hasNextMutation
+        self.nextMutation = nextMutation
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientModeMutationBatchFinish: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutationBatchFinish: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutationBatchFinish {
+        return
+            try ClientModeMutationBatchFinish(
+                wasLatest: FfiConverterBool.read(from: &buf),
+                shouldCancelActiveDrain: FfiConverterBool.read(from: &buf),
+                shouldClearRollback: FfiConverterBool.read(from: &buf),
+                hasNextMutation: FfiConverterBool.read(from: &buf),
+                nextMutation: FfiConverterTypeClientModeMutation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientModeMutationBatchFinish, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.wasLatest, into: &buf)
+        FfiConverterBool.write(value.shouldCancelActiveDrain, into: &buf)
+        FfiConverterBool.write(value.shouldClearRollback, into: &buf)
+        FfiConverterBool.write(value.hasNextMutation, into: &buf)
+        FfiConverterTypeClientModeMutation.write(value.nextMutation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationBatchFinish_lift(_ buf: RustBuffer) throws -> ClientModeMutationBatchFinish {
+    return try FfiConverterTypeClientModeMutationBatchFinish.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationBatchFinish_lower(_ value: ClientModeMutationBatchFinish) -> RustBuffer {
+    return FfiConverterTypeClientModeMutationBatchFinish.lower(value)
+}
+
+
+public struct ClientModeMutationDrainFinish: Equatable, Hashable {
+    public var isStale: Bool
+    public var shouldClearRollback: Bool
+    public var hasNextMutation: Bool
+    public var nextMutation: ClientModeMutation
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(isStale: Bool, shouldClearRollback: Bool, hasNextMutation: Bool, nextMutation: ClientModeMutation) {
+        self.isStale = isStale
+        self.shouldClearRollback = shouldClearRollback
+        self.hasNextMutation = hasNextMutation
+        self.nextMutation = nextMutation
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientModeMutationDrainFinish: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutationDrainFinish: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutationDrainFinish {
+        return
+            try ClientModeMutationDrainFinish(
+                isStale: FfiConverterBool.read(from: &buf),
+                shouldClearRollback: FfiConverterBool.read(from: &buf),
+                hasNextMutation: FfiConverterBool.read(from: &buf),
+                nextMutation: FfiConverterTypeClientModeMutation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientModeMutationDrainFinish, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.isStale, into: &buf)
+        FfiConverterBool.write(value.shouldClearRollback, into: &buf)
+        FfiConverterBool.write(value.hasNextMutation, into: &buf)
+        FfiConverterTypeClientModeMutation.write(value.nextMutation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationDrainFinish_lift(_ buf: RustBuffer) throws -> ClientModeMutationDrainFinish {
+    return try FfiConverterTypeClientModeMutationDrainFinish.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationDrainFinish_lower(_ value: ClientModeMutationDrainFinish) -> RustBuffer {
+    return FfiConverterTypeClientModeMutationDrainFinish.lower(value)
+}
+
+
+public struct ClientModeMutationEnqueueResult: Equatable, Hashable {
+    public var mutation: ClientModeMutation
+    public var shouldStartDrain: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(mutation: ClientModeMutation, shouldStartDrain: Bool) {
+        self.mutation = mutation
+        self.shouldStartDrain = shouldStartDrain
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientModeMutationEnqueueResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutationEnqueueResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutationEnqueueResult {
+        return
+            try ClientModeMutationEnqueueResult(
+                mutation: FfiConverterTypeClientModeMutation.read(from: &buf),
+                shouldStartDrain: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientModeMutationEnqueueResult, into buf: inout [UInt8]) {
+        FfiConverterTypeClientModeMutation.write(value.mutation, into: &buf)
+        FfiConverterBool.write(value.shouldStartDrain, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationEnqueueResult_lift(_ buf: RustBuffer) throws -> ClientModeMutationEnqueueResult {
+    return try FfiConverterTypeClientModeMutationEnqueueResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationEnqueueResult_lower(_ value: ClientModeMutationEnqueueResult) -> RustBuffer {
+    return FfiConverterTypeClientModeMutationEnqueueResult.lower(value)
+}
+
+
+public struct ClientModeMutationOption: Equatable, Hashable {
+    public var hasMutation: Bool
+    public var mutation: ClientModeMutation
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hasMutation: Bool, mutation: ClientModeMutation) {
+        self.hasMutation = hasMutation
+        self.mutation = mutation
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientModeMutationOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientModeMutationOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientModeMutationOption {
+        return
+            try ClientModeMutationOption(
+                hasMutation: FfiConverterBool.read(from: &buf),
+                mutation: FfiConverterTypeClientModeMutation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientModeMutationOption, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hasMutation, into: &buf)
+        FfiConverterTypeClientModeMutation.write(value.mutation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationOption_lift(_ buf: RustBuffer) throws -> ClientModeMutationOption {
+    return try FfiConverterTypeClientModeMutationOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientModeMutationOption_lower(_ value: ClientModeMutationOption) -> RustBuffer {
+    return FfiConverterTypeClientModeMutationOption.lower(value)
 }
 
 
@@ -2628,7 +3126,34 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_outbox() != 6374) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_clear() != 49095) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_enqueue_mode_mutation() != 33862) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_finish_batched_mode_mutation() != 61865) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_finish_mode_drain() != 17137) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_is_latest_mode_mutation() != 4228) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_latest_mode_mutation() != 4352) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_start_mode_drain() != 11967) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_take_next_mode_mutation() != 64668) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_constructor_looperclientcore_new() != 12582) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_constructor_clientmodemutationqueue_new() != 29307) {
         return InitializationResult.apiChecksumMismatch
     }
 
