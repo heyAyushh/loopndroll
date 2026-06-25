@@ -38,10 +38,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     private let clientCore: LooperClientCore
     private let decoder = JSONDecoder()
 
-    var realtimeLocalStore: LooperRealtimeLocalStore {
-        store
-    }
-
     init(fileURL: URL) throws {
         store = try LooperRealtimeLocalStore(recovering: fileURL)
         clientCore = LooperClientCore()

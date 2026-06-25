@@ -556,7 +556,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     let synchronizer = LooperRealtimeStateMiniSynchronizer(
-      store: sessionMiniLocalStore.realtimeLocalStore,
+      store: sessionMiniLocalStore,
       transport: MenuBarStateMiniSyncTransport(client: client)
     )
 

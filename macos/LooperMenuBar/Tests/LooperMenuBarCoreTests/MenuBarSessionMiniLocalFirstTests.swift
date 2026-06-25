@@ -253,7 +253,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             ]
         )
         let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: store.realtimeLocalStore,
+            store: store,
             transport: transport,
             sleep: { _ in }
         )
