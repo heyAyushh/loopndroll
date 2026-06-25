@@ -72,14 +72,14 @@ struct NotificationDestinationPresentationTests {
     }
 
     @MainActor
-    @Test("Session quick action submission waits for handler")
-    func sessionQuickActionSubmissionWaitsForHandler() async {
+    @Test("Session quick action submission dispatches reply handler")
+    func sessionQuickActionSubmissionDispatchesReplyHandler() async {
         let center = SessionQuickActionCenter()
-        var handledPrompts: [String] = []
+        let recorder = QuickActionPromptRecorder()
 
         center.registerHandler { request in
             try? await Task.sleep(for: .milliseconds(10))
-            handledPrompts.append(request.prompt ?? "")
+            await recorder.record(request.prompt ?? "")
         }
 
         await center.submit(SessionQuickActionRequest(
@@ -88,6 +88,26 @@ struct NotificationDestinationPresentationTests {
             prompt: "keep going"
         ))
 
-        #expect(handledPrompts == ["keep going"])
+        #expect(await recorder.waitForPrompts() == ["keep going"])
+    }
+}
+
+private actor QuickActionPromptRecorder {
+    private var prompts: [String] = []
+    private var continuation: CheckedContinuation<[String], Never>?
+
+    func record(_ prompt: String) {
+        prompts.append(prompt)
+        continuation?.resume(returning: prompts)
+        continuation = nil
+    }
+
+    func waitForPrompts() async -> [String] {
+        if !prompts.isEmpty {
+            return prompts
+        }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
     }
 }

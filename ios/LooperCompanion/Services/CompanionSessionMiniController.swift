@@ -39,7 +39,7 @@ final class CompanionSessionMiniController {
         }
 
         let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: localStore.realtimeLocalStore,
+            store: localStore,
             transport: DeferredCompanionStateMiniSyncTransport(service: service)
         )
 
@@ -69,7 +69,7 @@ final class CompanionSessionMiniController {
         }
 
         let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: localStore.realtimeLocalStore,
+            store: localStore,
             transport: transport
         )
         return await synchronizer.runOneCycle { update in

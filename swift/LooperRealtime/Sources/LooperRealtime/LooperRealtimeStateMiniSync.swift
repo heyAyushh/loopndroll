@@ -8,6 +8,18 @@ public protocol LooperRealtimeStateMiniSyncTransport: Sendable {
     ) async throws
 }
 
+public protocol LooperRealtimeStateMiniLocalState: Sendable {
+    func currentStateMiniSnapshot() -> LooperRealtimeLocalSnapshot
+
+    @discardableResult
+    func replaceStateMinis(with snapshot: LooperRealtimeStateMiniSnapshot) throws
+        -> LooperRealtimeLocalSnapshot
+
+    @discardableResult
+    func applyStateMiniDelta(_ delta: LooperRealtimeStateMiniDelta) throws
+        -> LooperRealtimeLocalSnapshot
+}
+
 public enum LooperRealtimeStateMiniSyncUpdateReason: String, Codable, Equatable, Sendable {
     case snapshot
     case delta
@@ -37,13 +49,13 @@ public struct LooperRealtimeStateMiniSynchronizer: Sendable {
     public typealias Sleep = @Sendable (Duration) async throws -> Void
     public typealias UpdateHandler = @Sendable (LooperRealtimeStateMiniSyncUpdate) async -> Void
 
-    private let store: LooperRealtimeLocalStore
+    private let store: any LooperRealtimeStateMiniLocalState
     private let transport: any LooperRealtimeStateMiniSyncTransport
     private let retryDelay: Duration
     private let sleep: Sleep
 
     public init(
-        store: LooperRealtimeLocalStore,
+        store: any LooperRealtimeStateMiniLocalState,
         transport: any LooperRealtimeStateMiniSyncTransport,
         retryDelay: Duration = .milliseconds(500),
         sleep: @escaping Sleep = { duration in try await Task.sleep(for: duration) }
@@ -73,10 +85,10 @@ public struct LooperRealtimeStateMiniSynchronizer: Sendable {
     public func runOneCycle(onUpdate: @escaping UpdateHandler) async
         -> LooperRealtimeStateMiniSyncCycleResult
     {
-        let afterSeq = store.snapshot().latestSeq
+        let afterSeq = store.currentStateMiniSnapshot().latestSeq
         do {
             try await transport.streamStateMinis(afterSeq: afterSeq) { delta in
-                let snapshot = try store.apply(delta)
+                let snapshot = try store.applyStateMiniDelta(delta)
                 await onUpdate(
                     LooperRealtimeStateMiniSyncUpdate(
                         reason: .delta,
@@ -84,11 +96,11 @@ public struct LooperRealtimeStateMiniSynchronizer: Sendable {
                     )
                 )
             }
-            return .streamEnded(latestSeq: store.snapshot().latestSeq)
+            return .streamEnded(latestSeq: store.currentStateMiniSnapshot().latestSeq)
         } catch {
             do {
                 let snapshot = try await transport.getStateMiniSnapshot()
-                let localSnapshot = try store.replace(with: snapshot)
+                let localSnapshot = try store.replaceStateMinis(with: snapshot)
                 await onUpdate(
                     LooperRealtimeStateMiniSyncUpdate(
                         reason: .recovery,
@@ -98,10 +110,30 @@ public struct LooperRealtimeStateMiniSynchronizer: Sendable {
                 return .recovered(latestSeq: localSnapshot.latestSeq)
             } catch {
                 return .retry(
-                    latestSeq: store.snapshot().latestSeq,
+                    latestSeq: store.currentStateMiniSnapshot().latestSeq,
                     errorDescription: error.localizedDescription
                 )
             }
         }
+    }
+}
+
+extension LooperRealtimeLocalStore: LooperRealtimeStateMiniLocalState {
+    public func currentStateMiniSnapshot() -> LooperRealtimeLocalSnapshot {
+        snapshot()
+    }
+
+    @discardableResult
+    public func replaceStateMinis(with snapshot: LooperRealtimeStateMiniSnapshot) throws
+        -> LooperRealtimeLocalSnapshot
+    {
+        try replace(with: snapshot)
+    }
+
+    @discardableResult
+    public func applyStateMiniDelta(_ delta: LooperRealtimeStateMiniDelta) throws
+        -> LooperRealtimeLocalSnapshot
+    {
+        try apply(delta)
     }
 }

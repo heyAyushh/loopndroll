@@ -78,6 +78,53 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(store.pendingCommands().count == 1)
     }
 
+    @Test
+    func testStateMiniSynchronizerUsesRustCoreStoreAndPreservesOutbox() async throws {
+        let store = try Self.temporaryMiniStore()
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        try store.replace(
+            latestSeq: 5,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 5, revision: "mini-revision-5"),
+            ]
+        )
+        try store.enqueuePromptCommand(
+            threadID: Constants.cachedThreadID,
+            prompt: "continue",
+            assistantSurface: .codex,
+            clientMutationID: "mutation-outbox"
+        )
+        let staleSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Stale Mini",
+            ref: "C1",
+            status: .active
+        )
+        let streamedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Streamed Mini",
+            ref: "C1",
+            status: .active
+        )
+        let transport = StateMiniDeltaTransport(deltas: [
+            try Self.miniDelta(session: staleSession, seq: 4, revision: "mini-revision-4"),
+            try Self.miniDelta(session: streamedSession, seq: 6, revision: "mini-revision-6"),
+        ])
+        let synchronizer = LooperRealtimeStateMiniSynchronizer(store: store, transport: transport)
+
+        let result = await synchronizer.runOneCycle { _ in }
+
+        #expect(result == .streamEnded(latestSeq: 6))
+        #expect(await transport.requestedAfterSeq() == 5)
+        #expect(try store.cachedSnapshot()?.session(withID: Constants.cachedThreadID)?.title == "Streamed Mini")
+        #expect(store.pendingCommands().map(\.clientMutationID) == ["mutation-outbox"])
+    }
+
     @MainActor
     @Test
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
@@ -370,6 +417,33 @@ struct CompanionSessionMiniLocalFirstTests {
         )
     }
 
+    private static func miniDelta(
+        session: SessionSummary,
+        seq: Int64,
+        revision: String
+    ) throws -> LooperRealtimeStateMiniDelta {
+        let record = try miniRecord(session: session, seq: seq, revision: revision)
+        let mini = LooperRealtimeStateMini(
+            sessionID: record.sessionID,
+            assistantSurface: record.assistantSurface,
+            seq: record.seq,
+            revision: record.revision,
+            payloadJSON: record.payloadJSON
+        )
+        return LooperRealtimeStateMiniDelta(
+            seq: seq,
+            latestSeq: seq,
+            entityID: session.id,
+            kind: "session_mini",
+            revision: revision,
+            serverTime: Constants.timestamp,
+            session: mini,
+            sessionID: mini.sessionID,
+            assistantSurface: mini.assistantSurface,
+            sessions: [mini]
+        )
+    }
+
     private static func networkSnapshot() -> MobileSnapshot {
         let session = sessionSummary(
             id: Constants.fallbackThreadID,
@@ -420,6 +494,33 @@ struct CompanionSessionMiniLocalFirstTests {
             isArchived: false,
             canSendPrompt: true
         )
+    }
+}
+
+private actor StateMiniDeltaTransport: LooperRealtimeStateMiniSyncTransport {
+    private let deltas: [LooperRealtimeStateMiniDelta]
+    private var afterSeq: Int64?
+
+    init(deltas: [LooperRealtimeStateMiniDelta]) {
+        self.deltas = deltas
+    }
+
+    func requestedAfterSeq() -> Int64? {
+        afterSeq
+    }
+
+    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+        LooperRealtimeStateMiniSnapshot(latestSeq: 0, sessions: [], serverTime: nil)
+    }
+
+    func streamStateMinis(
+        afterSeq: Int64,
+        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
+    ) async throws {
+        self.afterSeq = afterSeq
+        for delta in deltas {
+            try await onDelta(delta)
+        }
     }
 }
 

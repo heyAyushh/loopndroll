@@ -501,7 +501,7 @@ enum G006LocalFirstSelfTest {
         let observedAfterSeqs = await transport.observedAfterSeqs()
         try require(observedAfterSeqs == [20], "mini sync did not resume from cached seq")
         try require(service.loadSnapshotCallCount == 0, "mini sync triggered full snapshot")
-        return "afterSeq=20 latestSeq=\(store.realtimeLocalStore.snapshot().latestSeq) loadSnapshotCallCount=0"
+        return "afterSeq=20 latestSeq=\(store.currentStateMiniSnapshot().latestSeq) loadSnapshotCallCount=0"
     }
 
     private static func runLatencyBudget() async throws -> String {

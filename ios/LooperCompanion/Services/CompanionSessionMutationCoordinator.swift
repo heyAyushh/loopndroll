@@ -433,7 +433,7 @@ final class CompanionSessionMutationCoordinator {
             guard !Task.isCancelled else {
                 return false
             }
-            return await handleModeMutationFailure(error, envelope: envelope)
+            return handleModeMutationFailure(error, envelope: envelope)
         }
     }
 
@@ -509,14 +509,14 @@ final class CompanionSessionMutationCoordinator {
                 CompanionDiagnostics.record(
                     "prompt:mode-batch-failed sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
                 )
-                return await handlePromptMutationFailure(error, envelope: envelope)
+                return handlePromptMutationFailure(error, envelope: envelope)
             }
         }
 
         if let modeBarrierTask = envelope.modeBarrierTask {
             let didAcceptMode = await modeBarrierTask.value
             guard didAcceptMode else {
-                return await handlePromptMutationFailure(
+                return handlePromptMutationFailure(
                     LocalFirstMutationError.modeBarrierRejected,
                     envelope: envelope
                 )
@@ -532,7 +532,7 @@ final class CompanionSessionMutationCoordinator {
             )
             return await handlePromptMutationSuccess(result, envelope: envelope)
         } catch {
-            return await handlePromptMutationFailure(error, envelope: envelope)
+            return handlePromptMutationFailure(error, envelope: envelope)
         }
     }
 
