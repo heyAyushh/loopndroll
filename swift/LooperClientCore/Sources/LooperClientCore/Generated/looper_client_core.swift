@@ -1244,6 +1244,60 @@ public func FfiConverterTypeClientEndpoint_lower(_ value: ClientEndpoint) -> Rus
 }
 
 
+public struct ClientMobileSnapshotProjection: Equatable, Hashable {
+    public var hasSnapshot: Bool
+    public var snapshotJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hasSnapshot: Bool, snapshotJson: String) {
+        self.hasSnapshot = hasSnapshot
+        self.snapshotJson = snapshotJson
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSnapshotProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSnapshotProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSnapshotProjection {
+        return
+            try ClientMobileSnapshotProjection(
+                hasSnapshot: FfiConverterBool.read(from: &buf),
+                snapshotJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSnapshotProjection, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hasSnapshot, into: &buf)
+        FfiConverterString.write(value.snapshotJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshotProjection_lift(_ buf: RustBuffer) throws -> ClientMobileSnapshotProjection {
+    return try FfiConverterTypeClientMobileSnapshotProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshotProjection_lower(_ value: ClientMobileSnapshotProjection) -> RustBuffer {
+    return FfiConverterTypeClientMobileSnapshotProjection.lower(value)
+}
+
+
 public struct ClientOptimisticModeProjection: Equatable, Hashable {
     public var didUpdate: Bool
     public var visibleSnapshotJson: String
@@ -1961,6 +2015,8 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case InvalidSequence
     case InvalidSnapshotJson
     case InvalidDetailJson
+    case InvalidStateMiniPayloadJson
+    case StateMiniSessionIdMismatch
     case UnexpectedOutboxMutations
     case StateLockPoisoned
 
@@ -2002,8 +2058,10 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 8: return .InvalidSequence
         case 9: return .InvalidSnapshotJson
         case 10: return .InvalidDetailJson
-        case 11: return .UnexpectedOutboxMutations
-        case 12: return .StateLockPoisoned
+        case 11: return .InvalidStateMiniPayloadJson
+        case 12: return .StateMiniSessionIdMismatch
+        case 13: return .UnexpectedOutboxMutations
+        case 14: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2056,12 +2114,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(10))
 
 
-        case .UnexpectedOutboxMutations:
+        case .InvalidStateMiniPayloadJson:
             writeInt(&buf, Int32(11))
 
 
-        case .StateLockPoisoned:
+        case .StateMiniSessionIdMismatch:
             writeInt(&buf, Int32(12))
+
+
+        case .UnexpectedOutboxMutations:
+            writeInt(&buf, Int32(13))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(14))
 
         }
     }
@@ -2437,6 +2503,15 @@ public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [
     )
 })
 }
+public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientStateMini], serverTime: String)throws  -> ClientMobileSnapshotProjection  {
+    return try  FfiConverterTypeClientMobileSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_state_minis_mobile_snapshot(
+        FfiConverterInt64.lower(latestSeq),
+        FfiConverterSequenceTypeClientStateMini.lower(sessions),
+        FfiConverterString.lower(serverTime),$0
+    )
+})
+}
 public func reduceMobileSnapshotDetailCache(visibleSnapshotJson: String, detailBySessionIdJson: String)throws  -> ClientDetailCacheProjection  {
     return try  FfiConverterTypeClientDetailCacheProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_detail_cache(
@@ -2491,6 +2566,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_detail_cache() != 30029) {

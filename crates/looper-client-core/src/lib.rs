@@ -3,6 +3,7 @@ uniffi::setup_scaffolding!();
 mod client;
 mod command_batch;
 mod error;
+mod mobile_snapshot;
 mod model;
 mod snapshot_reducer;
 mod transport;
@@ -10,6 +11,7 @@ mod transport;
 pub use client::LooperClientCore;
 pub use command_batch::build_command_batch_response;
 pub use error::ClientCoreError;
+pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
     ClientCommandMetadata, ClientEndpoint, ClientPendingMutation, ClientStateDelta,

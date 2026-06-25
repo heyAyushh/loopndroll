@@ -20,6 +20,10 @@ pub enum ClientCoreError {
     InvalidSnapshotJson,
     #[error("detail JSON is invalid")]
     InvalidDetailJson,
+    #[error("state mini payload JSON is invalid")]
+    InvalidStateMiniPayloadJson,
+    #[error("state mini payload session ID does not match envelope")]
+    StateMiniSessionIdMismatch,
     #[error("outbox client mutation IDs did not match the expected order")]
     UnexpectedOutboxMutations,
     #[error("client core state lock is poisoned")]

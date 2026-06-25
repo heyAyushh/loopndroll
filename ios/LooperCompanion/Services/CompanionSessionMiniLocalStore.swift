@@ -19,20 +19,8 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let attemptCount: Int
 }
 
-enum CompanionSessionMiniLocalStoreError: Error, Equatable, Sendable {
-    case sessionIDMismatch(expected: String, actual: String)
-}
-
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = LooperRealtimeLocalStore.defaultFileName
-
-    private enum Defaults {
-        static let hostID = "local-session-mini-cache"
-        static let hostName = "Looper"
-        static let globalScope = "global"
-        static let defaultPrompt = "Continue"
-        static let revisionPrefix = "mini:"
-    }
 
     private let store: LooperRealtimeLocalStore
     private let clientCore: LooperClientCore
@@ -221,77 +209,16 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         sessions minis: [LooperRealtimeStateMini],
         serverTime: String?
     ) throws -> MobileSnapshot? {
-        guard !minis.isEmpty else {
+        let projection = try reduceStateMinisMobileSnapshot(
+            latestSeq: latestSeq,
+            sessions: minis.map(ClientStateMini.init),
+            serverTime: serverTime ?? ""
+        )
+        guard projection.hasSnapshot else {
             return nil
         }
 
-        let sessionsBySurface = try minis.reduce(
-            into: [String: [SessionSummary]]()
-        ) { partialResult, mini in
-            let session = try decodeSessionSummary(from: mini)
-            partialResult[mini.assistantSurface, default: []].append(session)
-        }
-        let selectedSurface = selectedSurface(from: minis)
-        let visibleSessions = sessionsBySurface[selectedSurface.rawValue] ?? []
-
-        return MobileSnapshot(
-            revision: revision(latestSeq: latestSeq, minis: minis),
-            host: HostSummary(
-                id: Defaults.hostID,
-                name: Defaults.hostName,
-                address: "",
-                isReachable: false,
-                lastSyncedAt: serverTime ?? ""
-            ),
-            globalSettings: GlobalSettings(
-                defaultPrompt: Defaults.defaultPrompt,
-                globalMode: nil,
-                scope: Defaults.globalScope,
-                notificationLabel: nil,
-                completionCheckLabel: nil,
-                completionCheckWaitForReply: false,
-                assistantSurface: selectedSurface
-            ),
-            sessions: visibleSessions.sorted(by: SessionSummary.isNewerOrLowerRef),
-            surfaceSessions: sessionsBySurface.mapValues {
-                $0.sorted(by: SessionSummary.isNewerOrLowerRef)
-            },
-            notifications: [],
-            completionChecks: []
-        )
-    }
-
-    private func decodeSessionSummary(from mini: LooperRealtimeStateMini) throws -> SessionSummary {
-        let data = Data(mini.payloadJSON.utf8)
-        let session = try decoder.decode(SessionSummary.self, from: data)
-        guard session.id == mini.sessionID else {
-            throw CompanionSessionMiniLocalStoreError.sessionIDMismatch(
-                expected: mini.sessionID,
-                actual: session.id
-            )
-        }
-        return session
-    }
-
-    private func selectedSurface(from minis: [LooperRealtimeStateMini]) -> CompanionAssistantSurface {
-        minis
-            .sorted { left, right in
-                if left.seq != right.seq {
-                    return left.seq > right.seq
-                }
-                return left.sessionID < right.sessionID
-            }
-            .lazy
-            .compactMap { CompanionAssistantSurface(rawValue: $0.assistantSurface) }
-            .first ?? .defaultSurface
-    }
-
-    private func revision(latestSeq: Int64, minis: [LooperRealtimeStateMini]) -> String {
-        minis
-            .max { left, right in left.seq < right.seq }?
-            .revision
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty ?? "\(Defaults.revisionPrefix)\(latestSeq)"
+        return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
     }
 }
 
