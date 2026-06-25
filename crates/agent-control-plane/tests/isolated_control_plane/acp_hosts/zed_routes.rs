@@ -137,7 +137,7 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
     )
     .await;
     assert!(!mobile_prompted.accepted);
-    assert_eq!(mobile_prompted.error_code, "failed_precondition");
+    assert_eq!(mobile_prompted.error_code, "mode_required");
 
     let stale_desktop_prompt = request_with_body_options(
         &router,

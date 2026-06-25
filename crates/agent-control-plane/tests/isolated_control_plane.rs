@@ -2324,7 +2324,8 @@ async fn mobile_session_controls_are_owned_by_rust() {
         }),
     )
     .await;
-    assert!(prompt_ack.accepted);
+    assert!(!prompt_ack.accepted);
+    assert_eq!(prompt_ack.error_code, "mode_required");
     assert_eq!(prompt_ack.entity_id, "thread-main");
 
     let mute_snapshot = request_json_body_with_options(

@@ -3,7 +3,7 @@ use agent_control_plane::events::{
     EventStore, MobileCommandAckInput, MobileCommandAckResult, MobileCommandReservationResult,
     MobileSessionMiniProjectionInput, MobileStateEventGap, MobileStateEventInput,
 };
-use agent_control_plane::mobile::events::mobile_event_now;
+use agent_control_plane::mobile::events::{MobileEventInput, mobile_event_now};
 use tokio_stream::wrappers::ReceiverStream;
 
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
