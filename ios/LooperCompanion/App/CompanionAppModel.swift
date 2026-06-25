@@ -54,20 +54,13 @@ final class CompanionAppModel {
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var notificationReplyCoordinator: CompanionNotificationReplyCoordinator?
+    @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
     @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
     @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
-    @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
-    @ObservationIgnored private var nextCachedSnapshotRestoreID = 0
-    @ObservationIgnored private var activeCachedSnapshotRestoreID = 0
-    @ObservationIgnored private var snapshotLoadTask: Task<Void, Never>?
-    @ObservationIgnored private var nextSnapshotLoadID = 0
-    @ObservationIgnored private var activeSnapshotLoadID = 0
-    @ObservationIgnored private var isDrainingSnapshotLoads = false
-    @ObservationIgnored private var hasPendingSnapshotLoad = false
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
     @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
     @ObservationIgnored private var isSavingAssistantSurface = false
@@ -102,6 +95,7 @@ final class CompanionAppModel {
             sessionMiniController: sessionMiniController,
             delegate: self
         )
+        snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
         sessionMutationCoordinator = CompanionSessionMutationCoordinator(delegate: self)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
@@ -114,7 +108,7 @@ final class CompanionAppModel {
         )
         let didScheduleCachedSnapshotRestore = !didRestoreSessionMiniSnapshot && !configuredBaseURL.isEmpty
         if didScheduleCachedSnapshotRestore {
-            scheduleCachedSnapshotRestoreIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
+            snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
         }
 
         configureStopQuickActions()
@@ -170,6 +164,13 @@ final class CompanionAppModel {
             preconditionFailure("Notification reply coordinator used before initialization")
         }
         return notificationReplyCoordinator
+    }
+
+    private var snapshotLoads: CompanionSnapshotLoadCoordinator {
+        guard let snapshotLoadCoordinator else {
+            preconditionFailure("Snapshot load coordinator used before initialization")
+        }
+        return snapshotLoadCoordinator
     }
 
     var needsAttentionSessions: [SessionSummary] {
@@ -488,8 +489,8 @@ final class CompanionAppModel {
     ) async -> Bool {
         let shouldRestartEventStream = sessionMiniController.isSyncing
         connectionRevision += 1
-        cancelCachedSnapshotRestore()
-        cancelSnapshotLoad()
+        snapshotLoads.cancelCachedSnapshotRestore()
+        snapshotLoads.cancelSnapshotLoad()
         stopRealtimeSessionSync(disconnectCachedClients: false)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         selectedAssistantSurface = .defaultSurface
@@ -500,7 +501,6 @@ final class CompanionAppModel {
         stopNotificationReplyOutboxDrain()
         lastAppliedRealtimeRevision = nil
         hasValidatedCurrentSnapshotWithHTTP = false
-        hasPendingSnapshotLoad = false
         serverHealth = nil
         reachedBaseURL = nil
         detailBySessionID = [:]
@@ -530,72 +530,12 @@ final class CompanionAppModel {
         detailBySessionID = [:]
         errorMessage = nil
         if let cachedSnapshotRestoreReason {
-            scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
+            snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
         }
 
         snapshot = nil
         sessionSections = .empty
         sessionIndex = .empty
-    }
-
-    private func scheduleCachedSnapshotRestoreIfAvailable(reason: String) {
-        cachedSnapshotRestoreTask?.cancel()
-        nextCachedSnapshotRestoreID += 1
-        let restoreID = nextCachedSnapshotRestoreID
-        activeCachedSnapshotRestoreID = restoreID
-        let restoreRevision = connectionRevision
-
-        cachedSnapshotRestoreTask = Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-
-            _ = await self.restoreCachedSnapshotIfAvailable(
-                reason: reason,
-                onlyWhenSnapshotMissing: true,
-                restoreRevision: restoreRevision
-            )
-            self.finishCachedSnapshotRestore(id: restoreID)
-        }
-    }
-
-    private func finishCachedSnapshotRestore(id: Int) {
-        guard id == activeCachedSnapshotRestoreID else {
-            return
-        }
-
-        cachedSnapshotRestoreTask = nil
-    }
-
-    private func cancelCachedSnapshotRestore() {
-        cachedSnapshotRestoreTask?.cancel()
-        cachedSnapshotRestoreTask = nil
-        activeCachedSnapshotRestoreID = 0
-    }
-
-    private func cancelSnapshotLoad() {
-        snapshotLoadTask?.cancel()
-        snapshotLoadTask = nil
-        isLoading = false
-        isDrainingSnapshotLoads = false
-        hasPendingSnapshotLoad = false
-    }
-
-    private func nextSnapshotLoadIdentifier() -> Int {
-        nextSnapshotLoadID += 1
-        activeSnapshotLoadID = nextSnapshotLoadID
-        return nextSnapshotLoadID
-    }
-
-    private func finishSnapshotLoad(id: Int, loadRevision: Int) {
-        guard id == activeSnapshotLoadID else {
-            return
-        }
-
-        snapshotLoadTask = nil
-        if loadRevision == connectionRevision {
-            isLoading = false
-        }
     }
 
     func refreshLocalNotificationStatus() async {
@@ -615,72 +555,10 @@ final class CompanionAppModel {
     }
 
     func loadSnapshot(allowsConcurrentConnectionReload: Bool = false) async {
-        if isDrainingSnapshotLoads, !allowsConcurrentConnectionReload {
-            hasPendingSnapshotLoad = true
-            CompanionDiagnostics.lifecycle.info("Snapshot load coalesced behind active load")
-            CompanionDiagnostics.record("snapshot:load-coalesced")
-            await snapshotLoadTask?.value
-            return
-        }
-
-        if isDrainingSnapshotLoads, allowsConcurrentConnectionReload {
-            snapshotLoadTask?.cancel()
-            hasPendingSnapshotLoad = false
-        }
-
-        isDrainingSnapshotLoads = true
-        defer {
-            isDrainingSnapshotLoads = false
-        }
-
-        repeat {
-            hasPendingSnapshotLoad = false
-            await loadSnapshotOnce()
-        } while shouldDrainPendingSnapshotLoad()
+        await snapshotLoads.loadSnapshot(allowsConcurrentConnectionReload: allowsConcurrentConnectionReload)
     }
 
-    private func loadSnapshotOnce() async {
-        snapshotLoadTask?.cancel()
-        let loadRevision = connectionRevision
-        let loadID = nextSnapshotLoadIdentifier()
-        isLoading = true
-        errorMessage = nil
-
-        let task = Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-
-            await self.performSnapshotLoad(loadRevision: loadRevision, loadID: loadID)
-        }
-        snapshotLoadTask = task
-
-        await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
-    }
-
-    private func shouldDrainPendingSnapshotLoad() -> Bool {
-        guard hasPendingSnapshotLoad else {
-            return false
-        }
-
-        guard !Task.isCancelled else {
-            hasPendingSnapshotLoad = false
-            return false
-        }
-
-        CompanionDiagnostics.record("snapshot:load-drain-pending")
-        return true
-    }
-
-    private func performSnapshotLoad(loadRevision: Int, loadID: Int) async {
-        defer {
-            finishSnapshotLoad(id: loadID, loadRevision: loadRevision)
-        }
-
+    private func performSnapshotLoad(loadRevision: Int) async {
         do {
             try Task.checkCancellation()
             CompanionDiagnostics.lifecycle.info(
@@ -1950,6 +1828,36 @@ final class CompanionAppModel {
             return nil
         }
         return trimmedRevision
+    }
+}
+
+extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {
+    var snapshotLoadConnectionRevision: Int {
+        connectionRevision
+    }
+
+    func snapshotLoadSetLoading(_ isLoading: Bool) {
+        self.isLoading = isLoading
+    }
+
+    func snapshotLoadClearError() {
+        errorMessage = nil
+    }
+
+    func snapshotLoadRestoreCachedSnapshot(
+        reason: String,
+        onlyWhenSnapshotMissing: Bool,
+        restoreRevision: Int
+    ) async -> Bool {
+        await restoreCachedSnapshotIfAvailable(
+            reason: reason,
+            onlyWhenSnapshotMissing: onlyWhenSnapshotMissing,
+            restoreRevision: restoreRevision
+        )
+    }
+
+    func snapshotLoadPerform(loadRevision: Int) async {
+        await performSnapshotLoad(loadRevision: loadRevision)
     }
 }
 

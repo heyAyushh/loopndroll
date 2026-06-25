@@ -33,6 +33,7 @@
 		477018ADC22B0FD35932DC41 /* SessionSummaryTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */; };
 		4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */; };
 		4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2489ABFC353256268974517A /* MockCompanionService.swift */; };
+		51E1FFB04F9BFB271633CBB7 /* CompanionSnapshotLoadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F121C1361C5584CFB429F3 /* CompanionSnapshotLoadCoordinator.swift */; };
 		550A7CF2EDFB91BD86928A53 /* LooperCompanionControlFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */; };
 		5824EF8E8A99FBA17624BCAA /* RealtimeCompanionClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */; };
 		5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */; };
@@ -178,6 +179,7 @@
 		B9D9AC6F0B6668F69F4314D1 /* StatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPill.swift; sourceTree = "<group>"; };
 		BD83527C256675DC251E3F3A /* SessionQuickActionCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionQuickActionCenter.swift; sourceTree = "<group>"; };
 		C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDeviceHubSheet.swift; sourceTree = "<group>"; };
+		C1F121C1361C5584CFB429F3 /* CompanionSnapshotLoadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotLoadCoordinator.swift; sourceTree = "<group>"; };
 		C80CC290869079749E6F36D5 /* CompanionSessionMiniLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSessionMiniLocalStore.swift; sourceTree = "<group>"; };
 		C908F2696CD222D37561EB90 /* LooperCompanionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LooperCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CF358D2391C7291C45B052B8 /* CompanionDevicePasskeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionDevicePasskeyStore.swift; sourceTree = "<group>"; };
@@ -351,6 +353,7 @@
 				1C788690C3676F6C3E679F85 /* CompanionSessionMiniController.swift */,
 				C80CC290869079749E6F36D5 /* CompanionSessionMiniLocalStore.swift */,
 				F549C1F92C6CB5BBEDBC5C7C /* CompanionSessionMutationCoordinator.swift */,
+				C1F121C1361C5584CFB429F3 /* CompanionSnapshotLoadCoordinator.swift */,
 				46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */,
 				2489ABFC353256268974517A /* MockCompanionService.swift */,
 				6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */,
@@ -645,6 +648,7 @@
 				945B8B939A36C71B76A6D228 /* CompanionSessionMiniLocalStore.swift in Sources */,
 				E72635F4B1397B348BF0E6A4 /* CompanionSessionMutationCoordinator.swift in Sources */,
 				8524708890E94F68FD81CFEC /* CompanionSnapshotCache.swift in Sources */,
+				51E1FFB04F9BFB271633CBB7 /* CompanionSnapshotLoadCoordinator.swift in Sources */,
 				31D8991779D663FED6D9E1BC /* CompanionTheme.swift in Sources */,
 				AEFD49C255BE922C3919FEE4 /* DiffBlockView.swift in Sources */,
 				9976ADE2586A2EB32821F7F3 /* G006LocalFirstSelfTest.swift in Sources */,
