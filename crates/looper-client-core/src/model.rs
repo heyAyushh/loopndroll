@@ -67,6 +67,31 @@ pub struct ClientCommandAck {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientCommandMetadata {
+    pub command_kind: ClientCommandKind,
+    pub client_mutation_id: String,
+    pub preset: String,
+    pub dispatch_kind: String,
+    pub notification_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientCommandAckEnvelope {
+    pub command_kind: ClientCommandKind,
+    pub ack: ClientCommandAck,
+    pub preset: String,
+    pub dispatch_kind: String,
+    pub prompt_id: String,
+    pub notification_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientCommandBatchResponse {
+    pub accepted: bool,
+    pub command_acks: Vec<ClientCommandAckEnvelope>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientStateDelta {
     pub seq: i64,
     pub entity_id: String,

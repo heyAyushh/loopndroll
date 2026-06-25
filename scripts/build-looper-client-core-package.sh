@@ -13,6 +13,13 @@ FFI_MODULE_NAME="looper_client_coreFFI"
 FFI_FRAMEWORK_NAME="${FFI_MODULE_NAME}.framework"
 FFI_HEADER_NAME="looper_client_coreFFI.h"
 
+strip_generated_whitespace() {
+  local output_dir="$1"
+  find "$output_dir" -type f \
+    \( -name '*.h' -o -name '*.swift' -o -name '*.modulemap' \) \
+    -exec perl -0pi -e 's/[ \t]+$//mg' {} +
+}
+
 IOS_TARGETS=(
   aarch64-apple-ios
   aarch64-apple-ios-sim
@@ -39,6 +46,7 @@ mkdir -p "$BINDINGS_DIR"
     --language swift \
     --out-dir "$BINDINGS_DIR"
 )
+strip_generated_whitespace "$BINDINGS_DIR"
 cp "$BINDINGS_DIR/looper_client_coreFFI.modulemap" "$BINDINGS_DIR/module.modulemap"
 
 for target in "${IOS_TARGETS[@]}"; do
@@ -74,6 +82,7 @@ make_static_framework() {
   cp "$CRATE_DIR/target/${target}/release/liblooper_client_core.a" \
     "$framework_dir/${FFI_MODULE_NAME}"
   cp "$BINDINGS_DIR/$FFI_HEADER_NAME" "$headers_dir/$FFI_HEADER_NAME"
+  strip_generated_whitespace "$headers_dir"
   cat >"$modules_dir/module.modulemap" <<MODULEMAP
 framework module ${FFI_MODULE_NAME} {
   umbrella header "${FFI_HEADER_NAME}"

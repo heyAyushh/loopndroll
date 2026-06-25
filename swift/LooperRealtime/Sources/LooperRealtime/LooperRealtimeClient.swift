@@ -1,6 +1,7 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
+import LooperClientCore
 import Synchronization
 
 public final class LooperRealtimeClient: Sendable {
@@ -52,36 +53,30 @@ public final class LooperRealtimeClient: Sendable {
                     }
                 },
                 onResponse: { response in
-                    var acks: [LooperRealtimeCommandAckEnvelope] = []
+                    let commandMetadata = commands.map(\.clientCoreMetadata)
+                    let expectedMutationIDs = Set(commands.map(\.clientMutationID))
+                    var acknowledgedMutationIDs = Set<String>()
+                    var acks: [ClientCommandAck] = []
                     for try await frame in response.messages {
                         guard case let .ack(ack)? = frame.frame else {
                             continue
                         }
-                        let realtimeAck = LooperRealtimeCommandAck(ack)
-                        guard let command = commands.first(where: {
-                            $0.clientMutationID == realtimeAck.clientMutationID
-                        }) else {
+                        let clientCoreAck = LooperRealtimeCommandAck(ack).clientCoreAck
+                        guard expectedMutationIDs.contains(clientCoreAck.clientMutationId),
+                              acknowledgedMutationIDs.insert(clientCoreAck.clientMutationId).inserted
+                        else {
                             continue
                         }
-                        acks.append(
-                            LooperRealtimeCommandAckEnvelope(
-                                commandKind: command.commandKind,
-                                ack: realtimeAck,
-                                preset: command.preset,
-                                dispatchKind: realtimeAck.accepted
-                                    ? command.dispatchKind
-                                    : "rejected",
-                                promptID: nil,
-                                notificationID: command.notificationID
-                            )
-                        )
+                        acks.append(clientCoreAck)
                         if acks.count == commands.count {
                             break
                         }
                     }
                     return LooperRealtimeSessionCommandBatchResponse(
-                        accepted: acks.count == commands.count && acks.allSatisfy(\.ack.accepted),
-                        commandAcks: acks
+                        try buildCommandBatchResponse(
+                            commands: commandMetadata,
+                            acks: acks
+                        )
                     )
                 }
             )

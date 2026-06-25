@@ -98,6 +98,61 @@ final class LooperClientCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.lastError, "mode_required: session is waiting for a mode")
     }
 
+    func testCommandBatchResponseMatchesAcksInRustCore() throws {
+        let response = try buildCommandBatchResponse(
+            commands: [
+                ClientCommandMetadata(
+                    commandKind: .setSessionMode,
+                    clientMutationId: "mutation-mode",
+                    preset: "await-reply",
+                    dispatchKind: "",
+                    notificationId: ""
+                ),
+                ClientCommandMetadata(
+                    commandKind: .sendSessionPrompt,
+                    clientMutationId: "mutation-prompt",
+                    preset: "",
+                    dispatchKind: "accepted",
+                    notificationId: ""
+                ),
+            ],
+            acks: [
+                commandAck(clientMutationID: "unknown", accepted: true, ackSeq: 40),
+                commandAck(clientMutationID: "mutation-prompt", accepted: true, ackSeq: 42),
+                commandAck(clientMutationID: "mutation-mode", accepted: true, ackSeq: 41),
+            ]
+        )
+
+        XCTAssertTrue(response.accepted)
+        XCTAssertEqual(response.commandAcks.map(\.ack.clientMutationId), [
+            "mutation-prompt",
+            "mutation-mode",
+        ])
+        XCTAssertEqual(response.commandAcks.first?.dispatchKind, "accepted")
+        XCTAssertEqual(response.commandAcks.last?.preset, "await-reply")
+    }
+
+    func testRejectedCommandBatchAckUsesRejectedDispatchKind() throws {
+        let response = try buildCommandBatchResponse(
+            commands: [
+                ClientCommandMetadata(
+                    commandKind: .submitNotificationReply,
+                    clientMutationId: mutationID,
+                    preset: "",
+                    dispatchKind: "accepted",
+                    notificationId: "notification-1"
+                ),
+            ],
+            acks: [
+                commandAck(clientMutationID: mutationID, accepted: false, ackSeq: 42),
+            ]
+        )
+
+        XCTAssertFalse(response.accepted)
+        XCTAssertEqual(response.commandAcks.first?.dispatchKind, "rejected")
+        XCTAssertEqual(response.commandAcks.first?.notificationId, "notification-1")
+    }
+
     func testStateDeltaAdvancesSequenceAndRevision() throws {
         let core = LooperClientCore()
 
@@ -189,6 +244,25 @@ final class LooperClientCoreTests: XCTestCase {
             seq: seq,
             revision: revision,
             payloadJson: #"{"title":"\#(title)"}"#
+        )
+    }
+
+    private func commandAck(
+        clientMutationID: String,
+        accepted: Bool,
+        ackSeq: Int64
+    ) -> ClientCommandAck {
+        ClientCommandAck(
+            accepted: accepted,
+            clientMutationId: clientMutationID,
+            ackSeq: ackSeq,
+            entityId: threadID,
+            revision: "rev-\(ackSeq)",
+            serverTime: serverTime,
+            idempotentReplay: false,
+            errorCode: "",
+            rejectReason: "",
+            currentState: ""
         )
     }
 }

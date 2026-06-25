@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 
 public enum LooperRealtimeSessionCommand: Equatable, Sendable {
     case setSessionMode(threadID: String, preset: String?, clientMutationID: String)
@@ -83,6 +84,17 @@ public struct LooperRealtimeCommandAckEnvelope: Equatable, Sendable {
         self.promptID = promptID
         self.notificationID = notificationID
     }
+
+    init(_ envelope: ClientCommandAckEnvelope) {
+        self.init(
+            commandKind: envelope.commandKind.realtimeCommandKind,
+            ack: LooperRealtimeCommandAck(envelope.ack),
+            preset: envelope.preset.nilIfEmpty,
+            dispatchKind: envelope.dispatchKind.nilIfEmpty,
+            promptID: envelope.promptId.nilIfEmpty,
+            notificationID: envelope.notificationId.nilIfEmpty
+        )
+    }
 }
 
 public struct LooperRealtimeSessionCommandBatchResponse: Equatable, Sendable {
@@ -95,5 +107,56 @@ public struct LooperRealtimeSessionCommandBatchResponse: Equatable, Sendable {
     ) {
         self.accepted = accepted
         self.commandAcks = commandAcks
+    }
+
+    init(_ response: ClientCommandBatchResponse) {
+        self.init(
+            accepted: response.accepted,
+            commandAcks: response.commandAcks.map(LooperRealtimeCommandAckEnvelope.init)
+        )
+    }
+}
+
+extension LooperRealtimeSessionCommand {
+    var clientCoreMetadata: ClientCommandMetadata {
+        ClientCommandMetadata(
+            commandKind: clientCoreCommandKind,
+            clientMutationId: clientMutationID,
+            preset: preset ?? "",
+            dispatchKind: dispatchKind ?? "",
+            notificationId: notificationID ?? ""
+        )
+    }
+
+    private var clientCoreCommandKind: ClientCommandKind {
+        switch self {
+        case .setSessionMode:
+            .setSessionMode
+        case .sendSessionPrompt:
+            .sendSessionPrompt
+        case .submitNotificationReply:
+            .submitNotificationReply
+        }
+    }
+}
+
+private extension ClientCommandKind {
+    var realtimeCommandKind: String {
+        switch self {
+        case .setSessionMode:
+            "SetSessionMode"
+        case .sendSessionPrompt:
+            "SendSessionPrompt"
+        case .submitNotificationReply:
+            "SubmitNotificationReply"
+        case .resume:
+            "Resume"
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

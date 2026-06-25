@@ -866,6 +866,196 @@ public func FfiConverterTypeClientCommandAck_lower(_ value: ClientCommandAck) ->
 }
 
 
+public struct ClientCommandAckEnvelope: Equatable, Hashable {
+    public var commandKind: ClientCommandKind
+    public var ack: ClientCommandAck
+    public var preset: String
+    public var dispatchKind: String
+    public var promptId: String
+    public var notificationId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(commandKind: ClientCommandKind, ack: ClientCommandAck, preset: String, dispatchKind: String, promptId: String, notificationId: String) {
+        self.commandKind = commandKind
+        self.ack = ack
+        self.preset = preset
+        self.dispatchKind = dispatchKind
+        self.promptId = promptId
+        self.notificationId = notificationId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientCommandAckEnvelope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientCommandAckEnvelope: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandAckEnvelope {
+        return
+            try ClientCommandAckEnvelope(
+                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
+                ack: FfiConverterTypeClientCommandAck.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf),
+                dispatchKind: FfiConverterString.read(from: &buf),
+                promptId: FfiConverterString.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientCommandAckEnvelope, into buf: inout [UInt8]) {
+        FfiConverterTypeClientCommandKind.write(value.commandKind, into: &buf)
+        FfiConverterTypeClientCommandAck.write(value.ack, into: &buf)
+        FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterString.write(value.dispatchKind, into: &buf)
+        FfiConverterString.write(value.promptId, into: &buf)
+        FfiConverterString.write(value.notificationId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandAckEnvelope_lift(_ buf: RustBuffer) throws -> ClientCommandAckEnvelope {
+    return try FfiConverterTypeClientCommandAckEnvelope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandAckEnvelope_lower(_ value: ClientCommandAckEnvelope) -> RustBuffer {
+    return FfiConverterTypeClientCommandAckEnvelope.lower(value)
+}
+
+
+public struct ClientCommandBatchResponse: Equatable, Hashable {
+    public var accepted: Bool
+    public var commandAcks: [ClientCommandAckEnvelope]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, commandAcks: [ClientCommandAckEnvelope]) {
+        self.accepted = accepted
+        self.commandAcks = commandAcks
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientCommandBatchResponse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientCommandBatchResponse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandBatchResponse {
+        return
+            try ClientCommandBatchResponse(
+                accepted: FfiConverterBool.read(from: &buf),
+                commandAcks: FfiConverterSequenceTypeClientCommandAckEnvelope.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientCommandBatchResponse, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterSequenceTypeClientCommandAckEnvelope.write(value.commandAcks, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandBatchResponse_lift(_ buf: RustBuffer) throws -> ClientCommandBatchResponse {
+    return try FfiConverterTypeClientCommandBatchResponse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandBatchResponse_lower(_ value: ClientCommandBatchResponse) -> RustBuffer {
+    return FfiConverterTypeClientCommandBatchResponse.lower(value)
+}
+
+
+public struct ClientCommandMetadata: Equatable, Hashable {
+    public var commandKind: ClientCommandKind
+    public var clientMutationId: String
+    public var preset: String
+    public var dispatchKind: String
+    public var notificationId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(commandKind: ClientCommandKind, clientMutationId: String, preset: String, dispatchKind: String, notificationId: String) {
+        self.commandKind = commandKind
+        self.clientMutationId = clientMutationId
+        self.preset = preset
+        self.dispatchKind = dispatchKind
+        self.notificationId = notificationId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientCommandMetadata: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientCommandMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandMetadata {
+        return
+            try ClientCommandMetadata(
+                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf),
+                dispatchKind: FfiConverterString.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientCommandMetadata, into buf: inout [UInt8]) {
+        FfiConverterTypeClientCommandKind.write(value.commandKind, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterString.write(value.dispatchKind, into: &buf)
+        FfiConverterString.write(value.notificationId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandMetadata_lift(_ buf: RustBuffer) throws -> ClientCommandMetadata {
+    return try FfiConverterTypeClientCommandMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandMetadata_lower(_ value: ClientCommandMetadata) -> RustBuffer {
+    return FfiConverterTypeClientCommandMetadata.lower(value)
+}
+
+
 public struct ClientEndpoint: Equatable, Hashable {
     public var url: String
     public var lastGood: Bool
@@ -1767,6 +1957,81 @@ public func FfiConverterTypeOutboundSessionFrameKind_lower(_ value: OutboundSess
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientCommandAck: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientCommandAck]
+
+    public static func write(_ value: [ClientCommandAck], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientCommandAck.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientCommandAck] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientCommandAck]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientCommandAck.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientCommandAckEnvelope: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientCommandAckEnvelope]
+
+    public static func write(_ value: [ClientCommandAckEnvelope], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientCommandAckEnvelope.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientCommandAckEnvelope] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientCommandAckEnvelope]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientCommandAckEnvelope.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientCommandMetadata: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientCommandMetadata]
+
+    public static func write(_ value: [ClientCommandMetadata], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientCommandMetadata.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientCommandMetadata] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientCommandMetadata]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientCommandMetadata.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientEndpoint: FfiConverterRustBuffer {
     typealias SwiftType = [ClientEndpoint]
 
@@ -1863,6 +2128,14 @@ fileprivate struct FfiConverterSequenceTypeOutboundSessionFrame: FfiConverterRus
         return seq
     }
 }
+public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [ClientCommandAck])throws  -> ClientCommandBatchResponse  {
+    return try  FfiConverterTypeClientCommandBatchResponse_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_build_command_batch_response(
+        FfiConverterSequenceTypeClientCommandMetadata.lower(commands),
+        FfiConverterSequenceTypeClientCommandAck.lower(acks),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -1878,6 +2151,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_looper_client_core_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_ack() != 37442) {
         return InitializationResult.apiChecksumMismatch

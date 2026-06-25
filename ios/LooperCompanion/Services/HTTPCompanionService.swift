@@ -1173,23 +1173,6 @@ private func unauthorizedError(from data: Data) -> HTTPCompanionServiceError {
     return .passkeySessionRequired(envelope.message ?? MobileAPIErrorMessage.passkeySessionRequired)
 }
 
-private extension LooperRealtimeCommandAck {
-    var clientCoreAck: ClientCommandAck {
-        ClientCommandAck(
-            accepted: accepted,
-            clientMutationId: clientMutationID,
-            ackSeq: ackSeq,
-            entityId: entityID,
-            revision: revision,
-            serverTime: serverTime ?? "",
-            idempotentReplay: idempotentReplay,
-            errorCode: errorCode ?? "",
-            rejectReason: rejectReason ?? "",
-            currentState: ""
-        )
-    }
-}
-
 private extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)

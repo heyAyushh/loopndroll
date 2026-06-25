@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 
 public struct LooperRealtimeEndpoint: Codable, Equatable, Hashable, Sendable {
     public let baseURL: URL
@@ -86,6 +87,35 @@ public struct LooperRealtimeCommandAck: Codable, Equatable, Sendable {
         self.idempotentReplay = idempotentReplay
         self.errorCode = errorCode
         self.rejectReason = rejectReason
+    }
+
+    public var clientCoreAck: ClientCommandAck {
+        ClientCommandAck(
+            accepted: accepted,
+            clientMutationId: clientMutationID,
+            ackSeq: ackSeq,
+            entityId: entityID,
+            revision: revision,
+            serverTime: serverTime ?? "",
+            idempotentReplay: idempotentReplay,
+            errorCode: errorCode ?? "",
+            rejectReason: rejectReason ?? "",
+            currentState: ""
+        )
+    }
+
+    init(_ ack: ClientCommandAck) {
+        self.init(
+            accepted: ack.accepted,
+            clientMutationID: ack.clientMutationId,
+            ackSeq: ack.ackSeq,
+            entityID: ack.entityId,
+            revision: ack.revision,
+            serverTime: ack.serverTime.nilIfEmpty,
+            idempotentReplay: ack.idempotentReplay,
+            errorCode: ack.errorCode.nilIfEmpty,
+            rejectReason: ack.rejectReason.nilIfEmpty
+        )
     }
 }
 
@@ -233,4 +263,10 @@ public struct LooperRealtimeNotificationReplyResponse: Codable, Equatable, Senda
 public enum LooperRealtimeError: Error, Equatable {
     case invalidEndpoint
     case unavailable
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
 }

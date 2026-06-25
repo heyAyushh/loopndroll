@@ -1,5 +1,6 @@
 import Foundation
 import GRPCCore
+import LooperClientCore
 import Testing
 
 @testable import LooperRealtime
@@ -105,6 +106,43 @@ struct LooperRealtimeModelsTests {
         #expect(mode.ack == expectedAck)
         #expect(prompt.ack == expectedAck)
         #expect(notificationReply.ack == expectedAck)
+    }
+
+    @Test
+    func commandBatchResponseUsesClientCoreAckEnvelope() {
+        let coreAck = ClientCommandAck(
+            accepted: false,
+            clientMutationId: "mutation-1",
+            ackSeq: 42,
+            entityId: "thread-main",
+            revision: "revision-1",
+            serverTime: "2026-06-24T00:00:00Z",
+            idempotentReplay: true,
+            errorCode: "mode_required",
+            rejectReason: "session is waiting for a mode",
+            currentState: ""
+        )
+        let response = LooperRealtimeSessionCommandBatchResponse(
+            ClientCommandBatchResponse(
+                accepted: false,
+                commandAcks: [
+                    ClientCommandAckEnvelope(
+                        commandKind: .submitNotificationReply,
+                        ack: coreAck,
+                        preset: "",
+                        dispatchKind: "rejected",
+                        promptId: "",
+                        notificationId: "notification-1"
+                    ),
+                ]
+            )
+        )
+
+        #expect(!response.accepted)
+        #expect(response.commandAcks.first?.commandKind == "SubmitNotificationReply")
+        #expect(response.commandAcks.first?.dispatchKind == "rejected")
+        #expect(response.commandAcks.first?.notificationID == "notification-1")
+        #expect(response.commandAcks.first?.ack.clientCoreAck == coreAck)
     }
 
     @Test
