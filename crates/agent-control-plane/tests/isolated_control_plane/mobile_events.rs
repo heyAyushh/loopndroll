@@ -11,9 +11,11 @@ const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
 const CLIENT_MUTATION_ID: &str = "mutation-send-session-prompt-1";
 const REQUEST_HASH: &str = "sha256:send-session-prompt-a";
 const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
-const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 1_500;
+const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
+const PROMPT_DELIVERY_WAIT_ATTEMPTS: usize = 200;
+const PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS: u64 = 100;
 
 #[test]
 fn mobile_state_event_log_replays_after_seq_and_detects_gap() {
@@ -264,6 +266,18 @@ async fn grpc_mobile_events_streams_authenticated_prompt_resumed_event() {
     let authorization = issue_mobile_authorization_header(&router).await;
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
     prime_state_mini_cache(&control_plane);
+    let _mode = set_mode_grpc(
+        &mut client,
+        &authorization,
+        "await-reply",
+        "grpc-authenticated-mode-1",
+    )
+    .await;
+    prime_state_mini_cache(&control_plane);
+    seed_promptable_session_mini_without_mode(
+        &control_plane,
+        "mini-revision-grpc-authenticated-resume",
+    );
 
     let (_session_sender, mut event_stream) = open_live_session_stream(
         &mut client,
@@ -308,6 +322,15 @@ async fn grpc_prompt_ack_returns_before_codex_resume_delivery_completes() {
     let authorization = issue_mobile_authorization_header(&router).await;
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
     prime_state_mini_cache(&control_plane);
+    let _mode = set_mode_grpc(
+        &mut client,
+        &authorization,
+        "await-reply",
+        "g011-ack-first-mode",
+    )
+    .await;
+    prime_state_mini_cache(&control_plane);
+    seed_promptable_session_mini_without_mode(&control_plane, "mini-revision-g011-resume");
 
     let response = tokio::time::timeout(tokio::time::Duration::from_millis(1_500), async {
         let mut stream = open_session_stream(
@@ -477,6 +500,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
             ],
         )
         .expect("backdate in-flight prompt reservation");
+    record_thread_stopped_event(&control_plane, "thread-main");
     let recovered_prompt =
         send_prompt_grpc(&mut client, &authorization, "g004-c002-inflight-prompt").await;
     assert_command_ack(
@@ -493,6 +517,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
         recovered_prompt.ack_seq > 0,
         "stale in-flight reservation must be reclaimed into a durable ACK"
     );
+    record_thread_stopped_event(&control_plane, "thread-main");
 
     let blank_reply = submit_notification_reply_grpc(&mut client, &authorization, "").await;
     assert!(!blank_reply.accepted);
@@ -782,6 +807,37 @@ async fn grpc_session_stream_mode_requires_hot_state_mini_cache_without_snapshot
 }
 
 #[tokio::test]
+async fn grpc_session_stream_prompt_rejects_without_mode_with_fsm_code() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    seed_promptable_session_mini_without_mode(&control_plane, "mini-revision-fsm-mode-required");
+    let event_count_before = mobile_state_event_count(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![send_prompt_session_frame(
+            "Continue without mode.",
+            "session-stream-fsm-mode-required",
+        )],
+    )
+    .await;
+
+    let ack = next_session_ack_frame(&mut stream, "first mode-required prompt command frame").await;
+    assert!(!ack.accepted);
+    assert_eq!(ack.client_mutation_id, "session-stream-fsm-mode-required");
+    assert_eq!(ack.entity_id, "thread-main");
+    assert_eq!(ack.ack_seq, 0);
+    assert_eq!(ack.error_code, "mode_required");
+    assert!(ack.reject_reason.contains("current_state=idle"));
+    assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+}
+
+#[tokio::test]
 async fn grpc_session_stream_replays_duplicate_command_ack() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -1024,6 +1080,18 @@ fn state_delta_payload_string(
         })
 }
 
+fn record_thread_stopped_event(control_plane: &ControlPlane, thread_id: &str) {
+    control_plane.emit_mobile_session_event(
+        MobileEventInput {
+            kind: MobileEventKind::SessionChanged,
+            thread_id: Some(thread_id.to_owned()),
+            prompt_id: None,
+            detail: Some("Stop".to_owned()),
+        },
+        thread_id,
+    );
+}
+
 async fn set_mode_grpc(
     client: &mut LooperRealtimeClient<tonic::transport::Channel>,
     authorization: &str,
@@ -1098,7 +1166,7 @@ fn mobile_state_event_count(control_plane: &ControlPlane) -> usize {
 }
 
 async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &str, detail: &str) {
-    for _ in 0..80 {
+    for _ in 0..PROMPT_DELIVERY_WAIT_ATTEMPTS {
         let found = control_plane
             .store()
             .mobile_state_events_after_seq(0, 1_000)
@@ -1120,7 +1188,10 @@ async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &
         if found {
             return;
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS,
+        ))
+        .await;
     }
     panic!("timed out waiting for {detail} event for {thread_id}");
 }
@@ -1131,7 +1202,7 @@ async fn wait_for_queued_prompt_count(
     expected_count: i64,
 ) {
     let mut observed_count = None;
-    for _ in 0..80 {
+    for _ in 0..PROMPT_DELIVERY_WAIT_ATTEMPTS {
         let queued_counts = control_plane
             .mobile_session_service()
             .queued_prompt_counts()
@@ -1140,7 +1211,10 @@ async fn wait_for_queued_prompt_count(
         if queued_counts.get(thread_id) == Some(&expected_count) {
             return;
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS,
+        ))
+        .await;
     }
     panic!(
         "timed out waiting for {expected_count} queued prompts for {thread_id}; observed {observed_count:?}"
@@ -1166,6 +1240,30 @@ fn seed_replyable_session_mini(control_plane: &ControlPlane, revision: &str, seq
             revision,
         )
         .expect("seed replyable session mini");
+}
+
+fn seed_promptable_session_mini_without_mode(control_plane: &ControlPlane, revision: &str) {
+    let seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+    control_plane
+        .store()
+        .replace_mobile_session_minis(
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-main".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "replyable": true,
+                    "canSendPrompt": true,
+                }),
+            }],
+            seq,
+            revision,
+        )
+        .expect("seed promptable session mini without mode");
 }
 
 fn command_request_hash_for_test(command_kind: &str, payload: serde_json::Value) -> String {

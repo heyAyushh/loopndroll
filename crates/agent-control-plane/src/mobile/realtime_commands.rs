@@ -1,6 +1,10 @@
 use serde::Serialize;
 
 use crate::control_plane::ControlPlane;
+use crate::control_plane::reducer::session_state_for_thread;
+use crate::control_plane::session_fsm::{
+    SessionCommand, SessionReject, next as next_session_state,
+};
 use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
 use crate::mobile::api::session_mini_records_contain_session;
 use crate::mobile::prompt_delivery::{
@@ -45,6 +49,7 @@ pub(crate) enum RealtimeCommandError {
     AlreadyExists(String),
     NotFound(String),
     MobileSession(MobileSessionError),
+    SessionRejected(SessionReject),
     Internal(String),
 }
 
@@ -107,6 +112,20 @@ pub(crate) fn submit_notification_reply_command(
     if let Err(error) =
         ensure_mobile_session_visible_from_minis(control_plane, thread_id, assistant_surface)
     {
+        release_command_reservation(
+            control_plane,
+            COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
+            client_mutation_id,
+            &request_hash,
+        )?;
+        return Err(error);
+    }
+    if let Err(error) = ensure_session_fsm_allows(
+        control_plane,
+        thread_id,
+        assistant_surface,
+        client_mutation_id,
+    ) {
         release_command_reservation(
             control_plane,
             COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
@@ -229,6 +248,31 @@ fn session_mini_visibility(
         thread_id,
         assistant_surface,
     ))
+}
+
+fn ensure_session_fsm_allows(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+    client_mutation_id: &str,
+) -> Result<(), RealtimeCommandError> {
+    let events = control_plane
+        .store()
+        .mobile_state_events()
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    let minis = control_plane
+        .store()
+        .mobile_session_minis()
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    let state = session_state_for_thread(&events, &minis, thread_id, assistant_surface);
+    next_session_state(
+        state,
+        SessionCommand::SubmitNotificationReply {
+            client_mutation_id: client_mutation_id.to_owned(),
+        },
+    )
+    .map(|_| ())
+    .map_err(RealtimeCommandError::SessionRejected)
 }
 
 fn notification_reply_response_from_ack_result(

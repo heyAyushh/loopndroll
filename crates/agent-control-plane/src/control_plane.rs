@@ -74,6 +74,8 @@ use crate::zed::{
 };
 
 mod acp_hosts;
+pub mod reducer;
+pub mod session_fsm;
 use acp_hosts::{
     ACP_CLIENT_HOST_SESSION_LIMIT, AcpClientHostProvider, active_zed_acp_runtime_session_count,
     devin_acp_runtime_session_capabilities, devin_acp_runtime_session_to_desktop_thread,

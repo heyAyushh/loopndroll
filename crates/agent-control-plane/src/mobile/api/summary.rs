@@ -1,10 +1,8 @@
 use serde_json::{Value, json};
 
 use crate::control_plane::DesktopThread;
-use crate::mobile::session::{
-    MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED, MobileSessionLifecycle,
-    MobileSessionState,
-};
+use crate::control_plane::session_fsm::{ACTIVE_STATUS as FSM_ACTIVE_STATUS, projected_status};
+use crate::mobile::session::{MobileSessionLifecycle, MobileSessionState};
 
 use super::assistant_identity::{assistant_client_for_thread, source_display_name};
 use super::availability::prompt_delivery_availability;
@@ -17,15 +15,13 @@ use super::time::{
     latest_thread_activity_millis, thread_activity_timestamp, thread_message_timestamp,
 };
 
-pub(super) const AWAIT_REPLY_PRESET: &str = "await-reply";
 const THREAD_REF_PREFIX: &str = "T";
 const UNKNOWN_TASK_KIND: &str = "unknown";
 const PROJECT_SESSION_KIND: &str = "project";
 const INSTANT_CHAT_SESSION_KIND: &str = "instant-chat";
-pub(super) const ACTIVE_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_ACTIVE;
-const ARCHIVED_SESSION_STATUS: &str = "archived";
-const STOPPED_SESSION_STATUS: &str = MOBILE_SESSION_STATUS_STOPPED;
-const WAITING_SESSION_STATUS: &str = "waiting";
+pub(super) const ACTIVE_SESSION_STATUS: &str = FSM_ACTIVE_STATUS;
+#[cfg(test)]
+pub(super) const AWAIT_REPLY_PRESET: &str = "await-reply";
 
 pub(super) fn session_summary(
     thread: &DesktopThread,
@@ -137,28 +133,10 @@ pub(super) fn session_status(
     lifecycle: Option<&MobileSessionLifecycle>,
     runtime_status: Option<&str>,
 ) -> &'static str {
-    if is_archived {
-        return ARCHIVED_SESSION_STATUS;
-    }
-
-    if let Some(lifecycle) = lifecycle {
-        match lifecycle.status.as_str() {
-            MOBILE_SESSION_STATUS_ACTIVE => return ACTIVE_SESSION_STATUS,
-            MOBILE_SESSION_STATUS_STOPPED => return inactive_session_status(effective_mode),
-            _ => {}
-        }
-    }
-
-    if runtime_status == Some(MOBILE_SESSION_STATUS_ACTIVE) {
-        return ACTIVE_SESSION_STATUS;
-    }
-
-    inactive_session_status(effective_mode)
-}
-
-fn inactive_session_status(effective_mode: Option<&str>) -> &'static str {
-    match effective_mode {
-        Some(AWAIT_REPLY_PRESET) => WAITING_SESSION_STATUS,
-        _ => STOPPED_SESSION_STATUS,
-    }
+    projected_status(
+        is_archived,
+        effective_mode,
+        lifecycle.map(|lifecycle| lifecycle.status.as_str()),
+        runtime_status,
+    )
 }

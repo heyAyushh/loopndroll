@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::control_plane::session_fsm;
+
 use super::completion_checks::{
     active_completion_check, active_completion_check_wait_for_reply,
     completion_check_failure_reason,
@@ -16,14 +18,11 @@ use super::schema::{
     MOBILE_REMOTE_PROMPTS_TABLE, MOBILE_SESSION_LIFECYCLE_TABLE, MOBILE_SESSION_RUNTIME_TABLE,
 };
 use super::{
-    MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED, MobileHookOutcome,
-    MobileHookPayload, MobileQueuedPrompt, MobileSessionError, MobileSessionResult,
-    MobileSessionService, MobileSessionState, MobileStopDecision,
+    MobileHookOutcome, MobileHookPayload, MobileQueuedPrompt, MobileSessionError,
+    MobileSessionResult, MobileSessionService, MobileSessionState, MobileStopDecision,
 };
 
-const SESSION_START_HOOK_EVENT: &str = "SessionStart";
 const STOP_HOOK_EVENT: &str = "Stop";
-const USER_PROMPT_SUBMIT_HOOK_EVENT: &str = "UserPromptSubmit";
 
 struct ConsumedPrompt {
     prompt: Option<String>,
@@ -388,12 +387,5 @@ impl MobileSessionService {
 }
 
 fn hook_lifecycle_status(hook_event_name: &str, did_continue: bool) -> Option<&'static str> {
-    match hook_event_name {
-        SESSION_START_HOOK_EVENT | USER_PROMPT_SUBMIT_HOOK_EVENT => {
-            Some(MOBILE_SESSION_STATUS_ACTIVE)
-        }
-        STOP_HOOK_EVENT if did_continue => Some(MOBILE_SESSION_STATUS_ACTIVE),
-        STOP_HOOK_EVENT => Some(MOBILE_SESSION_STATUS_STOPPED),
-        _ => None,
-    }
+    session_fsm::hook_lifecycle_status(hook_event_name, did_continue)
 }

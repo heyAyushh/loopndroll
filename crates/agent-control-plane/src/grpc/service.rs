@@ -5,6 +5,10 @@ use futures_core::Stream;
 use tonic::{Request, Response, Status};
 
 use crate::control_plane::ControlPlane;
+use crate::control_plane::reducer::session_state_for_thread;
+use crate::control_plane::session_fsm::{
+    SessionCommand, SessionMode, SessionReject, SessionRejectCode, next as next_session_state,
+};
 use crate::events::{
     MobileCommandAckRecord, MobileCommandAckResult, MobileStateEventGap, MobileStateEventRecord,
 };
@@ -334,8 +338,8 @@ fn session_command_frames(
         Err(status) => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             client_mutation_id,
             entity_id,
-            status_code_name(status.code()),
-            status.message(),
+            command_reject_code(&status),
+            &command_reject_reason(&status),
         ))]),
     }
 }
@@ -499,6 +503,29 @@ fn status_code_name(code: tonic::Code) -> &'static str {
     }
 }
 
+fn command_reject_code(status: &Status) -> &'static str {
+    SessionReject::from_status_message(status.message())
+        .map(|reject| reject.code_str())
+        .unwrap_or_else(|| status_code_name(status.code()))
+}
+
+fn command_reject_reason(status: &Status) -> String {
+    SessionReject::from_status_message(status.message())
+        .map(|reject| reject.wire_reason())
+        .unwrap_or_else(|| status.message().to_owned())
+}
+
+fn session_reject_status(reject: SessionReject) -> Status {
+    match reject.code {
+        SessionRejectCode::InvalidMode => Status::invalid_argument(reject.status_message()),
+        SessionRejectCode::ModeRequired
+        | SessionRejectCode::SessionBusy
+        | SessionRejectCode::IllegalTransition => {
+            Status::failed_precondition(reject.status_message())
+        }
+    }
+}
+
 fn set_session_mode_command(
     control_plane: &ControlPlane,
     thread_id: String,
@@ -549,6 +576,21 @@ fn set_session_mode_command(
         return Err(error);
     }
     let preset = normalized_optional_value(&preset);
+    let mode = SessionMode::parse_optional(preset).map_err(session_reject_status)?;
+    if let Err(error) = ensure_session_fsm_allows(
+        control_plane,
+        &thread_id,
+        None,
+        SessionCommand::SetMode { mode },
+    ) {
+        release_command_reservation(
+            control_plane,
+            COMMAND_KIND_SET_SESSION_MODE,
+            client_mutation_id,
+            &request_hash,
+        )?;
+        return Err(error);
+    }
     if let Err(error) = control_plane
         .mobile_session_service()
         .set_session_preset(&thread_id, preset)
@@ -633,6 +675,22 @@ fn send_session_prompt_command(
     if let Err(error) =
         ensure_mobile_session_visible_from_minis(control_plane, &thread_id, assistant_surface)
     {
+        release_command_reservation(
+            control_plane,
+            COMMAND_KIND_SEND_SESSION_PROMPT,
+            client_mutation_id,
+            &request_hash,
+        )?;
+        return Err(error);
+    }
+    if let Err(error) = ensure_session_fsm_allows(
+        control_plane,
+        &thread_id,
+        assistant_surface,
+        SessionCommand::SendPrompt {
+            client_mutation_id: client_mutation_id.to_owned(),
+        },
+    ) {
         release_command_reservation(
             control_plane,
             COMMAND_KIND_SEND_SESSION_PROMPT,
@@ -766,6 +824,39 @@ fn ensure_mobile_session_visible_from_minis(
     }
 }
 
+fn ensure_session_fsm_allows(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+    command: SessionCommand,
+) -> Result<(), Status> {
+    let state = current_session_fsm_state(control_plane, thread_id, assistant_surface)?;
+    next_session_state(state, command)
+        .map(|_| ())
+        .map_err(session_reject_status)
+}
+
+fn current_session_fsm_state(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+) -> Result<crate::control_plane::session_fsm::SessionState, Status> {
+    let events = control_plane
+        .store()
+        .mobile_state_events()
+        .map_err(|error| Status::internal(error.to_string()))?;
+    let minis = control_plane
+        .store()
+        .mobile_session_minis()
+        .map_err(|error| Status::internal(error.to_string()))?;
+    Ok(session_state_for_thread(
+        &events,
+        &minis,
+        thread_id,
+        assistant_surface,
+    ))
+}
+
 fn session_mini_visibility(
     control_plane: &ControlPlane,
     thread_id: &str,
@@ -832,6 +923,7 @@ fn realtime_command_status(error: RealtimeCommandError) -> Status {
         RealtimeCommandError::AlreadyExists(message) => Status::already_exists(message),
         RealtimeCommandError::NotFound(message) => Status::not_found(message),
         RealtimeCommandError::MobileSession(error) => mobile_session_status(error),
+        RealtimeCommandError::SessionRejected(reject) => session_reject_status(reject),
         RealtimeCommandError::Internal(message) => Status::internal(message),
     }
 }

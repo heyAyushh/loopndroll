@@ -498,6 +498,21 @@ create index if not exists mobile_session_minis_seq
             .map_err(Into::into)
     }
 
+    pub fn mobile_state_events(&self) -> Result<Vec<MobileStateEventRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        let mut statement = connection.prepare(
+            "select seq, entity_id, kind, revision, server_time, payload_json,
+                    client_mutation_id, command_kind, command_request_hash,
+                    command_response_json, created_at_ms
+             from mobile_state_event_log
+             order by seq asc",
+        )?;
+        let rows = statement.query_map([], mobile_state_event_row)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     pub fn latest_mobile_state_event_seq(&self) -> Result<i64> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;

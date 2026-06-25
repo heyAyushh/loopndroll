@@ -28,10 +28,13 @@ use self::queries::{
 };
 use self::schema::initialize_store;
 use self::settings::MobileSettingsRow;
+use crate::control_plane::session_fsm::{
+    ACTIVE_STATUS as SESSION_FSM_ACTIVE_STATUS, STOPPED_STATUS as SESSION_FSM_STOPPED_STATUS,
+};
 
 pub const DEFAULT_REMOTE_PROMPT: &str = "Continue from where this session stopped.";
-pub(crate) const MOBILE_SESSION_STATUS_ACTIVE: &str = "active";
-pub(crate) const MOBILE_SESSION_STATUS_STOPPED: &str = "stopped";
+pub(crate) const MOBILE_SESSION_STATUS_ACTIVE: &str = SESSION_FSM_ACTIVE_STATUS;
+pub(crate) const MOBILE_SESSION_STATUS_STOPPED: &str = SESSION_FSM_STOPPED_STATUS;
 
 #[derive(Clone, Debug)]
 pub struct MobileSessionService {
