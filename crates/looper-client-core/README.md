@@ -12,6 +12,7 @@ HTTP command routes, or legacy event streams.
 ```bash
 cargo fmt --check --manifest-path crates/looper-client-core/Cargo.toml
 cargo test --manifest-path crates/looper-client-core/Cargo.toml
+bash scripts/check-client-core-boundaries.sh --strict-runtime
 ```
 
 ## UniFFI / XCFramework path
@@ -34,6 +35,6 @@ package artifacts under `swift/LooperClientCore`.
   immutable Rust-owned snapshots before the network confirms.
 - FSM transition semantics still live in the control plane. The client core only
   mirrors server acks/rejects and keeps local pending command state.
-- `scripts/check-client-core-boundaries.py` prevents this crate from taking
-  inward dependencies on the control plane, local stores, removed event-stream
-  transports, or unary command request types.
+- `scripts/check-client-core-boundaries.py --strict-runtime` prevents this
+  crate from taking inward dependencies on the control plane and keeps clients
+  from reintroducing removed event-stream or unary command runtime paths.

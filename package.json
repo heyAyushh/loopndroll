@@ -17,7 +17,7 @@
     "install:cli": "bash scripts/install-looper-cli.sh",
     "test:menubar": "swift test --package-path macos/LooperMenuBar",
     "check:menubar": "swift test --package-path macos/LooperMenuBar",
-    "check:client-core": "cargo fmt --check --manifest-path crates/looper-client-core/Cargo.toml && cargo test --manifest-path crates/looper-client-core/Cargo.toml && bash scripts/check-client-core-boundaries.sh",
+    "check:client-core": "cargo fmt --check --manifest-path crates/looper-client-core/Cargo.toml && cargo test --manifest-path crates/looper-client-core/Cargo.toml && bash scripts/check-client-core-boundaries.sh && bash scripts/check-client-core-boundaries.sh --strict-runtime",
     "check:rust-control-plane": "cargo fmt --check --manifest-path crates/agent-control-plane/Cargo.toml && cargo test --manifest-path crates/agent-control-plane/Cargo.toml",
     "check:ios": "bash scripts/check-ios.sh",
     "check": "pnpm run check:client-core && pnpm run check:rust-control-plane && pnpm run check:menubar && pnpm run check:ios"
