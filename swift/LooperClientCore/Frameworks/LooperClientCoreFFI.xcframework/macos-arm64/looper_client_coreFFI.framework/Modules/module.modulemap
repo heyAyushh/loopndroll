@@ -1,0 +1,5 @@
+framework module looper_client_coreFFI {
+  umbrella header "looper_client_coreFFI.h"
+  export *
+  module * { export * }
+}

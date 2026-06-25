@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperRealtime
 
 public protocol MenuBarSessionCommandClient: Sendable {
@@ -73,6 +74,8 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyPrompt
     case missingAcknowledgement(clientMutationID: String)
     case acknowledgedDifferentMutation(expected: String, actual: String)
+    case unexpectedClientCoreOutboxDepth(Int)
+    case unexpectedClientCoreCommandKind(String)
 }
 
 public actor MenuBarSessionCommandCenter {
@@ -83,13 +86,16 @@ public actor MenuBarSessionCommandCenter {
     }
 
     private let client: any MenuBarSessionCommandClient
+    private let clientCore: LooperClientCore
     private let localStore: MenuBarSessionMiniLocalStore?
 
     public init(
         client: any MenuBarSessionCommandClient,
-        localStore: MenuBarSessionMiniLocalStore?
+        localStore: MenuBarSessionMiniLocalStore?,
+        clientCore: LooperClientCore = LooperClientCore()
     ) {
         self.client = client
+        self.clientCore = clientCore
         self.localStore = localStore
     }
 
@@ -100,21 +106,23 @@ public actor MenuBarSessionCommandCenter {
         clientMutationID: String = UUID().uuidString
     ) async throws -> MenuBarSessionModeCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
-        try localStore?.enqueueModeCommand(
-            threadID: normalizedThreadID,
-            preset: preset,
-            clientMutationID: clientMutationID
+        _ = try clientCore.setMode(
+            threadId: normalizedThreadID,
+            preset: preset?.nilIfBlank ?? "",
+            clientMutationId: clientMutationID
         )
+        let command = try nextSessionCommand(expected: clientMutationID)
+        if case let .setSessionMode(threadID, preset, clientMutationID) = command {
+            try localStore?.enqueueModeCommand(
+                threadID: threadID,
+                preset: preset,
+                clientMutationID: clientMutationID
+            )
+        }
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
         let response = try await client.submitSessionCommandBatch(
-            commands: [
-                .setSessionMode(
-                    threadID: normalizedThreadID,
-                    preset: preset,
-                    clientMutationID: clientMutationID
-                )
-            ]
+            commands: [command]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -122,6 +130,7 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }
@@ -141,23 +150,25 @@ public actor MenuBarSessionCommandCenter {
     ) async throws -> MenuBarSessionPromptCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        try localStore?.enqueuePromptCommand(
-            threadID: normalizedThreadID,
+        _ = try clientCore.sendPrompt(
+            threadId: normalizedThreadID,
             prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank,
-            clientMutationID: clientMutationID
+            assistantSurface: assistantSurface?.nilIfBlank ?? "",
+            clientMutationId: clientMutationID
         )
+        let command = try nextSessionCommand(expected: clientMutationID)
+        if case let .sendSessionPrompt(threadID, prompt, assistantSurface, clientMutationID) = command {
+            try localStore?.enqueuePromptCommand(
+                threadID: threadID,
+                prompt: prompt,
+                assistantSurface: assistantSurface,
+                clientMutationID: clientMutationID
+            )
+        }
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
         let response = try await client.submitSessionCommandBatch(
-            commands: [
-                .sendSessionPrompt(
-                    threadID: normalizedThreadID,
-                    prompt: normalizedPrompt,
-                    assistantSurface: assistantSurface?.nilIfBlank,
-                    clientMutationID: clientMutationID
-                )
-            ]
+            commands: [command]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -165,6 +176,7 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }
@@ -190,25 +202,33 @@ public actor MenuBarSessionCommandCenter {
         )
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        try localStore?.enqueueNotificationReplyCommand(
-            notificationID: normalizedNotificationID,
-            threadID: normalizedThreadID,
+        _ = try clientCore.submitNotificationReply(
+            notificationId: normalizedNotificationID,
+            threadId: normalizedThreadID,
             prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank,
-            clientMutationID: clientMutationID
+            assistantSurface: assistantSurface?.nilIfBlank ?? "",
+            clientMutationId: clientMutationID
         )
+        let command = try nextSessionCommand(expected: clientMutationID)
+        if case let .submitNotificationReply(
+            notificationID,
+            threadID,
+            prompt,
+            assistantSurface,
+            clientMutationID
+        ) = command {
+            try localStore?.enqueueNotificationReplyCommand(
+                notificationID: notificationID,
+                threadID: threadID,
+                prompt: prompt,
+                assistantSurface: assistantSurface,
+                clientMutationID: clientMutationID
+            )
+        }
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
         let response = try await client.submitSessionCommandBatch(
-            commands: [
-                .submitNotificationReply(
-                    notificationID: normalizedNotificationID,
-                    threadID: normalizedThreadID,
-                    prompt: normalizedPrompt,
-                    assistantSurface: assistantSurface?.nilIfBlank,
-                    clientMutationID: clientMutationID
-                )
-            ]
+            commands: [command]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -216,6 +236,7 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }
@@ -239,6 +260,52 @@ public actor MenuBarSessionCommandCenter {
         return trimmed
     }
 
+    private func nextSessionCommand(expected clientMutationID: String) throws
+        -> LooperRealtimeSessionCommand
+    {
+        let frames = try clientCore.takeOutbox()
+        guard frames.count == 1, let frame = frames.first else {
+            throw MenuBarSessionCommandError.unexpectedClientCoreOutboxDepth(frames.count)
+        }
+        guard frame.clientMutationId == clientMutationID else {
+            throw MenuBarSessionCommandError.acknowledgedDifferentMutation(
+                expected: clientMutationID,
+                actual: frame.clientMutationId
+            )
+        }
+        return try sessionCommand(from: frame)
+    }
+
+    private func sessionCommand(from frame: OutboundSessionFrame) throws
+        -> LooperRealtimeSessionCommand
+    {
+        switch frame.commandKind {
+        case .setSessionMode:
+            return .setSessionMode(
+                threadID: frame.threadId,
+                preset: frame.preset.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .sendSessionPrompt:
+            return .sendSessionPrompt(
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .submitNotificationReply:
+            return .submitNotificationReply(
+                notificationID: frame.notificationId,
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .resume:
+            throw MenuBarSessionCommandError.unexpectedClientCoreCommandKind("Resume")
+        }
+    }
+
     private func acknowledgement(
         from response: LooperRealtimeSessionCommandBatchResponse,
         commandKind: String,
@@ -257,6 +324,23 @@ public actor MenuBarSessionCommandCenter {
             )
         }
         return envelope
+    }
+}
+
+private extension LooperRealtimeCommandAck {
+    var clientCoreAck: ClientCommandAck {
+        ClientCommandAck(
+            accepted: accepted,
+            clientMutationId: clientMutationID,
+            ackSeq: ackSeq,
+            entityId: entityID,
+            revision: revision,
+            serverTime: serverTime ?? "",
+            idempotentReplay: idempotentReplay,
+            errorCode: errorCode ?? "",
+            rejectReason: rejectReason ?? "",
+            currentState: ""
+        )
     }
 }
 

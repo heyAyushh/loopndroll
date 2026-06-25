@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     macOS: "15.0"
 packages:
+  LooperClientCore:
+    path: ../../swift/LooperClientCore
+    group: Packages
   LooperRealtime:
     path: ../../swift/LooperRealtime
     group: Packages
@@ -19,6 +22,7 @@ targets:
     sources:
       - path: Sources/LooperMenuBarCore
     dependencies:
+      - package: LooperClientCore
       - package: LooperRealtime
     settings:
       base:
@@ -56,6 +60,7 @@ targets:
             destination: executables
     dependencies:
       - target: LooperMenuBarCore
+      - package: LooperClientCore
       - package: LooperRealtime
     preBuildScripts:
       - name: Build Rust control plane

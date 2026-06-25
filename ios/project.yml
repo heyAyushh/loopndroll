@@ -5,6 +5,9 @@ packages:
   LooperCompanionCore:
     path: LooperCompanionCore
     group: Packages
+  LooperClientCore:
+    path: ../swift/LooperClientCore
+    group: Packages
   OrbCodeKit:
     path: OrbCodeKit
     group: Packages
@@ -52,6 +55,7 @@ targets:
           LOOPER_API_BASE_URLS: ""
     dependencies:
       - package: LooperCompanionCore
+      - package: LooperClientCore
       - package: OrbCodeKit
       - package: LooperRealtime
       - sdk: AppIntents.framework

@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
 import LooperRealtime
 
@@ -149,16 +150,24 @@ struct HTTPCompanionService: CompanionService {
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
+        let clientCore = LooperClientCore()
+        let command = try sessionCommand(
+            clientCore: clientCore,
+            clientMutationID: clientMutationID
+        ) {
+            try $0.setMode(
+                threadId: id,
+                preset: preset?.rawValue ?? "",
+                clientMutationId: clientMutationID
+            )
+        }
         let envelope = try await submitSessionCommand(
-            .setSessionMode(
-                threadID: id,
-                preset: preset?.rawValue,
-                clientMutationID: clientMutationID
-            ),
+            command,
             expectedCommandKind: Self.setSessionModeCommandKind,
             unavailableDiagnostic: "mode:grpc-unavailable id=\(id)",
             invalidDiagnostic: "mode:grpc-invalid id=\(id)"
         )
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         CompanionDiagnostics.record(
             "mode:grpc-accepted id=\(id) ackSeq=\(envelope.ack.ackSeq)"
         )
@@ -187,17 +196,25 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
-        let envelope = try await submitSessionCommand(
-            .sendSessionPrompt(
-                threadID: id,
+        let clientCore = LooperClientCore()
+        let command = try sessionCommand(
+            clientCore: clientCore,
+            clientMutationID: clientMutationID
+        ) {
+            try $0.sendPrompt(
+                threadId: id,
                 prompt: prompt,
-                assistantSurface: assistantSurface?.rawValue,
-                clientMutationID: clientMutationID
-            ),
+                assistantSurface: assistantSurface?.rawValue ?? "",
+                clientMutationId: clientMutationID
+            )
+        }
+        let envelope = try await submitSessionCommand(
+            command,
             expectedCommandKind: Self.sendSessionPromptCommandKind,
             unavailableDiagnostic: "prompt:grpc-unavailable id=\(id)",
             invalidDiagnostic: "prompt:grpc-invalid id=\(id)"
         )
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         CompanionDiagnostics.record(
             "prompt:grpc-accepted id=\(id) kind=\(envelope.dispatchKind ?? "accepted")"
         )
@@ -225,21 +242,25 @@ struct HTTPCompanionService: CompanionService {
             )
             throw HTTPCompanionServiceError.invalidResponse
         }
+        let clientCore = LooperClientCore()
+        _ = try clientCore.setMode(
+            threadId: id,
+            preset: modePreset?.rawValue ?? "",
+            clientMutationId: modeClientMutationID
+        )
+        _ = try clientCore.sendPrompt(
+            threadId: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface?.rawValue ?? "",
+            clientMutationId: promptClientMutationID
+        )
+        let commands = try sessionCommands(
+            clientCore: clientCore,
+            expectedClientMutationIDs: [modeClientMutationID, promptClientMutationID]
+        )
 
         let response = try await realtimeClient.submitSessionCommandBatch(
-            commands: [
-                .setSessionMode(
-                    threadID: id,
-                    preset: modePreset?.rawValue,
-                    clientMutationID: modeClientMutationID
-                ),
-                .sendSessionPrompt(
-                    threadID: id,
-                    prompt: prompt,
-                    assistantSurface: assistantSurface?.rawValue,
-                    clientMutationID: promptClientMutationID
-                ),
-            ]
+            commands: commands
         )
         guard response.accepted,
               let modeAck = response.commandAcks.first(where: {
@@ -252,6 +273,8 @@ struct HTTPCompanionService: CompanionService {
             CompanionDiagnostics.record("prompt:grpc-batch-invalid id=\(id)")
             throw HTTPCompanionServiceError.invalidResponse
         }
+        _ = try clientCore.applyCommandAck(ack: modeAck.ack.clientCoreAck)
+        _ = try clientCore.applyCommandAck(ack: promptAck.ack.clientCoreAck)
 
         CompanionDiagnostics.record(
             "prompt:grpc-batch-accepted id=\(id) modeAckSeq=\(modeAck.ack.ackSeq) promptAckSeq=\(promptAck.ack.ackSeq)"
@@ -277,18 +300,26 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let envelope = try await submitSessionCommand(
-            .submitNotificationReply(
-                notificationID: notificationID,
-                threadID: sessionID,
+        let clientCore = LooperClientCore()
+        let command = try sessionCommand(
+            clientCore: clientCore,
+            clientMutationID: clientMutationID
+        ) {
+            try $0.submitNotificationReply(
+                notificationId: notificationID,
+                threadId: sessionID,
                 prompt: prompt,
-                assistantSurface: assistantSurface?.rawValue,
-                clientMutationID: clientMutationID
-            ),
+                assistantSurface: assistantSurface?.rawValue ?? "",
+                clientMutationId: clientMutationID
+            )
+        }
+        let envelope = try await submitSessionCommand(
+            command,
             expectedCommandKind: Self.submitNotificationReplyCommandKind,
             unavailableDiagnostic: "notification-reply:grpc-unavailable id=\(sessionID) notificationID=\(notificationID)",
             invalidDiagnostic: "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
         )
+        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         CompanionDiagnostics.record(
             "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(envelope.dispatchKind ?? "accepted")"
         )
@@ -332,6 +363,63 @@ struct HTTPCompanionService: CompanionService {
             throw HTTPCompanionServiceError.invalidResponse
         }
         return envelope
+    }
+
+    private func sessionCommand(
+        clientCore: LooperClientCore,
+        clientMutationID: String,
+        enqueue: (LooperClientCore) throws -> ClientStateSnapshot
+    ) throws -> LooperRealtimeSessionCommand {
+        _ = try enqueue(clientCore)
+        return try sessionCommands(
+            clientCore: clientCore,
+            expectedClientMutationIDs: [clientMutationID]
+        )[0]
+    }
+
+    private func sessionCommands(
+        clientCore: LooperClientCore,
+        expectedClientMutationIDs: [String]
+    ) throws -> [LooperRealtimeSessionCommand] {
+        let frames = try clientCore.takeOutbox()
+        guard frames.map(\.clientMutationId) == expectedClientMutationIDs else {
+            CompanionDiagnostics.record(
+                "session-command:client-core-outbox-mismatch expected=\(expectedClientMutationIDs.joined(separator: ",")) actual=\(frames.map(\.clientMutationId).joined(separator: ","))"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        return try frames.map(sessionCommand(from:))
+    }
+
+    private func sessionCommand(from frame: OutboundSessionFrame) throws
+        -> LooperRealtimeSessionCommand
+    {
+        switch frame.commandKind {
+        case .setSessionMode:
+            return .setSessionMode(
+                threadID: frame.threadId,
+                preset: frame.preset.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .sendSessionPrompt:
+            return .sendSessionPrompt(
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .submitNotificationReply:
+            return .submitNotificationReply(
+                notificationID: frame.notificationId,
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfBlank,
+                clientMutationID: frame.clientMutationId
+            )
+        case .resume:
+            CompanionDiagnostics.record("session-command:unexpected-resume-frame")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
     }
 
     func muteSession(id: String) async throws -> MobileSnapshot {
@@ -1083,4 +1171,28 @@ private func unauthorizedError(from data: Data) -> HTTPCompanionServiceError {
     }
 
     return .passkeySessionRequired(envelope.message ?? MobileAPIErrorMessage.passkeySessionRequired)
+}
+
+private extension LooperRealtimeCommandAck {
+    var clientCoreAck: ClientCommandAck {
+        ClientCommandAck(
+            accepted: accepted,
+            clientMutationId: clientMutationID,
+            ackSeq: ackSeq,
+            entityId: entityID,
+            revision: revision,
+            serverTime: serverTime ?? "",
+            idempotentReplay: idempotentReplay,
+            errorCode: errorCode ?? "",
+            rejectReason: rejectReason ?? "",
+            currentState: ""
+        )
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

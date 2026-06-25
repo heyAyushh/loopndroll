@@ -63,6 +63,7 @@ pub struct ClientCommandAck {
     pub idempotent_replay: bool,
     pub error_code: String,
     pub reject_reason: String,
+    pub current_state: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]

@@ -7,11 +7,19 @@ PACKAGE_DIR="$ROOT_DIR/swift/LooperClientCore"
 BINDINGS_DIR="$PACKAGE_DIR/Sources/LooperClientCore/Generated"
 FRAMEWORKS_DIR="$PACKAGE_DIR/Frameworks"
 XCFRAMEWORK_DIR="$FRAMEWORKS_DIR/LooperClientCoreFFI.xcframework"
+FRAMEWORK_BUILD_DIR="$CRATE_DIR/target/looper-client-core-frameworks"
 HOST_LIBRARY="target/release/liblooper_client_core.dylib"
+FFI_MODULE_NAME="looper_client_coreFFI"
+FFI_FRAMEWORK_NAME="${FFI_MODULE_NAME}.framework"
+FFI_HEADER_NAME="looper_client_coreFFI.h"
 
 IOS_TARGETS=(
   aarch64-apple-ios
   aarch64-apple-ios-sim
+)
+
+MACOS_TARGETS=(
+  aarch64-apple-darwin
 )
 
 echo "Building looper-client-core host library for UniFFI metadata"
@@ -31,8 +39,14 @@ mkdir -p "$BINDINGS_DIR"
     --language swift \
     --out-dir "$BINDINGS_DIR"
 )
+cp "$BINDINGS_DIR/looper_client_coreFFI.modulemap" "$BINDINGS_DIR/module.modulemap"
 
 for target in "${IOS_TARGETS[@]}"; do
+  rustup target add "$target"
+  cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --target "$target" --release
+done
+
+for target in "${MACOS_TARGETS[@]}"; do
   rustup target add "$target"
   cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --target "$target" --release
 done
@@ -42,13 +56,68 @@ if [[ -e "$XCFRAMEWORK_DIR" ]]; then
   echo "Replacing $XCFRAMEWORK_DIR"
   rm -R "$XCFRAMEWORK_DIR"
 fi
+if [[ -e "$FRAMEWORK_BUILD_DIR" ]]; then
+  rm -R "$FRAMEWORK_BUILD_DIR"
+fi
+mkdir -p "$FRAMEWORK_BUILD_DIR"
+
+make_static_framework() {
+  local target="$1"
+  local min_os_version="$2"
+  local framework_dir="$FRAMEWORK_BUILD_DIR/${target}/${FFI_FRAMEWORK_NAME}"
+  local modules_dir="$framework_dir/Modules"
+  local headers_dir="$framework_dir/Headers"
+  local bundle_suffix
+  bundle_suffix="$(printf '%s' "$target" | tr -cd '[:alnum:]')"
+
+  mkdir -p "$modules_dir" "$headers_dir"
+  cp "$CRATE_DIR/target/${target}/release/liblooper_client_core.a" \
+    "$framework_dir/${FFI_MODULE_NAME}"
+  cp "$BINDINGS_DIR/$FFI_HEADER_NAME" "$headers_dir/$FFI_HEADER_NAME"
+  cat >"$modules_dir/module.modulemap" <<MODULEMAP
+framework module ${FFI_MODULE_NAME} {
+  umbrella header "${FFI_HEADER_NAME}"
+  export *
+  module * { export * }
+}
+MODULEMAP
+  cat >"$framework_dir/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>${FFI_MODULE_NAME}</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.looper.clientcoreffi.${bundle_suffix}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>${FFI_MODULE_NAME}</string>
+  <key>CFBundlePackageType</key>
+  <string>FMWK</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>MinimumOSVersion</key>
+  <string>${min_os_version}</string>
+</dict>
+</plist>
+PLIST
+}
+
+make_static_framework aarch64-apple-ios 18.0
+make_static_framework aarch64-apple-ios-sim 18.0
+make_static_framework aarch64-apple-darwin 15.0
 
 echo "Creating $XCFRAMEWORK_DIR"
 xcodebuild -create-xcframework \
-  -library "$CRATE_DIR/target/aarch64-apple-ios/release/liblooper_client_core.a" \
-  -headers "$BINDINGS_DIR" \
-  -library "$CRATE_DIR/target/aarch64-apple-ios-sim/release/liblooper_client_core.a" \
-  -headers "$BINDINGS_DIR" \
+  -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-ios/$FFI_FRAMEWORK_NAME" \
+  -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-ios-sim/$FFI_FRAMEWORK_NAME" \
+  -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-darwin/$FFI_FRAMEWORK_NAME" \
   -output "$XCFRAMEWORK_DIR"
 
 echo "Created $XCFRAMEWORK_DIR"

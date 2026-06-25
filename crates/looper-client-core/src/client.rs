@@ -87,7 +87,6 @@ impl LooperClientCore {
         client_mutation_id: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_present(&thread_id, ClientCoreError::EmptyThreadId)?;
-        require_present(&preset, ClientCoreError::EmptyPreset)?;
         require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
 
         let mut state = self.lock_state()?;
@@ -348,6 +347,7 @@ mod tests {
                 idempotent_replay: false,
                 error_code: String::new(),
                 reject_reason: String::new(),
+                current_state: String::new(),
             })
             .expect("ack");
 
@@ -380,6 +380,7 @@ mod tests {
                 idempotent_replay: false,
                 error_code: "illegal_transition".to_owned(),
                 reject_reason: "WAIT_REPLY required".to_owned(),
+                current_state: "awaiting_mode".to_owned(),
             })
             .expect("ack");
 

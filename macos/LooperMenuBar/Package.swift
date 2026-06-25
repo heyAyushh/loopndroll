@@ -12,12 +12,14 @@ let package = Package(
         .library(name: "LooperMenuBarCore", targets: ["LooperMenuBarCore"]),
     ],
     dependencies: [
+        .package(path: "../../swift/LooperClientCore"),
         .package(path: "../../swift/LooperRealtime")
     ],
     targets: [
         .target(
             name: "LooperMenuBarCore",
             dependencies: [
+                .product(name: "LooperClientCore", package: "LooperClientCore"),
                 .product(name: "LooperRealtime", package: "LooperRealtime"),
             ]
         ),
@@ -25,6 +27,7 @@ let package = Package(
             name: "LooperMenuBar",
             dependencies: [
                 "LooperMenuBarCore",
+                .product(name: "LooperClientCore", package: "LooperClientCore"),
                 .product(name: "LooperRealtime", package: "LooperRealtime"),
             ]
         ),
@@ -32,6 +35,7 @@ let package = Package(
             name: "LooperMenuBarCoreTests",
             dependencies: [
                 "LooperMenuBarCore",
+                .product(name: "LooperClientCore", package: "LooperClientCore"),
                 .product(name: "LooperRealtime", package: "LooperRealtime"),
             ]
         ),

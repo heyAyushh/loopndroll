@@ -6,8 +6,6 @@ pub enum ClientCoreError {
     InvalidEndpoint,
     #[error("thread id is required")]
     EmptyThreadId,
-    #[error("mode preset is required")]
-    EmptyPreset,
     #[error("prompt is required")]
     EmptyPrompt,
     #[error("notification id is required")]
