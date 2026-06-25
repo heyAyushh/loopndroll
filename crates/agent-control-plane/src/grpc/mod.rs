@@ -12,7 +12,6 @@ use tonic::transport::Server;
 use crate::control_plane::ControlPlane;
 
 mod auth;
-mod events;
 mod service;
 
 pub mod proto {

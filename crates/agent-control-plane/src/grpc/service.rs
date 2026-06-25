@@ -9,12 +9,10 @@ use crate::events::{
     MobileCommandAckRecord, MobileCommandAckResult, MobileStateEventGap, MobileStateEventRecord,
 };
 use crate::grpc::auth::authorize_mobile_api_request;
-use crate::grpc::events::{MobileEventStream, mobile_events};
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::{
-    mobile_session_detail, session_mini_projection_inputs_with_mode,
-    session_mini_records_contain_session,
+    session_mini_projection_inputs_with_mode, session_mini_records_contain_session,
 };
 use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
@@ -22,7 +20,7 @@ use crate::mobile::events::{
 };
 use crate::mobile::prompt_delivery::{
     accept_session_prompt, dispatch_session_prompt_after_ack, invalidate_delivery_action_cache,
-    mobile_desktop_snapshot, prompt_dispatch_fields,
+    prompt_dispatch_fields,
 };
 use crate::mobile::realtime_ack::{
     CommandAckError, CommandReservation, ack_response_value, command_ack_server_time,
@@ -74,8 +72,6 @@ impl LooperRealtimeService {
 #[tonic::async_trait]
 impl LooperRealtime for LooperRealtimeService {
     type SessionStream = SessionFrameStream;
-    type SubscribeMobileEventsStream = MobileEventStream;
-    type SubscribeDesktopEventsStream = MobileEventStream;
 
     async fn health(
         &self,
@@ -87,61 +83,6 @@ impl LooperRealtime for LooperRealtimeService {
             service: HEALTH_SERVICE_NAME.to_owned(),
             server_time: mobile_event_now(),
         }))
-    }
-
-    async fn set_session_mode(
-        &self,
-        request: Request<proto::SetSessionModeRequest>,
-    ) -> Result<Response<proto::SetSessionModeResponse>, Status> {
-        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
-        let request = request.into_inner();
-
-        Ok(Response::new(set_session_mode_command(
-            &self.control_plane,
-            request.thread_id,
-            request.preset,
-            &request.client_mutation_id,
-            SessionVisibilityPolicy::AllowSnapshotFallback,
-        )?))
-    }
-
-    async fn send_session_prompt(
-        &self,
-        request: Request<proto::SendSessionPromptRequest>,
-    ) -> Result<Response<proto::SendSessionPromptResponse>, Status> {
-        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
-        let request = request.into_inner();
-
-        Ok(Response::new(send_session_prompt_command(
-            &self.control_plane,
-            request.thread_id,
-            request.prompt,
-            request.assistant_surface,
-            &request.client_mutation_id,
-        )?))
-    }
-
-    async fn submit_notification_reply(
-        &self,
-        request: Request<proto::SubmitNotificationReplyRequest>,
-    ) -> Result<Response<proto::SubmitNotificationReplyResponse>, Status> {
-        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
-        let request = request.into_inner();
-        let response = submit_notification_reply_command(
-            &self.control_plane,
-            SubmitNotificationReplyInput {
-                notification_id: &request.notification_id,
-                thread_id: &request.thread_id,
-                prompt: &request.prompt,
-                assistant_surface: Some(&request.assistant_surface),
-                client_mutation_id: &request.client_mutation_id,
-            },
-        )
-        .map_err(realtime_command_status)?;
-
-        Ok(Response::new(notification_reply_response_from_command(
-            response,
-        )))
     }
 
     async fn session(
@@ -256,21 +197,6 @@ impl LooperRealtime for LooperRealtimeService {
         };
         Ok(Response::new(Box::pin(output)))
     }
-
-    async fn subscribe_mobile_events(
-        &self,
-        request: Request<proto::SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeMobileEventsStream>, Status> {
-        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
-        Ok(Response::new(mobile_events(self.control_plane.clone())))
-    }
-
-    async fn subscribe_desktop_events(
-        &self,
-        _request: Request<proto::SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeDesktopEventsStream>, Status> {
-        Ok(Response::new(mobile_events(self.control_plane.clone())))
-    }
 }
 
 fn handle_session_client_frame(
@@ -313,9 +239,7 @@ fn handle_session_command(
                 request.thread_id,
                 request.preset,
                 &request.client_mutation_id,
-                SessionVisibilityPolicy::RequireStateMiniCache,
-            )
-            .and_then(command_ack_from_mode_response),
+            ),
         ),
         Some(proto::command::Command::SendSessionPrompt(request)) => session_command_frames(
             control_plane,
@@ -328,8 +252,7 @@ fn handle_session_command(
                 request.prompt,
                 request.assistant_surface,
                 &request.client_mutation_id,
-            )
-            .and_then(command_ack_from_prompt_response),
+            ),
         ),
         Some(proto::command::Command::SubmitNotificationReply(request)) => session_command_frames(
             control_plane,
@@ -346,9 +269,8 @@ fn handle_session_command(
                     client_mutation_id: &request.client_mutation_id,
                 },
             )
-            .map(notification_reply_response_from_command)
             .map_err(realtime_command_status)
-            .and_then(command_ack_from_notification_reply_response),
+            .map(notification_reply_ack_from_command),
         ),
         None => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             String::new(),
@@ -412,30 +334,6 @@ fn session_command_frames(
             status.message(),
         ))]),
     }
-}
-
-fn command_ack_from_mode_response(
-    response: proto::SetSessionModeResponse,
-) -> Result<proto::CommandAck, Status> {
-    response
-        .ack
-        .ok_or_else(|| Status::internal("set-session-mode response missing command ACK"))
-}
-
-fn command_ack_from_prompt_response(
-    response: proto::SendSessionPromptResponse,
-) -> Result<proto::CommandAck, Status> {
-    response
-        .ack
-        .ok_or_else(|| Status::internal("send-session-prompt response missing command ACK"))
-}
-
-fn command_ack_from_notification_reply_response(
-    response: proto::SubmitNotificationReplyResponse,
-) -> Result<proto::CommandAck, Status> {
-    response
-        .ack
-        .ok_or_else(|| Status::internal("notification-reply response missing command ACK"))
 }
 
 fn replay_state_delta_frames(
@@ -597,19 +495,12 @@ fn status_code_name(code: tonic::Code) -> &'static str {
     }
 }
 
-#[derive(Clone, Copy)]
-enum SessionVisibilityPolicy {
-    AllowSnapshotFallback,
-    RequireStateMiniCache,
-}
-
 fn set_session_mode_command(
     control_plane: &ControlPlane,
     thread_id: String,
     preset: String,
     client_mutation_id: &str,
-    visibility_policy: SessionVisibilityPolicy,
-) -> Result<proto::SetSessionModeResponse, Status> {
+) -> Result<proto::CommandAck, Status> {
     let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
     let request_hash = command_request_hash(
         COMMAND_KIND_SET_SESSION_MODE,
@@ -624,7 +515,11 @@ fn set_session_mode_command(
         client_mutation_id,
         &request_hash,
     )? {
-        return Ok(mode_response_from_record(&record, true));
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
     }
     let reservation = reserve_command_ack(
         control_plane,
@@ -633,15 +528,14 @@ fn set_session_mode_command(
         &request_hash,
     )?;
     if let CommandReservation::Replay(record) = reservation {
-        return Ok(mode_response_from_record(&record, true));
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
     }
 
-    if let Err(error) = ensure_mobile_session_visible_with_policy(
-        control_plane,
-        &thread_id,
-        None,
-        visibility_policy,
-    ) {
+    if let Err(error) = ensure_mobile_session_visible_from_minis(control_plane, &thread_id, None) {
         release_command_reservation(
             control_plane,
             COMMAND_KIND_SET_SESSION_MODE,
@@ -667,7 +561,7 @@ fn set_session_mode_command(
     emit_session_mode_changed(control_plane, &thread_id, preset);
     let response_preset = preset.unwrap_or_default().to_owned();
     let server_time = command_ack_server_time();
-    let revision = current_mobile_revision_or_snapshot(control_plane)?;
+    let revision = current_mobile_revision(control_plane)?;
     let entity_id = thread_id.clone();
     let response_json = serde_json::json!({
         "accepted": true,
@@ -686,7 +580,7 @@ fn set_session_mode_command(
         command_ack_state_event(&entity_id, &revision, &server_time),
     )?;
 
-    Ok(mode_response_from_ack_result(&ack_result))
+    Ok(command_ack_from_ack_result(&ack_result))
 }
 
 fn send_session_prompt_command(
@@ -695,7 +589,7 @@ fn send_session_prompt_command(
     prompt: String,
     assistant_surface: String,
     client_mutation_id: &str,
-) -> Result<proto::SendSessionPromptResponse, Status> {
+) -> Result<proto::CommandAck, Status> {
     let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
     let assistant_surface = normalized_assistant_surface(&assistant_surface)?;
     let request_hash = command_request_hash(
@@ -712,7 +606,11 @@ fn send_session_prompt_command(
         client_mutation_id,
         &request_hash,
     )? {
-        return Ok(prompt_response_from_record(&record, true));
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
     }
     let reservation = reserve_command_ack(
         control_plane,
@@ -721,7 +619,11 @@ fn send_session_prompt_command(
         &request_hash,
     )?;
     if let CommandReservation::Replay(record) = reservation {
-        return Ok(prompt_response_from_record(&record, true));
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
     }
 
     if let Err(error) =
@@ -786,7 +688,7 @@ fn send_session_prompt_command(
         dispatch_session_prompt_after_ack(control_plane.clone(), after_ack);
     }
 
-    Ok(prompt_response_from_ack_result(&ack_result))
+    Ok(command_ack_from_ack_result(&ack_result))
 }
 
 fn normalized_optional_value(value: &str) -> Option<&str> {
@@ -846,30 +748,6 @@ fn normalized_assistant_surface(value: &str) -> Result<Option<&str>, Status> {
     Err(Status::invalid_argument("invalid assistant surface"))
 }
 
-fn ensure_mobile_session_visible(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> Result<(), Status> {
-    if let Some(visible) = session_mini_visibility(control_plane, thread_id, assistant_surface)? {
-        if visible {
-            return Ok(());
-        }
-        return Err(Status::not_found("session not found"));
-    }
-
-    let snapshot = mobile_desktop_snapshot(control_plane)
-        .map_err(|error| Status::internal(error.to_string()))?;
-    let session_state = control_plane
-        .mobile_session_service()
-        .state()
-        .map_err(mobile_session_status)?;
-    if mobile_session_detail(&snapshot, &session_state, thread_id, assistant_surface).is_some() {
-        return Ok(());
-    }
-    Err(Status::not_found("session not found"))
-}
-
 fn ensure_mobile_session_visible_from_minis(
     control_plane: &ControlPlane,
     thread_id: &str,
@@ -881,22 +759,6 @@ fn ensure_mobile_session_visible_from_minis(
         None => Err(Status::failed_precondition(
             "state mini cache is required before sending a session command",
         )),
-    }
-}
-
-fn ensure_mobile_session_visible_with_policy(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-    policy: SessionVisibilityPolicy,
-) -> Result<(), Status> {
-    match policy {
-        SessionVisibilityPolicy::AllowSnapshotFallback => {
-            ensure_mobile_session_visible(control_plane, thread_id, assistant_surface)
-        }
-        SessionVisibilityPolicy::RequireStateMiniCache => {
-            ensure_mobile_session_visible_from_minis(control_plane, thread_id, assistant_surface)
-        }
     }
 }
 
@@ -914,16 +776,6 @@ fn session_mini_visibility(
         thread_id,
         assistant_surface,
     ))
-}
-
-fn current_mobile_revision_or_snapshot(control_plane: &ControlPlane) -> Result<String, Status> {
-    match current_mobile_revision(control_plane) {
-        Ok(revision) => Ok(revision),
-        Err(CommandAckError::Internal(_)) => control_plane
-            .mobile_snapshot_revision()
-            .map_err(|error| Status::internal(error.to_string())),
-        Err(error) => Err(error.into()),
-    }
 }
 
 fn command_ack_from_record(
@@ -944,88 +796,29 @@ fn command_ack_from_record(
     }
 }
 
-fn mode_response_from_ack_result(result: &MobileCommandAckResult) -> proto::SetSessionModeResponse {
-    mode_response_from_record(
-        result.record(),
+fn command_ack_from_ack_result(result: &MobileCommandAckResult) -> proto::CommandAck {
+    let record = result.record();
+    let value = ack_response_value(record);
+    command_ack_from_record(
+        record,
+        &value,
         matches!(result, MobileCommandAckResult::Duplicate(_)),
     )
 }
 
-fn mode_response_from_record(
-    record: &MobileCommandAckRecord,
-    idempotent_replay: bool,
-) -> proto::SetSessionModeResponse {
-    let value = ack_response_value(record);
-    let ack = command_ack_from_record(record, &value, idempotent_replay);
-    proto::SetSessionModeResponse {
-        accepted: ack.accepted,
-        thread_id: json_string(&value, "threadId"),
-        preset: json_string(&value, "preset"),
-        server_time: ack.server_time.clone(),
-        client_mutation_id: ack.client_mutation_id.clone(),
-        ack_seq: ack.ack_seq,
-        entity_id: ack.entity_id.clone(),
-        revision: ack.revision.clone(),
-        idempotent_replay,
-        ack: Some(ack),
-    }
-}
-
-fn prompt_response_from_ack_result(
-    result: &MobileCommandAckResult,
-) -> proto::SendSessionPromptResponse {
-    prompt_response_from_record(
-        result.record(),
-        matches!(result, MobileCommandAckResult::Duplicate(_)),
-    )
-}
-
-fn prompt_response_from_record(
-    record: &MobileCommandAckRecord,
-    idempotent_replay: bool,
-) -> proto::SendSessionPromptResponse {
-    let value = ack_response_value(record);
-    let ack = command_ack_from_record(record, &value, idempotent_replay);
-    proto::SendSessionPromptResponse {
-        accepted: ack.accepted,
-        dispatch_kind: json_string(&value, "dispatchKind"),
-        prompt_id: json_string(&value, "promptId"),
-        server_time: ack.server_time.clone(),
-        client_mutation_id: ack.client_mutation_id.clone(),
-        ack_seq: ack.ack_seq,
-        entity_id: ack.entity_id.clone(),
-        revision: ack.revision.clone(),
-        idempotent_replay,
-        ack: Some(ack),
-    }
-}
-
-fn notification_reply_response_from_command(
+fn notification_reply_ack_from_command(
     response: NotificationReplyCommandResponse,
-) -> proto::SubmitNotificationReplyResponse {
-    let ack = proto::CommandAck {
+) -> proto::CommandAck {
+    proto::CommandAck {
         accepted: response.accepted,
-        client_mutation_id: response.client_mutation_id.clone(),
-        ack_seq: response.ack_seq,
-        entity_id: response.entity_id.clone(),
-        revision: response.revision.clone(),
-        server_time: response.server_time.clone(),
-        idempotent_replay: response.idempotent_replay,
-        error_code: String::new(),
-        reject_reason: String::new(),
-    };
-    proto::SubmitNotificationReplyResponse {
-        accepted: response.accepted,
-        dispatch_kind: response.dispatch_kind,
-        prompt_id: response.prompt_id,
-        server_time: response.server_time,
         client_mutation_id: response.client_mutation_id,
         ack_seq: response.ack_seq,
         entity_id: response.entity_id,
         revision: response.revision,
+        server_time: response.server_time,
         idempotent_replay: response.idempotent_replay,
-        ack: Some(ack),
-        notification_id: response.notification_id,
+        error_code: String::new(),
+        reject_reason: String::new(),
     }
 }
 

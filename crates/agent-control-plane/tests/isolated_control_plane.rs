@@ -12,8 +12,8 @@ use agent_control_plane::auth::{
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::grpc::proto::{
-    ClientFrame, Command, Resume, SendSessionPromptRequest, ServerFrame, SetSessionModeRequest,
-    SubmitNotificationReplyRequest, SubscribeEventsRequest, client_frame, command,
+    ClientFrame, Command, HealthRequest, Resume, SendSessionPromptRequest, ServerFrame,
+    SetSessionModeRequest, SubmitNotificationReplyRequest, client_frame, command,
     looper_realtime_client::LooperRealtimeClient, server_frame,
 };
 use agent_control_plane::http::build_router;
@@ -3393,37 +3393,34 @@ async fn mobile_events_endpoint_requires_mobile_auth() {
 }
 
 #[tokio::test]
-async fn grpc_desktop_events_streams_without_mobile_auth() {
+async fn grpc_health_allows_no_mobile_auth() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     let (_server, mut client) = spawn_grpc_client(control_plane).await;
 
-    let mut stream = client
-        .subscribe_desktop_events(SubscribeEventsRequest {})
+    let response = client
+        .health(HealthRequest {})
         .await
-        .expect("desktop event stream")
+        .expect("health")
         .into_inner();
-    let event = stream
-        .message()
-        .await
-        .expect("stream message")
-        .expect("connected event");
 
-    assert_eq!(event.event_name, "connected");
+    assert!(response.ok);
+    assert_eq!(response.service, "looper-realtime");
 }
 
 #[tokio::test]
-async fn grpc_mobile_events_endpoint_requires_mobile_auth() {
+async fn grpc_session_requires_mobile_auth() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     let (_server, mut client) = spawn_grpc_client(control_plane).await;
+    let request = tonic::Request::new(tokio_stream::iter(Vec::<ClientFrame>::new()));
 
     let error = client
-        .subscribe_mobile_events(SubscribeEventsRequest {})
+        .session(request)
         .await
-        .expect_err("mobile gRPC event stream should require auth");
+        .expect_err("Session stream should require auth");
 
     assert_eq!(error.code(), tonic::Code::Unauthenticated);
 }
@@ -3440,25 +3437,42 @@ async fn grpc_mobile_prompt_records_prompt_resumed_event() {
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
     prime_state_mini_cache(&control_plane);
 
-    let mut request = tonic::Request::new(SendSessionPromptRequest {
-        thread_id: "thread-main".to_owned(),
-        prompt: "Keep going from gRPC.".to_owned(),
-        assistant_surface: String::new(),
-        client_mutation_id: "grpc-prompt-records-event-1".to_owned(),
-    });
+    let command_frame = ClientFrame {
+        frame: Some(client_frame::Frame::Command(Command {
+            command: Some(command::Command::SendSessionPrompt(
+                SendSessionPromptRequest {
+                    thread_id: "thread-main".to_owned(),
+                    prompt: "Keep going from gRPC.".to_owned(),
+                    assistant_surface: String::new(),
+                    client_mutation_id: "grpc-prompt-records-event-1".to_owned(),
+                },
+            )),
+        })),
+    };
+    let mut request = tonic::Request::new(tokio_stream::iter(vec![command_frame]));
     request.metadata_mut().insert(
         "authorization",
         authorization.parse().expect("authorization metadata"),
     );
 
-    let response = client
-        .send_session_prompt(request)
+    let mut stream = client
+        .session(request)
         .await
-        .expect("send session prompt")
+        .expect("Session stream")
         .into_inner();
+    let ack = stream
+        .message()
+        .await
+        .expect("session ACK result")
+        .expect("session ACK frame");
 
-    assert!(response.accepted);
-    assert_eq!(response.dispatch_kind, "accepted");
+    match ack.frame {
+        Some(server_frame::Frame::Ack(ack)) => {
+            assert!(ack.accepted);
+            assert_eq!(ack.client_mutation_id, "grpc-prompt-records-event-1");
+        }
+        other => panic!("expected Session ACK frame, got {other:?}"),
+    }
 
     for _ in 0..80 {
         let events = control_plane
