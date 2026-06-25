@@ -146,6 +146,70 @@ struct LooperRealtimeModelsTests {
     }
 
     @Test
+    func commandBatchResponseRoundTripsToClientCoreResponse() throws {
+        let response = LooperRealtimeSessionCommandBatchResponse(
+            accepted: false,
+            commandAcks: [
+                LooperRealtimeCommandAckEnvelope(
+                    commandKind: "SendSessionPrompt",
+                    ack: LooperRealtimeCommandAck(
+                        accepted: false,
+                        clientMutationID: "mutation-1",
+                        ackSeq: 42,
+                        entityID: "thread-main",
+                        revision: "revision-42",
+                        serverTime: "2026-06-24T00:00:00Z",
+                        idempotentReplay: false,
+                        errorCode: "mode_required",
+                        rejectReason: "session is waiting for a mode"
+                    ),
+                    preset: nil,
+                    dispatchKind: "rejected",
+                    promptID: nil,
+                    notificationID: nil
+                ),
+            ]
+        )
+
+        let coreResponse = try response.clientCoreResponse()
+
+        #expect(!coreResponse.accepted)
+        #expect(coreResponse.commandAcks.first?.commandKind == .sendSessionPrompt)
+        #expect(coreResponse.commandAcks.first?.ack.clientMutationId == "mutation-1")
+        #expect(coreResponse.commandAcks.first?.ack.errorCode == "mode_required")
+        #expect(coreResponse.commandAcks.first?.dispatchKind == "rejected")
+    }
+
+    @Test
+    func commandBatchResponseRejectsUnknownCommandKind() {
+        let response = LooperRealtimeSessionCommandBatchResponse(
+            accepted: true,
+            commandAcks: [
+                LooperRealtimeCommandAckEnvelope(
+                    commandKind: "UnexpectedCommand",
+                    ack: LooperRealtimeCommandAck(
+                        accepted: true,
+                        clientMutationID: "mutation-1",
+                        ackSeq: 42,
+                        entityID: "thread-main",
+                        revision: "revision-42",
+                        serverTime: "2026-06-24T00:00:00Z",
+                        idempotentReplay: false
+                    ),
+                    preset: nil,
+                    dispatchKind: nil,
+                    promptID: nil,
+                    notificationID: nil
+                ),
+            ]
+        )
+
+        #expect(throws: LooperRealtimeSessionCommandFrameError.unexpectedCommandKind("UnexpectedCommand")) {
+            try response.clientCoreResponse()
+        }
+    }
+
+    @Test
     func sessionCommandBuildsFromClientCoreOutboxFrame() throws {
         let frame = OutboundSessionFrame(
             frameKind: .command,

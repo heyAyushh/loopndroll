@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::error::ClientCoreError;
 use crate::model::{
-    ClientCommandAck, ClientCommandKind, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
-    ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientEndpoint,
+    ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
+    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind,
 };
 use crate::transport::validate_endpoint_url;
 
@@ -167,6 +168,17 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let mut state = self.lock_state()?;
         state.reconcile_ack(ack);
+        Ok(state.snapshot())
+    }
+
+    pub fn apply_command_batch_response(
+        &self,
+        response: ClientCommandBatchResponse,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        let mut state = self.lock_state()?;
+        for envelope in response.command_acks {
+            state.reconcile_ack(envelope.ack);
+        }
         Ok(state.snapshot())
     }
 
@@ -427,6 +439,7 @@ fn latest_state_mini_revision(sessions: &[ClientStateMini]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ClientCommandAckEnvelope;
 
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
     const ENDPOINT_LAST_GOOD: &str = "http://100.64.0.2:8765";
@@ -580,6 +593,78 @@ mod tests {
         assert_eq!(
             snapshot.last_error,
             "illegal_transition: WAIT_REPLY required"
+        );
+    }
+
+    #[test]
+    fn command_batch_response_reconciles_all_acks_in_rust_core() {
+        let core = LooperClientCore::new();
+        core.set_mode(
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("queue mode");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let snapshot = core
+            .apply_command_batch_response(ClientCommandBatchResponse {
+                accepted: false,
+                command_acks: vec![
+                    ClientCommandAckEnvelope {
+                        command_kind: ClientCommandKind::SetSessionMode,
+                        ack: ClientCommandAck {
+                            accepted: true,
+                            client_mutation_id: "cmid-mode".to_owned(),
+                            ack_seq: 41,
+                            entity_id: "thread-1".to_owned(),
+                            revision: "rev-41".to_owned(),
+                            server_time: "2026-06-25T00:00:00Z".to_owned(),
+                            idempotent_replay: false,
+                            error_code: String::new(),
+                            reject_reason: String::new(),
+                            current_state: String::new(),
+                        },
+                        preset: "await-reply".to_owned(),
+                        dispatch_kind: String::new(),
+                        prompt_id: String::new(),
+                        notification_id: String::new(),
+                    },
+                    ClientCommandAckEnvelope {
+                        command_kind: ClientCommandKind::SendSessionPrompt,
+                        ack: ClientCommandAck {
+                            accepted: false,
+                            client_mutation_id: "cmid-prompt".to_owned(),
+                            ack_seq: 42,
+                            entity_id: "thread-1".to_owned(),
+                            revision: "rev-42".to_owned(),
+                            server_time: "2026-06-25T00:00:01Z".to_owned(),
+                            idempotent_replay: false,
+                            error_code: "mode_required".to_owned(),
+                            reject_reason: "session is waiting for mode".to_owned(),
+                            current_state: "mode_armed".to_owned(),
+                        },
+                        preset: String::new(),
+                        dispatch_kind: "rejected".to_owned(),
+                        prompt_id: String::new(),
+                        notification_id: String::new(),
+                    },
+                ],
+            })
+            .expect("batch ack");
+
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
+        assert!(snapshot.pending_mutations.is_empty());
+        assert_eq!(
+            snapshot.last_error,
+            "mode_required: session is waiting for mode"
         );
     }
 

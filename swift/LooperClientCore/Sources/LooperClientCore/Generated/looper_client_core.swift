@@ -525,6 +525,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func applyCommandAck(ack: ClientCommandAck) throws  -> ClientStateSnapshot
 
+    func applyCommandBatchResponse(response: ClientCommandBatchResponse) throws  -> ClientStateSnapshot
+
     func applyStateDelta(delta: ClientStateDelta) throws  -> ClientStateSnapshot
 
     func applyStateMiniDelta(delta: ClientStateMiniDelta) throws  -> ClientStateSnapshot
@@ -617,6 +619,15 @@ open func applyCommandAck(ack: ClientCommandAck)throws  -> ClientStateSnapshot  
     uniffi_looper_client_core_fn_method_looperclientcore_apply_command_ack(
             self.uniffiCloneHandle(),
         FfiConverterTypeClientCommandAck_lower(ack),$0
+    )
+})
+}
+
+open func applyCommandBatchResponse(response: ClientCommandBatchResponse)throws  -> ClientStateSnapshot  {
+    return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_apply_command_batch_response(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientCommandBatchResponse_lower(response),$0
     )
 })
 }
@@ -2198,6 +2209,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_ack() != 37442) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_batch_response() != 63124) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_delta() != 30286) {

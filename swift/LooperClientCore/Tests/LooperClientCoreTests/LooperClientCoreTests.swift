@@ -127,6 +127,58 @@ final class LooperClientCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.lastError, "mode_required: session is waiting for a mode")
     }
 
+    func testCommandBatchResponseReconcilesInRustCore() throws {
+        let core = LooperClientCore()
+        _ = try core.setMode(
+            threadId: threadID,
+            preset: "ask",
+            clientMutationId: "mutation-mode"
+        )
+        _ = try core.sendPrompt(
+            threadId: threadID,
+            prompt: "reply now",
+            assistantSurface: "ios",
+            clientMutationId: "mutation-prompt"
+        )
+
+        let snapshot = try core.applyCommandBatchResponse(response: ClientCommandBatchResponse(
+            accepted: false,
+            commandAcks: [
+                ClientCommandAckEnvelope(
+                    commandKind: .setSessionMode,
+                    ack: commandAck(
+                        clientMutationID: "mutation-mode",
+                        accepted: true,
+                        ackSeq: 41
+                    ),
+                    preset: "ask",
+                    dispatchKind: "",
+                    promptId: "",
+                    notificationId: ""
+                ),
+                ClientCommandAckEnvelope(
+                    commandKind: .sendSessionPrompt,
+                    ack: commandAck(
+                        clientMutationID: "mutation-prompt",
+                        accepted: false,
+                        ackSeq: 42,
+                        errorCode: "mode_required",
+                        rejectReason: "session is waiting for a mode"
+                    ),
+                    preset: "",
+                    dispatchKind: "rejected",
+                    promptId: "",
+                    notificationId: ""
+                ),
+            ]
+        ))
+
+        XCTAssertTrue(snapshot.pendingMutations.isEmpty)
+        XCTAssertEqual(snapshot.latestSeq, 42)
+        XCTAssertEqual(snapshot.revision, "rev-42")
+        XCTAssertEqual(snapshot.lastError, "mode_required: session is waiting for a mode")
+    }
+
     func testCommandBatchResponseMatchesAcksInRustCore() throws {
         let response = try buildCommandBatchResponse(
             commands: [
@@ -279,7 +331,9 @@ final class LooperClientCoreTests: XCTestCase {
     private func commandAck(
         clientMutationID: String,
         accepted: Bool,
-        ackSeq: Int64
+        ackSeq: Int64,
+        errorCode: String = "",
+        rejectReason: String = ""
     ) -> ClientCommandAck {
         ClientCommandAck(
             accepted: accepted,
@@ -289,8 +343,8 @@ final class LooperClientCoreTests: XCTestCase {
             revision: "rev-\(ackSeq)",
             serverTime: serverTime,
             idempotentReplay: false,
-            errorCode: "",
-            rejectReason: "",
+            errorCode: errorCode,
+            rejectReason: rejectReason,
             currentState: ""
         )
     }

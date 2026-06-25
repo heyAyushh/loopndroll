@@ -136,6 +136,22 @@ public struct LooperRealtimeCommandAckEnvelope: Equatable, Sendable {
             notificationID: envelope.notificationId.nilIfEmpty
         )
     }
+
+    var clientCoreEnvelope: ClientCommandAckEnvelope {
+        get throws {
+            guard let commandKind = commandKind.clientCoreCommandKind else {
+                throw LooperRealtimeSessionCommandFrameError.unexpectedCommandKind(commandKind)
+            }
+            return ClientCommandAckEnvelope(
+                commandKind: commandKind,
+                ack: ack.clientCoreAck,
+                preset: preset ?? "",
+                dispatchKind: dispatchKind ?? "",
+                promptId: promptID ?? "",
+                notificationId: notificationID ?? ""
+            )
+        }
+    }
 }
 
 public struct LooperRealtimeSessionCommandBatchResponse: Equatable, Sendable {
@@ -154,6 +170,13 @@ public struct LooperRealtimeSessionCommandBatchResponse: Equatable, Sendable {
         self.init(
             accepted: response.accepted,
             commandAcks: response.commandAcks.map(LooperRealtimeCommandAckEnvelope.init)
+        )
+    }
+
+    func clientCoreResponse() throws -> ClientCommandBatchResponse {
+        ClientCommandBatchResponse(
+            accepted: accepted,
+            commandAcks: try commandAcks.map { try $0.clientCoreEnvelope }
         )
     }
 }
@@ -192,6 +215,23 @@ private extension ClientCommandKind {
             "SubmitNotificationReply"
         case .resume:
             "Resume"
+        }
+    }
+}
+
+private extension String {
+    var clientCoreCommandKind: ClientCommandKind? {
+        switch self {
+        case "SetSessionMode":
+            .setSessionMode
+        case "SendSessionPrompt":
+            .sendSessionPrompt
+        case "SubmitNotificationReply":
+            .submitNotificationReply
+        case "Resume":
+            .resume
+        default:
+            nil
         }
     }
 }

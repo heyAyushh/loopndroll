@@ -122,7 +122,6 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
-        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }
@@ -166,7 +165,6 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
-        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }
@@ -218,7 +216,6 @@ public actor MenuBarSessionCommandCenter {
             expected: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
-        _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
         if envelope.ack.accepted {
             try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
         }

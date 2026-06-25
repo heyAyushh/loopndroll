@@ -17,9 +17,7 @@ public extension LooperRealtimeSessionCommandSubmitting {
         )
         let commands = try frames.map(LooperRealtimeSessionCommand.init(outboundFrame:))
         let response = try await submitSessionCommandBatch(commands: commands)
-        for envelope in response.commandAcks {
-            _ = try clientCore.applyCommandAck(ack: envelope.ack.clientCoreAck)
-        }
+        _ = try clientCore.applyCommandBatchResponse(response: response.clientCoreResponse())
         return response
     }
 }
