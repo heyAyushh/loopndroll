@@ -58,6 +58,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
+    @ObservationIgnored private var notificationReplyCoordinator: CompanionNotificationReplyCoordinator?
     @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
@@ -101,6 +102,10 @@ final class CompanionAppModel {
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
+        notificationReplyCoordinator = CompanionNotificationReplyCoordinator(
+            sessionMiniController: sessionMiniController,
+            delegate: self
+        )
         sessionMutationCoordinator = CompanionSessionMutationCoordinator(delegate: self)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
@@ -156,6 +161,13 @@ final class CompanionAppModel {
             preconditionFailure("Connection coordinator used before initialization")
         }
         return connectionCoordinator
+    }
+
+    private var notificationReplies: CompanionNotificationReplyCoordinator {
+        guard let notificationReplyCoordinator else {
+            preconditionFailure("Notification reply coordinator used before initialization")
+        }
+        return notificationReplyCoordinator
     }
 
     var needsAttentionSessions: [SessionSummary] {
@@ -1287,146 +1299,25 @@ final class CompanionAppModel {
         to sessionID: String,
         clientMutationID providedClientMutationID: String? = nil
     ) async -> Bool {
-        let trimmedNotificationID = notificationID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedNotificationID.isEmpty else {
-            errorMessage = "Notification reply is missing its delivery ID."
-            Haptics.warning()
-            return false
-        }
-        guard !trimmedPrompt.isEmpty else {
-            errorMessage = "Prompt is required."
-            Haptics.warning()
-            return false
-        }
-
-        let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
-            ?? selectedAssistantSurface
-        let providedMutationID = providedClientMutationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let clientMutationID = providedMutationID.isEmpty
-            ? SessionQuickActionRequest.notificationReplyClientMutationID(
-                notificationID: trimmedNotificationID
-            )
-            : providedMutationID
-        enqueueLocalNotificationReplyCommand(
-            notificationID: trimmedNotificationID,
-            sessionID: sessionID,
-            prompt: trimmedPrompt,
-            clientMutationID: clientMutationID
+        await notificationReplies.submitNotificationReply(
+            notificationID: notificationID,
+            prompt: prompt,
+            to: sessionID,
+            clientMutationID: providedClientMutationID
         )
-
-        return await sendNotificationReplyCommand(
-            notificationID: trimmedNotificationID,
-            sessionID: sessionID,
-            prompt: trimmedPrompt,
-            targetSurface: targetSurface,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    @discardableResult
-    private func sendNotificationReplyCommand(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        targetSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    ) async -> Bool {
-        do {
-            let response = try await service.submitNotificationReply(
-                notificationID: notificationID,
-                sessionID: sessionID,
-                prompt: prompt,
-                assistantSurface: nil,
-                clientMutationID: clientMutationID
-            )
-            markLocalCommandDelivered(response.clientMutationID)
-            if nextPendingNotificationReplyCommand() == nil {
-                resetNotificationReplyOutboxRetry()
-            }
-            connectionState = .connected
-            errorMessage = nil
-            lastUpdatedAt = Date()
-            CompanionDiagnostics.record(
-                "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
-            )
-            if detailBySessionID[sessionID] != nil {
-                await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
-            }
-            return true
-        } catch {
-            connectionState = connectionState(for: error)
-            clearConnectionRouteStateIfNeeded(for: connectionState)
-            errorMessage = error.localizedDescription
-            Haptics.error()
-            CompanionDiagnostics.record(
-                "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
-            )
-            scheduleNotificationReplyOutboxRetryIfNeeded()
-            return false
-        }
     }
 
     func drainPendingNotificationReplies() async {
-        let drainTask = startNotificationReplyOutboxDrainIfNeeded()
-        await drainTask?.value
+        await notificationReplies.drainPendingNotificationReplies()
     }
 
     @discardableResult
     private func startNotificationReplyOutboxDrainIfNeeded() -> Task<Void, Never>? {
-        sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(
-            drainID: makeClientMutationID()
-        ) { [weak self] command in
-            await self?.submitPendingNotificationReplyCommand(command) ?? false
-        }
+        notificationReplies.startOutboxDrainIfNeeded()
     }
 
     private func stopNotificationReplyOutboxDrain() {
-        sessionMiniController.stopNotificationReplyOutboxDrain()
-    }
-
-    private func nextPendingNotificationReplyCommand() -> CompanionSessionMiniPendingCommand? {
-        sessionMiniController.pendingNotificationReplyCommand()
-    }
-
-    @discardableResult
-    private func submitPendingNotificationReplyCommand(
-        _ command: CompanionSessionMiniPendingCommand
-    ) async -> Bool {
-        guard let notificationID = Self.nonEmptyText(command.notificationID),
-              let prompt = Self.nonEmptyText(command.prompt),
-              let sessionID = Self.nonEmptyText(command.threadID)
-        else {
-            CompanionDiagnostics.record(
-                "notification-reply:drop-malformed-outbox-command id=\(command.clientMutationID)"
-            )
-            markLocalCommandDelivered(command.clientMutationID)
-            return true
-        }
-
-        markLocalCommandAttempted(command.clientMutationID)
-        let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
-            ?? selectedAssistantSurface
-        return await sendNotificationReplyCommand(
-            notificationID: notificationID,
-            sessionID: sessionID,
-            prompt: prompt,
-            targetSurface: targetSurface,
-            clientMutationID: command.clientMutationID
-        )
-    }
-
-    private func scheduleNotificationReplyOutboxRetryIfNeeded() {
-        sessionMiniController.scheduleNotificationReplyOutboxRetryIfNeeded(
-            drainID: makeClientMutationID()
-        ) { [weak self] command in
-            await self?.submitPendingNotificationReplyCommand(command) ?? false
-        }
-    }
-
-    private func resetNotificationReplyOutboxRetry() {
-        sessionMiniController.resetNotificationReplyOutboxRetry()
+        notificationReplies.stopOutboxDrain()
     }
 
     func muteSession(_ sessionID: String) async {
@@ -2372,5 +2263,81 @@ extension CompanionAppModel: CompanionConnectionCoordinatorDelegate {
 
     func connectionCoordinatorReloadConnection() async {
         await reloadConnection()
+    }
+}
+
+extension CompanionAppModel: CompanionNotificationReplyCoordinatorDelegate {
+    var notificationReplyService: any CompanionService {
+        service
+    }
+
+    var notificationReplySelectedAssistantSurface: CompanionAssistantSurface {
+        selectedAssistantSurface
+    }
+
+    func notificationReplyMakeClientMutationID() -> String {
+        makeClientMutationID()
+    }
+
+    func notificationReplyAssistantSurface(for sessionID: String) -> CompanionAssistantSurface? {
+        sessionIndex.assistantSurface(containingSessionID: sessionID)
+    }
+
+    func notificationReplyReject(_ message: String) {
+        errorMessage = message
+        Haptics.warning()
+    }
+
+    func notificationReplyEnqueueCommand(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        clientMutationID: String
+    ) {
+        enqueueLocalNotificationReplyCommand(
+            notificationID: notificationID,
+            sessionID: sessionID,
+            prompt: prompt,
+            clientMutationID: clientMutationID
+        )
+    }
+
+    func notificationReplyMarkCommandAttempted(_ clientMutationID: String) {
+        markLocalCommandAttempted(clientMutationID)
+    }
+
+    func notificationReplyMarkCommandDelivered(_ clientMutationID: String?) {
+        markLocalCommandDelivered(clientMutationID)
+    }
+
+    func notificationReplyApplyAccepted(
+        _ response: LooperRealtimeNotificationReplyResponse,
+        sessionID: String,
+        notificationID: String,
+        targetSurface: CompanionAssistantSurface
+    ) async {
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
+        )
+        if detailBySessionID[sessionID] != nil {
+            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
+        }
+    }
+
+    func notificationReplyApplyFailure(
+        _ error: Error,
+        sessionID: String,
+        notificationID: String
+    ) {
+        connectionState = connectionState(for: error)
+        clearConnectionRouteStateIfNeeded(for: connectionState)
+        errorMessage = error.localizedDescription
+        Haptics.error()
+        CompanionDiagnostics.record(
+            "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
+        )
     }
 }
