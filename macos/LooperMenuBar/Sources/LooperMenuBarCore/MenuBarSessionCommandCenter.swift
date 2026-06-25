@@ -273,36 +273,12 @@ public actor MenuBarSessionCommandCenter {
                 actual: frame.clientMutationId
             )
         }
-        return try sessionCommand(from: frame)
-    }
-
-    private func sessionCommand(from frame: OutboundSessionFrame) throws
-        -> LooperRealtimeSessionCommand
-    {
-        switch frame.commandKind {
-        case .setSessionMode:
-            return .setSessionMode(
-                threadID: frame.threadId,
-                preset: frame.preset.nilIfBlank,
-                clientMutationID: frame.clientMutationId
+        do {
+            return try LooperRealtimeSessionCommand(outboundFrame: frame)
+        } catch {
+            throw MenuBarSessionCommandError.unexpectedClientCoreCommandKind(
+                String(describing: error)
             )
-        case .sendSessionPrompt:
-            return .sendSessionPrompt(
-                threadID: frame.threadId,
-                prompt: frame.prompt,
-                assistantSurface: frame.assistantSurface.nilIfBlank,
-                clientMutationID: frame.clientMutationId
-            )
-        case .submitNotificationReply:
-            return .submitNotificationReply(
-                notificationID: frame.notificationId,
-                threadID: frame.threadId,
-                prompt: frame.prompt,
-                assistantSurface: frame.assistantSurface.nilIfBlank,
-                clientMutationID: frame.clientMutationId
-            )
-        case .resume:
-            throw MenuBarSessionCommandError.unexpectedClientCoreCommandKind("Resume")
         }
     }
 

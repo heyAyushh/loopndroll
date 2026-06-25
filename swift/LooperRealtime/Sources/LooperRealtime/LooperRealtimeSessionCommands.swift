@@ -17,6 +17,42 @@ public enum LooperRealtimeSessionCommand: Equatable, Sendable {
         clientMutationID: String
     )
 
+    public init(outboundFrame frame: OutboundSessionFrame) throws {
+        guard frame.frameKind == .command else {
+            throw LooperRealtimeSessionCommandFrameError.unexpectedFrameKind(
+                frame.frameKind.realtimeFrameKind
+            )
+        }
+
+        switch frame.commandKind {
+        case .setSessionMode:
+            self = .setSessionMode(
+                threadID: frame.threadId,
+                preset: frame.preset.nilIfEmpty,
+                clientMutationID: frame.clientMutationId
+            )
+        case .sendSessionPrompt:
+            self = .sendSessionPrompt(
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfEmpty,
+                clientMutationID: frame.clientMutationId
+            )
+        case .submitNotificationReply:
+            self = .submitNotificationReply(
+                notificationID: frame.notificationId,
+                threadID: frame.threadId,
+                prompt: frame.prompt,
+                assistantSurface: frame.assistantSurface.nilIfEmpty,
+                clientMutationID: frame.clientMutationId
+            )
+        case .resume:
+            throw LooperRealtimeSessionCommandFrameError.unexpectedCommandKind(
+                frame.commandKind.realtimeCommandKind
+            )
+        }
+    }
+
     public var commandKind: String {
         switch self {
         case .setSessionMode:
@@ -59,6 +95,11 @@ public enum LooperRealtimeSessionCommand: Equatable, Sendable {
         }
         return nil
     }
+}
+
+public enum LooperRealtimeSessionCommandFrameError: Error, Equatable, Sendable {
+    case unexpectedFrameKind(String)
+    case unexpectedCommandKind(String)
 }
 
 public struct LooperRealtimeCommandAckEnvelope: Equatable, Sendable {
@@ -149,6 +190,17 @@ private extension ClientCommandKind {
             "SendSessionPrompt"
         case .submitNotificationReply:
             "SubmitNotificationReply"
+        case .resume:
+            "Resume"
+        }
+    }
+}
+
+private extension OutboundSessionFrameKind {
+    var realtimeFrameKind: String {
+        switch self {
+        case .command:
+            "Command"
         case .resume:
             "Resume"
         }

@@ -388,36 +388,10 @@ struct HTTPCompanionService: CompanionService {
             )
             throw HTTPCompanionServiceError.invalidResponse
         }
-        return try frames.map(sessionCommand(from:))
-    }
-
-    private func sessionCommand(from frame: OutboundSessionFrame) throws
-        -> LooperRealtimeSessionCommand
-    {
-        switch frame.commandKind {
-        case .setSessionMode:
-            return .setSessionMode(
-                threadID: frame.threadId,
-                preset: frame.preset.nilIfBlank,
-                clientMutationID: frame.clientMutationId
-            )
-        case .sendSessionPrompt:
-            return .sendSessionPrompt(
-                threadID: frame.threadId,
-                prompt: frame.prompt,
-                assistantSurface: frame.assistantSurface.nilIfBlank,
-                clientMutationID: frame.clientMutationId
-            )
-        case .submitNotificationReply:
-            return .submitNotificationReply(
-                notificationID: frame.notificationId,
-                threadID: frame.threadId,
-                prompt: frame.prompt,
-                assistantSurface: frame.assistantSurface.nilIfBlank,
-                clientMutationID: frame.clientMutationId
-            )
-        case .resume:
-            CompanionDiagnostics.record("session-command:unexpected-resume-frame")
+        do {
+            return try frames.map(LooperRealtimeSessionCommand.init(outboundFrame:))
+        } catch {
+            CompanionDiagnostics.record("session-command:unexpected-client-core-frame \(error)")
             throw HTTPCompanionServiceError.invalidResponse
         }
     }

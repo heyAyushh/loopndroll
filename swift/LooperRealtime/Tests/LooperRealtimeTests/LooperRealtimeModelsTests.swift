@@ -146,6 +146,49 @@ struct LooperRealtimeModelsTests {
     }
 
     @Test
+    func sessionCommandBuildsFromClientCoreOutboxFrame() throws {
+        let frame = OutboundSessionFrame(
+            frameKind: .command,
+            commandKind: .sendSessionPrompt,
+            threadId: "thread-main",
+            preset: "",
+            prompt: "ship it",
+            assistantSurface: "codex",
+            notificationId: "",
+            clientMutationId: "mutation-1",
+            afterSeq: 0
+        )
+
+        let command = try LooperRealtimeSessionCommand(outboundFrame: frame)
+
+        #expect(command == .sendSessionPrompt(
+            threadID: "thread-main",
+            prompt: "ship it",
+            assistantSurface: "codex",
+            clientMutationID: "mutation-1"
+        ))
+    }
+
+    @Test
+    func sessionCommandRejectsResumeOutboxFrame() {
+        let frame = OutboundSessionFrame(
+            frameKind: .resume,
+            commandKind: .resume,
+            threadId: "",
+            preset: "",
+            prompt: "",
+            assistantSurface: "",
+            notificationId: "",
+            clientMutationId: "",
+            afterSeq: 44
+        )
+
+        #expect(throws: LooperRealtimeSessionCommandFrameError.unexpectedFrameKind("Resume")) {
+            try LooperRealtimeSessionCommand(outboundFrame: frame)
+        }
+    }
+
+    @Test
     func localStoreDedupesOutboxAndAppliesMiniDeltas() throws {
         let fileURL = temporaryStoreFileURL()
         let store = try LooperRealtimeLocalStore(fileURL: fileURL)
