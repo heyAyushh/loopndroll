@@ -77,11 +77,42 @@ pub struct ClientStateDelta {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientStateMini {
+    pub session_id: String,
+    pub assistant_surface: String,
+    pub seq: i64,
+    pub revision: String,
+    pub payload_json: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientStateMiniSnapshot {
+    pub latest_seq: i64,
+    pub sessions: Vec<ClientStateMini>,
+    pub server_time: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientStateMiniDelta {
+    pub seq: i64,
+    pub latest_seq: i64,
+    pub entity_id: String,
+    pub kind: String,
+    pub revision: String,
+    pub server_time: String,
+    pub has_session: bool,
+    pub session: ClientStateMini,
+    pub sessions: Vec<ClientStateMini>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientStateSnapshot {
     pub phase: ConnectionPhase,
     pub endpoint_url: String,
     pub latest_seq: i64,
     pub revision: String,
+    pub server_time: String,
+    pub state_minis: Vec<ClientStateMini>,
     pub pending_mutations: Vec<ClientPendingMutation>,
     pub outbox_depth: u32,
     pub last_error: String,

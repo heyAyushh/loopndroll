@@ -9,5 +9,6 @@ pub use client::LooperClientCore;
 pub use error::ClientCoreError;
 pub use model::{
     ClientCommandAck, ClientCommandKind, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
-    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };

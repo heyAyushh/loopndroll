@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::error::ClientCoreError;
 use crate::model::{
     ClientCommandAck, ClientCommandKind, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
-    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 use crate::transport::validate_endpoint_url;
 
@@ -16,6 +17,8 @@ struct ClientCoreState {
     endpoint_url: String,
     latest_seq: i64,
     revision: String,
+    server_time: String,
+    state_minis: Vec<ClientStateMini>,
     pending_mutations: Vec<ClientPendingMutation>,
     outbox: Vec<OutboundSessionFrame>,
     last_error: String,
@@ -171,9 +174,65 @@ impl LooperClientCore {
         &self,
         delta: ClientStateDelta,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_valid_sequence(delta.seq)?;
+
         let mut state = self.lock_state()?;
         state.latest_seq = state.latest_seq.max(delta.seq);
         state.revision = delta.revision;
+        state.server_time = delta.server_time;
+        state.last_error.clear();
+        Ok(state.snapshot())
+    }
+
+    pub fn replace_state_minis(
+        &self,
+        snapshot: ClientStateMiniSnapshot,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_valid_sequence(snapshot.latest_seq)?;
+        validate_state_minis(&snapshot.sessions)?;
+
+        let mut state = self.lock_state()?;
+        state.latest_seq = snapshot.latest_seq;
+        state.server_time = snapshot.server_time;
+        state.state_minis = normalize_state_minis(snapshot.sessions);
+        if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
+            state.revision = revision;
+        }
+        state.last_error.clear();
+        Ok(state.snapshot())
+    }
+
+    pub fn apply_state_mini_delta(
+        &self,
+        delta: ClientStateMiniDelta,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_valid_sequence(delta.seq)?;
+        require_valid_sequence(delta.latest_seq)?;
+        if delta.has_session {
+            validate_state_mini(&delta.session)?;
+        }
+        validate_state_minis(&delta.sessions)?;
+
+        let mut state = self.lock_state()?;
+        if delta.seq <= state.latest_seq {
+            return Ok(state.snapshot());
+        }
+
+        if delta.has_session {
+            state.upsert_state_mini(delta.session);
+        } else if !delta.sessions.is_empty() {
+            state.state_minis = normalize_state_minis(delta.sessions);
+        }
+
+        state.latest_seq = state.latest_seq.max(delta.seq).max(delta.latest_seq);
+        if !delta.revision.is_empty() {
+            state.revision = delta.revision;
+        } else if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
+            state.revision = revision;
+        }
+        if !delta.server_time.is_empty() {
+            state.server_time = delta.server_time;
+        }
         state.last_error.clear();
         Ok(state.snapshot())
     }
@@ -204,6 +263,8 @@ impl ClientCoreState {
             endpoint_url: self.endpoint_url.clone(),
             latest_seq: self.latest_seq,
             revision: self.revision.clone(),
+            server_time: self.server_time.clone(),
+            state_minis: self.state_minis.clone(),
             pending_mutations: self.pending_mutations.clone(),
             outbox_depth: self.outbox.len() as u32,
             last_error: self.last_error.clone(),
@@ -239,6 +300,19 @@ impl ClientCoreState {
             self.last_error = reject_message;
         }
     }
+
+    fn upsert_state_mini(&mut self, session: ClientStateMini) {
+        if let Some(index) = self
+            .state_minis
+            .iter()
+            .position(|current| same_state_mini_key(current, &session))
+        {
+            self.state_minis[index] = session;
+        } else {
+            self.state_minis.push(session);
+        }
+        sort_state_minis(&mut self.state_minis);
+    }
 }
 
 fn select_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, ClientCoreError> {
@@ -267,12 +341,75 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
     }
 }
 
+fn require_valid_sequence(sequence: i64) -> Result<(), ClientCoreError> {
+    if sequence < INITIAL_SEQUENCE {
+        Err(ClientCoreError::InvalidSequence)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_state_minis(sessions: &[ClientStateMini]) -> Result<(), ClientCoreError> {
+    for session in sessions {
+        validate_state_mini(session)?;
+    }
+    Ok(())
+}
+
+fn validate_state_mini(session: &ClientStateMini) -> Result<(), ClientCoreError> {
+    require_present(&session.session_id, ClientCoreError::EmptySessionId)?;
+    require_valid_sequence(session.seq)
+}
+
+fn normalize_state_minis(sessions: Vec<ClientStateMini>) -> Vec<ClientStateMini> {
+    let mut normalized = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        if let Some(index) = normalized
+            .iter()
+            .position(|current| same_state_mini_key(current, &session))
+        {
+            normalized[index] = session;
+        } else {
+            normalized.push(session);
+        }
+    }
+    sort_state_minis(&mut normalized);
+    normalized
+}
+
+fn sort_state_minis(sessions: &mut [ClientStateMini]) {
+    sessions.sort_by(|lhs, rhs| {
+        lhs.seq
+            .cmp(&rhs.seq)
+            .then_with(|| lhs.assistant_surface.cmp(&rhs.assistant_surface))
+            .then_with(|| lhs.session_id.cmp(&rhs.session_id))
+    });
+}
+
+fn same_state_mini_key(lhs: &ClientStateMini, rhs: &ClientStateMini) -> bool {
+    lhs.session_id == rhs.session_id && lhs.assistant_surface == rhs.assistant_surface
+}
+
+fn latest_state_mini_revision(sessions: &[ClientStateMini]) -> Option<String> {
+    sessions
+        .iter()
+        .filter(|session| !session.revision.is_empty())
+        .max_by(|lhs, rhs| {
+            lhs.seq
+                .cmp(&rhs.seq)
+                .then_with(|| lhs.assistant_surface.cmp(&rhs.assistant_surface))
+                .then_with(|| lhs.session_id.cmp(&rhs.session_id))
+        })
+        .map(|session| session.revision.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
     const ENDPOINT_LAST_GOOD: &str = "http://100.64.0.2:8765";
+    const SERVER_TIME: &str = "2026-06-25T00:00:02Z";
 
     #[test]
     fn connect_prefers_last_good_endpoint() {
@@ -402,13 +539,109 @@ mod tests {
                 entity_id: "thread-1".to_owned(),
                 kind: "session-mode".to_owned(),
                 revision: "rev-44".to_owned(),
-                server_time: "2026-06-25T00:00:02Z".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
                 payload_json: r#"{"mode":"await-reply"}"#.to_owned(),
             })
             .expect("state delta");
 
         assert_eq!(snapshot.latest_seq, 44);
         assert_eq!(snapshot.revision, "rev-44");
+        assert_eq!(snapshot.server_time, SERVER_TIME);
+    }
+
+    #[test]
+    fn state_mini_snapshot_replaces_and_normalizes_records() {
+        let core = LooperClientCore::new();
+
+        let snapshot = core
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 10,
+                sessions: vec![
+                    state_mini("thread-2", "codex", 7, "rev-7", "queued"),
+                    state_mini("thread-1", "codex", 5, "rev-5", "old"),
+                    state_mini("thread-1", "codex", 9, "rev-9", "current"),
+                ],
+                server_time: SERVER_TIME.to_owned(),
+            })
+            .expect("replace minis");
+
+        assert_eq!(snapshot.latest_seq, 10);
+        assert_eq!(snapshot.revision, "rev-9");
+        assert_eq!(snapshot.server_time, SERVER_TIME);
+        assert_eq!(
+            snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2", "thread-1"]
+        );
+        assert_eq!(
+            snapshot.state_minis[1].payload_json,
+            r#"{"title":"current"}"#
+        );
+    }
+
+    #[test]
+    fn state_mini_delta_upserts_and_ignores_stale_sequences() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 2,
+            sessions: vec![state_mini("thread-1", "codex", 2, "rev-2", "old")],
+            server_time: String::new(),
+        })
+        .expect("seed minis");
+
+        let snapshot = core
+            .apply_state_mini_delta(ClientStateMiniDelta {
+                seq: 3,
+                latest_seq: 3,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-3".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: state_mini("thread-1", "codex", 3, "rev-3", "new"),
+                sessions: vec![],
+            })
+            .expect("apply mini delta");
+
+        assert_eq!(snapshot.latest_seq, 3);
+        assert_eq!(snapshot.state_minis.len(), 1);
+        assert_eq!(snapshot.state_minis[0].payload_json, r#"{"title":"new"}"#);
+
+        let stale = core
+            .apply_state_mini_delta(ClientStateMiniDelta {
+                seq: 2,
+                latest_seq: 2,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-stale".to_owned(),
+                server_time: String::new(),
+                has_session: true,
+                session: state_mini("thread-1", "codex", 2, "rev-stale", "stale"),
+                sessions: vec![],
+            })
+            .expect("ignore stale mini delta");
+
+        assert_eq!(stale.latest_seq, 3);
+        assert_eq!(stale.revision, "rev-3");
+        assert_eq!(stale.state_minis[0].payload_json, r#"{"title":"new"}"#);
+    }
+
+    #[test]
+    fn invalid_state_mini_input_is_rejected() {
+        let core = LooperClientCore::new();
+
+        let error = core
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 1,
+                sessions: vec![state_mini("", "codex", 1, "rev-1", "bad")],
+                server_time: String::new(),
+            })
+            .expect_err("empty session id");
+
+        assert_eq!(error, ClientCoreError::EmptySessionId);
     }
 
     #[test]
@@ -438,5 +671,21 @@ mod tests {
 
         assert_eq!(error, ClientCoreError::EmptyMutationId);
         assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
+    }
+
+    fn state_mini(
+        session_id: &str,
+        assistant_surface: &str,
+        seq: i64,
+        revision: &str,
+        title: &str,
+    ) -> ClientStateMini {
+        ClientStateMini {
+            session_id: session_id.to_owned(),
+            assistant_surface: assistant_surface.to_owned(),
+            seq,
+            revision: revision.to_owned(),
+            payload_json: format!(r#"{{"title":"{}"}}"#, title),
+        }
     }
 }

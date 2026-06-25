@@ -352,7 +352,7 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles. 
+// Initial value and increment amount for handles.
 // These ensure that SWIFT handles always have the lowest bit set
 fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
 fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
@@ -522,29 +522,33 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 public protocol LooperClientCoreProtocol: AnyObject, Sendable {
-    
+
     func applyCommandAck(ack: ClientCommandAck) throws  -> ClientStateSnapshot
-    
+
     func applyStateDelta(delta: ClientStateDelta) throws  -> ClientStateSnapshot
-    
+
+    func applyStateMiniDelta(delta: ClientStateMiniDelta) throws  -> ClientStateSnapshot
+
     func connect(endpoints: [ClientEndpoint]) throws  -> ClientStateSnapshot
-    
+
     func disconnect() throws  -> ClientStateSnapshot
-    
+
     func markReconnecting() throws  -> ClientStateSnapshot
-    
+
+    func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
+
     func resumeAfter(afterSeq: Int64) throws  -> ClientStateSnapshot
-    
+
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientStateSnapshot
-    
+
     func setMode(threadId: String, preset: String, clientMutationId: String) throws  -> ClientStateSnapshot
-    
+
     func snapshot() throws  -> ClientStateSnapshot
-    
+
     func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientStateSnapshot
-    
+
     func takeOutbox() throws  -> [OutboundSessionFrame]
-    
+
 }
 open class LooperClientCore: LooperClientCoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -603,9 +607,9 @@ public convenience init() {
         try! rustCall { uniffi_looper_client_core_fn_free_looperclientcore(handle, $0) }
     }
 
-    
 
-    
+
+
 open func applyCommandAck(ack: ClientCommandAck)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_apply_command_ack(
@@ -614,7 +618,7 @@ open func applyCommandAck(ack: ClientCommandAck)throws  -> ClientStateSnapshot  
     )
 })
 }
-    
+
 open func applyStateDelta(delta: ClientStateDelta)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_apply_state_delta(
@@ -623,7 +627,16 @@ open func applyStateDelta(delta: ClientStateDelta)throws  -> ClientStateSnapshot
     )
 })
 }
-    
+
+open func applyStateMiniDelta(delta: ClientStateMiniDelta)throws  -> ClientStateSnapshot  {
+    return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_apply_state_mini_delta(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientStateMiniDelta_lower(delta),$0
+    )
+})
+}
+
 open func connect(endpoints: [ClientEndpoint])throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_connect(
@@ -632,7 +645,7 @@ open func connect(endpoints: [ClientEndpoint])throws  -> ClientStateSnapshot  {
     )
 })
 }
-    
+
 open func disconnect()throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_disconnect(
@@ -640,7 +653,7 @@ open func disconnect()throws  -> ClientStateSnapshot  {
     )
 })
 }
-    
+
 open func markReconnecting()throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_mark_reconnecting(
@@ -648,7 +661,16 @@ open func markReconnecting()throws  -> ClientStateSnapshot  {
     )
 })
 }
-    
+
+open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientStateSnapshot  {
+    return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_replace_state_minis(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientStateMiniSnapshot_lower(snapshot),$0
+    )
+})
+}
+
 open func resumeAfter(afterSeq: Int64)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_resume_after(
@@ -657,7 +679,7 @@ open func resumeAfter(afterSeq: Int64)throws  -> ClientStateSnapshot  {
     )
 })
 }
-    
+
 open func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_send_prompt(
@@ -669,7 +691,7 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
     )
 })
 }
-    
+
 open func setMode(threadId: String, preset: String, clientMutationId: String)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_set_mode(
@@ -680,7 +702,7 @@ open func setMode(threadId: String, preset: String, clientMutationId: String)thr
     )
 })
 }
-    
+
 open func snapshot()throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_snapshot(
@@ -688,7 +710,7 @@ open func snapshot()throws  -> ClientStateSnapshot  {
     )
 })
 }
-    
+
 open func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply(
@@ -701,7 +723,7 @@ open func submitNotificationReply(notificationId: String, threadId: String, prom
     )
 })
 }
-    
+
 open func takeOutbox()throws  -> [OutboundSessionFrame]  {
     return try  FfiConverterSequenceTypeOutboundSessionFrame.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_take_outbox(
@@ -709,9 +731,9 @@ open func takeOutbox()throws  -> [OutboundSessionFrame]  {
     )
 })
 }
-    
 
-    
+
+
 }
 
 
@@ -785,9 +807,9 @@ public struct ClientCommandAck: Equatable, Hashable {
         self.currentState = currentState
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -801,15 +823,15 @@ public struct FfiConverterTypeClientCommandAck: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandAck {
         return
             try ClientCommandAck(
-                accepted: FfiConverterBool.read(from: &buf), 
-                clientMutationId: FfiConverterString.read(from: &buf), 
-                ackSeq: FfiConverterInt64.read(from: &buf), 
-                entityId: FfiConverterString.read(from: &buf), 
-                revision: FfiConverterString.read(from: &buf), 
-                serverTime: FfiConverterString.read(from: &buf), 
-                idempotentReplay: FfiConverterBool.read(from: &buf), 
-                errorCode: FfiConverterString.read(from: &buf), 
-                rejectReason: FfiConverterString.read(from: &buf), 
+                accepted: FfiConverterBool.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                ackSeq: FfiConverterInt64.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                idempotentReplay: FfiConverterBool.read(from: &buf),
+                errorCode: FfiConverterString.read(from: &buf),
+                rejectReason: FfiConverterString.read(from: &buf),
                 currentState: FfiConverterString.read(from: &buf)
         )
     }
@@ -855,9 +877,9 @@ public struct ClientEndpoint: Equatable, Hashable {
         self.lastGood = lastGood
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -871,7 +893,7 @@ public struct FfiConverterTypeClientEndpoint: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientEndpoint {
         return
             try ClientEndpoint(
-                url: FfiConverterString.read(from: &buf), 
+                url: FfiConverterString.read(from: &buf),
                 lastGood: FfiConverterBool.read(from: &buf)
         )
     }
@@ -911,9 +933,9 @@ public struct ClientPendingMutation: Equatable, Hashable {
         self.threadId = threadId
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -927,8 +949,8 @@ public struct FfiConverterTypeClientPendingMutation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientPendingMutation {
         return
             try ClientPendingMutation(
-                clientMutationId: FfiConverterString.read(from: &buf), 
-                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf), 
+                clientMutationId: FfiConverterString.read(from: &buf),
+                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
                 threadId: FfiConverterString.read(from: &buf)
         )
     }
@@ -975,9 +997,9 @@ public struct ClientStateDelta: Equatable, Hashable {
         self.payloadJson = payloadJson
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -991,11 +1013,11 @@ public struct FfiConverterTypeClientStateDelta: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateDelta {
         return
             try ClientStateDelta(
-                seq: FfiConverterInt64.read(from: &buf), 
-                entityId: FfiConverterString.read(from: &buf), 
-                kind: FfiConverterString.read(from: &buf), 
-                revision: FfiConverterString.read(from: &buf), 
-                serverTime: FfiConverterString.read(from: &buf), 
+                seq: FfiConverterInt64.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
                 payloadJson: FfiConverterString.read(from: &buf)
         )
     }
@@ -1026,30 +1048,240 @@ public func FfiConverterTypeClientStateDelta_lower(_ value: ClientStateDelta) ->
 }
 
 
+public struct ClientStateMini: Equatable, Hashable {
+    public var sessionId: String
+    public var assistantSurface: String
+    public var seq: Int64
+    public var revision: String
+    public var payloadJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, assistantSurface: String, seq: Int64, revision: String, payloadJson: String) {
+        self.sessionId = sessionId
+        self.assistantSurface = assistantSurface
+        self.seq = seq
+        self.revision = revision
+        self.payloadJson = payloadJson
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMini: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMini: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMini {
+        return
+            try ClientStateMini(
+                sessionId: FfiConverterString.read(from: &buf),
+                assistantSurface: FfiConverterString.read(from: &buf),
+                seq: FfiConverterInt64.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                payloadJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientStateMini, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.assistantSurface, into: &buf)
+        FfiConverterInt64.write(value.seq, into: &buf)
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterString.write(value.payloadJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMini_lift(_ buf: RustBuffer) throws -> ClientStateMini {
+    return try FfiConverterTypeClientStateMini.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMini_lower(_ value: ClientStateMini) -> RustBuffer {
+    return FfiConverterTypeClientStateMini.lower(value)
+}
+
+
+public struct ClientStateMiniDelta: Equatable, Hashable {
+    public var seq: Int64
+    public var latestSeq: Int64
+    public var entityId: String
+    public var kind: String
+    public var revision: String
+    public var serverTime: String
+    public var hasSession: Bool
+    public var session: ClientStateMini
+    public var sessions: [ClientStateMini]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(seq: Int64, latestSeq: Int64, entityId: String, kind: String, revision: String, serverTime: String, hasSession: Bool, session: ClientStateMini, sessions: [ClientStateMini]) {
+        self.seq = seq
+        self.latestSeq = latestSeq
+        self.entityId = entityId
+        self.kind = kind
+        self.revision = revision
+        self.serverTime = serverTime
+        self.hasSession = hasSession
+        self.session = session
+        self.sessions = sessions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMiniDelta: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMiniDelta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMiniDelta {
+        return
+            try ClientStateMiniDelta(
+                seq: FfiConverterInt64.read(from: &buf),
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                hasSession: FfiConverterBool.read(from: &buf),
+                session: FfiConverterTypeClientStateMini.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientStateMini.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientStateMiniDelta, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.seq, into: &buf)
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterString.write(value.entityId, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+        FfiConverterBool.write(value.hasSession, into: &buf)
+        FfiConverterTypeClientStateMini.write(value.session, into: &buf)
+        FfiConverterSequenceTypeClientStateMini.write(value.sessions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniDelta_lift(_ buf: RustBuffer) throws -> ClientStateMiniDelta {
+    return try FfiConverterTypeClientStateMiniDelta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniDelta_lower(_ value: ClientStateMiniDelta) -> RustBuffer {
+    return FfiConverterTypeClientStateMiniDelta.lower(value)
+}
+
+
+public struct ClientStateMiniSnapshot: Equatable, Hashable {
+    public var latestSeq: Int64
+    public var sessions: [ClientStateMini]
+    public var serverTime: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(latestSeq: Int64, sessions: [ClientStateMini], serverTime: String) {
+        self.latestSeq = latestSeq
+        self.sessions = sessions
+        self.serverTime = serverTime
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMiniSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMiniSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMiniSnapshot {
+        return
+            try ClientStateMiniSnapshot(
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientStateMini.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientStateMiniSnapshot, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterSequenceTypeClientStateMini.write(value.sessions, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniSnapshot_lift(_ buf: RustBuffer) throws -> ClientStateMiniSnapshot {
+    return try FfiConverterTypeClientStateMiniSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniSnapshot_lower(_ value: ClientStateMiniSnapshot) -> RustBuffer {
+    return FfiConverterTypeClientStateMiniSnapshot.lower(value)
+}
+
+
 public struct ClientStateSnapshot: Equatable, Hashable {
     public var phase: ConnectionPhase
     public var endpointUrl: String
     public var latestSeq: Int64
     public var revision: String
+    public var serverTime: String
+    public var stateMinis: [ClientStateMini]
     public var pendingMutations: [ClientPendingMutation]
     public var outboxDepth: UInt32
     public var lastError: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(phase: ConnectionPhase, endpointUrl: String, latestSeq: Int64, revision: String, pendingMutations: [ClientPendingMutation], outboxDepth: UInt32, lastError: String) {
+    public init(phase: ConnectionPhase, endpointUrl: String, latestSeq: Int64, revision: String, serverTime: String, stateMinis: [ClientStateMini], pendingMutations: [ClientPendingMutation], outboxDepth: UInt32, lastError: String) {
         self.phase = phase
         self.endpointUrl = endpointUrl
         self.latestSeq = latestSeq
         self.revision = revision
+        self.serverTime = serverTime
+        self.stateMinis = stateMinis
         self.pendingMutations = pendingMutations
         self.outboxDepth = outboxDepth
         self.lastError = lastError
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -1063,12 +1295,14 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateSnapshot {
         return
             try ClientStateSnapshot(
-                phase: FfiConverterTypeConnectionPhase.read(from: &buf), 
-                endpointUrl: FfiConverterString.read(from: &buf), 
-                latestSeq: FfiConverterInt64.read(from: &buf), 
-                revision: FfiConverterString.read(from: &buf), 
-                pendingMutations: FfiConverterSequenceTypeClientPendingMutation.read(from: &buf), 
-                outboxDepth: FfiConverterUInt32.read(from: &buf), 
+                phase: FfiConverterTypeConnectionPhase.read(from: &buf),
+                endpointUrl: FfiConverterString.read(from: &buf),
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                stateMinis: FfiConverterSequenceTypeClientStateMini.read(from: &buf),
+                pendingMutations: FfiConverterSequenceTypeClientPendingMutation.read(from: &buf),
+                outboxDepth: FfiConverterUInt32.read(from: &buf),
                 lastError: FfiConverterString.read(from: &buf)
         )
     }
@@ -1078,6 +1312,8 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
         FfiConverterString.write(value.endpointUrl, into: &buf)
         FfiConverterInt64.write(value.latestSeq, into: &buf)
         FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+        FfiConverterSequenceTypeClientStateMini.write(value.stateMinis, into: &buf)
         FfiConverterSequenceTypeClientPendingMutation.write(value.pendingMutations, into: &buf)
         FfiConverterUInt32.write(value.outboxDepth, into: &buf)
         FfiConverterString.write(value.lastError, into: &buf)
@@ -1125,9 +1361,9 @@ public struct OutboundSessionFrame: Equatable, Hashable {
         self.afterSeq = afterSeq
     }
 
-    
 
-    
+
+
 }
 
 #if compiler(>=6)
@@ -1141,14 +1377,14 @@ public struct FfiConverterTypeOutboundSessionFrame: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OutboundSessionFrame {
         return
             try OutboundSessionFrame(
-                frameKind: FfiConverterTypeOutboundSessionFrameKind.read(from: &buf), 
-                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf), 
-                threadId: FfiConverterString.read(from: &buf), 
-                preset: FfiConverterString.read(from: &buf), 
-                prompt: FfiConverterString.read(from: &buf), 
-                assistantSurface: FfiConverterString.read(from: &buf), 
-                notificationId: FfiConverterString.read(from: &buf), 
-                clientMutationId: FfiConverterString.read(from: &buf), 
+                frameKind: FfiConverterTypeOutboundSessionFrameKind.read(from: &buf),
+                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
+                threadId: FfiConverterString.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf),
+                prompt: FfiConverterString.read(from: &buf),
+                assistantSurface: FfiConverterString.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
                 afterSeq: FfiConverterInt64.read(from: &buf)
         )
     }
@@ -1185,7 +1421,7 @@ public func FfiConverterTypeOutboundSessionFrame_lower(_ value: OutboundSessionF
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ClientCommandKind: Equatable, Hashable {
-    
+
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
@@ -1210,38 +1446,38 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .setSessionMode
-        
+
         case 2: return .sendSessionPrompt
-        
+
         case 3: return .submitNotificationReply
-        
+
         case 4: return .resume
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ClientCommandKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .setSessionMode:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .sendSessionPrompt:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .submitNotificationReply:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .resume:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -1265,25 +1501,27 @@ public func FfiConverterTypeClientCommandKind_lower(_ value: ClientCommandKind) 
 
 public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
-    
-    
+
+
     case NoEndpoint
     case InvalidEndpoint
     case EmptyThreadId
     case EmptyPrompt
     case EmptyNotificationId
     case EmptyMutationId
+    case EmptySessionId
+    case InvalidSequence
     case StateLockPoisoned
 
-    
 
-    
 
-    
+
+
+
     public var errorDescription: String? {
         String(reflecting: self)
     }
-    
+
 }
 
 #if compiler(>=6)
@@ -1300,16 +1538,18 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .NoEndpoint
         case 2: return .InvalidEndpoint
         case 3: return .EmptyThreadId
         case 4: return .EmptyPrompt
         case 5: return .EmptyNotificationId
         case 6: return .EmptyMutationId
-        case 7: return .StateLockPoisoned
+        case 7: return .EmptySessionId
+        case 8: return .InvalidSequence
+        case 9: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1318,37 +1558,45 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
     public static func write(_ value: ClientCoreError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case .NoEndpoint:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .InvalidEndpoint:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .EmptyThreadId:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .EmptyPrompt:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .EmptyNotificationId:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .EmptyMutationId:
             writeInt(&buf, Int32(6))
-        
-        
-        case .StateLockPoisoned:
+
+
+        case .EmptySessionId:
             writeInt(&buf, Int32(7))
-        
+
+
+        case .InvalidSequence:
+            writeInt(&buf, Int32(8))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(9))
+
         }
     }
 }
@@ -1372,7 +1620,7 @@ public func FfiConverterTypeClientCoreError_lower(_ value: ClientCoreError) -> R
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ConnectionPhase: Equatable, Hashable {
-    
+
     case disconnected
     case connecting
     case ready
@@ -1397,38 +1645,38 @@ public struct FfiConverterTypeConnectionPhase: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ConnectionPhase {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .disconnected
-        
+
         case 2: return .connecting
-        
+
         case 3: return .ready
-        
+
         case 4: return .reconnecting
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ConnectionPhase, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .disconnected:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .connecting:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .ready:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .reconnecting:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -1453,7 +1701,7 @@ public func FfiConverterTypeConnectionPhase_lower(_ value: ConnectionPhase) -> R
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum OutboundSessionFrameKind: Equatable, Hashable {
-    
+
     case command
     case resume
 
@@ -1476,26 +1724,26 @@ public struct FfiConverterTypeOutboundSessionFrameKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OutboundSessionFrameKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .command
-        
+
         case 2: return .resume
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: OutboundSessionFrameKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .command:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .resume:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -1569,6 +1817,31 @@ fileprivate struct FfiConverterSequenceTypeClientPendingMutation: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientStateMini: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientStateMini]
+
+    public static func write(_ value: [ClientStateMini], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientStateMini.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientStateMini] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientStateMini]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientStateMini.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeOutboundSessionFrame: FfiConverterRustBuffer {
     typealias SwiftType = [OutboundSessionFrame]
 
@@ -1612,6 +1885,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_delta() != 30286) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_mini_delta() != 38866) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_connect() != 52119) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1619,6 +1895,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_mark_reconnecting() != 54428) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_replace_state_minis() != 24521) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_resume_after() != 12145) {

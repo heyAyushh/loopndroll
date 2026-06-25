@@ -2,10 +2,10 @@
 
 Rust client core boundary for Looper's rewrite-only realtime architecture.
 
-This crate owns client-side state mirroring, optimistic mutation tracking, and
-the outbound `Session` frame queue that iOS, macOS, and the TUI consume. It does
-not depend on the server crate, SQLite, agent adapters, HTTP command routes, or
-legacy event streams.
+This crate owns client-side state mirroring, state-mini reduction, optimistic
+mutation tracking, and the outbound `Session` frame queue that iOS, macOS, and
+the TUI consume. It does not depend on the server crate, SQLite, agent adapters,
+HTTP command routes, or legacy event streams.
 
 ## Rust checks
 
@@ -30,9 +30,10 @@ package artifacts under `swift/LooperClientCore`.
 
 - Protocol transport is intentionally modeled as outbound `Session` frames. E's
   protocol cut owns the generated gRPC contract.
-- Reducer and FSM semantics are intentionally placeholders at this boundary. H's
-  reducer/FSM slice owns the final shared Rust modules; this crate is where they
-  should be reused after integration.
+- Session-mini replace/apply semantics live here so Swift clients can render
+  immutable Rust-owned snapshots before the network confirms.
+- FSM transition semantics still live in the control plane. The client core only
+  mirrors server acks/rejects and keeps local pending command state.
 - `scripts/check-client-core-boundaries.py` prevents this crate from taking
   inward dependencies on the control plane, local stores, removed event-stream
   transports, or unary command request types.

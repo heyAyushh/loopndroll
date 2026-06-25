@@ -12,6 +12,10 @@ pub enum ClientCoreError {
     EmptyNotificationId,
     #[error("client mutation id is required")]
     EmptyMutationId,
+    #[error("session id is required")]
+    EmptySessionId,
+    #[error("sequence must be non-negative")]
+    InvalidSequence,
     #[error("client core state lock is poisoned")]
     StateLockPoisoned,
 }

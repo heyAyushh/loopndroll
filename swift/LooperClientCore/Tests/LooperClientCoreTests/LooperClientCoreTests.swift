@@ -6,6 +6,7 @@ final class LooperClientCoreTests: XCTestCase {
     private let lastGoodEndpoint = "http://100.64.0.2:8765"
     private let threadID = "thread-1"
     private let mutationID = "mutation-1"
+    private let serverTime = "2026-06-25T00:00:00Z"
 
     func testConnectPrefersLastGoodEndpoint() throws {
         let core = LooperClientCore()
@@ -105,11 +106,89 @@ final class LooperClientCoreTests: XCTestCase {
             entityId: threadID,
             kind: "session_mini",
             revision: "rev-99",
-            serverTime: "2026-06-25T00:00:00Z",
+            serverTime: serverTime,
             payloadJson: "{}"
         ))
 
         XCTAssertEqual(snapshot.latestSeq, 99)
         XCTAssertEqual(snapshot.revision, "rev-99")
+        XCTAssertEqual(snapshot.serverTime, serverTime)
+    }
+
+    func testStateMiniSnapshotReplacesAndNormalizesRecords() throws {
+        let core = LooperClientCore()
+
+        let snapshot = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+            latestSeq: 10,
+            sessions: [
+                stateMini(sessionID: "thread-2", seq: 7, revision: "rev-7", title: "queued"),
+                stateMini(sessionID: threadID, seq: 5, revision: "rev-5", title: "old"),
+                stateMini(sessionID: threadID, seq: 9, revision: "rev-9", title: "current"),
+            ],
+            serverTime: serverTime
+        ))
+
+        XCTAssertEqual(snapshot.latestSeq, 10)
+        XCTAssertEqual(snapshot.revision, "rev-9")
+        XCTAssertEqual(snapshot.serverTime, serverTime)
+        XCTAssertEqual(snapshot.stateMinis.map(\.sessionId), ["thread-2", threadID])
+        XCTAssertEqual(snapshot.stateMinis.last?.payloadJson, #"{"title":"current"}"#)
+    }
+
+    func testStateMiniDeltaUpsertsAndIgnoresStaleSequences() throws {
+        let core = LooperClientCore()
+        _ = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+            latestSeq: 2,
+            sessions: [stateMini(sessionID: threadID, seq: 2, revision: "rev-2", title: "old")],
+            serverTime: ""
+        ))
+
+        let snapshot = try core.applyStateMiniDelta(delta: ClientStateMiniDelta(
+            seq: 3,
+            latestSeq: 3,
+            entityId: threadID,
+            kind: "session_mini",
+            revision: "rev-3",
+            serverTime: serverTime,
+            hasSession: true,
+            session: stateMini(sessionID: threadID, seq: 3, revision: "rev-3", title: "new"),
+            sessions: []
+        ))
+
+        XCTAssertEqual(snapshot.latestSeq, 3)
+        XCTAssertEqual(snapshot.revision, "rev-3")
+        XCTAssertEqual(snapshot.stateMinis.map(\.payloadJson), [#"{"title":"new"}"#])
+
+        let stale = try core.applyStateMiniDelta(delta: ClientStateMiniDelta(
+            seq: 2,
+            latestSeq: 2,
+            entityId: threadID,
+            kind: "session_mini",
+            revision: "rev-stale",
+            serverTime: "",
+            hasSession: true,
+            session: stateMini(sessionID: threadID, seq: 2, revision: "rev-stale", title: "stale"),
+            sessions: []
+        ))
+
+        XCTAssertEqual(stale.latestSeq, 3)
+        XCTAssertEqual(stale.revision, "rev-3")
+        XCTAssertEqual(stale.stateMinis.map(\.payloadJson), [#"{"title":"new"}"#])
+    }
+
+    private func stateMini(
+        sessionID: String,
+        surface: String = "codex",
+        seq: Int64,
+        revision: String,
+        title: String
+    ) -> ClientStateMini {
+        ClientStateMini(
+            sessionId: sessionID,
+            assistantSurface: surface,
+            seq: seq,
+            revision: revision,
+            payloadJson: #"{"title":"\#(title)"}"#
+        )
     }
 }
