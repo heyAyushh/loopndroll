@@ -46,6 +46,156 @@ public nonisolated struct Looper_V1_HealthResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Looper_V1_ClientFrame: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var frame: Looper_V1_ClientFrame.OneOf_Frame? = nil
+
+  public var command: Looper_V1_Command {
+    get {
+      if case .command(let v)? = frame {return v}
+      return Looper_V1_Command()
+    }
+    set {frame = .command(newValue)}
+  }
+
+  public var resume: Looper_V1_Resume {
+    get {
+      if case .resume(let v)? = frame {return v}
+      return Looper_V1_Resume()
+    }
+    set {frame = .resume(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Frame: Equatable, Sendable {
+    case command(Looper_V1_Command)
+    case resume(Looper_V1_Resume)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Looper_V1_ServerFrame: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var frame: Looper_V1_ServerFrame.OneOf_Frame? = nil
+
+  public var ack: Looper_V1_CommandAck {
+    get {
+      if case .ack(let v)? = frame {return v}
+      return Looper_V1_CommandAck()
+    }
+    set {frame = .ack(newValue)}
+  }
+
+  public var stateDelta: Looper_V1_StateMiniDelta {
+    get {
+      if case .stateDelta(let v)? = frame {return v}
+      return Looper_V1_StateMiniDelta()
+    }
+    set {frame = .stateDelta(newValue)}
+  }
+
+  public var textChunk: Looper_V1_TextChunk {
+    get {
+      if case .textChunk(let v)? = frame {return v}
+      return Looper_V1_TextChunk()
+    }
+    set {frame = .textChunk(newValue)}
+  }
+
+  public var event: Looper_V1_MobileEvent {
+    get {
+      if case .event(let v)? = frame {return v}
+      return Looper_V1_MobileEvent()
+    }
+    set {frame = .event(newValue)}
+  }
+
+  public var heartbeat: Looper_V1_Heartbeat {
+    get {
+      if case .heartbeat(let v)? = frame {return v}
+      return Looper_V1_Heartbeat()
+    }
+    set {frame = .heartbeat(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Frame: Equatable, Sendable {
+    case ack(Looper_V1_CommandAck)
+    case stateDelta(Looper_V1_StateMiniDelta)
+    case textChunk(Looper_V1_TextChunk)
+    case event(Looper_V1_MobileEvent)
+    case heartbeat(Looper_V1_Heartbeat)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Looper_V1_Command: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var command: Looper_V1_Command.OneOf_Command? = nil
+
+  public var setSessionMode: Looper_V1_SetSessionModeRequest {
+    get {
+      if case .setSessionMode(let v)? = command {return v}
+      return Looper_V1_SetSessionModeRequest()
+    }
+    set {command = .setSessionMode(newValue)}
+  }
+
+  public var sendSessionPrompt: Looper_V1_SendSessionPromptRequest {
+    get {
+      if case .sendSessionPrompt(let v)? = command {return v}
+      return Looper_V1_SendSessionPromptRequest()
+    }
+    set {command = .sendSessionPrompt(newValue)}
+  }
+
+  public var submitNotificationReply: Looper_V1_SubmitNotificationReplyRequest {
+    get {
+      if case .submitNotificationReply(let v)? = command {return v}
+      return Looper_V1_SubmitNotificationReplyRequest()
+    }
+    set {command = .submitNotificationReply(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Command: Equatable, Sendable {
+    case setSessionMode(Looper_V1_SetSessionModeRequest)
+    case sendSessionPrompt(Looper_V1_SendSessionPromptRequest)
+    case submitNotificationReply(Looper_V1_SubmitNotificationReplyRequest)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Looper_V1_Resume: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var afterSeq: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Looper_V1_SetSessionModeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -273,6 +423,64 @@ public nonisolated struct Looper_V1_CommandAck: Sendable {
   public init() {}
 }
 
+public nonisolated struct Looper_V1_StateMiniDelta: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var seq: Int64 = 0
+
+  public var entityID: String = String()
+
+  public var kind: String = String()
+
+  public var revision: String = String()
+
+  public var serverTime: String = String()
+
+  public var payloadJson: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Looper_V1_TextChunk: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var seq: Int64 = 0
+
+  public var threadID: String = String()
+
+  public var messageID: String = String()
+
+  public var content: String = String()
+
+  public var isFinal: Bool = false
+
+  public var serverTime: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Looper_V1_Heartbeat: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverTime: String = String()
+
+  public var latestSeq: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Looper_V1_SubscribeEventsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -365,6 +573,305 @@ nonisolated extension Looper_V1_HealthResponse: SwiftProtobuf.Message, SwiftProt
     if lhs.ok != rhs.ok {return false}
     if lhs.service != rhs.service {return false}
     if lhs.serverTime != rhs.serverTime {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_ClientFrame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClientFrame"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}command\0\u{1}resume\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Looper_V1_Command?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .command(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .command(v)
+        }
+      }()
+      case 2: try {
+        var v: Looper_V1_Resume?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .resume(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .resume(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.frame {
+    case .command?: try {
+      guard case .command(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .resume?: try {
+      guard case .resume(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_ClientFrame, rhs: Looper_V1_ClientFrame) -> Bool {
+    if lhs.frame != rhs.frame {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_ServerFrame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ServerFrame"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ack\0\u{3}state_delta\0\u{3}text_chunk\0\u{1}event\0\u{1}heartbeat\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Looper_V1_CommandAck?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .ack(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .ack(v)
+        }
+      }()
+      case 2: try {
+        var v: Looper_V1_StateMiniDelta?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .stateDelta(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .stateDelta(v)
+        }
+      }()
+      case 3: try {
+        var v: Looper_V1_TextChunk?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .textChunk(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .textChunk(v)
+        }
+      }()
+      case 4: try {
+        var v: Looper_V1_MobileEvent?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .event(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .event(v)
+        }
+      }()
+      case 5: try {
+        var v: Looper_V1_Heartbeat?
+        var hadOneofValue = false
+        if let current = self.frame {
+          hadOneofValue = true
+          if case .heartbeat(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.frame = .heartbeat(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.frame {
+    case .ack?: try {
+      guard case .ack(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .stateDelta?: try {
+      guard case .stateDelta(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case .textChunk?: try {
+      guard case .textChunk(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .event?: try {
+      guard case .event(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .heartbeat?: try {
+      guard case .heartbeat(let v)? = self.frame else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_ServerFrame, rhs: Looper_V1_ServerFrame) -> Bool {
+    if lhs.frame != rhs.frame {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_Command: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Command"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}set_session_mode\0\u{3}send_session_prompt\0\u{3}submit_notification_reply\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Looper_V1_SetSessionModeRequest?
+        var hadOneofValue = false
+        if let current = self.command {
+          hadOneofValue = true
+          if case .setSessionMode(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.command = .setSessionMode(v)
+        }
+      }()
+      case 2: try {
+        var v: Looper_V1_SendSessionPromptRequest?
+        var hadOneofValue = false
+        if let current = self.command {
+          hadOneofValue = true
+          if case .sendSessionPrompt(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.command = .sendSessionPrompt(v)
+        }
+      }()
+      case 3: try {
+        var v: Looper_V1_SubmitNotificationReplyRequest?
+        var hadOneofValue = false
+        if let current = self.command {
+          hadOneofValue = true
+          if case .submitNotificationReply(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.command = .submitNotificationReply(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.command {
+    case .setSessionMode?: try {
+      guard case .setSessionMode(let v)? = self.command else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .sendSessionPrompt?: try {
+      guard case .sendSessionPrompt(let v)? = self.command else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case .submitNotificationReply?: try {
+      guard case .submitNotificationReply(let v)? = self.command else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_Command, rhs: Looper_V1_Command) -> Bool {
+    if lhs.command != rhs.command {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_Resume: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Resume"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}after_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.afterSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.afterSeq != 0 {
+      try visitor.visitSingularInt64Field(value: self.afterSeq, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_Resume, rhs: Looper_V1_Resume) -> Bool {
+    if lhs.afterSeq != rhs.afterSeq {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -858,6 +1365,151 @@ nonisolated extension Looper_V1_CommandAck: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.revision != rhs.revision {return false}
     if lhs.serverTime != rhs.serverTime {return false}
     if lhs.idempotentReplay != rhs.idempotentReplay {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_StateMiniDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StateMiniDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{3}entity_id\0\u{1}kind\0\u{1}revision\0\u{3}server_time\0\u{3}payload_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.entityID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.revision) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.payloadJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.seq != 0 {
+      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 1)
+    }
+    if !self.entityID.isEmpty {
+      try visitor.visitSingularStringField(value: self.entityID, fieldNumber: 2)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 3)
+    }
+    if !self.revision.isEmpty {
+      try visitor.visitSingularStringField(value: self.revision, fieldNumber: 4)
+    }
+    if !self.serverTime.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverTime, fieldNumber: 5)
+    }
+    if !self.payloadJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.payloadJson, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_StateMiniDelta, rhs: Looper_V1_StateMiniDelta) -> Bool {
+    if lhs.seq != rhs.seq {return false}
+    if lhs.entityID != rhs.entityID {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.serverTime != rhs.serverTime {return false}
+    if lhs.payloadJson != rhs.payloadJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_TextChunk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TextChunk"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{3}thread_id\0\u{3}message_id\0\u{1}content\0\u{3}is_final\0\u{3}server_time\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.threadID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.isFinal) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.seq != 0 {
+      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 1)
+    }
+    if !self.threadID.isEmpty {
+      try visitor.visitSingularStringField(value: self.threadID, fieldNumber: 2)
+    }
+    if !self.messageID.isEmpty {
+      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 3)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 4)
+    }
+    if self.isFinal != false {
+      try visitor.visitSingularBoolField(value: self.isFinal, fieldNumber: 5)
+    }
+    if !self.serverTime.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverTime, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_TextChunk, rhs: Looper_V1_TextChunk) -> Bool {
+    if lhs.seq != rhs.seq {return false}
+    if lhs.threadID != rhs.threadID {return false}
+    if lhs.messageID != rhs.messageID {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs.isFinal != rhs.isFinal {return false}
+    if lhs.serverTime != rhs.serverTime {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Looper_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Heartbeat"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_time\0\u{3}latest_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverTime) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.latestSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverTime.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverTime, fieldNumber: 1)
+    }
+    if self.latestSeq != 0 {
+      try visitor.visitSingularInt64Field(value: self.latestSeq, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Looper_V1_Heartbeat, rhs: Looper_V1_Heartbeat) -> Bool {
+    if lhs.serverTime != rhs.serverTime {return false}
+    if lhs.latestSeq != rhs.latestSeq {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

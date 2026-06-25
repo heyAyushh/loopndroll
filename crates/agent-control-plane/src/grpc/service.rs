@@ -1,3 +1,6 @@
+use std::pin::Pin;
+
+use futures_core::Stream;
 use tonic::{Request, Response, Status};
 
 use crate::control_plane::ControlPlane;
@@ -32,6 +35,10 @@ const MODE_CLEARED_DETAIL: &str = "mode-cleared";
 const MODE_UPDATED_DETAIL: &str = "mode-updated";
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
 const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
+
+type SessionFrameStream =
+    Pin<Box<dyn Stream<Item = Result<proto::ServerFrame, Status>> + Send + 'static>>;
+
 impl From<CommandAckError> for Status {
     fn from(error: CommandAckError) -> Self {
         match error {
@@ -55,6 +62,7 @@ impl LooperRealtimeService {
 
 #[tonic::async_trait]
 impl LooperRealtime for LooperRealtimeService {
+    type SessionStream = SessionFrameStream;
     type SubscribeMobileEventsStream = MobileEventStream;
     type SubscribeDesktopEventsStream = MobileEventStream;
 
@@ -122,6 +130,16 @@ impl LooperRealtime for LooperRealtimeService {
         Ok(Response::new(notification_reply_response_from_command(
             response,
         )))
+    }
+
+    async fn session(
+        &self,
+        request: Request<tonic::Streaming<proto::ClientFrame>>,
+    ) -> Result<Response<Self::SessionStream>, Status> {
+        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
+        Err(Status::unimplemented(
+            "duplex Session stream contract is available; server implementation is pending",
+        ))
     }
 
     async fn subscribe_mobile_events(

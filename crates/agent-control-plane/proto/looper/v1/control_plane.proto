@@ -4,6 +4,7 @@ package looper.v1;
 
 service LooperRealtime {
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Session(stream ClientFrame) returns (stream ServerFrame);
   rpc SetSessionMode(SetSessionModeRequest) returns (SetSessionModeResponse);
   rpc SendSessionPrompt(SendSessionPromptRequest) returns (SendSessionPromptResponse);
   rpc SubmitNotificationReply(SubmitNotificationReplyRequest) returns (SubmitNotificationReplyResponse);
@@ -17,6 +18,35 @@ message HealthResponse {
   bool ok = 1;
   string service = 2;
   string server_time = 3;
+}
+
+message ClientFrame {
+  oneof frame {
+    Command command = 1;
+    Resume resume = 2;
+  }
+}
+
+message ServerFrame {
+  oneof frame {
+    CommandAck ack = 1;
+    StateMiniDelta state_delta = 2;
+    TextChunk text_chunk = 3;
+    MobileEvent event = 4;
+    Heartbeat heartbeat = 5;
+  }
+}
+
+message Command {
+  oneof command {
+    SetSessionModeRequest set_session_mode = 1;
+    SendSessionPromptRequest send_session_prompt = 2;
+    SubmitNotificationReplyRequest submit_notification_reply = 3;
+  }
+}
+
+message Resume {
+  int64 after_seq = 1;
 }
 
 message SetSessionModeRequest {
@@ -88,6 +118,29 @@ message CommandAck {
   string revision = 5;
   string server_time = 6;
   bool idempotent_replay = 7;
+}
+
+message StateMiniDelta {
+  int64 seq = 1;
+  string entity_id = 2;
+  string kind = 3;
+  string revision = 4;
+  string server_time = 5;
+  string payload_json = 6;
+}
+
+message TextChunk {
+  int64 seq = 1;
+  string thread_id = 2;
+  string message_id = 3;
+  string content = 4;
+  bool is_final = 5;
+  string server_time = 6;
+}
+
+message Heartbeat {
+  string server_time = 1;
+  int64 latest_seq = 2;
 }
 
 message SubscribeEventsRequest {}

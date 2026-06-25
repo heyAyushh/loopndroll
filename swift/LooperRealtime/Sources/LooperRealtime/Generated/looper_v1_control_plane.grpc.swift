@@ -33,6 +33,19 @@ public enum Looper_V1_LooperRealtime: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Session" metadata.
+        public enum Session: Sendable {
+            /// Request type for "Session".
+            public typealias Input = Looper_V1_ClientFrame
+            /// Response type for "Session".
+            public typealias Output = Looper_V1_ServerFrame
+            /// Descriptor for "Session".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "looper.v1.LooperRealtime"),
+                method: "Session",
+                type: .bidirectionalStreaming
+            )
+        }
         /// Namespace for "SetSessionMode" metadata.
         public enum SetSessionMode: Sendable {
             /// Request type for "SetSessionMode".
@@ -101,6 +114,7 @@ public enum Looper_V1_LooperRealtime: Sendable {
         /// Descriptors for all methods in the "looper.v1.LooperRealtime" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Health.descriptor,
+            Session.descriptor,
             SetSessionMode.descriptor,
             SendSessionPrompt.descriptor,
             SubmitNotificationReply.descriptor,
@@ -142,6 +156,25 @@ extension Looper_V1_LooperRealtime {
             deserializer: some GRPCCore.MessageDeserializer<Looper_V1_HealthResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_HealthResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Session" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request producing `Looper_V1_ClientFrame` messages.
+        ///   - serializer: A serializer for `Looper_V1_ClientFrame` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_ServerFrame` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func session<Result>(
+            request: GRPCCore.StreamingClientRequest<Looper_V1_ClientFrame>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_ClientFrame>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_ServerFrame>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Looper_V1_ServerFrame>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "SetSessionMode" method.
@@ -279,6 +312,34 @@ extension Looper_V1_LooperRealtime {
             try await self.client.unary(
                 request: request,
                 descriptor: Looper_V1_LooperRealtime.Method.Health.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Session" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request producing `Looper_V1_ClientFrame` messages.
+        ///   - serializer: A serializer for `Looper_V1_ClientFrame` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_ServerFrame` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func session<Result>(
+            request: GRPCCore.StreamingClientRequest<Looper_V1_ClientFrame>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_ClientFrame>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_ServerFrame>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Looper_V1_ServerFrame>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.bidirectionalStreaming(
+                request: request,
+                descriptor: Looper_V1_LooperRealtime.Method.Session.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -462,6 +523,29 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
         )
     }
 
+    /// Call the "Session" method.
+    ///
+    /// - Parameters:
+    ///   - request: A streaming request producing `Looper_V1_ClientFrame` messages.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func session<Result>(
+        request: GRPCCore.StreamingClientRequest<Looper_V1_ClientFrame>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Looper_V1_ServerFrame>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.session(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Looper_V1_ClientFrame>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Looper_V1_ServerFrame>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "SetSessionMode" method.
     ///
     /// - Parameters:
@@ -610,6 +694,34 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
             metadata: metadata
         )
         return try await self.health(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Session" method.
+    ///
+    /// - Parameters:
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - producer: A closure producing request messages to send to the server. The request
+    ///       stream is closed when the closure returns.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func session<Result>(
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        requestProducer producer: @Sendable @escaping (GRPCCore.RPCWriter<Looper_V1_ClientFrame>) async throws -> Void,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Looper_V1_ServerFrame>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.StreamingClientRequest<Looper_V1_ClientFrame>(
+            metadata: metadata,
+            producer: producer
+        )
+        return try await self.session(
             request: request,
             options: options,
             onResponse: handleResponse
