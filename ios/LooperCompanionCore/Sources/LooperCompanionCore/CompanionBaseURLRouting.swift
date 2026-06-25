@@ -22,6 +22,9 @@ public enum CompanionBaseURLRoute: Equatable, Sendable {
 }
 
 public enum CompanionBaseURLRouting {
+    public static let defaultHTTPAPIPort = 8765
+    public static let defaultRealtimeGRPCPort = 8766
+
     private static let localHostnameSuffix = ".local"
     private static let tailscaleMagicDNSSuffix = ".ts.net"
     private static let tailscaleLegacyMagicDNSSuffix = ".beta.tailscale.net"
@@ -103,6 +106,28 @@ public enum CompanionBaseURLRouting {
                 return lhsPriority < rhsPriority
             }
             .map(\.element)
+    }
+
+    public static func canonicalHTTPAPIBaseURL(for baseURL: URL) -> URL {
+        guard baseURL.port == defaultRealtimeGRPCPort,
+              baseURL.usesCompanionHTTP,
+              isOwnedRealtimePortRepairRoute(route(for: baseURL)),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else {
+            return baseURL
+        }
+
+        components.port = defaultHTTPAPIPort
+        return components.url ?? baseURL
+    }
+
+    private static func isOwnedRealtimePortRepairRoute(_ route: CompanionBaseURLRoute) -> Bool {
+        switch route {
+        case .tailscale, .lan, .loopback:
+            return true
+        case .remote, .unsupported:
+            return false
+        }
     }
 
     private static func priority(

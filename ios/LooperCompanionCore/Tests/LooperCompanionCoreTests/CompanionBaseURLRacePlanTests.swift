@@ -8,6 +8,12 @@ struct CompanionBaseURLRacePlanTests {
     private let duplicatePreferredLANURL = "http://192.168.1.26:8765/"
     private let fallbackLANURL = "http://192.168.1.26:8781"
     private let fallbackDelay: Duration = .milliseconds(125)
+    private let defaultFallbackDelay: Duration = .milliseconds(350)
+
+    @Test("Default fallback delay is tuned for realtime control")
+    func defaultFallbackDelayIsTunedForRealtimeControl() {
+        #expect(CompanionBaseURLRacePlan.defaultFallbackDelay == defaultFallbackDelay)
+    }
 
     @Test("Race plan starts the preferred URL immediately and defers fallbacks")
     func racePlanStartsPreferredURLImmediatelyAndDefersFallbacks() throws {

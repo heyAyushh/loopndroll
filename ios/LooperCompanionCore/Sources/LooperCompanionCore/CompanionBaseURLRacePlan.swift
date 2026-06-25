@@ -11,7 +11,7 @@ public struct CompanionBaseURLRaceCandidate: Equatable, Sendable {
 }
 
 public enum CompanionBaseURLRacePlan {
-    private static let fallbackDelayMilliseconds = 1_500
+    private static let fallbackDelayMilliseconds = 350
 
     public static let defaultFallbackDelay: Duration = .milliseconds(fallbackDelayMilliseconds)
 

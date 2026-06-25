@@ -7,7 +7,9 @@ struct CompanionBaseURLSelectionTests {
     private let reachedBonjourURL = "http://looper.local:8765"
     private let advertisedLANURL = "http://192.168.2.10:8765"
     private let advertisedTailscaleURL = "http://100.95.2.4:8765"
+    private let advertisedTailscaleRealtimeURL = "http://100.95.2.4:8766"
     private let advertisedLANPinnedPortURL = "http://192.168.2.10:8781"
+    private let advertisedLANRealtimeURL = "http://192.168.2.10:8766"
     private let advertisedTailscalePinnedPortURL = "http://100.95.2.4:8781"
     private let staleReachedURL = "http://192.168.2.10:8765"
     private let advertisedMagicDNSURL = "http://ayushs-macbook-pro.tail62d9a8.ts.net:8765"
@@ -16,6 +18,7 @@ struct CompanionBaseURLSelectionTests {
     private let staleConfiguredURL = "http://198.51.100.20:8765"
     private let normalizedReachedURL = "http://LOOPER.local:8765/"
     private let normalizedAdvertisedURL = "http://looper.local:8765"
+    private let remoteHTTPSRealtimePortURL = "https://looper.example.test:8766"
 
     @Test("Reached and advertised URLs replace stale configured primary")
     func reachedAndAdvertisedURLsReplaceStaleConfiguredPrimary() throws {
@@ -163,6 +166,37 @@ struct CompanionBaseURLSelectionTests {
         let route = CompanionBaseURLRouting.route(for: try url(advertisedMagicDNSURL))
 
         #expect(route == .tailscale)
+    }
+
+    @Test("Default realtime port is repaired to HTTP API port")
+    func defaultRealtimePortIsRepairedToHTTPAPIPort() throws {
+        let urls = try urls(advertisedTailscaleRealtimeURL, advertisedLANRealtimeURL)
+            .map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedTailscaleURL,
+            advertisedLANURL,
+        ])
+    }
+
+    @Test("Custom pinned ports are not rewritten")
+    func customPinnedPortsAreNotRewritten() throws {
+        let urls = try urls(advertisedLANPinnedPortURL, advertisedTailscalePinnedPortURL)
+            .map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedLANPinnedPortURL,
+            advertisedTailscalePinnedPortURL,
+        ])
+    }
+
+    @Test("Remote HTTPS URLs on realtime port are not rewritten")
+    func remoteHTTPSRealtimePortIsNotRewritten() throws {
+        let url = CompanionBaseURLRouting.canonicalHTTPAPIBaseURL(
+            for: try url(remoteHTTPSRealtimePortURL)
+        )
+
+        #expect(url.absoluteString == remoteHTTPSRealtimePortURL)
     }
 
     private func urls(_ values: String...) throws -> [URL] {
