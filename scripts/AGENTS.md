@@ -17,6 +17,8 @@
 | CLI install | `install-looper-cli.sh` | Installs `looper`, `looper-cli`, `looper-server`; guarded against outside-root prefix. |
 | Swift gRPC generation | `generate-swift-grpc.sh` | Writes generated Swift files from Rust proto. |
 | OrbCode XCFramework | `build-orb-code-ios-package.sh` | Recreates `ios/OrbCodeKit/Frameworks/OrbCodeFFI.xcframework`. |
+| Looper client core package | `build-looper-client-core-package.sh` | Generates UniFFI Swift bindings and creates `swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework`. |
+| realtime boundary lint | `check-client-core-boundaries.sh` | Fails client-core inward dependency and removed transport boundary violations; `--strict-runtime` is the final no-unary/no-event-stream sweep. |
 | lint rule guard | `lint-rule-guard/`, `run-lint-rule-guard.sh` | Standalone Rust helper under scripts. |
 
 ## CONVENTIONS
@@ -46,6 +48,11 @@ bash scripts/install-looper-cli.sh
 bash scripts/release-macos.sh
 bash scripts/generate-swift-grpc.sh
 bash scripts/build-orb-code-ios-package.sh
+cargo fmt --check --manifest-path crates/looper-client-core/Cargo.toml
+cargo test --manifest-path crates/looper-client-core/Cargo.toml
+bash scripts/check-client-core-boundaries.sh
+bash scripts/check-client-core-boundaries.sh --strict-runtime
+bash scripts/build-looper-client-core-package.sh
 cargo build --release --manifest-path scripts/lint-rule-guard/Cargo.toml
 ```
 
