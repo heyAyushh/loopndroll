@@ -4,6 +4,7 @@ mod client;
 mod command_batch;
 mod error;
 mod model;
+mod snapshot_reducer;
 mod transport;
 
 pub use client::LooperClientCore;
@@ -14,4 +15,10 @@ pub use model::{
     ClientCommandMetadata, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
     ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
     ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+};
+pub use snapshot_reducer::{
+    ClientDetailCacheProjection, ClientDetailModeProjection, ClientOptimisticModeProjection,
+    ClientSnapshotProjection, reduce_mobile_snapshot_detail_cache,
+    reduce_mobile_snapshot_optimistic_mode, reduce_mobile_snapshot_projection,
+    reduce_session_detail_optimistic_mode,
 };

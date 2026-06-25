@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
 import Observation
 
@@ -55,13 +56,17 @@ final class CompanionSnapshotStateStore {
         _ nextSnapshot: MobileSnapshot,
         preferredSurface: CompanionAssistantSurface? = nil
     ) -> MobileSnapshot {
-        let surface = preferredSurface ?? preferredAssistantSurface(for: nextSnapshot)
-        let visibleSnapshot = nextSnapshot.visibleSnapshot(for: surface)
+        let projection = SnapshotReducerCodec.reduceSnapshotProjection(
+            snapshot: nextSnapshot,
+            preferredSurface: preferredSurface,
+            hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
+            currentSelectedAssistantSurface: selectedAssistantSurface
+        )
+        let surface = SnapshotReducerCodec.assistantSurface(from: projection.selectedAssistantSurface)
+        let visibleSnapshot = SnapshotReducerCodec.decodeSnapshot(projection.visibleSnapshotJson)
         selectedAssistantSurface = surface
-        snapshot = visibleSnapshot
-        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
-        sessionIndex = SessionIndex(snapshot: visibleSnapshot)
-        syncDetailCache(with: visibleSnapshot)
+        applyReducedVisibleSnapshot(visibleSnapshot)
+        syncDetailCache(withVisibleSnapshotJSON: projection.visibleSnapshotJson)
         return visibleSnapshot
     }
 
@@ -180,29 +185,34 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applyOptimisticMode(_ preset: SessionMode?, to sessionID: String) -> Bool {
-        var didUpdate = false
+        let detailJSON = SnapshotReducerCodec.encodeDetail(detailBySessionID[sessionID])
 
-        if var detail = detailBySessionID[sessionID] {
-            detail.effectiveMode = preset
-            detailBySessionID[sessionID] = detail
-            didUpdate = true
+        guard let snapshot else {
+            let projection = SnapshotReducerCodec.reduceDetailOptimisticMode(
+                detailJSON: detailJSON,
+                preset: preset
+            )
+            applyDetailModeProjection(projection, to: sessionID)
+            return projection.didUpdate
         }
 
-        if var nextSnapshot = snapshot {
-            updateMode(preset, for: sessionID, in: &nextSnapshot.sessions, didUpdate: &didUpdate)
-            for surface in Array(nextSnapshot.surfaceSessions.keys) {
-                updateMode(
-                    preset,
-                    for: sessionID,
-                    in: &nextSnapshot.surfaceSessions[surface, default: []],
-                    didUpdate: &didUpdate
-                )
-            }
-
-            applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
+        let projection = SnapshotReducerCodec.reduceSnapshotOptimisticMode(
+            snapshot: snapshot,
+            detailJSON: detailJSON,
+            sessionID: sessionID,
+            preset: preset,
+            selectedAssistantSurface: selectedAssistantSurface
+        )
+        applyReducedVisibleSnapshot(
+            SnapshotReducerCodec.decodeSnapshot(projection.visibleSnapshotJson)
+        )
+        if projection.hasDetail {
+            detailBySessionID[sessionID] = SnapshotReducerCodec.decodeDetail(
+                projection.visibleDetailJson
+            )
         }
 
-        return didUpdate
+        return projection.didUpdate
     }
 
     func restoreOptimisticModeSnapshot(
@@ -217,48 +227,151 @@ final class CompanionSnapshotStateStore {
         detailBySessionID[sessionID] = previousDetail
     }
 
-    private func preferredAssistantSurface(
-        for nextSnapshot: MobileSnapshot
-    ) -> CompanionAssistantSurface {
-        if hasUserSelectedAssistantSurface {
-            return selectedAssistantSurface
-        }
-
-        return nextSnapshot.globalSettings.assistantSurface
+    private func applyReducedVisibleSnapshot(_ visibleSnapshot: MobileSnapshot) {
+        snapshot = visibleSnapshot
+        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
+        sessionIndex = SessionIndex(snapshot: visibleSnapshot)
     }
 
-    private func syncDetailCache(with nextSnapshot: MobileSnapshot) {
-        let sessionIDs = Set(nextSnapshot.sessions.map(\.id))
-        detailBySessionID = detailBySessionID.filter { sessionIDs.contains($0.key) }
-
-        for session in nextSnapshot.sessions {
-            guard var detail = detailBySessionID[session.id] else {
-                continue
-            }
-
-            detail.status = session.status
-            detail.effectiveMode = session.effectiveMode
-            detail.lastUpdatedAt = session.lastUpdatedAt
-            detail.lastActivityAt = session.lastActivityAt
-            detail.lastMessageAt = session.lastMessageAt
-            detail.assistantPreview = session.assistantPreview
-            detail.isArchived = session.isArchived
-            detail.metadata = session.metadata
-            detailBySessionID[session.id] = detail
-        }
+    private func syncDetailCache(withVisibleSnapshotJSON visibleSnapshotJSON: String) {
+        let projection = SnapshotReducerCodec.reduceDetailCache(
+            visibleSnapshotJSON: visibleSnapshotJSON,
+            detailBySessionID: detailBySessionID
+        )
+        detailBySessionID = SnapshotReducerCodec.decodeDetailMap(
+            projection.detailBySessionIdJson
+        )
     }
 
-    private func updateMode(
-        _ preset: SessionMode?,
-        for sessionID: String,
-        in sessions: inout [SessionSummary],
-        didUpdate: inout Bool
+    private func applyDetailModeProjection(
+        _ projection: ClientDetailModeProjection,
+        to sessionID: String
     ) {
-        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }) else {
+        guard projection.hasDetail else {
             return
         }
 
-        sessions[sessionIndex].effectiveMode = preset
-        didUpdate = true
+        detailBySessionID[sessionID] = SnapshotReducerCodec.decodeDetail(projection.detailJson)
+    }
+}
+
+private enum SnapshotReducerCodec {
+    static func reduceSnapshotProjection(
+        snapshot: MobileSnapshot,
+        preferredSurface: CompanionAssistantSurface?,
+        hasUserSelectedAssistantSurface: Bool,
+        currentSelectedAssistantSurface: CompanionAssistantSurface
+    ) -> ClientSnapshotProjection {
+        do {
+            return try reduceMobileSnapshotProjection(
+                snapshotJson: encode(snapshot),
+                preferredAssistantSurface: preferredSurface?.rawValue ?? "",
+                hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
+                currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue
+            )
+        } catch {
+            invariantFailure("Snapshot projection reducer failed", error: error)
+        }
+    }
+
+    static func reduceSnapshotOptimisticMode(
+        snapshot: MobileSnapshot,
+        detailJSON: String,
+        sessionID: String,
+        preset: SessionMode?,
+        selectedAssistantSurface: CompanionAssistantSurface
+    ) -> ClientOptimisticModeProjection {
+        do {
+            return try reduceMobileSnapshotOptimisticMode(
+                snapshotJson: encode(snapshot),
+                detailJson: detailJSON,
+                sessionId: sessionID,
+                preset: preset?.rawValue ?? "",
+                selectedAssistantSurface: selectedAssistantSurface.rawValue
+            )
+        } catch {
+            invariantFailure("Snapshot optimistic mode reducer failed", error: error)
+        }
+    }
+
+    static func reduceDetailCache(
+        visibleSnapshotJSON: String,
+        detailBySessionID: [String: SessionDetail]
+    ) -> ClientDetailCacheProjection {
+        do {
+            return try reduceMobileSnapshotDetailCache(
+                visibleSnapshotJson: visibleSnapshotJSON,
+                detailBySessionIdJson: encode(detailBySessionID)
+            )
+        } catch {
+            invariantFailure("Detail cache reducer failed", error: error)
+        }
+    }
+
+    static func reduceDetailOptimisticMode(
+        detailJSON: String,
+        preset: SessionMode?
+    ) -> ClientDetailModeProjection {
+        do {
+            return try reduceSessionDetailOptimisticMode(
+                detailJson: detailJSON,
+                preset: preset?.rawValue ?? ""
+            )
+        } catch {
+            invariantFailure("Detail optimistic mode reducer failed", error: error)
+        }
+    }
+
+    static func assistantSurface(from rawValue: String) -> CompanionAssistantSurface {
+        guard let surface = CompanionAssistantSurface(rawValue: rawValue) else {
+            fatalError("Snapshot reducer returned unknown assistant surface: \(rawValue)")
+        }
+
+        return surface
+    }
+
+    static func encodeDetail(_ detail: SessionDetail?) -> String {
+        guard let detail else {
+            return ""
+        }
+
+        return encode(detail)
+    }
+
+    static func decodeSnapshot(_ json: String) -> MobileSnapshot {
+        decode(MobileSnapshot.self, from: json)
+    }
+
+    static func decodeDetail(_ json: String) -> SessionDetail {
+        decode(SessionDetail.self, from: json)
+    }
+
+    static func decodeDetailMap(_ json: String) -> [String: SessionDetail] {
+        decode([String: SessionDetail].self, from: json)
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) -> String {
+        do {
+            let data = try JSONEncoder().encode(value)
+            guard let json = String(data: data, encoding: .utf8) else {
+                fatalError("Client reducer payload was not valid UTF-8")
+            }
+
+            return json
+        } catch {
+            invariantFailure("Client reducer payload encoding failed", error: error)
+        }
+    }
+
+    private static func decode<Value: Decodable>(_ type: Value.Type, from json: String) -> Value {
+        do {
+            return try JSONDecoder().decode(type, from: Data(json.utf8))
+        } catch {
+            invariantFailure("Client reducer payload decoding failed", error: error)
+        }
+    }
+
+    private static func invariantFailure(_ message: String, error: Error) -> Never {
+        fatalError("\(message): \(error)")
     }
 }

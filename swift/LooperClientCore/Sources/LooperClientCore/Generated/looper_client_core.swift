@@ -1078,6 +1078,118 @@ public func FfiConverterTypeClientCommandMetadata_lower(_ value: ClientCommandMe
 }
 
 
+public struct ClientDetailCacheProjection: Equatable, Hashable {
+    public var detailBySessionIdJson: String
+    public var visibleSessionIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(detailBySessionIdJson: String, visibleSessionIds: [String]) {
+        self.detailBySessionIdJson = detailBySessionIdJson
+        self.visibleSessionIds = visibleSessionIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientDetailCacheProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientDetailCacheProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientDetailCacheProjection {
+        return
+            try ClientDetailCacheProjection(
+                detailBySessionIdJson: FfiConverterString.read(from: &buf),
+                visibleSessionIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientDetailCacheProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.detailBySessionIdJson, into: &buf)
+        FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientDetailCacheProjection_lift(_ buf: RustBuffer) throws -> ClientDetailCacheProjection {
+    return try FfiConverterTypeClientDetailCacheProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientDetailCacheProjection_lower(_ value: ClientDetailCacheProjection) -> RustBuffer {
+    return FfiConverterTypeClientDetailCacheProjection.lower(value)
+}
+
+
+public struct ClientDetailModeProjection: Equatable, Hashable {
+    public var didUpdate: Bool
+    public var detailJson: String
+    public var hasDetail: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(didUpdate: Bool, detailJson: String, hasDetail: Bool) {
+        self.didUpdate = didUpdate
+        self.detailJson = detailJson
+        self.hasDetail = hasDetail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientDetailModeProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientDetailModeProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientDetailModeProjection {
+        return
+            try ClientDetailModeProjection(
+                didUpdate: FfiConverterBool.read(from: &buf),
+                detailJson: FfiConverterString.read(from: &buf),
+                hasDetail: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientDetailModeProjection, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.didUpdate, into: &buf)
+        FfiConverterString.write(value.detailJson, into: &buf)
+        FfiConverterBool.write(value.hasDetail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientDetailModeProjection_lift(_ buf: RustBuffer) throws -> ClientDetailModeProjection {
+    return try FfiConverterTypeClientDetailModeProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientDetailModeProjection_lower(_ value: ClientDetailModeProjection) -> RustBuffer {
+    return FfiConverterTypeClientDetailModeProjection.lower(value)
+}
+
+
 public struct ClientEndpoint: Equatable, Hashable {
     public var url: String
     public var lastGood: Bool
@@ -1129,6 +1241,72 @@ public func FfiConverterTypeClientEndpoint_lift(_ buf: RustBuffer) throws -> Cli
 #endif
 public func FfiConverterTypeClientEndpoint_lower(_ value: ClientEndpoint) -> RustBuffer {
     return FfiConverterTypeClientEndpoint.lower(value)
+}
+
+
+public struct ClientOptimisticModeProjection: Equatable, Hashable {
+    public var didUpdate: Bool
+    public var visibleSnapshotJson: String
+    public var visibleDetailJson: String
+    public var hasDetail: Bool
+    public var visibleSessionIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(didUpdate: Bool, visibleSnapshotJson: String, visibleDetailJson: String, hasDetail: Bool, visibleSessionIds: [String]) {
+        self.didUpdate = didUpdate
+        self.visibleSnapshotJson = visibleSnapshotJson
+        self.visibleDetailJson = visibleDetailJson
+        self.hasDetail = hasDetail
+        self.visibleSessionIds = visibleSessionIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientOptimisticModeProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientOptimisticModeProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientOptimisticModeProjection {
+        return
+            try ClientOptimisticModeProjection(
+                didUpdate: FfiConverterBool.read(from: &buf),
+                visibleSnapshotJson: FfiConverterString.read(from: &buf),
+                visibleDetailJson: FfiConverterString.read(from: &buf),
+                hasDetail: FfiConverterBool.read(from: &buf),
+                visibleSessionIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientOptimisticModeProjection, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.didUpdate, into: &buf)
+        FfiConverterString.write(value.visibleSnapshotJson, into: &buf)
+        FfiConverterString.write(value.visibleDetailJson, into: &buf)
+        FfiConverterBool.write(value.hasDetail, into: &buf)
+        FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientOptimisticModeProjection_lift(_ buf: RustBuffer) throws -> ClientOptimisticModeProjection {
+    return try FfiConverterTypeClientOptimisticModeProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientOptimisticModeProjection_lower(_ value: ClientOptimisticModeProjection) -> RustBuffer {
+    return FfiConverterTypeClientOptimisticModeProjection.lower(value)
 }
 
 
@@ -1187,6 +1365,64 @@ public func FfiConverterTypeClientPendingMutation_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMutation) -> RustBuffer {
     return FfiConverterTypeClientPendingMutation.lower(value)
+}
+
+
+public struct ClientSnapshotProjection: Equatable, Hashable {
+    public var selectedAssistantSurface: String
+    public var visibleSnapshotJson: String
+    public var visibleSessionIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(selectedAssistantSurface: String, visibleSnapshotJson: String, visibleSessionIds: [String]) {
+        self.selectedAssistantSurface = selectedAssistantSurface
+        self.visibleSnapshotJson = visibleSnapshotJson
+        self.visibleSessionIds = visibleSessionIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSnapshotProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSnapshotProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSnapshotProjection {
+        return
+            try ClientSnapshotProjection(
+                selectedAssistantSurface: FfiConverterString.read(from: &buf),
+                visibleSnapshotJson: FfiConverterString.read(from: &buf),
+                visibleSessionIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSnapshotProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.selectedAssistantSurface, into: &buf)
+        FfiConverterString.write(value.visibleSnapshotJson, into: &buf)
+        FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSnapshotProjection_lift(_ buf: RustBuffer) throws -> ClientSnapshotProjection {
+    return try FfiConverterTypeClientSnapshotProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSnapshotProjection_lower(_ value: ClientSnapshotProjection) -> RustBuffer {
+    return FfiConverterTypeClientSnapshotProjection.lower(value)
 }
 
 
@@ -1723,6 +1959,8 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case EmptyMutationId
     case EmptySessionId
     case InvalidSequence
+    case InvalidSnapshotJson
+    case InvalidDetailJson
     case UnexpectedOutboxMutations
     case StateLockPoisoned
 
@@ -1762,8 +2000,10 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 6: return .EmptyMutationId
         case 7: return .EmptySessionId
         case 8: return .InvalidSequence
-        case 9: return .UnexpectedOutboxMutations
-        case 10: return .StateLockPoisoned
+        case 9: return .InvalidSnapshotJson
+        case 10: return .InvalidDetailJson
+        case 11: return .UnexpectedOutboxMutations
+        case 12: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1808,12 +2048,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(8))
 
 
-        case .UnexpectedOutboxMutations:
+        case .InvalidSnapshotJson:
             writeInt(&buf, Int32(9))
 
 
-        case .StateLockPoisoned:
+        case .InvalidDetailJson:
             writeInt(&buf, Int32(10))
+
+
+        case .UnexpectedOutboxMutations:
+            writeInt(&buf, Int32(11))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(12))
 
         }
     }
@@ -2189,6 +2437,43 @@ public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [
     )
 })
 }
+public func reduceMobileSnapshotDetailCache(visibleSnapshotJson: String, detailBySessionIdJson: String)throws  -> ClientDetailCacheProjection  {
+    return try  FfiConverterTypeClientDetailCacheProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_detail_cache(
+        FfiConverterString.lower(visibleSnapshotJson),
+        FfiConverterString.lower(detailBySessionIdJson),$0
+    )
+})
+}
+public func reduceMobileSnapshotOptimisticMode(snapshotJson: String, detailJson: String, sessionId: String, preset: String, selectedAssistantSurface: String)throws  -> ClientOptimisticModeProjection  {
+    return try  FfiConverterTypeClientOptimisticModeProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_optimistic_mode(
+        FfiConverterString.lower(snapshotJson),
+        FfiConverterString.lower(detailJson),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(preset),
+        FfiConverterString.lower(selectedAssistantSurface),$0
+    )
+})
+}
+public func reduceMobileSnapshotProjection(snapshotJson: String, preferredAssistantSurface: String, hasUserSelectedAssistantSurface: Bool, currentSelectedAssistantSurface: String)throws  -> ClientSnapshotProjection  {
+    return try  FfiConverterTypeClientSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_projection(
+        FfiConverterString.lower(snapshotJson),
+        FfiConverterString.lower(preferredAssistantSurface),
+        FfiConverterBool.lower(hasUserSelectedAssistantSurface),
+        FfiConverterString.lower(currentSelectedAssistantSurface),$0
+    )
+})
+}
+public func reduceSessionDetailOptimisticMode(detailJson: String, preset: String)throws  -> ClientDetailModeProjection  {
+    return try  FfiConverterTypeClientDetailModeProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_session_detail_optimistic_mode(
+        FfiConverterString.lower(detailJson),
+        FfiConverterString.lower(preset),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -2206,6 +2491,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_detail_cache() != 30029) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_optimistic_mode() != 25243) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_projection() != 16296) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_ack() != 37442) {

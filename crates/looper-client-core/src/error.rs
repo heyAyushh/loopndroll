@@ -16,6 +16,10 @@ pub enum ClientCoreError {
     EmptySessionId,
     #[error("sequence must be non-negative")]
     InvalidSequence,
+    #[error("snapshot JSON is invalid")]
+    InvalidSnapshotJson,
+    #[error("detail JSON is invalid")]
+    InvalidDetailJson,
     #[error("outbox client mutation IDs did not match the expected order")]
     UnexpectedOutboxMutations,
     #[error("client core state lock is poisoned")]

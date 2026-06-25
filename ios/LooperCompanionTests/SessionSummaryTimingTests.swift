@@ -213,18 +213,22 @@ struct SessionSummaryTimingTests {
     @MainActor
     @Test("Snapshot state store owns visible surface projection")
     func snapshotStateStoreOwnsVisibleSurfaceProjection() throws {
-        let codexSession = try sessionSummary(
+        var codexSession = try sessionSummary(
             id: "thread-main",
             ref: "S1",
             activityMilliseconds: Constants.olderActivityMilliseconds,
             messageMilliseconds: Constants.messageMilliseconds
         )
-        let devinSession = try sessionSummary(
+        codexSession.effectiveMode = .maxTurns1
+        codexSession.assistantPreview = "Codex ready"
+        var devinSession = try sessionSummary(
             id: "thread-main",
             ref: "S2",
             activityMilliseconds: Constants.activityMilliseconds,
             messageMilliseconds: Constants.messageMilliseconds
         )
+        devinSession.effectiveMode = .awaitReply
+        devinSession.assistantPreview = "Devin ready"
         let snapshot = MobileSnapshot(
             revision: "revision-1",
             host: HostSummary(
@@ -252,15 +256,53 @@ struct SessionSummaryTimingTests {
             completionChecks: []
         )
         let store = CompanionSnapshotStateStore()
+        store.setDetail(
+            SessionDetail(
+                id: "thread-main",
+                ref: "S2",
+                title: "thread-main",
+                status: .stopped,
+                effectiveMode: .infinite,
+                lastUpdatedAt: "2026-06-16T07:00:00Z",
+                lastActivityAt: "2026-06-16T07:00:00Z",
+                lastMessageAt: "2026-06-16T07:00:00Z",
+                assistantPreview: "Old detail",
+                latestAssistantMessage: nil,
+                isArchived: true,
+                notificationIds: [],
+                completionCheckID: nil,
+                completionCheckWaitForReply: false,
+                availableNotifications: [],
+                availableCompletionChecks: []
+            ),
+            for: "thread-main"
+        )
 
         store.applySnapshot(snapshot)
         #expect(store.selectedAssistantSurface == .codex)
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
+        #expect(store.detail(for: "thread-main")?.effectiveMode == .maxTurns1)
+        #expect(store.detail(for: "thread-main")?.assistantPreview == "Codex ready")
 
         store.selectAssistantSurface(.devin)
         #expect(store.selectedAssistantSurface == .devin)
         #expect(store.sessionSections.active.map(\.ref) == ["S2"])
         #expect(store.session(withID: "thread-main")?.ref == "S2")
+        #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
+        #expect(store.detail(for: "thread-main")?.assistantPreview == "Devin ready")
+
+        let rollback = store.rollbackState(for: "thread-main")
+        #expect(store.applyOptimisticMode(.infinite, to: "thread-main"))
+        #expect(store.session(withID: "thread-main")?.effectiveMode == .infinite)
+        #expect(store.detail(for: "thread-main")?.effectiveMode == .infinite)
+
+        store.restoreOptimisticModeSnapshot(
+            rollback.snapshot,
+            previousDetail: rollback.detail,
+            sessionID: "thread-main"
+        )
+        #expect(store.session(withID: "thread-main")?.effectiveMode == .awaitReply)
+        #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
     }
 
     private func sessionSummary(
