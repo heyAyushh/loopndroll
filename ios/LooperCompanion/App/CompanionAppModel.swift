@@ -57,6 +57,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
+    @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
@@ -99,6 +100,7 @@ final class CompanionAppModel {
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
+        connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         sessionMutationCoordinator = CompanionSessionMutationCoordinator(delegate: self)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
@@ -147,6 +149,13 @@ final class CompanionAppModel {
             preconditionFailure("Session mutation coordinator used before initialization")
         }
         return sessionMutationCoordinator
+    }
+
+    private var connectionActions: CompanionConnectionCoordinator {
+        guard let connectionCoordinator else {
+            preconditionFailure("Connection coordinator used before initialization")
+        }
+        return connectionCoordinator
     }
 
     var needsAttentionSessions: [SessionSummary] {
@@ -434,59 +443,23 @@ final class CompanionAppModel {
     }
 
     func saveConnectionBaseURL(_ value: String) async {
-        let baseURLs = CompanionConfiguration.normalizedBaseURLsForUserInput(value)
-        CompanionConfiguration.storeConnection(
-            CompanionConnection(baseURLs: baseURLs, bearerToken: nil)
-        )
-        await reloadConnection()
+        await connectionActions.saveBaseURL(value)
     }
 
     func saveConnection(_ connection: CompanionConnection) async {
-        CompanionConfiguration.storeConnection(connection)
-        await reloadConnection()
+        await connectionActions.saveConnection(connection)
     }
 
     func setConnectionRoutePreference(_ preference: CompanionConnectionRoutePreference) async {
-        let currentConnection = CompanionConfiguration.resolvedConnection()
-        let currentPreference = CompanionConfiguration.connectionRoutePreference()
-        guard preference != currentPreference else {
-            return
-        }
-
-        CompanionConfiguration.storeConnectionRoutePreference(preference)
-        CompanionConfiguration.storeConnection(
-            currentConnection,
-            mobileSessionPolicy: .preserveIfBearerTokenUnchanged
-        )
-        await reloadConnection()
-        CompanionDiagnostics.record(
-            "connection:route-preference preference=\(preference.rawValue) primary=\(configuredBaseURL)"
-        )
+        await connectionActions.setRoutePreference(preference)
     }
 
     func saveConnectionCode(_ connectionCode: String) async throws {
-        let trimmedConnectionCode = connectionCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedConnectionCode.isEmpty else {
-            throw CompanionConfigurationError.invalidConnectionCode
-        }
-
-        let connection = try CompanionConfiguration.resolveConnection(
-            fromConnectionCode: trimmedConnectionCode
-        )
-        await saveConnection(connection)
+        try await connectionActions.saveConnectionCode(connectionCode)
     }
 
     func saveConnectionOrbID(_ orbID: String) async throws {
-        let resolver = HTTPCompanionService(
-            baseURLs: CompanionConfiguration.resolvedBaseURLStrings(),
-            bearerToken: nil
-        )
-        let connectionCode = try await resolver.resolveConnectionCode(orbID: orbID)
-        try await saveConnectionCode(connectionCode.code)
-
-        guard connectionState == .connected else {
-            throw CompanionConnectionResolutionError.savedConnectionUnavailable(errorMessage)
-        }
+        try await connectionActions.saveConnectionOrbID(orbID)
     }
 
     private func reloadConnection() async {
@@ -2384,6 +2357,24 @@ extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
     }
 }
 
+extension CompanionAppModel: CompanionConnectionCoordinatorDelegate {
+    var connectionCoordinatorCurrentState: ConnectivityState {
+        connectionState
+    }
+
+    var connectionCoordinatorErrorMessage: String? {
+        errorMessage
+    }
+
+    var connectionCoordinatorConfiguredBaseURL: String {
+        configuredBaseURL
+    }
+
+    func connectionCoordinatorReloadConnection() async {
+        await reloadConnection()
+    }
+}
+
 private actor SpotlightIndexSyncWorker {
     private var currentTask: Task<Void, Never>?
 
@@ -2430,17 +2421,6 @@ private actor SpotlightIndexSyncWorker {
             } catch {
                 print("Failed to update Spotlight sessions: \(error)")
             }
-        }
-    }
-}
-
-private enum CompanionConnectionResolutionError: LocalizedError {
-    case savedConnectionUnavailable(String?)
-
-    var errorDescription: String? {
-        switch self {
-        case let .savedConnectionUnavailable(message):
-            return message ?? "The orb was accepted, but looper is not reachable yet."
         }
     }
 }

@@ -36,6 +36,7 @@
 		550A7CF2EDFB91BD86928A53 /* LooperCompanionControlFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */; };
 		5824EF8E8A99FBA17624BCAA /* RealtimeCompanionClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */; };
 		5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */; };
+		5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64F157A38686F69FE4685AC3 /* CompanionConnectionCoordinator.swift */; };
 		614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */; };
 		626E73486A4D4B1DA9409649 /* LooperCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3F8AB98DA026EB40D6D0D3 /* LooperCompanionApp.swift */; };
 		649D5A7BC8370586DD0D415C /* codex-logo-dark-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = FC260B4728D2B8FA011C6F93 /* codex-logo-dark-poster.png */; };
@@ -140,6 +141,7 @@
 		62FF4BF9B2F8F7856941F6C2 /* codex-logo.mp4 */ = {isa = PBXFileReference; path = "codex-logo.mp4"; sourceTree = "<group>"; };
 		64992FB2DA134F019F69163E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppModel.swift; sourceTree = "<group>"; };
+		64F157A38686F69FE4685AC3 /* CompanionConnectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConnectionCoordinator.swift; sourceTree = "<group>"; };
 		6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeCompanionClientFactory.swift; sourceTree = "<group>"; };
 		66B602FC6F0126FEDA7623BA /* OrbCodeKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OrbCodeKit; path = OrbCodeKit; sourceTree = SOURCE_ROOT; };
 		6EC1A0190D9046B11D3FCC6B /* CompanionTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionTheme.swift; sourceTree = "<group>"; };
@@ -336,6 +338,7 @@
 		853BAE846FD75D8A9077C32B /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				64F157A38686F69FE4685AC3 /* CompanionConnectionCoordinator.swift */,
 				56C79B6AF7BC32D952CE288D /* CompanionService.swift */,
 				1C788690C3676F6C3E679F85 /* CompanionSessionMiniController.swift */,
 				C80CC290869079749E6F36D5 /* CompanionSessionMiniLocalStore.swift */,
@@ -620,6 +623,7 @@
 				BA1A26A088E5157DCA412AC3 /* CompanionAppAuthenticator.swift in Sources */,
 				614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */,
 				AEE02BA4C8872FDFB121F4F2 /* CompanionConfiguration.swift in Sources */,
+				5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */,
 				B17C9F2AEA6D0C42142A0661 /* CompanionDevicePasskeyStore.swift in Sources */,
 				8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */,
 				DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */,
