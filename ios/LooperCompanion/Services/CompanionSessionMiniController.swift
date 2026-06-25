@@ -2,7 +2,30 @@ import Foundation
 import LooperRealtime
 
 @MainActor
-final class CompanionSessionMiniController {
+protocol CompanionSessionCommandLocalStore: AnyObject {
+    func enqueueModeCommand(
+        sessionID: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    )
+    func enqueuePromptCommand(
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface,
+        clientMutationID: String
+    )
+    func enqueueNotificationReplyCommand(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        clientMutationID: String
+    )
+    func markCommandAttempted(_ clientMutationID: String)
+    func markCommandDelivered(_ clientMutationID: String?)
+}
+
+@MainActor
+final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
     typealias SyncUpdateHandler = @MainActor @Sendable (
         LooperRealtimeStateMiniSyncUpdate,
         Int

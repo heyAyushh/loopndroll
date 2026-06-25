@@ -9,14 +9,6 @@ protocol CompanionNotificationReplyCoordinatorDelegate: AnyObject {
     func notificationReplyMakeClientMutationID() -> String
     func notificationReplyAssistantSurface(for sessionID: String) -> CompanionAssistantSurface?
     func notificationReplyReject(_ message: String)
-    func notificationReplyEnqueueCommand(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        clientMutationID: String
-    )
-    func notificationReplyMarkCommandAttempted(_ clientMutationID: String)
-    func notificationReplyMarkCommandDelivered(_ clientMutationID: String?)
     func notificationReplyApplyAccepted(
         _ response: LooperRealtimeNotificationReplyResponse,
         sessionID: String,
@@ -74,7 +66,7 @@ final class CompanionNotificationReplyCoordinator {
                 notificationID: trimmedNotificationID
             )
             : providedMutationID
-        delegate.notificationReplyEnqueueCommand(
+        sessionMiniController.enqueueNotificationReplyCommand(
             notificationID: trimmedNotificationID,
             sessionID: sessionID,
             prompt: trimmedPrompt,
@@ -136,7 +128,7 @@ final class CompanionNotificationReplyCoordinator {
                 assistantSurface: nil,
                 clientMutationID: clientMutationID
             )
-            delegate.notificationReplyMarkCommandDelivered(response.clientMutationID)
+            sessionMiniController.markCommandDelivered(response.clientMutationID)
             if nextPendingCommand() == nil {
                 sessionMiniController.resetNotificationReplyOutboxRetry()
             }
@@ -169,11 +161,11 @@ final class CompanionNotificationReplyCoordinator {
             CompanionDiagnostics.record(
                 "notification-reply:drop-malformed-outbox-command id=\(command.clientMutationID)"
             )
-            delegate?.notificationReplyMarkCommandDelivered(command.clientMutationID)
+            sessionMiniController.markCommandDelivered(command.clientMutationID)
             return true
         }
 
-        delegate?.notificationReplyMarkCommandAttempted(command.clientMutationID)
+        sessionMiniController.markCommandAttempted(command.clientMutationID)
         let targetSurface = delegate?.notificationReplyAssistantSurface(for: sessionID)
             ?? delegate?.notificationReplySelectedAssistantSurface
             ?? .defaultSurface

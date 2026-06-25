@@ -96,7 +96,10 @@ final class CompanionAppModel {
             delegate: self
         )
         snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
-        sessionMutationCoordinator = CompanionSessionMutationCoordinator(delegate: self)
+        sessionMutationCoordinator = CompanionSessionMutationCoordinator(
+            commandStore: sessionMiniController,
+            delegate: self
+        )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
         if didActivateBundledConnection {
@@ -1476,61 +1479,6 @@ final class CompanionAppModel {
         UUID().uuidString
     }
 
-    private func enqueueLocalModeCommand(
-        sessionID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) {
-        sessionMiniController.enqueueModeCommand(
-            sessionID: sessionID,
-            preset: preset,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    private func enqueueLocalPromptCommand(
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    ) {
-        sessionMiniController.enqueuePromptCommand(
-            sessionID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    private func enqueueLocalNotificationReplyCommand(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        clientMutationID: String
-    ) {
-        sessionMiniController.enqueueNotificationReplyCommand(
-            notificationID: notificationID,
-            sessionID: sessionID,
-            prompt: prompt,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    private func markLocalCommandAttempted(_ clientMutationID: String) {
-        sessionMiniController.markCommandAttempted(clientMutationID)
-    }
-
-    private func markLocalCommandDelivered(_ clientMutationID: String?) {
-        guard let trimmedClientMutationID = clientMutationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !trimmedClientMutationID.isEmpty
-        else {
-            return
-        }
-
-        sessionMiniController.markCommandDelivered(trimmedClientMutationID)
-    }
-
     @discardableResult
     private func restoreCachedSnapshotIfAvailable(
         reason: String,
@@ -1898,36 +1846,6 @@ extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
         applyOptimisticMode(preset, to: sessionID)
     }
 
-    func sessionMutationEnqueueModeCommand(
-        sessionID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) {
-        enqueueLocalModeCommand(
-            sessionID: sessionID,
-            preset: preset,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    func sessionMutationEnqueuePromptCommand(
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    ) {
-        enqueueLocalPromptCommand(
-            sessionID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    func sessionMutationMarkCommandDelivered(_ clientMutationID: String?) {
-        markLocalCommandDelivered(clientMutationID)
-    }
-
     func sessionMutationApplyModeResult(
         _ result: CompanionSessionModeResult,
         sessionID: String
@@ -2062,28 +1980,6 @@ extension CompanionAppModel: CompanionNotificationReplyCoordinatorDelegate {
     func notificationReplyReject(_ message: String) {
         errorMessage = message
         Haptics.warning()
-    }
-
-    func notificationReplyEnqueueCommand(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        clientMutationID: String
-    ) {
-        enqueueLocalNotificationReplyCommand(
-            notificationID: notificationID,
-            sessionID: sessionID,
-            prompt: prompt,
-            clientMutationID: clientMutationID
-        )
-    }
-
-    func notificationReplyMarkCommandAttempted(_ clientMutationID: String) {
-        markLocalCommandAttempted(clientMutationID)
-    }
-
-    func notificationReplyMarkCommandDelivered(_ clientMutationID: String?) {
-        markLocalCommandDelivered(clientMutationID)
     }
 
     func notificationReplyApplyAccepted(

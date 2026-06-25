@@ -121,18 +121,6 @@ protocol CompanionSessionMutationCoordinatorDelegate: AnyObject {
     func sessionMutationCanSendPrompt(to sessionID: String) -> Bool
     func sessionMutationRejectPrompt(_ message: String)
     func sessionMutationApplyOptimisticMode(_ preset: SessionMode?, to sessionID: String)
-    func sessionMutationEnqueueModeCommand(
-        sessionID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    )
-    func sessionMutationEnqueuePromptCommand(
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    )
-    func sessionMutationMarkCommandDelivered(_ clientMutationID: String?)
     func sessionMutationApplyModeResult(
         _ result: CompanionSessionModeResult,
         sessionID: String
@@ -153,6 +141,7 @@ protocol CompanionSessionMutationCoordinatorDelegate: AnyObject {
 
 @MainActor
 final class CompanionSessionMutationCoordinator {
+    private let commandStore: (any CompanionSessionCommandLocalStore)?
     private weak var delegate: CompanionSessionMutationCoordinatorDelegate?
 
     private var modeMutationDrainTasksBySessionID: [String: Task<Bool, Never>] = [:]
@@ -167,7 +156,11 @@ final class CompanionSessionMutationCoordinator {
     private var modeDrainBeforeFinishHook: (() async -> Void)?
     #endif
 
-    init(delegate: CompanionSessionMutationCoordinatorDelegate) {
+    init(
+        commandStore: (any CompanionSessionCommandLocalStore)?,
+        delegate: CompanionSessionMutationCoordinatorDelegate
+    ) {
+        self.commandStore = commandStore
         self.delegate = delegate
     }
 
@@ -194,7 +187,7 @@ final class CompanionSessionMutationCoordinator {
             clientMutationID: clientMutationID
         )
         delegate.sessionMutationApplyOptimisticMode(preset, to: sessionID)
-        delegate.sessionMutationEnqueueModeCommand(
+        commandStore?.enqueueModeCommand(
             sessionID: sessionID,
             preset: preset,
             clientMutationID: clientMutationID
@@ -252,7 +245,7 @@ final class CompanionSessionMutationCoordinator {
         let modeBarrierTask = pendingModeMutation.map {
             modeMutationBarrierTask($0.barrier)
         }
-        delegate.sessionMutationEnqueuePromptCommand(
+        commandStore?.enqueuePromptCommand(
             sessionID: sessionID,
             prompt: trimmedPrompt,
             assistantSurface: targetSurface,
@@ -445,7 +438,7 @@ final class CompanionSessionMutationCoordinator {
             return false
         }
 
-        delegate.sessionMutationMarkCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
+        commandStore?.markCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
         guard envelope.connectionRevision == delegate.sessionMutationConnectionRevision else {
             CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(envelope.sessionID)")
             return false
@@ -541,7 +534,7 @@ final class CompanionSessionMutationCoordinator {
         pendingModeMutation: PendingSessionModeMutation,
         envelope: PromptMutationEnvelope
     ) async -> Bool {
-        delegate?.sessionMutationMarkCommandDelivered(
+        commandStore?.markCommandDelivered(
             result.mode.clientMutationID ?? pendingModeMutation.clientMutationID
         )
         await finishModeMutationDeliveredByBatch(
@@ -610,7 +603,7 @@ final class CompanionSessionMutationCoordinator {
             return false
         }
 
-        delegate.sessionMutationMarkCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
+        commandStore?.markCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
         guard envelope.connectionRevision == delegate.sessionMutationConnectionRevision else {
             CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(envelope.sessionID)")
             return false
