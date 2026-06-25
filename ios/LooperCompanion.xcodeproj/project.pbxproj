@@ -36,6 +36,7 @@
 		550A7CF2EDFB91BD86928A53 /* LooperCompanionControlFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */; };
 		5824EF8E8A99FBA17624BCAA /* RealtimeCompanionClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */; };
 		5D7B6A01FCAB9937455A0FD0 /* PreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */; };
+		5EFEDA0E1496D4866CF6A477 /* SpotlightIndexSyncWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80466873285B25A2D1353BE3 /* SpotlightIndexSyncWorker.swift */; };
 		5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64F157A38686F69FE4685AC3 /* CompanionConnectionCoordinator.swift */; };
 		614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */; };
 		626E73486A4D4B1DA9409649 /* LooperCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3F8AB98DA026EB40D6D0D3 /* LooperCompanionApp.swift */; };
@@ -152,6 +153,7 @@
 		76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbScannerScreen.swift; sourceTree = "<group>"; };
 		78346AF56F5D457B05954C0B /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
 		7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCurrentSessionResolver.swift; sourceTree = "<group>"; };
+		80466873285B25A2D1353BE3 /* SpotlightIndexSyncWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightIndexSyncWorker.swift; sourceTree = "<group>"; };
 		80DC6E68627D2DF8604A322B /* MotionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionController.swift; sourceTree = "<group>"; };
 		8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */ = {isa = PBXFileReference; path = "codex-logo-dark.mp4"; sourceTree = "<group>"; };
 		87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Debug.entitlements; sourceTree = "<group>"; };
@@ -347,6 +349,7 @@
 				2489ABFC353256268974517A /* MockCompanionService.swift */,
 				6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */,
 				A415685A0D0A05E2D83C2E80 /* SessionSpotlightIndexer.swift */,
+				80466873285B25A2D1353BE3 /* SpotlightIndexSyncWorker.swift */,
 				ACE4AA7E26A90DEF6007679B /* SpotlightSearchService.swift */,
 			);
 			path = Services;
@@ -676,6 +679,7 @@
 				0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */,
 				CFEA7233B0827765E88A1346 /* SessionsScreen.swift in Sources */,
 				293C8235B895D87F362AFB95 /* SettingsScreen.swift in Sources */,
+				5EFEDA0E1496D4866CF6A477 /* SpotlightIndexSyncWorker.swift in Sources */,
 				A075E99DA429033BC81CF2D6 /* SpotlightSearchService.swift in Sources */,
 				C7FDB71A399DED377B511A0F /* StatusPill.swift in Sources */,
 				93130249F7C31EC788DCD5E9 /* UIBodySynchronizer.swift in Sources */,
