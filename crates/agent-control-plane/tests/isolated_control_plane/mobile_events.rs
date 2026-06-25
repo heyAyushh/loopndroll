@@ -859,7 +859,7 @@ async fn grpc_session_stream_acks_mode_command_before_state_deltas() {
     )
     .await;
 
-    let ack = next_session_ack(&mut stream, "mode command ack").await;
+    let ack = next_session_ack_frame(&mut stream, "first mode command frame").await;
     assert_command_ack(
         ack.accepted,
         &ack.client_mutation_id,
@@ -945,7 +945,7 @@ async fn grpc_session_stream_rejects_invalid_command_as_ack_frame() {
     )
     .await;
 
-    let ack = next_session_ack(&mut stream, "invalid mode command ack").await;
+    let ack = next_session_ack_frame(&mut stream, "first invalid mode command frame").await;
     assert!(!ack.accepted);
     assert_eq!(ack.client_mutation_id, "");
     assert_eq!(ack.entity_id, "thread-main");
@@ -976,7 +976,7 @@ async fn grpc_session_stream_mode_requires_hot_state_mini_cache_without_snapshot
     )
     .await;
 
-    let ack = next_session_ack(&mut stream, "cold mini mode command ack").await;
+    let ack = next_session_ack_frame(&mut stream, "first cold mini mode command frame").await;
     assert!(!ack.accepted);
     assert_eq!(ack.client_mutation_id, "session-stream-mode-cold-mini");
     assert_eq!(ack.entity_id, "thread-main");
@@ -1008,7 +1008,7 @@ async fn grpc_session_stream_replays_duplicate_command_ack() {
     )
     .await;
 
-    let first_ack = next_session_ack(&mut stream, "first duplicate command ack").await;
+    let first_ack = next_session_ack_frame(&mut stream, "first duplicate command frame").await;
     assert_command_ack(
         first_ack.accepted,
         &first_ack.client_mutation_id,
@@ -1086,11 +1086,15 @@ async fn next_session_frame(
     .unwrap_or_else(|| panic!("session stream closed before {label}"))
 }
 
-async fn next_session_ack(
+async fn next_session_ack_frame(
     stream: &mut tonic::codec::Streaming<ServerFrame>,
     label: &str,
 ) -> agent_control_plane::grpc::proto::CommandAck {
-    next_session_ack_matching(stream, label, |_| true).await
+    let frame = next_session_frame(stream, label).await;
+    match frame.frame {
+        Some(server_frame::Frame::Ack(ack)) => ack,
+        other => panic!("expected ACK as {label}, got {other:?}"),
+    }
 }
 
 async fn next_session_ack_matching(

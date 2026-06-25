@@ -152,8 +152,8 @@ impl LooperRealtime for LooperRealtimeService {
         let mut inbound = request.into_inner();
         let control_plane = self.control_plane.clone();
         let output = stream! {
-            let mut event_receiver = control_plane.mobile_event_hub().subscribe();
             let mut last_seq = latest_mobile_state_seq(&control_plane);
+            let mut event_receiver = control_plane.mobile_event_hub().subscribe();
             let mut state_poll = tokio::time::interval_at(
                 tokio::time::Instant::now() + SESSION_STATE_POLL_INTERVAL,
                 SESSION_STATE_POLL_INTERVAL,
@@ -172,7 +172,17 @@ impl LooperRealtime for LooperRealtimeService {
                     received = inbound.message() => {
                         match received {
                             Ok(Some(frame)) => {
-                                match handle_session_client_frame(&control_plane, frame, &mut last_seq) {
+                                let batch = handle_session_client_frame(&control_plane, frame, &mut last_seq);
+                                for frame in batch.frames {
+                                    yield Ok(frame);
+                                }
+                                if let Some(status) = batch.terminal_error {
+                                    yield Err(status);
+                                    break;
+                                }
+                            }
+                            Ok(None) => {
+                                match drain_state_delta_frames(&control_plane, &mut last_seq) {
                                     Ok(frames) => {
                                         for frame in frames {
                                             yield Ok(frame);
@@ -180,11 +190,10 @@ impl LooperRealtime for LooperRealtimeService {
                                     }
                                     Err(status) => {
                                         yield Err(status);
-                                        break;
                                     }
                                 }
-                            }
-                            Ok(None) => break,
+                                break;
+                            },
                             Err(status) => {
                                 yield Err(status);
                                 break;
@@ -268,15 +277,18 @@ fn handle_session_client_frame(
     control_plane: &ControlPlane,
     frame: proto::ClientFrame,
     last_seq: &mut i64,
-) -> Result<Vec<proto::ServerFrame>, Status> {
+) -> SessionFrameBatch {
     match frame.frame {
         Some(proto::client_frame::Frame::Command(command)) => {
             handle_session_command(control_plane, command, last_seq)
         }
         Some(proto::client_frame::Frame::Resume(resume)) => {
-            replay_state_delta_frames(control_plane, resume.after_seq, last_seq)
+            match replay_state_delta_frames(control_plane, resume.after_seq, last_seq) {
+                Ok(frames) => SessionFrameBatch::frames(frames),
+                Err(status) => SessionFrameBatch::terminal_error(status),
+            }
         }
-        None => Ok(vec![command_ack_frame(rejected_command_ack(
+        None => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             String::new(),
             String::new(),
             REJECT_ERROR_CODE_EMPTY_FRAME,
@@ -289,7 +301,7 @@ fn handle_session_command(
     control_plane: &ControlPlane,
     command: proto::Command,
     last_seq: &mut i64,
-) -> Result<Vec<proto::ServerFrame>, Status> {
+) -> SessionFrameBatch {
     match command.command {
         Some(proto::command::Command::SetSessionMode(request)) => session_command_frames(
             control_plane,
@@ -338,12 +350,40 @@ fn handle_session_command(
             .map_err(realtime_command_status)
             .and_then(command_ack_from_notification_reply_response),
         ),
-        None => Ok(vec![command_ack_frame(rejected_command_ack(
+        None => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             String::new(),
             String::new(),
             REJECT_ERROR_CODE_EMPTY_COMMAND,
             "command frame is empty",
         ))]),
+    }
+}
+
+struct SessionFrameBatch {
+    frames: Vec<proto::ServerFrame>,
+    terminal_error: Option<Status>,
+}
+
+impl SessionFrameBatch {
+    fn frames(frames: Vec<proto::ServerFrame>) -> Self {
+        Self {
+            frames,
+            terminal_error: None,
+        }
+    }
+
+    fn terminal_error(status: Status) -> Self {
+        Self {
+            frames: Vec::new(),
+            terminal_error: Some(status),
+        }
+    }
+
+    fn frames_then_error(frames: Vec<proto::ServerFrame>, status: Status) -> Self {
+        Self {
+            frames,
+            terminal_error: Some(status),
+        }
     }
 }
 
@@ -353,14 +393,19 @@ fn session_command_frames(
     client_mutation_id: String,
     entity_id: String,
     result: Result<proto::CommandAck, Status>,
-) -> Result<Vec<proto::ServerFrame>, Status> {
+) -> SessionFrameBatch {
     match result {
         Ok(ack) => {
             let mut frames = vec![command_ack_frame(ack)];
-            frames.extend(drain_state_delta_frames(control_plane, last_seq)?);
-            Ok(frames)
+            match drain_state_delta_frames(control_plane, last_seq) {
+                Ok(deltas) => {
+                    frames.extend(deltas);
+                    SessionFrameBatch::frames(frames)
+                }
+                Err(status) => SessionFrameBatch::frames_then_error(frames, status),
+            }
         }
-        Err(status) => Ok(vec![command_ack_frame(rejected_command_ack(
+        Err(status) => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             client_mutation_id,
             entity_id,
             status_code_name(status.code()),
