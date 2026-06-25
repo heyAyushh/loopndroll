@@ -4,6 +4,8 @@ import GRPCNIOTransportHTTP2
 import Synchronization
 
 public final class LooperRealtimeClient: Sendable {
+    private static let stateMiniSnapshotPath = "/api/mobile/session-minis/snapshot"
+
     private let endpoints: [LooperRealtimeEndpoint]
     private let credentials: LooperRealtimeCredentials
     private let connections = LooperRealtimeConnectionPool()
@@ -130,6 +132,98 @@ public final class LooperRealtimeClient: Sendable {
         }
     }
 
+    public func submitSessionCommandBatch(
+        commands: [LooperRealtimeSessionCommand]
+    ) async throws -> LooperRealtimeSessionCommandBatchResponse {
+        guard !commands.isEmpty else {
+            return LooperRealtimeSessionCommandBatchResponse(accepted: true, commandAcks: [])
+        }
+
+        return try await withFirstAvailableService { service, metadata in
+            try await service.session(
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.promptCallOptions,
+                requestProducer: { writer in
+                    for command in commands {
+                        try await writer.write(command.clientFrame)
+                    }
+                },
+                onResponse: { response in
+                    var acks: [LooperRealtimeCommandAckEnvelope] = []
+                    for try await frame in response.messages {
+                        guard case let .ack(ack)? = frame.frame else {
+                            continue
+                        }
+                        let realtimeAck = LooperRealtimeCommandAck(ack)
+                        guard let command = commands.first(where: {
+                            $0.clientMutationID == realtimeAck.clientMutationID
+                        }) else {
+                            continue
+                        }
+                        acks.append(
+                            LooperRealtimeCommandAckEnvelope(
+                                commandKind: command.commandKind,
+                                ack: realtimeAck,
+                                preset: command.preset,
+                                dispatchKind: realtimeAck.accepted
+                                    ? command.dispatchKind
+                                    : "rejected",
+                                promptID: nil,
+                                notificationID: command.notificationID
+                            )
+                        )
+                        if acks.count == commands.count {
+                            break
+                        }
+                    }
+                    return LooperRealtimeSessionCommandBatchResponse(
+                        accepted: acks.count == commands.count && acks.allSatisfy(\.ack.accepted),
+                        commandAcks: acks
+                    )
+                }
+            )
+        }
+    }
+
+    public func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+        var lastError: Error?
+        for endpoint in endpoints {
+            do {
+                return try await stateMiniSnapshot(endpoint: endpoint)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? LooperRealtimeError.unavailable
+    }
+
+    public func streamStateMinis(
+        afterSeq: Int64,
+        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
+    ) async throws {
+        try await withFirstAvailableService { service, metadata in
+            try await service.session(
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.streamCallOptions,
+                requestProducer: { writer in
+                    var frame = Looper_V1_ClientFrame()
+                    var resume = Looper_V1_Resume()
+                    resume.afterSeq = afterSeq
+                    frame.resume = resume
+                    try await writer.write(frame)
+                },
+                onResponse: { response in
+                    for try await frame in response.messages {
+                        guard case let .stateDelta(delta)? = frame.frame else {
+                            continue
+                        }
+                        try await onDelta(LooperRealtimeStateMiniDelta(delta))
+                    }
+                }
+            )
+        }
+    }
+
     private func withFirstAvailableService<Result: Sendable>(
         _ operation: @Sendable @escaping (
             Looper_V1_LooperRealtime.Client<HTTP2ClientTransport.TransportServices>,
@@ -164,6 +258,30 @@ public final class LooperRealtimeClient: Sendable {
         let client = try connections.client(for: endpoint, host: host, port: port)
         let service = Looper_V1_LooperRealtime.Client(wrapping: client)
         return try await operation(service, credentials.metadata)
+    }
+
+    private func stateMiniSnapshot(endpoint: LooperRealtimeEndpoint) async throws
+        -> LooperRealtimeStateMiniSnapshot
+    {
+        let url = endpoint.baseURL.appending(path: Self.stateMiniSnapshotPath)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2
+        for (key, value) in credentials.httpHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let (data, urlResponse) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = urlResponse as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode)
+        else {
+            throw LooperRealtimeError.unavailable
+        }
+        let snapshotResponse = try JSONDecoder().decode(
+            LooperRealtimeStateMiniSnapshotResponse.self,
+            from: data
+        )
+        return LooperRealtimeStateMiniSnapshot(from: snapshotResponse)
     }
 }
 
@@ -286,13 +404,21 @@ enum LooperRealtimeLatencyPolicy {
 }
 
 private extension LooperRealtimeCredentials {
-    var metadata: Metadata {
-        var metadata = Metadata()
+    var httpHeaders: [(String, String)] {
+        var headers: [(String, String)] = []
         if let bearerToken {
-            metadata.addString("Bearer \(bearerToken)", forKey: "authorization")
+            headers.append(("authorization", "Bearer \(bearerToken)"))
         }
         if let mobileSessionHeader {
-            metadata.addString(mobileSessionHeader, forKey: "x-looper-mobile-session")
+            headers.append(("x-looper-mobile-session", mobileSessionHeader))
+        }
+        return headers
+    }
+
+    var metadata: Metadata {
+        var metadata = Metadata()
+        for (key, value) in httpHeaders {
+            metadata.addString(value, forKey: key)
         }
         return metadata
     }
@@ -320,8 +446,193 @@ private extension LooperRealtimeCommandAck {
             entityID: ack.entityID,
             revision: ack.revision,
             serverTime: ack.serverTime.nilIfEmpty,
-            idempotentReplay: ack.idempotentReplay
+            idempotentReplay: ack.idempotentReplay,
+            errorCode: ack.errorCode.nilIfEmpty,
+            rejectReason: ack.rejectReason.nilIfEmpty
         )
+    }
+}
+
+private extension LooperRealtimeSessionCommand {
+    var clientFrame: Looper_V1_ClientFrame {
+        var frame = Looper_V1_ClientFrame()
+        var command = Looper_V1_Command()
+        switch self {
+        case let .setSessionMode(threadID, preset, clientMutationID):
+            var request = Looper_V1_SetSessionModeRequest()
+            request.threadID = threadID
+            request.preset = preset ?? ""
+            request.clientMutationID = clientMutationID
+            command.setSessionMode = request
+        case let .sendSessionPrompt(threadID, prompt, assistantSurface, clientMutationID):
+            var request = Looper_V1_SendSessionPromptRequest()
+            request.threadID = threadID
+            request.prompt = prompt
+            request.assistantSurface = assistantSurface ?? ""
+            request.clientMutationID = clientMutationID
+            command.sendSessionPrompt = request
+        case let .submitNotificationReply(
+            notificationID,
+            threadID,
+            prompt,
+            assistantSurface,
+            clientMutationID
+        ):
+            var request = Looper_V1_SubmitNotificationReplyRequest()
+            request.notificationID = notificationID
+            request.threadID = threadID
+            request.prompt = prompt
+            request.assistantSurface = assistantSurface ?? ""
+            request.clientMutationID = clientMutationID
+            command.submitNotificationReply = request
+        }
+        frame.command = command
+        return frame
+    }
+}
+
+private extension LooperRealtimeStateMiniSnapshot {
+    init(from response: LooperRealtimeStateMiniSnapshotResponse) {
+        self.init(
+            latestSeq: response.latestSeq,
+            sessions: response.sessions.compactMap(LooperRealtimeStateMini.init),
+            serverTime: response.serverTime
+        )
+    }
+}
+
+private extension LooperRealtimeStateMiniDelta {
+    init(_ delta: Looper_V1_StateMiniDelta) {
+        let session = LooperRealtimeStateMini(
+            seq: delta.seq,
+            revision: delta.revision,
+            payloadJSON: delta.payloadJson
+        )
+        self.init(
+            seq: delta.seq,
+            latestSeq: delta.seq,
+            entityID: delta.entityID,
+            kind: delta.kind,
+            revision: delta.revision,
+            serverTime: delta.serverTime.nilIfEmpty,
+            session: session,
+            sessionID: session?.sessionID,
+            assistantSurface: session?.assistantSurface,
+            sessions: session.map { [$0] } ?? []
+        )
+    }
+}
+
+private extension LooperRealtimeStateMini {
+    init?(_ value: LooperRealtimeStateMiniJSON) {
+        guard let sessionID = value.sessionID?.nilIfEmpty else {
+            return nil
+        }
+        let assistantSurface = value.assistantSurface?.nilIfEmpty ?? ""
+        self.init(
+            sessionID: sessionID,
+            assistantSurface: assistantSurface,
+            seq: value.seq ?? 0,
+            revision: value.revision?.nilIfEmpty ?? "",
+            payloadJSON: value.payloadJSON
+        )
+    }
+
+    init?(seq: Int64, revision: String, payloadJSON: String) {
+        guard let data = payloadJSON.data(using: .utf8),
+              let value = try? JSONDecoder().decode(LooperRealtimeStateMiniJSON.self, from: data),
+              let sessionID = value.sessionID?.nilIfEmpty
+        else {
+            return nil
+        }
+
+        self.init(
+            sessionID: sessionID,
+            assistantSurface: value.assistantSurface?.nilIfEmpty ?? "",
+            seq: value.seq ?? seq,
+            revision: value.revision?.nilIfEmpty ?? revision,
+            payloadJSON: payloadJSON
+        )
+    }
+}
+
+private struct LooperRealtimeStateMiniSnapshotResponse: Decodable {
+    let latestSeq: Int64
+    let sessions: [LooperRealtimeStateMiniJSON]
+    let serverTime: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case latestSeq
+        case latestSeqSnake = "latest_seq"
+        case sessions
+        case serverTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        latestSeq = try container.decodeIfPresent(Int64.self, forKey: .latestSeq)
+            ?? container.decodeIfPresent(Int64.self, forKey: .latestSeqSnake)
+            ?? 0
+        sessions = try container.decodeIfPresent(
+            [LooperRealtimeStateMiniJSON].self,
+            forKey: .sessions
+        ) ?? []
+        serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime)
+    }
+}
+
+private struct LooperRealtimeStateMiniJSON: Decodable {
+    let sessionID: String?
+    let assistantSurface: String?
+    let seq: Int64?
+    let revision: String?
+    let payloadJSON: String
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID
+        case sessionId
+        case assistantSurface
+        case seq
+        case revision
+    }
+
+    init(from decoder: Decoder) throws {
+        payloadJSON = try Self.rawJSON(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+            ?? container.decodeIfPresent(String.self, forKey: .sessionId)
+        assistantSurface = try container.decodeIfPresent(String.self, forKey: .assistantSurface)
+        seq = try container.decodeIfPresent(Int64.self, forKey: .seq)
+        revision = try container.decodeIfPresent(String.self, forKey: .revision)
+    }
+
+    private static func rawJSON(from decoder: Decoder) throws -> String {
+        let value = try LooperRealtimeRawJSON(from: decoder).value
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+private struct LooperRealtimeRawJSON: Decodable {
+    let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let object = try? container.decode([String: LooperRealtimeRawJSON].self) {
+            value = object.mapValues(\.value)
+        } else if let array = try? container.decode([LooperRealtimeRawJSON].self) {
+            value = array.map(\.value)
+        } else if let string = try? container.decode(String.self) {
+            value = string
+        } else if let double = try? container.decode(Double.self) {
+            value = double
+        } else if let bool = try? container.decode(Bool.self) {
+            value = bool
+        } else if container.decodeNil() {
+            value = NSNull()
+        } else {
+            value = [:] as [String: Any]
+        }
     }
 }
 

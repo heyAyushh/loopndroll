@@ -63,6 +63,8 @@ public struct LooperRealtimeCommandAck: Codable, Equatable, Sendable {
     public let revision: String
     public let serverTime: String?
     public let idempotentReplay: Bool
+    public let errorCode: String?
+    public let rejectReason: String?
 
     public init(
         accepted: Bool,
@@ -71,7 +73,9 @@ public struct LooperRealtimeCommandAck: Codable, Equatable, Sendable {
         entityID: String,
         revision: String,
         serverTime: String?,
-        idempotentReplay: Bool
+        idempotentReplay: Bool,
+        errorCode: String? = nil,
+        rejectReason: String? = nil
     ) {
         self.accepted = accepted
         self.clientMutationID = clientMutationID
@@ -80,6 +84,8 @@ public struct LooperRealtimeCommandAck: Codable, Equatable, Sendable {
         self.revision = revision
         self.serverTime = serverTime
         self.idempotentReplay = idempotentReplay
+        self.errorCode = errorCode
+        self.rejectReason = rejectReason
     }
 }
 
