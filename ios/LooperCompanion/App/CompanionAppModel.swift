@@ -172,14 +172,13 @@ final class CompanionAppModel {
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
-    @ObservationIgnored private let sessionMiniLocalStore: CompanionSessionMiniLocalStore?
+    @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
-    @ObservationIgnored private var sessionMiniSyncTask: Task<Void, Never>?
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
     @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
     @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
@@ -225,7 +224,7 @@ final class CompanionAppModel {
         self.notificationManager = notificationManager
         self.remotePushRegistrar = remotePushRegistrar
         self.spotlightIndexer = spotlightIndexer
-        self.sessionMiniLocalStore = sessionMiniLocalStore
+        self.sessionMiniController = CompanionSessionMiniController(localStore: sessionMiniLocalStore)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
@@ -245,7 +244,7 @@ final class CompanionAppModel {
         }
 
         configureStopQuickActions()
-        SessionQuickActionCenter.shared.configureLocalStore(sessionMiniLocalStore)
+        SessionQuickActionCenter.shared.configureLocalStore(sessionMiniController.localStore)
         registerSessionQuickActionHandler()
         registerNotificationObservers()
         CompanionDiagnostics.lifecycle.info(
@@ -472,7 +471,7 @@ final class CompanionAppModel {
     }
 
     private func stopRealtimeSessionSync(disconnectCachedClients: Bool) {
-        stopSessionMiniSync()
+        sessionMiniController.stopSync()
         if disconnectCachedClients {
             Task {
                 await RealtimeCompanionClientFactory.disconnectCachedClients()
@@ -481,30 +480,14 @@ final class CompanionAppModel {
     }
 
     func startRealtimeSessionSyncIfNeeded() {
-        startSessionMiniSyncIfNeeded()
-    }
-
-    private func startSessionMiniSyncIfNeeded() {
-        guard sessionMiniSyncTask == nil,
-              let sessionMiniLocalStore
-        else {
-            return
-        }
-
-        let service = service
-        let connectionRevision = connectionRevision
-        let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: sessionMiniLocalStore.realtimeLocalStore,
-            transport: DeferredCompanionStateMiniSyncTransport(service: service)
-        )
-
-        sessionMiniSyncTask = Task { [weak self] in
-            await synchronizer.runUntilCancelled { [weak self] update in
-                await self?.applySessionMiniSyncUpdate(
-                    update,
-                    connectionRevision: connectionRevision
-                )
-            }
+        sessionMiniController.startSyncIfNeeded(
+            service: service,
+            connectionRevision: connectionRevision
+        ) { [weak self] update, connectionRevision in
+            self?.applySessionMiniSyncUpdate(
+                update,
+                connectionRevision: connectionRevision
+            )
         }
     }
 
@@ -512,20 +495,11 @@ final class CompanionAppModel {
     func runSessionMiniSyncCycleForSelfTest(
         transport: any LooperRealtimeStateMiniSyncTransport
     ) async -> LooperRealtimeStateMiniSyncCycleResult {
-        guard let sessionMiniLocalStore else {
-            return .retry(
-                latestSeq: 0,
-                errorDescription: "session mini local store unavailable"
-            )
-        }
-
-        let connectionRevision = connectionRevision
-        let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: sessionMiniLocalStore.realtimeLocalStore,
-            transport: transport
-        )
-        return await synchronizer.runOneCycle { [weak self] update in
-            await self?.applySessionMiniSyncUpdate(
+        await sessionMiniController.runSyncCycleForSelfTest(
+            transport: transport,
+            connectionRevision: connectionRevision
+        ) { [weak self] update, connectionRevision in
+            self?.applySessionMiniSyncUpdate(
                 update,
                 connectionRevision: connectionRevision
             )
@@ -533,24 +507,17 @@ final class CompanionAppModel {
     }
     #endif
 
-    private func stopSessionMiniSync() {
-        sessionMiniSyncTask?.cancel()
-        sessionMiniSyncTask = nil
-    }
-
     private func applySessionMiniSyncUpdate(
         _ update: LooperRealtimeStateMiniSyncUpdate,
         connectionRevision: Int
     ) {
-        guard connectionRevision == self.connectionRevision,
-              let sessionMiniLocalStore
-        else {
+        guard connectionRevision == self.connectionRevision else {
             CompanionDiagnostics.record("session-mini:sync-stale-skip")
             return
         }
 
         do {
-            guard let cachedSnapshot = try sessionMiniLocalStore.cachedSnapshot() else {
+            guard let cachedSnapshot = try sessionMiniController.cachedSnapshot() else {
                 return
             }
 
@@ -660,7 +627,7 @@ final class CompanionAppModel {
         clearsSnapshotCache: Bool,
         cachedSnapshotRestoreReason: String?
     ) async -> Bool {
-        let shouldRestartEventStream = sessionMiniSyncTask != nil
+        let shouldRestartEventStream = sessionMiniController.isSyncing
         connectionRevision += 1
         cancelCachedSnapshotRestore()
         cancelSnapshotLoad()
@@ -1059,7 +1026,7 @@ final class CompanionAppModel {
     }
 
     func refreshFromFallbackTimer() async {
-        guard sessionMiniSyncTask == nil || snapshot == nil else {
+        guard !sessionMiniController.isSyncing || snapshot == nil else {
             CompanionDiagnostics.record("root:refresh-skip session-sync-active")
             return
         }
@@ -1334,7 +1301,7 @@ final class CompanionAppModel {
     }
 
     private func restartRealtimeSessionSyncIfActive() {
-        guard sessionMiniSyncTask != nil else {
+        guard sessionMiniController.isSyncing else {
             return
         }
 
@@ -2038,9 +2005,7 @@ final class CompanionAppModel {
     }
 
     private func nextPendingNotificationReplyCommand() -> CompanionSessionMiniPendingCommand? {
-        sessionMiniLocalStore?.pendingCommands().first { command in
-            command.kind == .submitNotificationReply
-        }
+        sessionMiniController.pendingNotificationReplyCommand()
     }
 
     @discardableResult
@@ -2472,25 +2437,8 @@ final class CompanionAppModel {
 
     @discardableResult
     private func restoreCachedSessionMiniSnapshotIfAvailable(reason: String) -> Bool {
-        guard let sessionMiniLocalStore else {
-            return false
-        }
-
-        do {
-            guard let cachedSnapshot = try sessionMiniLocalStore.cachedSnapshot() else {
-                return false
-            }
-
-            applyCachedSnapshot(cachedSnapshot, reason: "session-mini-\(reason)")
-            CompanionDiagnostics.record(
-                "session-mini:cache-restore reason=\(reason) sessions=\(cachedSnapshot.sessions.count)"
-            )
-            return true
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:cache-restore-failed reason=\(reason) error=\(error.localizedDescription)"
-            )
-            return false
+        sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason in
+            self?.applyCachedSnapshot(cachedSnapshot, reason: reason)
         }
     }
 
@@ -2503,18 +2451,11 @@ final class CompanionAppModel {
         preset: SessionMode?,
         clientMutationID: String
     ) {
-        do {
-            try sessionMiniLocalStore?.enqueueModeCommand(
-                threadID: sessionID,
-                preset: preset,
-                clientMutationID: clientMutationID
-            )
-            markLocalCommandAttempted(clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:mode-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-        }
+        sessionMiniController.enqueueModeCommand(
+            sessionID: sessionID,
+            preset: preset,
+            clientMutationID: clientMutationID
+        )
     }
 
     private func enqueueLocalPromptCommand(
@@ -2523,19 +2464,12 @@ final class CompanionAppModel {
         assistantSurface: CompanionAssistantSurface,
         clientMutationID: String
     ) {
-        do {
-            try sessionMiniLocalStore?.enqueuePromptCommand(
-                threadID: sessionID,
-                prompt: prompt,
-                assistantSurface: assistantSurface,
-                clientMutationID: clientMutationID
-            )
-            markLocalCommandAttempted(clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:prompt-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-        }
+        sessionMiniController.enqueuePromptCommand(
+            sessionID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: clientMutationID
+        )
     }
 
     private func enqueueLocalNotificationReplyCommand(
@@ -2544,30 +2478,16 @@ final class CompanionAppModel {
         prompt: String,
         clientMutationID: String
     ) {
-        do {
-            try sessionMiniLocalStore?.enqueueNotificationReplyCommand(
-                notificationID: notificationID,
-                threadID: sessionID,
-                prompt: prompt,
-                assistantSurface: nil,
-                clientMutationID: clientMutationID
-            )
-            markLocalCommandAttempted(clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:notification-reply-outbox-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
-            )
-        }
+        sessionMiniController.enqueueNotificationReplyCommand(
+            notificationID: notificationID,
+            sessionID: sessionID,
+            prompt: prompt,
+            clientMutationID: clientMutationID
+        )
     }
 
     private func markLocalCommandAttempted(_ clientMutationID: String) {
-        do {
-            try sessionMiniLocalStore?.markAttempted(clientMutationID: clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:outbox-attempt-mark-failed id=\(clientMutationID) error=\(error.localizedDescription)"
-            )
-        }
+        sessionMiniController.markCommandAttempted(clientMutationID)
     }
 
     private func markLocalCommandDelivered(_ clientMutationID: String?) {
@@ -2578,13 +2498,7 @@ final class CompanionAppModel {
             return
         }
 
-        do {
-            try sessionMiniLocalStore?.markDelivered(clientMutationID: trimmedClientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:outbox-delivery-mark-failed id=\(trimmedClientMutationID) error=\(error.localizedDescription)"
-            )
-        }
+        sessionMiniController.markCommandDelivered(trimmedClientMutationID)
     }
 
     @discardableResult
