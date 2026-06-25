@@ -547,6 +547,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientStateSnapshot
 
+    func takeExpectedOutbox(expectedClientMutationIds: [String]) throws  -> [OutboundSessionFrame]
+
     func takeOutbox() throws  -> [OutboundSessionFrame]
 
 }
@@ -720,6 +722,15 @@ open func submitNotificationReply(notificationId: String, threadId: String, prom
         FfiConverterString.lower(prompt),
         FfiConverterString.lower(assistantSurface),
         FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func takeExpectedOutbox(expectedClientMutationIds: [String])throws  -> [OutboundSessionFrame]  {
+    return try  FfiConverterSequenceTypeOutboundSessionFrame.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_take_expected_outbox(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(expectedClientMutationIds),$0
     )
 })
 }
@@ -1701,6 +1712,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case EmptyMutationId
     case EmptySessionId
     case InvalidSequence
+    case UnexpectedOutboxMutations
     case StateLockPoisoned
 
 
@@ -1739,7 +1751,8 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 6: return .EmptyMutationId
         case 7: return .EmptySessionId
         case 8: return .InvalidSequence
-        case 9: return .StateLockPoisoned
+        case 9: return .UnexpectedOutboxMutations
+        case 10: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1784,8 +1797,12 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(8))
 
 
-        case .StateLockPoisoned:
+        case .UnexpectedOutboxMutations:
             writeInt(&buf, Int32(9))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -1953,6 +1970,31 @@ public func FfiConverterTypeOutboundSessionFrameKind_lower(_ value: OutboundSess
     return FfiConverterTypeOutboundSessionFrameKind.lower(value)
 }
 
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2189,6 +2231,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply() != 23894) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_take_expected_outbox() != 30309) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_outbox() != 6374) {

@@ -44,6 +44,35 @@ final class LooperClientCoreTests: XCTestCase {
         XCTAssertEqual(try core.snapshot().outboxDepth, 0)
     }
 
+    func testExpectedOutboxValidatesMutationOrderBeforeDrain() throws {
+        let core = LooperClientCore()
+        _ = try core.setMode(
+            threadId: threadID,
+            preset: "ask",
+            clientMutationId: "mutation-mode"
+        )
+        _ = try core.sendPrompt(
+            threadId: threadID,
+            prompt: "reply now",
+            assistantSurface: "ios",
+            clientMutationId: "mutation-prompt"
+        )
+
+        XCTAssertThrowsError(try core.takeExpectedOutbox(
+            expectedClientMutationIds: ["mutation-prompt", "mutation-mode"]
+        )) { error in
+            XCTAssertEqual(error as? ClientCoreError, .UnexpectedOutboxMutations)
+        }
+        XCTAssertEqual(try core.snapshot().outboxDepth, 2)
+
+        let frames = try core.takeExpectedOutbox(
+            expectedClientMutationIds: ["mutation-mode", "mutation-prompt"]
+        )
+
+        XCTAssertEqual(frames.map(\.clientMutationId), ["mutation-mode", "mutation-prompt"])
+        XCTAssertEqual(try core.snapshot().outboxDepth, 0)
+    }
+
     func testAcceptedAckClearsPendingMutation() throws {
         let core = LooperClientCore()
         _ = try core.sendPrompt(

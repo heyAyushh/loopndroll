@@ -261,11 +261,8 @@ struct LooperRealtimeModelsTests {
                 expectedClientMutationIDs: ["expected-mutation"]
             )
             Issue.record("expected unexpected mutation error")
-        } catch let error as LooperRealtimeClientCoreCommandError {
-            #expect(error == .unexpectedOutboxMutations(
-                expected: ["expected-mutation"],
-                actual: ["actual-mutation"]
-            ))
+        } catch let error as ClientCoreError {
+            #expect(error == .UnexpectedOutboxMutations)
         } catch {
             Issue.record("unexpected error: \(error)")
         }

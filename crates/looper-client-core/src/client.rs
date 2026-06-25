@@ -246,6 +246,27 @@ impl LooperClientCore {
         let mut state = self.lock_state()?;
         Ok(std::mem::take(&mut state.outbox))
     }
+
+    pub fn take_expected_outbox(
+        &self,
+        expected_client_mutation_ids: Vec<String>,
+    ) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
+        let mut state = self.lock_state()?;
+        let actual_client_mutation_ids: Vec<&str> = state
+            .outbox
+            .iter()
+            .map(|frame| frame.client_mutation_id.as_str())
+            .collect();
+        let expected_client_mutation_ids: Vec<&str> = expected_client_mutation_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+        if actual_client_mutation_ids != expected_client_mutation_ids {
+            return Err(ClientCoreError::UnexpectedOutboxMutations);
+        }
+
+        Ok(std::mem::take(&mut state.outbox))
+    }
 }
 
 impl LooperClientCore {
@@ -460,6 +481,39 @@ mod tests {
         let drained = core.snapshot().expect("snapshot");
         assert_eq!(drained.outbox_depth, 0);
         assert_eq!(drained.pending_mutations.len(), 1);
+    }
+
+    #[test]
+    fn take_expected_outbox_drains_only_matching_mutations() {
+        let core = LooperClientCore::new();
+        core.set_mode(
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("queue mode");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let mismatch = core
+            .take_expected_outbox(vec!["cmid-prompt".to_owned(), "cmid-mode".to_owned()])
+            .expect_err("mutation order mismatch");
+        assert_eq!(mismatch, ClientCoreError::UnexpectedOutboxMutations);
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 2);
+
+        let outbox = core
+            .take_expected_outbox(vec!["cmid-mode".to_owned(), "cmid-prompt".to_owned()])
+            .expect("matching outbox");
+
+        assert_eq!(outbox.len(), 2);
+        assert_eq!(outbox[0].client_mutation_id, "cmid-mode");
+        assert_eq!(outbox[1].client_mutation_id, "cmid-prompt");
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
     }
 
     #[test]
