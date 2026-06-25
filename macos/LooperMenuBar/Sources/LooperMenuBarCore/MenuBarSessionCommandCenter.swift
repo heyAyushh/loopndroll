@@ -2,11 +2,7 @@ import Foundation
 import LooperClientCore
 import LooperRealtime
 
-public protocol MenuBarSessionCommandClient: Sendable {
-    func submitSessionCommandBatch(
-        commands: [LooperRealtimeSessionCommand]
-    ) async throws -> LooperRealtimeSessionCommandBatchResponse
-}
+public protocol MenuBarSessionCommandClient: LooperRealtimeSessionCommandSubmitting {}
 
 public actor MenuBarRealtimeSessionCommandClient: MenuBarSessionCommandClient {
     private let controlPlaneClient: any ControlPlaneClient
@@ -74,8 +70,6 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyPrompt
     case missingAcknowledgement(clientMutationID: String)
     case acknowledgedDifferentMutation(expected: String, actual: String)
-    case unexpectedClientCoreOutboxDepth(Int)
-    case unexpectedClientCoreCommandKind(String)
 }
 
 public actor MenuBarSessionCommandCenter {
@@ -111,18 +105,16 @@ public actor MenuBarSessionCommandCenter {
             preset: preset?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        let command = try nextSessionCommand(expected: clientMutationID)
-        if case let .setSessionMode(threadID, preset, clientMutationID) = command {
-            try localStore?.enqueueModeCommand(
-                threadID: threadID,
-                preset: preset,
-                clientMutationID: clientMutationID
-            )
-        }
+        try localStore?.enqueueModeCommand(
+            threadID: normalizedThreadID,
+            preset: preset?.nilIfBlank,
+            clientMutationID: clientMutationID
+        )
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
-        let response = try await client.submitSessionCommandBatch(
-            commands: [command]
+        let response = try await client.submitClientCoreOutbox(
+            clientCore: clientCore,
+            expectedClientMutationIDs: [clientMutationID]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -156,19 +148,17 @@ public actor MenuBarSessionCommandCenter {
             assistantSurface: assistantSurface?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        let command = try nextSessionCommand(expected: clientMutationID)
-        if case let .sendSessionPrompt(threadID, prompt, assistantSurface, clientMutationID) = command {
-            try localStore?.enqueuePromptCommand(
-                threadID: threadID,
-                prompt: prompt,
-                assistantSurface: assistantSurface,
-                clientMutationID: clientMutationID
-            )
-        }
+        try localStore?.enqueuePromptCommand(
+            threadID: normalizedThreadID,
+            prompt: normalizedPrompt,
+            assistantSurface: assistantSurface?.nilIfBlank,
+            clientMutationID: clientMutationID
+        )
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
-        let response = try await client.submitSessionCommandBatch(
-            commands: [command]
+        let response = try await client.submitClientCoreOutbox(
+            clientCore: clientCore,
+            expectedClientMutationIDs: [clientMutationID]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -209,26 +199,18 @@ public actor MenuBarSessionCommandCenter {
             assistantSurface: assistantSurface?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        let command = try nextSessionCommand(expected: clientMutationID)
-        if case let .submitNotificationReply(
-            notificationID,
-            threadID,
-            prompt,
-            assistantSurface,
-            clientMutationID
-        ) = command {
-            try localStore?.enqueueNotificationReplyCommand(
-                notificationID: notificationID,
-                threadID: threadID,
-                prompt: prompt,
-                assistantSurface: assistantSurface,
-                clientMutationID: clientMutationID
-            )
-        }
+        try localStore?.enqueueNotificationReplyCommand(
+            notificationID: normalizedNotificationID,
+            threadID: normalizedThreadID,
+            prompt: normalizedPrompt,
+            assistantSurface: assistantSurface?.nilIfBlank,
+            clientMutationID: clientMutationID
+        )
         try localStore?.markAttempted(clientMutationID: clientMutationID)
 
-        let response = try await client.submitSessionCommandBatch(
-            commands: [command]
+        let response = try await client.submitClientCoreOutbox(
+            clientCore: clientCore,
+            expectedClientMutationIDs: [clientMutationID]
         )
         let envelope = try acknowledgement(
             from: response,
@@ -258,28 +240,6 @@ public actor MenuBarSessionCommandCenter {
             throw error
         }
         return trimmed
-    }
-
-    private func nextSessionCommand(expected clientMutationID: String) throws
-        -> LooperRealtimeSessionCommand
-    {
-        let frames = try clientCore.takeOutbox()
-        guard frames.count == 1, let frame = frames.first else {
-            throw MenuBarSessionCommandError.unexpectedClientCoreOutboxDepth(frames.count)
-        }
-        guard frame.clientMutationId == clientMutationID else {
-            throw MenuBarSessionCommandError.acknowledgedDifferentMutation(
-                expected: clientMutationID,
-                actual: frame.clientMutationId
-            )
-        }
-        do {
-            return try LooperRealtimeSessionCommand(outboundFrame: frame)
-        } catch {
-            throw MenuBarSessionCommandError.unexpectedClientCoreCommandKind(
-                String(describing: error)
-            )
-        }
     }
 
     private func acknowledgement(

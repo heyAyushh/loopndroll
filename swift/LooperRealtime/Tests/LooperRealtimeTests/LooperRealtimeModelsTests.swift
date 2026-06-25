@@ -189,6 +189,89 @@ struct LooperRealtimeModelsTests {
     }
 
     @Test
+    func clientCoreOutboxSubmitterDrainsAndReconcilesAck() async throws {
+        let core = LooperClientCore()
+        _ = try core.sendPrompt(
+            threadId: "thread-main",
+            prompt: "ship it",
+            assistantSurface: "codex",
+            clientMutationId: "mutation-1"
+        )
+        let submitter = RecordingCommandSubmitter { commands in
+            #expect(commands == [
+                .sendSessionPrompt(
+                    threadID: "thread-main",
+                    prompt: "ship it",
+                    assistantSurface: "codex",
+                    clientMutationID: "mutation-1"
+                ),
+            ])
+            return LooperRealtimeSessionCommandBatchResponse(
+                accepted: true,
+                commandAcks: [
+                    LooperRealtimeCommandAckEnvelope(
+                        commandKind: "SendSessionPrompt",
+                        ack: LooperRealtimeCommandAck(
+                            accepted: true,
+                            clientMutationID: "mutation-1",
+                            ackSeq: 42,
+                            entityID: "thread-main",
+                            revision: "revision-42",
+                            serverTime: "2026-06-24T00:00:00Z",
+                            idempotentReplay: false
+                        ),
+                        preset: nil,
+                        dispatchKind: "accepted",
+                        promptID: nil,
+                        notificationID: nil
+                    ),
+                ]
+            )
+        }
+
+        let response = try await submitter.submitClientCoreOutbox(
+            clientCore: core,
+            expectedClientMutationIDs: ["mutation-1"]
+        )
+        let snapshot = try core.snapshot()
+
+        #expect(response.accepted)
+        #expect(snapshot.pendingMutations.isEmpty)
+        #expect(snapshot.outboxDepth == 0)
+        #expect(snapshot.latestSeq == 42)
+        #expect(snapshot.revision == "revision-42")
+    }
+
+    @Test
+    func clientCoreOutboxSubmitterRejectsUnexpectedMutations() async throws {
+        let core = LooperClientCore()
+        _ = try core.setMode(
+            threadId: "thread-main",
+            preset: "await-reply",
+            clientMutationId: "actual-mutation"
+        )
+        let submitter = RecordingCommandSubmitter { _ in
+            Issue.record("unexpected submit")
+            return LooperRealtimeSessionCommandBatchResponse(accepted: true, commandAcks: [])
+        }
+
+        do {
+            _ = try await submitter.submitClientCoreOutbox(
+                clientCore: core,
+                expectedClientMutationIDs: ["expected-mutation"]
+            )
+            Issue.record("expected unexpected mutation error")
+        } catch let error as LooperRealtimeClientCoreCommandError {
+            #expect(error == .unexpectedOutboxMutations(
+                expected: ["expected-mutation"],
+                actual: ["actual-mutation"]
+            ))
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test
     func localStoreDedupesOutboxAndAppliesMiniDeltas() throws {
         let fileURL = temporaryStoreFileURL()
         let store = try LooperRealtimeLocalStore(fileURL: fileURL)
@@ -316,6 +399,17 @@ struct LooperRealtimeModelsTests {
             .appending(path: UUID().uuidString)
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return directoryURL.appending(path: LooperRealtimeLocalStore.defaultFileName)
+    }
+}
+
+private struct RecordingCommandSubmitter: LooperRealtimeSessionCommandSubmitting {
+    let handler: @Sendable ([LooperRealtimeSessionCommand]) async throws
+        -> LooperRealtimeSessionCommandBatchResponse
+
+    func submitSessionCommandBatch(
+        commands: [LooperRealtimeSessionCommand]
+    ) async throws -> LooperRealtimeSessionCommandBatchResponse {
+        try await handler(commands)
     }
 }
 
