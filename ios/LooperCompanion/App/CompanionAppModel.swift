@@ -27,116 +27,6 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
-private enum LocalFirstMutationError: LocalizedError {
-    case modeBarrierRejected
-
-    var errorDescription: String? {
-        switch self {
-        case .modeBarrierRejected:
-            return "Mode change was not accepted. Prompt stayed queued."
-        }
-    }
-}
-
-private enum PendingSessionModeSelection: Sendable {
-    case globalDefault
-    case preset(SessionMode)
-
-    var mode: SessionMode? {
-        switch self {
-        case .globalDefault:
-            return nil
-        case let .preset(mode):
-            return mode
-        }
-    }
-
-    init(_ mode: SessionMode?) {
-        if let mode {
-            self = .preset(mode)
-        } else {
-            self = .globalDefault
-        }
-    }
-}
-
-private struct ModeRollbackState: Sendable {
-    let snapshot: MobileSnapshot?
-    let detail: SessionDetail?
-}
-
-private struct PendingSessionModeMutation: Sendable {
-    let selection: PendingSessionModeSelection
-    let clientMutationID: String
-    let barrier: LocalFirstMutationBarrier
-
-    var mode: SessionMode? {
-        selection.mode
-    }
-
-    init(
-        mode: SessionMode?,
-        clientMutationID: String
-    ) {
-        selection = PendingSessionModeSelection(mode)
-        self.clientMutationID = clientMutationID
-        barrier = LocalFirstMutationBarrier()
-    }
-}
-
-private struct ModeMutationEnvelope: Sendable {
-    let sessionID: String
-    let selection: PendingSessionModeSelection
-    let clientMutationID: String
-    let barrier: LocalFirstMutationBarrier
-    let connectionRevision: Int
-    let rollbackState: ModeRollbackState?
-    let service: any CompanionService
-
-    var mode: SessionMode? {
-        selection.mode
-    }
-}
-
-private struct PromptMutationEnvelope: Sendable {
-    let sessionID: String
-    let prompt: String
-    let assistantSurface: CompanionAssistantSurface
-    let clientMutationID: String
-    let connectionRevision: Int
-    let service: any CompanionService
-    let pendingModeMutation: PendingSessionModeMutation?
-    let modeBarrierTask: Task<Bool, Never>?
-}
-
-private actor LocalFirstMutationBarrier {
-    private var result: Bool?
-    private var continuations: [CheckedContinuation<Bool, Never>] = []
-
-    func wait() async -> Bool {
-        if let result {
-            return result
-        }
-
-        return await withCheckedContinuation { continuation in
-            continuations.append(continuation)
-        }
-    }
-
-    func resolve(_ accepted: Bool) {
-        guard result == nil else {
-            return
-        }
-
-        result = accepted
-        let continuations = continuations
-        self.continuations.removeAll()
-        for continuation in continuations {
-            continuation.resume(returning: accepted)
-        }
-    }
-}
-
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -167,6 +57,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
+    @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
@@ -188,16 +79,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var isSavingAssistantSurface = false
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
-    @ObservationIgnored private var modeMutationDrainTasksBySessionID: [String: Task<Bool, Never>] = [:]
-    @ObservationIgnored private var modeMutationDrainIDBySessionID: [String: String] = [:]
-    @ObservationIgnored private var pendingModeMutationsBySessionID: [String: [PendingSessionModeMutation]] = [:]
-    @ObservationIgnored private var modeRollbackStateBySessionID: [String: ModeRollbackState] = [:]
-    @ObservationIgnored private var latestModeMutationBySessionID: [String: PendingSessionModeMutation] = [:]
-    @ObservationIgnored private var latestModeMutationIDBySessionID: [String: String] = [:]
-    @ObservationIgnored private var latestModeMutationBarrierBySessionID: [String: LocalFirstMutationBarrier] = [:]
-    #if DEBUG
-    @ObservationIgnored private var modeDrainBeforeFinishHook: (() async -> Void)?
-    #endif
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private let spotlightSyncWorker = SpotlightIndexSyncWorker()
     @ObservationIgnored private var didClearSpotlightIndexForCachedSnapshotThisLaunch = false
@@ -218,6 +99,7 @@ final class CompanionAppModel {
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
+        sessionMutationCoordinator = CompanionSessionMutationCoordinator(delegate: self)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
         if didActivateBundledConnection {
@@ -258,6 +140,13 @@ final class CompanionAppModel {
 
     var stoppedSessions: [SessionSummary] {
         sessionSections.stopped
+    }
+
+    private var sessionMutations: CompanionSessionMutationCoordinator {
+        guard let sessionMutationCoordinator else {
+            preconditionFailure("Session mutation coordinator used before initialization")
+        }
+        return sessionMutationCoordinator
     }
 
     var needsAttentionSessions: [SessionSummary] {
@@ -626,18 +515,8 @@ final class CompanionAppModel {
         hasUserSelectedAssistantSurface = false
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
-        modeMutationDrainTasksBySessionID.values.forEach { task in
-            task.cancel()
-        }
-        await resolveModeMutationBarriers(false)
-        modeMutationDrainTasksBySessionID = [:]
-        modeMutationDrainIDBySessionID = [:]
-        pendingModeMutationsBySessionID = [:]
-        modeRollbackStateBySessionID = [:]
+        await sessionMutations.cancelAllModeMutations(resolveAs: false)
         stopNotificationReplyOutboxDrain()
-        latestModeMutationBySessionID = [:]
-        latestModeMutationIDBySessionID = [:]
-        latestModeMutationBarrierBySessionID = [:]
         lastAppliedRealtimeRevision = nil
         hasValidatedCurrentSnapshotWithHTTP = false
         hasPendingSnapshotLoad = false
@@ -1380,250 +1259,23 @@ final class CompanionAppModel {
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
-        let drainTask = beginApplyMode(preset, to: sessionID)
-        _ = await drainTask.value
+        await sessionMutations.applyMode(preset, to: sessionID)
     }
 
     @discardableResult
     func beginApplyMode(_ preset: SessionMode?, to sessionID: String) -> Task<Bool, Never> {
-        if modeRollbackStateBySessionID[sessionID] == nil {
-            modeRollbackStateBySessionID[sessionID] = ModeRollbackState(
-                snapshot: snapshot,
-                detail: detailBySessionID[sessionID]
-            )
-        }
-
-        let clientMutationID = makeClientMutationID()
-        let pendingMutation = PendingSessionModeMutation(
-            mode: preset,
-            clientMutationID: clientMutationID
-        )
-        applyOptimisticMode(preset, to: sessionID)
-        enqueueLocalModeCommand(
-            sessionID: sessionID,
-            preset: preset,
-            clientMutationID: clientMutationID
-        )
-        latestModeMutationBySessionID[sessionID] = pendingMutation
-        latestModeMutationIDBySessionID[sessionID] = clientMutationID
-        latestModeMutationBarrierBySessionID[sessionID] = pendingMutation.barrier
-
-        if modeMutationDrainTasksBySessionID[sessionID] != nil {
-            pendingModeMutationsBySessionID[sessionID, default: []].append(pendingMutation)
-            return modeMutationBarrierTask(pendingMutation.barrier)
-        }
-
-        let envelope = makeModeMutationEnvelope(pendingMutation, sessionID: sessionID)
-        let drainID = makeClientMutationID()
-        let drainTask = makeModeMutationDrainTask(first: envelope, drainID: drainID)
-        modeMutationDrainTasksBySessionID[sessionID] = drainTask
-        modeMutationDrainIDBySessionID[sessionID] = drainID
-        return modeMutationBarrierTask(pendingMutation.barrier)
-    }
-
-    private func modeMutationBarrierTask(
-        _ barrier: LocalFirstMutationBarrier
-    ) -> Task<Bool, Never> {
-        Task.detached(priority: .userInitiated) {
-            await barrier.wait()
-        }
-    }
-
-    private func makeModeMutationDrainTask(
-        first envelope: ModeMutationEnvelope,
-        drainID: String
-    ) -> Task<Bool, Never> {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            var nextEnvelope: ModeMutationEnvelope? = envelope
-            var didAcceptLatestMutation = true
-            while !Task.isCancelled, let currentEnvelope = nextEnvelope {
-                let didAcceptMutation = await Self.sendModeMutation(currentEnvelope, model: self)
-                await currentEnvelope.barrier.resolve(didAcceptMutation)
-                if !didAcceptMutation {
-                    didAcceptLatestMutation = false
-                    break
-                }
-                nextEnvelope = await self?.nextModeMutationEnvelope(for: currentEnvelope.sessionID)
-            }
-            if Task.isCancelled, let unresolvedEnvelope = nextEnvelope {
-                await unresolvedEnvelope.barrier.resolve(false)
-            }
-            #if DEBUG
-            await self?.runModeDrainBeforeFinishHookIfNeeded()
-            #endif
-            await self?.finishModeMutationDrain(for: envelope.sessionID, drainID: drainID)
-            return didAcceptLatestMutation && !Task.isCancelled
-        }
-    }
-
-    private func nextModeMutationEnvelope(for sessionID: String) -> ModeMutationEnvelope? {
-        guard var pendingMutations = pendingModeMutationsBySessionID[sessionID],
-              !pendingMutations.isEmpty
-        else {
-            return nil
-        }
-
-        let mutation = pendingMutations.removeFirst()
-        pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty ? nil : pendingMutations
-        return makeModeMutationEnvelope(mutation, sessionID: sessionID)
-    }
-
-    private func finishModeMutationDrain(for sessionID: String, drainID: String) {
-        guard modeMutationDrainIDBySessionID[sessionID] == drainID else {
-            CompanionDiagnostics.record("mode:stale-drain-finish-skip sessionID=\(sessionID)")
-            return
-        }
-
-        modeMutationDrainTasksBySessionID[sessionID] = nil
-        modeMutationDrainIDBySessionID[sessionID] = nil
-        guard let nextEnvelope = nextModeMutationEnvelope(for: sessionID) else {
-            modeRollbackStateBySessionID[sessionID] = nil
-            latestModeMutationBySessionID[sessionID] = nil
-            latestModeMutationIDBySessionID[sessionID] = nil
-            latestModeMutationBarrierBySessionID[sessionID] = nil
-            return
-        }
-
-        let nextDrainID = makeClientMutationID()
-        let drainTask = makeModeMutationDrainTask(first: nextEnvelope, drainID: nextDrainID)
-        modeMutationDrainTasksBySessionID[sessionID] = drainTask
-        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
+        sessionMutations.beginApplyMode(preset, to: sessionID)
     }
 
     private func resolveModeMutationBarriers(_ accepted: Bool) async {
-        let barriers = Array(latestModeMutationBarrierBySessionID.values)
-            + pendingModeMutationsBySessionID.values.flatMap { mutations in
-                mutations.map(\.barrier)
-            }
-        for barrier in barriers {
-            await barrier.resolve(accepted)
-        }
+        await sessionMutations.resolveModeMutationBarriers(accepted)
     }
 
     #if DEBUG
     func setModeDrainBeforeFinishHookForSelfTest(_ hook: (() async -> Void)?) {
-        modeDrainBeforeFinishHook = hook
-    }
-
-    private func runModeDrainBeforeFinishHookIfNeeded() async {
-        guard let hook = modeDrainBeforeFinishHook else {
-            return
-        }
-
-        modeDrainBeforeFinishHook = nil
-        await hook()
+        sessionMutations.setModeDrainBeforeFinishHookForSelfTest(hook)
     }
     #endif
-
-    private func makeModeMutationEnvelope(
-        _ mutation: PendingSessionModeMutation,
-        sessionID: String
-    ) -> ModeMutationEnvelope {
-        ModeMutationEnvelope(
-            sessionID: sessionID,
-            selection: mutation.selection,
-            clientMutationID: mutation.clientMutationID,
-            barrier: mutation.barrier,
-            connectionRevision: connectionRevision,
-            rollbackState: modeRollbackStateBySessionID[sessionID],
-            service: service
-        )
-    }
-
-    private nonisolated static func sendModeMutation(
-        _ envelope: ModeMutationEnvelope,
-        model: CompanionAppModel?
-    ) async -> Bool {
-        guard !Task.isCancelled else {
-            return false
-        }
-
-        do {
-            let result = try await envelope.service.setSessionMode(
-                id: envelope.sessionID,
-                preset: envelope.mode,
-                clientMutationID: envelope.clientMutationID
-            )
-            guard !Task.isCancelled else {
-                return false
-            }
-            return await model?.handleModeMutationSuccess(result, envelope: envelope) ?? false
-        } catch {
-            guard !Task.isCancelled else {
-                return false
-            }
-            return await model?.handleModeMutationFailure(error, envelope: envelope) ?? false
-        }
-    }
-
-    private func handleModeMutationSuccess(
-        _ result: CompanionSessionModeResult,
-        envelope: ModeMutationEnvelope
-    ) async -> Bool {
-        markLocalCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
-        guard envelope.connectionRevision == connectionRevision else {
-            CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(envelope.sessionID)")
-            return false
-        }
-
-        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
-            CompanionDiagnostics.record("mode:mutation-superseded-skip sessionID=\(envelope.sessionID)")
-            return true
-        }
-
-        await applyModeMutationResult(result, sessionID: envelope.sessionID)
-        return true
-    }
-
-    private func handleModeMutationFailure(
-        _ error: Error,
-        envelope: ModeMutationEnvelope
-    ) -> Bool {
-        guard envelope.connectionRevision == connectionRevision else {
-            CompanionDiagnostics.record(
-                "mode:mutation-stale-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
-            )
-            return false
-        }
-
-        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
-            CompanionDiagnostics.record(
-                "mode:mutation-superseded-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
-            )
-            return true
-        }
-
-        restoreOptimisticModeSnapshot(
-            envelope.rollbackState?.snapshot,
-            previousDetail: envelope.rollbackState?.detail,
-            sessionID: envelope.sessionID
-        )
-        connectionState = connectionState(for: error)
-        clearConnectionRouteStateIfNeeded(for: connectionState)
-        errorMessage = error.localizedDescription
-        Haptics.error()
-        return false
-    }
-
-    private func applyModeMutationResult(
-        _ result: CompanionSessionModeResult,
-        sessionID: String
-    ) async {
-        if let nextSnapshot = result.snapshot {
-            await applySnapshot(nextSnapshot)
-            if detailBySessionID[sessionID] != nil {
-                await refreshSessionDetail(id: sessionID)
-            }
-            return
-        }
-
-        connectionState = .connected
-        errorMessage = nil
-        lastUpdatedAt = Date()
-        CompanionDiagnostics.record(
-            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
-        )
-    }
 
     func setSessionArchived(_ archived: Bool, sessionID: String) async {
         let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
@@ -1647,205 +1299,12 @@ final class CompanionAppModel {
 
     @discardableResult
     func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
-        let promptTask = beginSendSessionPrompt(prompt, to: sessionID)
-        return await promptTask.value
+        await sessionMutations.sendSessionPrompt(prompt, to: sessionID)
     }
 
     @discardableResult
     func beginSendSessionPrompt(_ prompt: String, to sessionID: String) -> Task<Bool, Never> {
-        let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
-            ?? selectedAssistantSurface
-
-        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else {
-            errorMessage = "Prompt is required."
-            Haptics.warning()
-            return Task.detached { false }
-        }
-
-        guard !mutatingSessionIDs.contains(sessionID) else {
-            return Task.detached { false }
-        }
-
-        let clientMutationID = makeClientMutationID()
-        let pendingModeMutation = service.supportsModePromptBatch
-            ? latestModeMutationBySessionID[sessionID]
-            : nil
-        let modeBarrierTask = pendingModeMutation.map {
-            modeMutationBarrierTask($0.barrier)
-        }
-        enqueueLocalPromptCommand(
-            sessionID: sessionID,
-            prompt: trimmedPrompt,
-            assistantSurface: targetSurface,
-            clientMutationID: clientMutationID
-        )
-
-        let mutationRevision = connectionRevision
-        setSessionMutation(true, sessionID: sessionID)
-        let envelope = PromptMutationEnvelope(
-            sessionID: sessionID,
-            prompt: trimmedPrompt,
-            assistantSurface: targetSurface,
-            clientMutationID: clientMutationID,
-            connectionRevision: mutationRevision,
-            service: service,
-            pendingModeMutation: pendingModeMutation,
-            modeBarrierTask: modeBarrierTask
-        )
-
-        return Task.detached(priority: .userInitiated) { [weak self] in
-            await Self.sendPromptMutation(envelope, model: self)
-        }
-    }
-
-    private nonisolated static func sendPromptMutation(
-        _ envelope: PromptMutationEnvelope,
-        model: CompanionAppModel?
-    ) async -> Bool {
-        if let pendingModeMutation = envelope.pendingModeMutation {
-            do {
-                let result = try await envelope.service.sendSessionPromptAfterMode(
-                    id: envelope.sessionID,
-                    modePreset: pendingModeMutation.mode,
-                    modeClientMutationID: pendingModeMutation.clientMutationID,
-                    prompt: envelope.prompt,
-                    assistantSurface: envelope.assistantSurface,
-                    promptClientMutationID: envelope.clientMutationID
-                )
-                return await model?.handleModePromptBatchSuccess(
-                    result,
-                    pendingModeMutation: pendingModeMutation,
-                    envelope: envelope
-                ) ?? false
-            } catch {
-                CompanionDiagnostics.record(
-                    "prompt:mode-batch-failed sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
-                )
-                return await model?.handlePromptMutationFailure(error, envelope: envelope) ?? false
-            }
-        }
-
-        if let modeBarrierTask = envelope.modeBarrierTask {
-            let didAcceptMode = await modeBarrierTask.value
-            guard didAcceptMode else {
-                return await model?.handlePromptMutationFailure(
-                    LocalFirstMutationError.modeBarrierRejected,
-                    envelope: envelope
-                ) ?? false
-            }
-        }
-
-        do {
-            let result = try await envelope.service.sendSessionPrompt(
-                id: envelope.sessionID,
-                prompt: envelope.prompt,
-                assistantSurface: envelope.assistantSurface,
-                clientMutationID: envelope.clientMutationID
-            )
-            return await model?.handlePromptMutationSuccess(result, envelope: envelope) ?? false
-        } catch {
-            return await model?.handlePromptMutationFailure(error, envelope: envelope) ?? false
-        }
-    }
-
-    private func handleModePromptBatchSuccess(
-        _ result: CompanionModePromptBatchResult,
-        pendingModeMutation: PendingSessionModeMutation,
-        envelope: PromptMutationEnvelope
-    ) async -> Bool {
-        markLocalCommandDelivered(result.mode.clientMutationID ?? pendingModeMutation.clientMutationID)
-        await finishModeMutationDeliveredByBatch(
-            pendingModeMutation,
-            sessionID: envelope.sessionID
-        )
-        return await handlePromptMutationSuccess(result.prompt, envelope: envelope)
-    }
-
-    private func finishModeMutationDeliveredByBatch(
-        _ mutation: PendingSessionModeMutation,
-        sessionID: String
-    ) async {
-        await mutation.barrier.resolve(true)
-
-        if var pendingMutations = pendingModeMutationsBySessionID[sessionID] {
-            pendingMutations.removeAll { pendingMutation in
-                pendingMutation.clientMutationID == mutation.clientMutationID
-            }
-            pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty
-                ? nil
-                : pendingMutations
-        }
-
-        let batchedMutationWasLatest =
-            latestModeMutationIDBySessionID[sessionID] == mutation.clientMutationID
-        if batchedMutationWasLatest {
-            latestModeMutationBySessionID[sessionID] = nil
-            latestModeMutationIDBySessionID[sessionID] = nil
-            latestModeMutationBarrierBySessionID[sessionID] = nil
-        }
-
-        modeMutationDrainTasksBySessionID[sessionID]?.cancel()
-        modeMutationDrainTasksBySessionID[sessionID] = nil
-        modeMutationDrainIDBySessionID[sessionID] = nil
-
-        guard let nextEnvelope = nextModeMutationEnvelope(for: sessionID) else {
-            if batchedMutationWasLatest {
-                modeRollbackStateBySessionID[sessionID] = nil
-            }
-            return
-        }
-
-        let nextDrainID = makeClientMutationID()
-        modeMutationDrainTasksBySessionID[sessionID] = makeModeMutationDrainTask(
-            first: nextEnvelope,
-            drainID: nextDrainID
-        )
-        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
-    }
-
-    private func handlePromptMutationSuccess(
-        _ result: CompanionPromptSendResult,
-        envelope: PromptMutationEnvelope
-    ) async -> Bool {
-        defer {
-            setSessionMutation(false, sessionID: envelope.sessionID)
-        }
-
-        markLocalCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
-        guard envelope.connectionRevision == connectionRevision else {
-            CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(envelope.sessionID)")
-            return false
-        }
-
-        await applyPromptSendResult(
-            result,
-            sessionID: envelope.sessionID,
-            assistantSurface: envelope.assistantSurface
-        )
-        return true
-    }
-
-    private func handlePromptMutationFailure(
-        _ error: Error,
-        envelope: PromptMutationEnvelope
-    ) -> Bool {
-        defer {
-            setSessionMutation(false, sessionID: envelope.sessionID)
-        }
-
-        guard envelope.connectionRevision == connectionRevision else {
-            CompanionDiagnostics.record(
-                "prompt:mutation-stale-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
-            )
-            return false
-        }
-
-        connectionState = connectionState(for: error)
-        clearConnectionRouteStateIfNeeded(for: connectionState)
-        errorMessage = error.localizedDescription
-        Haptics.error()
-        return false
+        sessionMutations.beginSendSessionPrompt(prompt, to: sessionID)
     }
 
     @discardableResult
@@ -2793,6 +2252,135 @@ final class CompanionAppModel {
             return nil
         }
         return trimmedRevision
+    }
+}
+
+extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
+    var sessionMutationService: any CompanionService {
+        service
+    }
+
+    var sessionMutationConnectionRevision: Int {
+        connectionRevision
+    }
+
+    func sessionMutationMakeClientMutationID() -> String {
+        makeClientMutationID()
+    }
+
+    func sessionMutationRollbackState(for sessionID: String) -> ModeRollbackState {
+        ModeRollbackState(
+            snapshot: snapshot,
+            detail: detailBySessionID[sessionID]
+        )
+    }
+
+    func sessionMutationAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
+        sessionIndex.assistantSurface(containingSessionID: sessionID) ?? selectedAssistantSurface
+    }
+
+    func sessionMutationCanSendPrompt(to sessionID: String) -> Bool {
+        !mutatingSessionIDs.contains(sessionID)
+    }
+
+    func sessionMutationRejectPrompt(_ message: String) {
+        errorMessage = message
+        Haptics.warning()
+    }
+
+    func sessionMutationApplyOptimisticMode(_ preset: SessionMode?, to sessionID: String) {
+        applyOptimisticMode(preset, to: sessionID)
+    }
+
+    func sessionMutationEnqueueModeCommand(
+        sessionID: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    ) {
+        enqueueLocalModeCommand(
+            sessionID: sessionID,
+            preset: preset,
+            clientMutationID: clientMutationID
+        )
+    }
+
+    func sessionMutationEnqueuePromptCommand(
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface,
+        clientMutationID: String
+    ) {
+        enqueueLocalPromptCommand(
+            sessionID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: clientMutationID
+        )
+    }
+
+    func sessionMutationMarkCommandDelivered(_ clientMutationID: String?) {
+        markLocalCommandDelivered(clientMutationID)
+    }
+
+    func sessionMutationApplyModeResult(
+        _ result: CompanionSessionModeResult,
+        sessionID: String
+    ) async {
+        if let nextSnapshot = result.snapshot {
+            await applySnapshot(nextSnapshot)
+            if detailBySessionID[sessionID] != nil {
+                await refreshSessionDetail(id: sessionID)
+            }
+            return
+        }
+
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
+        )
+    }
+
+    func sessionMutationHandleModeFailure(
+        _ error: Error,
+        sessionID: String,
+        rollbackState: ModeRollbackState?
+    ) -> Bool {
+        restoreOptimisticModeSnapshot(
+            rollbackState?.snapshot,
+            previousDetail: rollbackState?.detail,
+            sessionID: sessionID
+        )
+        connectionState = connectionState(for: error)
+        clearConnectionRouteStateIfNeeded(for: connectionState)
+        errorMessage = error.localizedDescription
+        Haptics.error()
+        return false
+    }
+
+    func sessionMutationSetPromptMutating(_ isMutating: Bool, sessionID: String) {
+        setSessionMutation(isMutating, sessionID: sessionID)
+    }
+
+    func sessionMutationApplyPromptResult(
+        _ result: CompanionPromptSendResult,
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) async {
+        await applyPromptSendResult(
+            result,
+            sessionID: sessionID,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    func sessionMutationHandlePromptFailure(_ error: Error, sessionID: String) -> Bool {
+        connectionState = connectionState(for: error)
+        clearConnectionRouteStateIfNeeded(for: connectionState)
+        errorMessage = error.localizedDescription
+        Haptics.error()
+        return false
     }
 }
 

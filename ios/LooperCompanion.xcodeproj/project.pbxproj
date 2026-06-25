@@ -80,6 +80,7 @@
 		DC4C3ED5A508D6EC8369A9DF /* OrbScannerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */; };
 		DEADABB2FAB9574917ACDCB3 /* LooperCompanionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4A1CE795142C8C486736E592 /* LooperCompanionCore */; };
 		E2EAF24D303EE6B8D48B349B /* LooperSiriSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */; };
+		E72635F4B1397B348BF0E6A4 /* CompanionSessionMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F549C1F92C6CB5BBEDBC5C7C /* CompanionSessionMutationCoordinator.swift */; };
 		EAA54213C4FE63B54944CF58 /* UITestLaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97689277AC6F86ED5E681D2D /* UITestLaunchArguments.swift */; };
 		F8CEA95579671A21AF796C46 /* SessionSearchRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37F135BB1B061C9ACFE9DCD /* SessionSearchRows.swift */; };
 		F8F4812717098C17D15013E5 /* MazeGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */; };
@@ -183,6 +184,7 @@
 		EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewFixtures.swift; sourceTree = "<group>"; };
 		F02652A178B2079D63BC929D /* SessionSearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchScreen.swift; sourceTree = "<group>"; };
 		F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummaryTimingTests.swift; sourceTree = "<group>"; };
+		F549C1F92C6CB5BBEDBC5C7C /* CompanionSessionMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSessionMutationCoordinator.swift; sourceTree = "<group>"; };
 		FC260B4728D2B8FA011C6F93 /* codex-logo-dark-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "codex-logo-dark-poster.png"; sourceTree = "<group>"; };
 		FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkAccessMonitor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -337,6 +339,7 @@
 				56C79B6AF7BC32D952CE288D /* CompanionService.swift */,
 				1C788690C3676F6C3E679F85 /* CompanionSessionMiniController.swift */,
 				C80CC290869079749E6F36D5 /* CompanionSessionMiniLocalStore.swift */,
+				F549C1F92C6CB5BBEDBC5C7C /* CompanionSessionMutationCoordinator.swift */,
 				46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */,
 				2489ABFC353256268974517A /* MockCompanionService.swift */,
 				6581F63EC979621078DC61CB /* RealtimeCompanionClientFactory.swift */,
@@ -625,6 +628,7 @@
 				073E41EA71909E5B707E6C8F /* CompanionService.swift in Sources */,
 				21B87458E1EEB06E83802324 /* CompanionSessionMiniController.swift in Sources */,
 				945B8B939A36C71B76A6D228 /* CompanionSessionMiniLocalStore.swift in Sources */,
+				E72635F4B1397B348BF0E6A4 /* CompanionSessionMutationCoordinator.swift in Sources */,
 				8524708890E94F68FD81CFEC /* CompanionSnapshotCache.swift in Sources */,
 				31D8991779D663FED6D9E1BC /* CompanionTheme.swift in Sources */,
 				AEFD49C255BE922C3919FEE4 /* DiffBlockView.swift in Sources */,
