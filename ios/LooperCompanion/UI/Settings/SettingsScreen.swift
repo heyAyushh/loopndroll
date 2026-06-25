@@ -63,7 +63,7 @@ struct SettingsScreen: View {
     }
 
     private var isPromptDirty: Bool {
-        draftPrompt != (model.snapshot?.globalSettings.defaultPrompt ?? "")
+        draftPrompt != model.viewState.defaultPrompt
     }
 
     var body: some View {
@@ -121,10 +121,8 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("settings.keyboard-done")
             }
         }
-        .task(id: model.snapshot?.globalSettings.defaultPrompt) {
-            if let defaultPrompt = model.snapshot?.globalSettings.defaultPrompt {
-                draftPrompt = defaultPrompt
-            }
+        .task(id: model.viewState.defaultPrompt) {
+            draftPrompt = model.viewState.defaultPrompt
         }
         .task(id: initialSearchTaskID) {
             openSettingsTarget(initialSearchTarget)
@@ -137,7 +135,7 @@ struct SettingsScreen: View {
     private var connectionSection: some View {
         Section {
             LabeledContent("Status", value: model.connectionState.label)
-            LabeledContent("Linked Mac", value: model.snapshot?.host.name ?? "Not Connected")
+            LabeledContent("Linked Mac", value: model.viewState.hostName ?? "Not Connected")
 
             Picker("Route", selection: connectionRoutePreference) {
                 ForEach(CompanionConnectionRoutePreference.allCases) { preference in
@@ -645,7 +643,8 @@ struct SettingsRoutesScreen: View {
 
     var body: some View {
         List {
-            if let notifications = model.snapshot?.notifications, !notifications.isEmpty {
+            let notifications = model.viewState.availableNotifications
+            if !notifications.isEmpty {
                 ForEach(notifications) { notification in
                     NotificationDestinationRow(destination: notification)
                 }
@@ -668,7 +667,8 @@ struct SettingsCompletionChecksScreen: View {
 
     var body: some View {
         List {
-            if let completionChecks = model.snapshot?.completionChecks, !completionChecks.isEmpty {
+            let completionChecks = model.viewState.availableCompletionChecks
+            if !completionChecks.isEmpty {
                 ForEach(completionChecks) { completionCheck in
                     LabeledContent(completionCheck.label) {
                         Text(commandCountLabel(completionCheck.commandCount))

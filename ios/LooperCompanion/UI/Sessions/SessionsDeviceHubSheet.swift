@@ -52,11 +52,11 @@ struct SessionsDeviceHubSheet: View {
     @State private var isOrbScannerPresented = false
 
     private var syncLabel: String {
-        guard let host = model.snapshot?.host else {
+        guard let lastSyncedAt = model.viewState.lastSyncedAt else {
             return "Waiting for first sync"
         }
 
-        return ModelFormatting.relativeTimestamp(host.lastSyncedAt)
+        return ModelFormatting.relativeTimestamp(lastSyncedAt)
     }
 
     private var alertActionTitle: String {
@@ -124,7 +124,7 @@ struct SessionsDeviceHubSheet: View {
                 Section("Device") {
                     LabeledContent("This iPhone", value: personalDeviceName)
                     LabeledContent("Software", value: deviceSoftwareLabel)
-                    LabeledContent("Mac", value: model.snapshot?.host.name ?? "No Mac Connected")
+                    LabeledContent("Mac", value: model.viewState.hostName ?? "No Mac Connected")
                     LabeledContent("API", value: serverStatusLabel)
                     if let routePresentation = model.viewState.connectionRoutePresentation {
                         ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)

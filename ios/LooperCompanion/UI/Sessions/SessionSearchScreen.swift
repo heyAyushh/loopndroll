@@ -124,7 +124,7 @@ struct SessionSearchScreen: View {
 
     @ViewBuilder
     private var overlayState: some View {
-        if model.isLoading && model.snapshot == nil {
+        if model.isLoading && !model.viewState.hasSnapshot {
             ProgressView("Loading Search")
         } else if !hasVisibleSearchResults {
             ContentUnavailableView(
@@ -176,7 +176,7 @@ struct SessionSearchScreen: View {
                     NavigationLink(value: session) {
                         SearchSessionRow(
                             session: session,
-                            assistantSurface: model.selectedAssistantSurface
+                            assistantSurface: model.viewState.selectedAssistantSurface
                         )
                     }
                 }
@@ -232,7 +232,7 @@ struct SessionSearchScreen: View {
             NavigationLink(value: session) {
                 SearchSessionRow(
                     session: session,
-                    assistantSurface: model.selectedAssistantSurface
+                    assistantSurface: model.viewState.selectedAssistantSurface
                 )
             }
         case let .settings(target):
@@ -310,7 +310,7 @@ struct SessionSearchScreen: View {
         [
             selectedScope.rawValue,
             trimmedSearchText,
-            model.sessionIndex.identity,
+            model.viewState.sessionIndexIdentity,
             spotlightResultIDs.joined(separator: ","),
         ].joined(separator: "|")
     }
@@ -323,7 +323,7 @@ struct SessionSearchScreen: View {
     private func updateRenderedSearchResults() async {
         let searchText = trimmedSearchText
         let currentScope = selectedScope
-        let allSessions = model.sessionIndex.allSessions
+        let allSessions = model.viewState.allSessions
         let needsAttentionSessions = model.viewState.needsAttentionSessions
         let runningSessions = model.viewState.runningSessions
         let stoppedSessions = model.viewState.stoppedSessions
@@ -351,7 +351,7 @@ struct SessionSearchScreen: View {
     }
 
     private var allSessions: [SessionSummary] {
-        model.sessionIndex.allSessions
+        model.viewState.allSessions
     }
 
     private var recentSearches: [String] {

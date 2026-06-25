@@ -32,6 +32,7 @@
 		3D4F937914550297AEEC1BC3 /* OrbCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */; };
 		3D5A7809C8C19205CAEE478D /* AssistantClientGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD847E9AD9142AA0F82C325D /* AssistantClientGlyph.swift */; };
 		477018ADC22B0FD35932DC41 /* SessionSummaryTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */; };
+		47A730C70973FF7EBF36AA03 /* CompanionSnapshotStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2B7C2312B6304A59773558 /* CompanionSnapshotStateStore.swift */; };
 		4BDAA3BDB7862E0C3E4E1287 /* PhysicsCategories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DBD5F231B613E410E6EA87 /* PhysicsCategories.swift */; };
 		4EE3662DAE74D2551B56ED9B /* MockCompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2489ABFC353256268974517A /* MockCompanionService.swift */; };
 		51E1FFB04F9BFB271633CBB7 /* CompanionSnapshotLoadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F121C1361C5584CFB429F3 /* CompanionSnapshotLoadCoordinator.swift */; };
@@ -135,6 +136,7 @@
 		46D0CBC75A906432C75B50F0 /* HTTPCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPCompanionService.swift; sourceTree = "<group>"; };
 		49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconManager.swift; sourceTree = "<group>"; };
 		4B853A44BD4EC54518692819 /* CompanionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionModels.swift; sourceTree = "<group>"; };
+		4C2B7C2312B6304A59773558 /* CompanionSnapshotStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotStateStore.swift; sourceTree = "<group>"; };
 		4D6DADF770C736556DE619E8 /* HapticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManager.swift; sourceTree = "<group>"; };
 		4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballDebugOverlay.swift; sourceTree = "<group>"; };
 		5596E2F00F71A1D4FBC8A7DB /* LooperCompanionUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LooperCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -378,6 +380,7 @@
 				61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */,
 				159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */,
 				5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */,
+				4C2B7C2312B6304A59773558 /* CompanionSnapshotStateStore.swift */,
 				6F3F8AB98DA026EB40D6D0D3 /* LooperCompanionApp.swift */,
 			);
 			path = App;
@@ -653,6 +656,7 @@
 				E72635F4B1397B348BF0E6A4 /* CompanionSessionMutationCoordinator.swift in Sources */,
 				8524708890E94F68FD81CFEC /* CompanionSnapshotCache.swift in Sources */,
 				51E1FFB04F9BFB271633CBB7 /* CompanionSnapshotLoadCoordinator.swift in Sources */,
+				47A730C70973FF7EBF36AA03 /* CompanionSnapshotStateStore.swift in Sources */,
 				31D8991779D663FED6D9E1BC /* CompanionTheme.swift in Sources */,
 				AEFD49C255BE922C3919FEE4 /* DiffBlockView.swift in Sources */,
 				9976ADE2586A2EB32821F7F3 /* G006LocalFirstSelfTest.swift in Sources */,

@@ -11,41 +11,106 @@ struct CompanionAppViewState {
     }
 
     var activeSessions: [SessionSummary] {
-        model.sessionSections.active
+        model.snapshotState.sessionSections.active
     }
 
     var runningSessions: [SessionSummary] {
-        model.sessionSections.running
+        model.snapshotState.sessionSections.running
     }
 
     var waitingSessions: [SessionSummary] {
-        model.sessionSections.waiting
+        model.snapshotState.sessionSections.waiting
     }
 
     var stoppedSessions: [SessionSummary] {
-        model.sessionSections.stopped
+        model.snapshotState.sessionSections.stopped
     }
 
     var needsAttentionSessions: [SessionSummary] {
-        model.sessionSections.needsAttention
+        model.snapshotState.sessionSections.needsAttention
     }
 
     var archivedSessions: [SessionSummary] {
-        model.sessionSections.archived
+        model.snapshotState.sessionSections.archived
     }
 
     var sessionsBadgeCount: Int {
-        model.sessionSections.needsAttentionCount
+        model.snapshotState.sessionSections.needsAttentionCount
     }
 
     var canSwitchAssistantSurface: Bool {
-        model.snapshot != nil || model.connectionState == .connected
+        model.snapshotState.hasSnapshot || model.connectionState == .connected
+    }
+
+    var hasSnapshot: Bool {
+        model.snapshotState.hasSnapshot
+    }
+
+    var selectedAssistantSurface: CompanionAssistantSurface {
+        model.snapshotState.selectedAssistantSurface
+    }
+
+    var sessionIndexIdentity: String {
+        model.snapshotState.sessionIndexIdentity
+    }
+
+    var allSessions: [SessionSummary] {
+        model.snapshotState.allSessions
+    }
+
+    var assistantSurfaceConnectionSummary: String? {
+        switch selectedAssistantSurface {
+        case .grokBuild:
+            guard let grokBuild = model.snapshotState.snapshot?.grokBuild else {
+                return nil
+            }
+            return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
+        case .devin:
+            guard let devinDesktop = model.snapshotState.snapshot?.devinDesktop else {
+                return nil
+            }
+            return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.activeSessionCount) active / \(devinDesktop.sessionCount) total · \(devinDesktop.enabledAgentCount) agents"
+        case .claudeCode, .zed, .codex:
+            return nil
+        }
+    }
+
+    var devinEmptyStateDescription: String? {
+        guard let devinDesktop = model.snapshotState.snapshot?.devinDesktop else {
+            return nil
+        }
+
+        return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.enabledAgentCount) enabled agents · \(devinDesktop.sessionCount) indexed sessions."
+    }
+
+    var defaultPrompt: String {
+        model.snapshotState.snapshot?.globalSettings.defaultPrompt ?? ""
+    }
+
+    var availableNotifications: [NotificationDestination] {
+        model.snapshotState.snapshot?.notifications ?? []
+    }
+
+    var availableCompletionChecks: [CompletionCheckSummary] {
+        model.snapshotState.snapshot?.completionChecks ?? []
+    }
+
+    var lastSyncedAt: String? {
+        model.snapshotState.snapshot?.host.lastSyncedAt
+    }
+
+    var hostName: String? {
+        model.snapshotState.snapshot?.host.name
+    }
+
+    func session(withID sessionID: String) -> SessionSummary? {
+        model.snapshotState.session(withID: sessionID)
     }
 
     var connectivityHeadline: String {
         switch model.connectionState {
         case .connected:
-            return model.snapshot?.host.name ?? "Connected"
+            return model.snapshotState.snapshot?.host.name ?? "Connected"
         case .connecting:
             return "Connecting to your Mac"
         case .offline:
@@ -60,7 +125,7 @@ struct CompanionAppViewState {
     }
 
     var connectivitySummary: String {
-        if model.connectionState == .connected, model.snapshot != nil {
+        if model.connectionState == .connected, hasSnapshot {
             return connectedStatusSummary
         }
 
@@ -149,7 +214,7 @@ struct CompanionAppViewState {
     }
 
     func detail(for sessionID: String) -> SessionDetail? {
-        model.detailBySessionID[sessionID]
+        model.snapshotState.detail(for: sessionID)
     }
 
     func isMutatingSession(_ sessionID: String) -> Bool {
@@ -165,15 +230,15 @@ struct CompanionAppViewState {
             parts.append("API running at \(serverHealth.baseURL)")
         }
 
-        if let workSummary = model.snapshot?.workStatus.displaySummary {
+        if let workSummary = model.snapshotState.snapshot?.workStatus.displaySummary {
             parts.append(workSummary)
         }
 
-        if let coverageSummary = model.snapshot?.workStatus.coverageSummary {
+        if let coverageSummary = model.snapshotState.snapshot?.workStatus.coverageSummary {
             parts.append(coverageSummary)
         }
 
-        if let lastSyncedAt = model.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+        if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
             parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
         }
 

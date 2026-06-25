@@ -210,6 +210,59 @@ struct SessionSummaryTimingTests {
         #expect(sections.stopped.isEmpty)
     }
 
+    @MainActor
+    @Test("Snapshot state store owns visible surface projection")
+    func snapshotStateStoreOwnsVisibleSurfaceProjection() throws {
+        let codexSession = try sessionSummary(
+            id: "thread-main",
+            ref: "S1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let devinSession = try sessionSummary(
+            id: "thread-main",
+            ref: "S2",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = MobileSnapshot(
+            revision: "revision-1",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [codexSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession],
+                CompanionAssistantSurface.devin.rawValue: [devinSession],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+
+        store.applySnapshot(snapshot)
+        #expect(store.selectedAssistantSurface == .codex)
+        #expect(store.sessionSections.active.map(\.ref) == ["S1"])
+
+        store.selectAssistantSurface(.devin)
+        #expect(store.selectedAssistantSurface == .devin)
+        #expect(store.sessionSections.active.map(\.ref) == ["S2"])
+        #expect(store.session(withID: "thread-main")?.ref == "S2")
+    }
+
     private func sessionSummary(
         id: String,
         ref: String,

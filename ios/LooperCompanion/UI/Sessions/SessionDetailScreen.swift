@@ -57,7 +57,7 @@ struct SessionDetailScreen: View {
     }
 
     private var availableNotifications: [NotificationDestination] {
-        detail?.availableNotifications ?? model.snapshot?.notifications ?? []
+        detail?.availableNotifications ?? model.viewState.availableNotifications
     }
 
     private var selectedCompletionCheck: CompletionCheckSummary? {
@@ -250,7 +250,7 @@ struct SessionDetailScreen: View {
             LabeledContent("Last Active") {
                 Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
             }
-            if let lastSyncedAt = model.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+            if let lastSyncedAt = model.viewState.lastSyncedAt, !lastSyncedAt.isEmpty {
                 LabeledContent("Last Synced") {
                     Text(ModelFormatting.relativeTimestamp(lastSyncedAt))
                 }

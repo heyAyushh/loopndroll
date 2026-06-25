@@ -98,7 +98,7 @@ struct SessionsScreen: View {
             .onChange(of: model.pendingOpenSessionID) {
                 openPendingSessionIfNeeded()
             }
-            .onChange(of: model.sessionIndex.identity) {
+            .onChange(of: model.viewState.sessionIndexIdentity) {
                 openPendingSessionIfNeeded()
             }
             .task(id: model.pendingOpenSessionID) {
@@ -116,7 +116,7 @@ struct SessionsScreen: View {
 
     @ViewBuilder
     private var overlayState: some View {
-        if model.isLoading && model.snapshot == nil {
+        if model.isLoading && !model.viewState.hasSnapshot {
             ProgressView("Loading Looper")
         } else if !hasVisibleSessions {
             ContentUnavailableView(
@@ -164,7 +164,7 @@ struct SessionsScreen: View {
     private var assistantPicker: some View {
         AssistantSurfacePicker(
             selection: Binding(
-                get: { model.selectedAssistantSurface },
+                get: { model.viewState.selectedAssistantSurface },
                 set: { updateAssistantSurface($0) }
             ),
             isDisabled: !model.viewState.canSwitchAssistantSurface
@@ -173,11 +173,8 @@ struct SessionsScreen: View {
     }
 
     private var connectionSubtitle: String {
-        if model.selectedAssistantSurface == .grokBuild, let grokBuild = model.snapshot?.grokBuild {
-            return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
-        }
-        if model.selectedAssistantSurface == .devin, let devinDesktop = model.snapshot?.devinDesktop {
-            return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.activeSessionCount) active / \(devinDesktop.sessionCount) total · \(devinDesktop.enabledAgentCount) agents"
+        if let assistantSurfaceSummary = model.viewState.assistantSurfaceConnectionSummary {
+            return assistantSurfaceSummary
         }
 
         return model.viewState.connectivitySummary
@@ -200,7 +197,7 @@ struct SessionsScreen: View {
                 NavigationLink(value: session) {
                     SessionRow(
                         session: session,
-                        assistantSurface: model.selectedAssistantSurface
+                        assistantSurface: model.viewState.selectedAssistantSurface
                     )
                 }
                 .companionCardRowSurface()
@@ -274,7 +271,7 @@ struct SessionsScreen: View {
 
     private func openPendingSessionIfNeeded() {
         guard let sessionID = model.pendingOpenSessionID,
-              let session = model.sessionIndex.session(withID: sessionID)
+              let session = model.viewState.session(withID: sessionID)
         else {
             return
         }
@@ -293,7 +290,7 @@ struct SessionsScreen: View {
             return model.viewState.connectivitySummary
         }
 
-        switch model.selectedAssistantSurface {
+        switch model.viewState.selectedAssistantSurface {
         case .claudeCode:
             return "Claude Code sessions appear here separately from Codex when Claude is running on your Mac."
         case .zed:
@@ -301,8 +298,8 @@ struct SessionsScreen: View {
         case .grokBuild:
             return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
         case .devin:
-            if let devinDesktop = model.snapshot?.devinDesktop {
-                return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.enabledAgentCount) enabled agents · \(devinDesktop.sessionCount) indexed sessions."
+            if let devinEmptyStateDescription = model.viewState.devinEmptyStateDescription {
+                return devinEmptyStateDescription
             }
             return "Devin Desktop sessions appear here when Devin is running on your Mac."
         case .codex:
@@ -313,7 +310,7 @@ struct SessionsScreen: View {
     private var unavailableStateTitle: String {
         switch model.connectionState {
         case .connected:
-            switch model.selectedAssistantSurface {
+            switch model.viewState.selectedAssistantSurface {
             case .claudeCode:
                 return "No Claude Code Sessions"
             case .zed:

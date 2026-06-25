@@ -61,7 +61,7 @@ struct OnboardingScreen: View {
     private var macLoginSection: some View {
         Section {
             LabeledContent("Status", value: model.connectionState.label)
-            LabeledContent("Linked Mac", value: model.snapshot?.host.name ?? "Not Connected")
+            LabeledContent("Linked Mac", value: model.viewState.hostName ?? "Not Connected")
 
             TextField("Enter device code", text: $draftConnectionCode)
                 .textInputAutocapitalization(.never)
