@@ -8,10 +8,18 @@ final class CompanionSessionMiniController {
         Int
     ) -> Void
     typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
+    typealias NotificationReplySubmitter = @MainActor @Sendable (
+        CompanionSessionMiniPendingCommand
+    ) async -> Bool
 
     let localStore: CompanionSessionMiniLocalStore?
 
     private var syncTask: Task<Void, Never>?
+    private var notificationReplyOutboxDrainTask: Task<Void, Never>?
+    private var notificationReplyOutboxDrainID: String?
+    private var notificationReplyOutboxRetryTask: Task<Void, Never>?
+    private var notificationReplyOutboxRetryDelayNanoseconds =
+        NotificationReplyOutboxRetry.initialDelayNanoseconds
 
     var isSyncing: Bool {
         syncTask != nil
@@ -107,6 +115,82 @@ final class CompanionSessionMiniController {
         }
     }
 
+    @discardableResult
+    func startNotificationReplyOutboxDrainIfNeeded(
+        drainID: String,
+        submit: @escaping NotificationReplySubmitter
+    ) -> Task<Void, Never>? {
+        guard notificationReplyOutboxDrainTask == nil,
+              pendingNotificationReplyCommand() != nil
+        else {
+            return notificationReplyOutboxDrainTask
+        }
+
+        cancelNotificationReplyOutboxRetry()
+        let drainTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            await self.drainNotificationReplyOutbox(
+                drainID: drainID,
+                submit: submit
+            )
+        }
+        notificationReplyOutboxDrainTask = drainTask
+        notificationReplyOutboxDrainID = drainID
+        return drainTask
+    }
+
+    func stopNotificationReplyOutboxDrain() {
+        notificationReplyOutboxDrainTask?.cancel()
+        notificationReplyOutboxDrainTask = nil
+        notificationReplyOutboxDrainID = nil
+        cancelNotificationReplyOutboxRetry()
+    }
+
+    func scheduleNotificationReplyOutboxRetryIfNeeded(
+        drainID: String,
+        submit: @escaping NotificationReplySubmitter
+    ) {
+        guard notificationReplyOutboxRetryTask == nil,
+              pendingNotificationReplyCommand() != nil
+        else {
+            return
+        }
+
+        let delayNanoseconds = notificationReplyOutboxRetryDelayNanoseconds
+        notificationReplyOutboxRetryDelayNanoseconds = min(
+            delayNanoseconds * NotificationReplyOutboxRetry.backoffMultiplier,
+            NotificationReplyOutboxRetry.maximumDelayNanoseconds
+        )
+        CompanionDiagnostics.record(
+            "notification-reply:retry-scheduled delayNanoseconds=\(delayNanoseconds)"
+        )
+        notificationReplyOutboxRetryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.notificationReplyOutboxRetryTask = nil
+            self?.startNotificationReplyOutboxDrainIfNeeded(
+                drainID: drainID,
+                submit: submit
+            )
+        }
+    }
+
+    func resetNotificationReplyOutboxRetry() {
+        cancelNotificationReplyOutboxRetry()
+        notificationReplyOutboxRetryDelayNanoseconds =
+            NotificationReplyOutboxRetry.initialDelayNanoseconds
+    }
+
     func enqueueModeCommand(
         sessionID: String,
         preset: SessionMode?,
@@ -195,4 +279,44 @@ final class CompanionSessionMiniController {
             )
         }
     }
+
+    private func drainNotificationReplyOutbox(
+        drainID: String,
+        submit: NotificationReplySubmitter
+    ) async {
+        while !Task.isCancelled {
+            guard let command = pendingNotificationReplyCommand() else {
+                break
+            }
+            let didSend = await submit(command)
+            if !didSend {
+                break
+            }
+        }
+        finishNotificationReplyOutboxDrain(drainID: drainID)
+    }
+
+    private func finishNotificationReplyOutboxDrain(drainID: String) {
+        guard notificationReplyOutboxDrainID == drainID else {
+            CompanionDiagnostics.record("notification-reply:stale-drain-finish-skip")
+            return
+        }
+
+        notificationReplyOutboxDrainTask = nil
+        notificationReplyOutboxDrainID = nil
+        if pendingNotificationReplyCommand() == nil {
+            resetNotificationReplyOutboxRetry()
+        }
+    }
+
+    private func cancelNotificationReplyOutboxRetry() {
+        notificationReplyOutboxRetryTask?.cancel()
+        notificationReplyOutboxRetryTask = nil
+    }
+}
+
+private enum NotificationReplyOutboxRetry {
+    static let initialDelayNanoseconds: UInt64 = 250_000_000
+    static let maximumDelayNanoseconds: UInt64 = 30_000_000_000
+    static let backoffMultiplier: UInt64 = 2
 }
