@@ -2,6 +2,8 @@ use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use serde_json::Value;
 
+use crate::grpc::proto;
+
 use super::state::TuiState;
 use super::tabs::TuiTab;
 use super::transport::{delete_json, get_json, patch_json, post_json};
@@ -26,22 +28,12 @@ pub(crate) async fn execute_command(
         (TuiTab::Sessions, "mode") => {
             let thread_id = selected_thread_id(app)?;
             let preset = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                &format!("/desktop/sessions/{thread_id}/mode"),
-                serde_json::json!({ "preset": nullable_id(preset) }),
-            )
-            .await?;
+            submit_session_mode(&thread_id, nullable_id(preset)).await?;
         }
         (TuiTab::Sessions, "prompt") => {
             let thread_id = selected_thread_id(app)?;
             let prompt = command_body(command, name)?;
-            post_json(
-                client,
-                &format!("/desktop/sessions/{thread_id}/prompt"),
-                serde_json::json!({ "prompt": prompt }),
-            )
-            .await?;
+            submit_session_prompt(&thread_id, prompt).await?;
         }
         (TuiTab::Sessions, "prompt-mode") => {
             let thread_id = selected_thread_id(app)?;
@@ -267,16 +259,55 @@ async fn prompt_threads(
     prompt: &str,
     preset: Option<&str>,
 ) -> Result<()> {
-    post_json(
-        client,
-        "/desktop/session-prompts",
-        serde_json::json!({
-            "threadIds": thread_ids,
-            "prompt": prompt,
-            "preset": preset,
-        }),
+    let _ = client;
+    for thread_id in thread_ids {
+        if let Some(preset) = preset {
+            submit_session_mode(&thread_id, nullable_id(preset)).await?;
+        }
+        submit_session_prompt(&thread_id, prompt).await?;
+    }
+    Ok(())
+}
+
+async fn submit_session_mode(thread_id: &str, preset: Option<&str>) -> Result<()> {
+    let client_mutation_id = format!("tui-mode-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetSessionMode(
+            proto::SetSessionModeRequest {
+                thread_id: thread_id.to_owned(),
+                preset: preset.unwrap_or_default().to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    crate::grpc::submit_local_session_command(
+        &crate::runtime::default_server_base_url(),
+        command,
+        &client_mutation_id,
     )
-    .await
+    .await?;
+    Ok(())
+}
+
+async fn submit_session_prompt(thread_id: &str, prompt: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-prompt-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SendSessionPrompt(
+            proto::SendSessionPromptRequest {
+                thread_id: thread_id.to_owned(),
+                prompt: prompt.to_owned(),
+                assistant_surface: String::new(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    crate::grpc::submit_local_session_command(
+        &crate::runtime::default_server_base_url(),
+        command,
+        &client_mutation_id,
+    )
+    .await?;
+    Ok(())
 }
 
 fn selected_thread_id(app: &TuiState) -> Result<String> {

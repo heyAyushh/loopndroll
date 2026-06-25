@@ -1,12 +1,6 @@
 import Foundation
 import UserNotifications
 
-extension Notification.Name {
-    static let looperDidReceiveSessionQuickAction = Notification.Name(
-        "looper.didReceiveSessionQuickAction"
-    )
-}
-
 enum LooperNotificationPayloadKey {
     static let action = "action"
     static let notificationKind = "notificationKind"
@@ -37,7 +31,7 @@ final class LocalNotificationManager {
     }
 
     func configureStopQuickActions(_ actions: Set<QuickActionOption>) {
-        let orderedActions = QuickActionOption.allCases
+        let orderedActions = QuickActionSettings.notificationPresentationOrder
             .filter { actions.contains($0) }
             .map(notificationAction)
 
@@ -238,36 +232,18 @@ final class ForegroundNotificationDelegate: NSObject, @unchecked Sendable, UNUse
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        defer { completionHandler() }
-
-        guard
-            response.notification.request.content.userInfo[
-                LooperNotificationPayloadKey.notificationKind
-            ] as? String == LooperNotificationKind.sessionStop,
-            let sessionId = response.notification.request.content.userInfo[
-                LooperNotificationPayloadKey.sessionId
-            ] as? String
-        else {
+        guard let request = quickActionRequest(from: response) else {
+            completionHandler()
             return
         }
 
-        guard let action = quickAction(from: response) else {
-            return
+        // UNUserNotificationCenter still provides a legacy completion closure; Swift 6
+        // cannot infer its sendability, but this path calls it exactly once on MainActor.
+        nonisolated(unsafe) let complete = completionHandler
+        Task { @MainActor in
+            await SessionQuickActionCenter.shared.submit(request)
+            complete()
         }
-
-        var userInfo = response.notification.request.content.userInfo
-        userInfo[LooperNotificationPayloadKey.action] = action.rawValue
-        userInfo[LooperNotificationPayloadKey.sessionId] = sessionId
-
-        if let textResponse = response as? UNTextInputNotificationResponse {
-            userInfo[LooperNotificationPayloadKey.prompt] = textResponse.userText
-        }
-
-        NotificationCenter.default.post(
-            name: .looperDidReceiveSessionQuickAction,
-            object: nil,
-            userInfo: userInfo
-        )
     }
 
     private nonisolated func quickAction(
@@ -281,5 +257,28 @@ final class ForegroundNotificationDelegate: NSObject, @unchecked Sendable, UNUse
         default:
             return QuickActionOption(rawValue: response.actionIdentifier)
         }
+    }
+
+    private nonisolated func quickActionRequest(
+        from response: UNNotificationResponse
+    ) -> SessionQuickActionRequest? {
+        guard
+            response.notification.request.content.userInfo[
+                LooperNotificationPayloadKey.notificationKind
+            ] as? String == LooperNotificationKind.sessionStop,
+            let sessionID = response.notification.request.content.userInfo[
+                LooperNotificationPayloadKey.sessionId
+            ] as? String,
+            let action = quickAction(from: response)
+        else {
+            return nil
+        }
+
+        return SessionQuickActionRequest(
+            action: action,
+            sessionID: sessionID,
+            prompt: (response as? UNTextInputNotificationResponse)?.userText,
+            notificationID: response.notification.request.identifier
+        )
     }
 }

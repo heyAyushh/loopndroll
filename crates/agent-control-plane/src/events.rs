@@ -9,7 +9,7 @@ use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 
 use crate::mobile::events::{
-    MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_sse_name,
+    MobileEvent, MobileEventKind, MobileEventRecord, mobile_event_wire_name,
 };
 
 const ENABLED_SETTING: i64 = 1;
@@ -1008,7 +1008,7 @@ fn migrate_legacy_mobile_events(connection: &Connection) -> Result<()> {
     for legacy_event in legacy_events {
         let entity_id = legacy_event.entity_id();
         let payload_json = serde_json::json!({
-            "eventType": mobile_event_sse_name(legacy_event.event_type),
+            "eventType": mobile_event_wire_name(legacy_event.event_type),
             "threadId": legacy_event.thread_id.as_deref(),
             "promptId": legacy_event.prompt_id.as_deref(),
             "detail": legacy_event.detail.as_deref(),
@@ -1074,7 +1074,7 @@ fn insert_mobile_state_event(
          ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             input.entity_id.as_str(),
-            mobile_event_sse_name(input.kind),
+            mobile_event_wire_name(input.kind),
             input.revision.as_str(),
             input.server_time.as_str(),
             payload_json.as_str(),

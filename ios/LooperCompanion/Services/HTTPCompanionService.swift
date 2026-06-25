@@ -66,13 +66,21 @@ struct HTTPCompanionService: CompanionService {
     private static let snapshotPath = "/api/mobile/snapshot"
     private static let sessionPathPrefix = "/api/mobile/sessions"
     private static let pathSeparator = "/"
+    private static let modePathSuffix = "mode"
     private static let assistantSurfaceQueryItemName = "assistantSurface"
+    private static let setSessionModeCommandKind = "SetSessionMode"
+    private static let sendSessionPromptCommandKind = "SendSessionPrompt"
+    private static let submitNotificationReplyCommandKind = "SubmitNotificationReply"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
     private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
         .subtracting(pathSegmentReservedCharacters)
 
     let baseURLs: [URL]
     let bearerToken: String?
+
+    var supportsModePromptBatch: Bool {
+        true
+    }
 
     init(baseURL: URL) {
         self.baseURLs = [baseURL]
@@ -84,8 +92,18 @@ struct HTTPCompanionService: CompanionService {
         self.bearerToken = bearerToken
     }
 
-    func makeMobileEventStreamClient() -> MobileEventStreamClient {
-        MobileEventStreamClient(baseURLs: baseURLs, bearerToken: bearerToken)
+    func prepareRealtimeConnection() async {
+        await RealtimeCompanionClientFactory.prepareClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        )
+    }
+
+    func makeStateMiniSyncTransport() async -> (any LooperRealtimeStateMiniSyncTransport)? {
+        await RealtimeCompanionClientFactory.makeClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        )
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -105,6 +123,17 @@ struct HTTPCompanionService: CompanionService {
         try await request(path: Self.snapshotPath, method: HTTPMethod.get)
     }
 
+    func loadSessionMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot? {
+        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        ) else {
+            return nil
+        }
+
+        return try await realtimeClient.getStateMiniSnapshot()
+    }
+
     func loadSessionDetail(
         id: String,
         surface: CompanionAssistantSurface?
@@ -115,11 +144,28 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot {
-        try await request(
-            path: sessionPath(id: id, suffix: "mode"),
-            method: HTTPMethod.post,
-            body: ["preset": preset?.rawValue ?? NSNull()]
+    func setSessionMode(
+        id: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    ) async throws -> CompanionSessionModeResult {
+        let envelope = try await submitSessionCommand(
+            .setSessionMode(
+                threadID: id,
+                preset: preset?.rawValue,
+                clientMutationID: clientMutationID
+            ),
+            expectedCommandKind: Self.setSessionModeCommandKind,
+            unavailableDiagnostic: "mode:grpc-unavailable id=\(id)",
+            invalidDiagnostic: "mode:grpc-invalid id=\(id)"
+        )
+        CompanionDiagnostics.record(
+            "mode:grpc-accepted id=\(id) ackSeq=\(envelope.ack.ackSeq)"
+        )
+        return .accepted(
+            mode: envelope.preset.flatMap(SessionMode.init(rawValue:)) ?? preset,
+            serverTime: envelope.ack.serverTime,
+            clientMutationID: envelope.ack.clientMutationID
         )
     }
 
@@ -138,31 +184,154 @@ struct HTTPCompanionService: CompanionService {
     func sendSessionPrompt(
         id: String,
         prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        if let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
+        assistantSurface: CompanionAssistantSurface?,
+        clientMutationID: String
+    ) async throws -> CompanionPromptSendResult {
+        let envelope = try await submitSessionCommand(
+            .sendSessionPrompt(
+                threadID: id,
+                prompt: prompt,
+                assistantSurface: assistantSurface?.rawValue,
+                clientMutationID: clientMutationID
+            ),
+            expectedCommandKind: Self.sendSessionPromptCommandKind,
+            unavailableDiagnostic: "prompt:grpc-unavailable id=\(id)",
+            invalidDiagnostic: "prompt:grpc-invalid id=\(id)"
+        )
+        CompanionDiagnostics.record(
+            "prompt:grpc-accepted id=\(id) kind=\(envelope.dispatchKind ?? "accepted")"
+        )
+        return .accepted(
+            promptID: envelope.promptID,
+            dispatchKind: envelope.dispatchKind ?? "accepted",
+            clientMutationID: envelope.ack.clientMutationID
+        )
+    }
+
+    func sendSessionPromptAfterMode(
+        id: String,
+        modePreset: SessionMode?,
+        modeClientMutationID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?,
+        promptClientMutationID: String
+    ) async throws -> CompanionModePromptBatchResult {
+        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
             baseURLs: baseURLs,
             bearerToken: bearerToken
-        ) {
-            do {
-                _ = try await realtimeClient.sendSessionPrompt(
-                    threadID: id,
-                    prompt: prompt,
-                    assistantSurface: assistantSurface?.rawValue
-                )
-                return try await loadSnapshot()
-            } catch {
-                CompanionDiagnostics.record(
-                    "prompt:grpc-fallback id=\(id) error=\(error.localizedDescription)"
-                )
-            }
+        ) else {
+            CompanionDiagnostics.record(
+                "prompt:grpc-batch-unavailable id=\(id)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
         }
 
-        return try await request(
-            path: path(sessionPath(id: id, suffix: "prompt"), assistantSurface: assistantSurface),
-            method: HTTPMethod.post,
-            body: ["prompt": prompt]
+        let response = try await realtimeClient.submitSessionCommandBatch(
+            commands: [
+                .setSessionMode(
+                    threadID: id,
+                    preset: modePreset?.rawValue,
+                    clientMutationID: modeClientMutationID
+                ),
+                .sendSessionPrompt(
+                    threadID: id,
+                    prompt: prompt,
+                    assistantSurface: assistantSurface?.rawValue,
+                    clientMutationID: promptClientMutationID
+                ),
+            ]
         )
+        guard response.accepted,
+              let modeAck = response.commandAcks.first(where: {
+                  $0.commandKind == Self.setSessionModeCommandKind
+              }),
+              let promptAck = response.commandAcks.first(where: {
+                  $0.commandKind == Self.sendSessionPromptCommandKind
+              })
+        else {
+            CompanionDiagnostics.record("prompt:grpc-batch-invalid id=\(id)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+
+        CompanionDiagnostics.record(
+            "prompt:grpc-batch-accepted id=\(id) modeAckSeq=\(modeAck.ack.ackSeq) promptAckSeq=\(promptAck.ack.ackSeq)"
+        )
+        return CompanionModePromptBatchResult(
+            mode: .accepted(
+                mode: modeAck.preset.flatMap(SessionMode.init(rawValue:)) ?? modePreset,
+                serverTime: modeAck.ack.serverTime,
+                clientMutationID: modeAck.ack.clientMutationID
+            ),
+            prompt: .accepted(
+                promptID: promptAck.promptID,
+                dispatchKind: promptAck.dispatchKind,
+                clientMutationID: promptAck.ack.clientMutationID
+            )
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?,
+        clientMutationID: String
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        let envelope = try await submitSessionCommand(
+            .submitNotificationReply(
+                notificationID: notificationID,
+                threadID: sessionID,
+                prompt: prompt,
+                assistantSurface: assistantSurface?.rawValue,
+                clientMutationID: clientMutationID
+            ),
+            expectedCommandKind: Self.submitNotificationReplyCommandKind,
+            unavailableDiagnostic: "notification-reply:grpc-unavailable id=\(sessionID) notificationID=\(notificationID)",
+            invalidDiagnostic: "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
+        )
+        CompanionDiagnostics.record(
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(envelope.dispatchKind ?? "accepted")"
+        )
+        return LooperRealtimeNotificationReplyResponse(
+            accepted: envelope.ack.accepted,
+            dispatchKind: envelope.dispatchKind ?? "accepted",
+            promptID: envelope.promptID,
+            serverTime: envelope.ack.serverTime,
+            clientMutationID: envelope.ack.clientMutationID,
+            ackSeq: envelope.ack.ackSeq,
+            entityID: envelope.ack.entityID,
+            revision: envelope.ack.revision,
+            idempotentReplay: envelope.ack.idempotentReplay,
+            notificationID: envelope.notificationID ?? notificationID
+        )
+    }
+
+    private func submitSessionCommand(
+        _ command: LooperRealtimeSessionCommand,
+        expectedCommandKind: String,
+        unavailableDiagnostic: String,
+        invalidDiagnostic: String
+    ) async throws -> LooperRealtimeCommandAckEnvelope {
+        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken
+        ) else {
+            CompanionDiagnostics.record(unavailableDiagnostic)
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+
+        let response = try await realtimeClient.submitSessionCommandBatch(commands: [command])
+        guard response.accepted,
+              let envelope = response.commandAcks.first(where: {
+                  $0.commandKind == expectedCommandKind
+                      && $0.ack.clientMutationID == command.clientMutationID
+              }),
+              envelope.ack.accepted
+        else {
+            CompanionDiagnostics.record(invalidDiagnostic)
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        return envelope
     }
 
     func muteSession(id: String) async throws -> MobileSnapshot {
@@ -336,26 +505,49 @@ struct HTTPCompanionService: CompanionService {
             throw HTTPCompanionServiceError.invalidResponse
         }
 
-        if method == .get {
-            return try await firstSuccessfulGetData(
-                candidates: CompanionBaseURLRacePlan.candidates(for: resolvedBaseURLs),
+        let prioritizedBaseURLs = await HTTPCompanionRouteCache.shared.prioritizedBaseURLs(
+            candidateBaseURLs
+        )
+        let bodyData = try body.map { requestBody in
+            try JSONSerialization.data(withJSONObject: requestBody)
+        }
+
+        if shouldRaceResolvedURLs(path: path, method: method) {
+            let response = try await firstSuccessfulData(
+                candidates: CompanionBaseURLRacePlan.candidates(for: prioritizedBaseURLs),
                 path: path,
+                method: method,
+                bodyData: bodyData,
                 includesAuthentication: includesAuthentication
             )
+            await HTTPCompanionRouteCache.shared.rememberSuccessfulBaseURL(
+                response.baseURL,
+                for: candidateBaseURLs
+            )
+            return response
         }
 
         var lastError: Error?
 
-        for baseURL in candidateBaseURLs {
+        for baseURL in prioritizedBaseURLs {
             do {
-                return try await responseData(
+                let response = try await responseData(
                     baseURL: baseURL,
                     path: path,
                     method: method,
-                    body: body,
+                    bodyData: bodyData,
                     includesAuthentication: includesAuthentication
                 )
+                await HTTPCompanionRouteCache.shared.rememberSuccessfulBaseURL(
+                    response.baseURL,
+                    for: candidateBaseURLs
+                )
+                return response
             } catch {
+                await HTTPCompanionRouteCache.shared.forgetFailedBaseURL(
+                    baseURL,
+                    for: candidateBaseURLs
+                )
                 lastError = error
             }
         }
@@ -367,7 +559,7 @@ struct HTTPCompanionService: CompanionService {
         baseURL: URL,
         path: String,
         method: HTTPMethod,
-        body: [String: Any]? = nil,
+        bodyData: Data? = nil,
         includesAuthentication: Bool = true
     ) async throws -> HTTPCompanionResponseData {
         var request = URLRequest(url: try requestURL(baseURL: baseURL, path: path))
@@ -384,9 +576,7 @@ struct HTTPCompanionService: CompanionService {
             request.setValue(passkeySession, forHTTPHeaderField: MobileAPIAuthenticationHeader.passkeySession)
         }
 
-        if let body {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
+        request.httpBody = bodyData
 
         CompanionDiagnostics.networking.info(
             "Request starting method=\(method.rawValue, privacy: .public) path=\(path, privacy: .public) baseURL=\(baseURL.absoluteString, privacy: .public) bearer=\(hasBearerToken, privacy: .public) passkeySession=\(hasPasskeySession, privacy: .public)"
@@ -398,7 +588,7 @@ struct HTTPCompanionService: CompanionService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await HTTPCompanionURLSession.shared.data(for: request)
         } catch {
             CompanionDiagnostics.networking.error(
                 "Request transport failed path=\(path, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
@@ -443,6 +633,19 @@ struct HTTPCompanionService: CompanionService {
             "http:success path=\(path) status=\(httpResponse.statusCode) bytes=\(data.count)"
         )
         return HTTPCompanionResponseData(data: data, baseURL: baseURL)
+    }
+
+    private func shouldRaceResolvedURLs(path: String, method: HTTPMethod) -> Bool {
+        if method == .get {
+            return true
+        }
+
+        return method == .post && isModeMutationPath(path)
+    }
+
+    private func isModeMutationPath(_ path: String) -> Bool {
+        path.hasPrefix(Self.sessionPathPrefix + Self.pathSeparator) &&
+            path.hasSuffix(Self.pathSeparator + Self.modePathSuffix)
     }
 
     private func sessionPath(id: String, suffix: String? = nil) throws -> String {
@@ -509,9 +712,11 @@ struct HTTPCompanionService: CompanionService {
         return trimmedSuffix
     }
 
-    private func firstSuccessfulGetData(
+    private func firstSuccessfulData(
         candidates: [CompanionBaseURLRaceCandidate],
         path: String,
+        method: HTTPMethod,
+        bodyData: Data?,
         includesAuthentication: Bool
     ) async throws -> HTTPCompanionResponseData {
         guard !candidates.isEmpty else {
@@ -530,7 +735,8 @@ struct HTTPCompanionService: CompanionService {
                         let response = try await responseData(
                             baseURL: candidate.baseURL,
                             path: path,
-                            method: HTTPMethod.get,
+                            method: method,
+                            bodyData: bodyData,
                             includesAuthentication: includesAuthentication
                         )
                         try Task.checkCancellation()
@@ -611,7 +817,7 @@ struct HTTPCompanionService: CompanionService {
 private enum LocalCompanionServiceDiscovery {
     static let serviceType = "_looper._tcp."
     static let domain = "local."
-    static let timeoutSeconds: TimeInterval = 8
+    static let timeoutSeconds: TimeInterval = 3
 
     @MainActor
     static func discoverBaseURLs() async -> [URL] {
@@ -721,11 +927,12 @@ private enum HTTPStatus {
 }
 
 private enum HTTPRequestTimeout {
-    static let health: TimeInterval = 8
-    static let sessionDetail: TimeInterval = 12
-    static let snapshot: TimeInterval = 6
-    static let mutation: TimeInterval = 25
-    static let fallback: TimeInterval = 15
+    static let health: TimeInterval = 2
+    static let sessionDetail: TimeInterval = 4
+    static let snapshot: TimeInterval = 3
+    static let mutation: TimeInterval = 1.0
+    static let fallback: TimeInterval = 5
+    static let resource: TimeInterval = 6
 
     static func interval(path: String, method: HTTPMethod) -> TimeInterval {
         if method != .get {
@@ -745,6 +952,58 @@ private enum HTTPRequestTimeout {
         }
 
         return fallback
+    }
+}
+
+private enum HTTPCompanionURLSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = HTTPRequestTimeout.fallback
+        configuration.timeoutIntervalForResource = HTTPRequestTimeout.resource
+        return URLSession(configuration: configuration)
+    }()
+}
+
+private actor HTTPCompanionRouteCache {
+    static let shared = HTTPCompanionRouteCache()
+
+    private static let cacheKeySeparator = "\n"
+
+    private var successfulBaseURLByCandidateKey: [String: URL] = [:]
+
+    func prioritizedBaseURLs(_ baseURLs: [URL]) -> [URL] {
+        let key = cacheKey(for: baseURLs)
+        guard let cachedBaseURL = successfulBaseURLByCandidateKey[key],
+              baseURLs.contains(cachedBaseURL)
+        else {
+            return baseURLs
+        }
+
+        return [cachedBaseURL] + baseURLs.filter { $0 != cachedBaseURL }
+    }
+
+    func rememberSuccessfulBaseURL(_ baseURL: URL, for baseURLs: [URL]) {
+        guard baseURLs.contains(baseURL) else {
+            return
+        }
+
+        successfulBaseURLByCandidateKey[cacheKey(for: baseURLs)] = baseURL
+    }
+
+    func forgetFailedBaseURL(_ baseURL: URL, for baseURLs: [URL]) {
+        let key = cacheKey(for: baseURLs)
+        guard successfulBaseURLByCandidateKey[key] == baseURL else {
+            return
+        }
+
+        successfulBaseURLByCandidateKey[key] = nil
+    }
+
+    private func cacheKey(for baseURLs: [URL]) -> String {
+        baseURLs
+            .map(\.absoluteString)
+            .joined(separator: Self.cacheKeySeparator)
     }
 }
 

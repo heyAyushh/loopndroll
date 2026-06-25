@@ -27,13 +27,8 @@ use crate::mobile::auth::{
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
 };
 use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
-use crate::mobile::prompt_delivery::{
-    BatchPromptInput, mobile_desktop_snapshot, queue_desktop_batch_prompt, send_session_prompt,
-};
+use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 use crate::mobile::push::MobilePushRegistrationRequest;
-use crate::mobile::realtime_commands::{
-    RealtimeCommandError, SubmitNotificationReplyInput, submit_notification_reply_command,
-};
 use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
@@ -46,7 +41,7 @@ mod requests;
 mod responses;
 mod session_actions;
 
-use self::events::{desktop_events, events_tail, mobile_events_handler};
+use self::events::events_tail;
 use self::handoff::handoff_session_page;
 use self::mobile_access::{
     authorize_mobile_api_request, authorize_mobile_request, current_mobile_time,
@@ -62,14 +57,13 @@ use self::requests::{
     AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest,
     DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
     DesktopConnectionRenameRequest, DesktopDefaultNotificationTargetsRequest,
-    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationReplyRequest,
-    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionBatchPromptRequest,
-    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
-    DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest, MobileAssistantSurfaceRequest,
-    MobileDefaultPromptRequest, MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
+    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationRequest,
+    DesktopScopeRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
+    DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
+    MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
+    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
-    MobileSessionPromptQuery, MobileSessionPromptRequest, MobileSiriCurrentSessionRequest,
-    MobileSiriDefaultSessionRequest,
+    MobileSiriCurrentSessionRequest, MobileSiriDefaultSessionRequest,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -78,7 +72,7 @@ use self::responses::{
 };
 use self::session_actions::{
     delete_session as delete_session_action, mute_session as mute_session_action,
-    set_session_archived, set_session_mode,
+    set_session_archived,
 };
 
 const SHUTDOWN_EXIT_DELAY: Duration = Duration::from_millis(50);
@@ -107,7 +101,6 @@ fn system_routes() -> Router<ControlPlane> {
         .route("/codex/servers", get(codex_servers))
         .route("/codex/compactions", get(compactions))
         .route("/desktop/snapshot", get(desktop_snapshot))
-        .route("/desktop/events", get(desktop_events))
         .route("/handoff/sessions/:thread_id", get(handoff_session_page))
         .route("/sync/manifest", get(sync_manifest))
 }
@@ -261,22 +254,9 @@ fn desktop_session_routes() -> Router<ControlPlane> {
             "/desktop/sessions/:thread_id/completion-check",
             post(desktop_session_completion_check),
         )
-        .route("/desktop/session-prompts", post(desktop_sessions_prompt))
-        .route(
-            "/desktop/sessions/:thread_id/mode",
-            post(desktop_session_mode),
-        )
         .route(
             "/desktop/sessions/:thread_id/archive",
             post(desktop_session_archive),
-        )
-        .route(
-            "/desktop/sessions/:thread_id/prompt",
-            post(desktop_session_prompt),
-        )
-        .route(
-            "/desktop/sessions/:thread_id/notification-reply",
-            post(desktop_session_notification_reply),
         )
         .route(
             "/desktop/sessions/:thread_id/mute",
@@ -326,22 +306,13 @@ fn mobile_routes() -> Router<ControlPlane> {
             "/api/mobile/session-minis/snapshot",
             get(mobile_session_minis_snapshot_handler),
         )
-        .route("/api/mobile/events", get(mobile_events_handler))
         .route(
             "/api/mobile/sessions/:thread_id",
             get(mobile_session_detail_handler).delete(mobile_session_delete),
         )
         .route(
-            "/api/mobile/sessions/:thread_id/mode",
-            post(mobile_session_mode),
-        )
-        .route(
             "/api/mobile/sessions/:thread_id/archive",
             post(mobile_session_archive),
-        )
-        .route(
-            "/api/mobile/sessions/:thread_id/prompt",
-            post(mobile_session_prompt),
         )
         .route(
             "/api/mobile/sessions/:thread_id/mute",
@@ -1269,21 +1240,6 @@ async fn desktop_session_completion_check(
     }
 }
 
-async fn desktop_session_mode(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<MobileSessionModeRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_session_mode(&control_plane, &thread_id, input.preset.as_deref()) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
 async fn desktop_session_archive(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
@@ -1295,67 +1251,6 @@ async fn desktop_session_archive(
     }
     match set_session_archived(&control_plane, &thread_id, input.archived) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn desktop_session_prompt(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<MobileSessionPromptRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match send_session_prompt(&control_plane, &thread_id, None, &input.prompt) {
-        Ok(_) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn desktop_session_notification_reply(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopNotificationReplyRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match submit_notification_reply_command(
-        &control_plane,
-        SubmitNotificationReplyInput {
-            notification_id: &input.notification_id,
-            thread_id: &thread_id,
-            prompt: &input.prompt,
-            assistant_surface: input.assistant_surface.as_deref(),
-            client_mutation_id: &input.client_mutation_id,
-        },
-    ) {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => realtime_command_error_response(error),
-    }
-}
-
-async fn desktop_sessions_prompt(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopSessionBatchPromptRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-
-    match queue_desktop_batch_prompt(
-        &control_plane,
-        BatchPromptInput {
-            thread_ids: input.thread_ids,
-            prompt: input.prompt,
-            preset: input.preset,
-        },
-    ) {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1397,32 +1292,6 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
         std::process::exit(0);
     });
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
-}
-
-fn realtime_command_error_response(error: RealtimeCommandError) -> Response {
-    match error {
-        RealtimeCommandError::InvalidArgument(message) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": message })),
-        )
-            .into_response(),
-        RealtimeCommandError::AlreadyExists(message) => (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": message })),
-        )
-            .into_response(),
-        RealtimeCommandError::NotFound(message) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": message })),
-        )
-            .into_response(),
-        RealtimeCommandError::MobileSession(error) => mobile_session_error_response(error),
-        RealtimeCommandError::Internal(message) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": message })),
-        )
-            .into_response(),
-    }
 }
 
 async fn sync_manifest(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -1723,25 +1592,6 @@ async fn mobile_session_detail_handler(
     }
 }
 
-async fn mobile_session_mode(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Path(thread_id): Path<String>,
-    Json(input): Json<MobileSessionModeRequest>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
-        return response;
-    }
-
-    match set_session_mode(&control_plane, &thread_id, input.preset.as_deref()) {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
 async fn mobile_session_archive(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
@@ -1775,39 +1625,6 @@ async fn mobile_session_delete(
 
     match delete_session_action(&control_plane, &thread_id) {
         Ok(()) => mobile_snapshot_response(&control_plane, &headers),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_session_prompt(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Path(thread_id): Path<String>,
-    Query(query): Query<MobileSessionPromptQuery>,
-    Json(input): Json<MobileSessionPromptRequest>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-    if let Some(assistant_surface) = query.assistant_surface.as_deref()
-        && !ASSISTANT_SURFACES.contains(&assistant_surface)
-    {
-        return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
-    }
-    if let Some(response) = missing_mobile_session_rejection(
-        &control_plane,
-        &thread_id,
-        query.assistant_surface.as_deref(),
-    ) {
-        return response;
-    }
-    match send_session_prompt(
-        &control_plane,
-        &thread_id,
-        query.assistant_surface.as_deref(),
-        &input.prompt,
-    ) {
-        Ok(_) => mobile_snapshot_response(&control_plane, &headers),
         Err(error) => mobile_session_error_response(error),
     }
 }

@@ -184,17 +184,47 @@ struct SessionSummaryTimingTests {
         #expect(sections.stopped.isEmpty)
     }
 
+    @Test("Blocked goal is visible as a needs-attention card status")
+    func blockedGoalIsVisibleAsNeedsAttentionCardStatus() throws {
+        let session = try sessionSummary(
+            id: "blocked-thread",
+            ref: "S3",
+            status: "stopped",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            goal: [
+                "id": "goal-blocked",
+                "title": "Unblock delivery",
+                "status": "blocked",
+                "lifecycle": "blocked",
+                "running": false,
+                "updatedAtMs": Constants.activityMilliseconds,
+            ]
+        )
+        let sections = SessionSections(sessions: [session])
+
+        #expect(session.hasBlockedGoal)
+        #expect(session.workStatusLabel == "Goal blocked")
+        #expect(session.workStatusSymbolName == "exclamationmark.octagon.fill")
+        #expect(sections.needsAttention.map { $0.id } == ["blocked-thread"])
+        #expect(sections.stopped.isEmpty)
+    }
+
     private func sessionSummary(
         id: String,
         ref: String,
+        status: String = "active",
         activityMilliseconds: Int64,
-        messageMilliseconds: Int64
+        messageMilliseconds: Int64,
+        goal: [String: Any]? = nil
     ) throws -> SessionSummary {
         let payload = sessionPayload(
             id: id,
             ref: ref,
+            status: status,
             activityMilliseconds: activityMilliseconds,
-            messageMilliseconds: messageMilliseconds
+            messageMilliseconds: messageMilliseconds,
+            goal: goal
         )
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try decoder.decode(SessionSummary.self, from: data)

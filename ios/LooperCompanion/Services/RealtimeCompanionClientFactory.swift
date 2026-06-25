@@ -4,8 +4,22 @@ import LooperRealtime
 
 enum RealtimeCompanionClientFactory {
     private static let healthPath = "/api/mobile/health"
-    private static let requestTimeout: TimeInterval = 4
+    fileprivate static let requestTimeout: TimeInterval = 1.5
+    fileprivate static let resourceTimeout: TimeInterval = 2
     private static let connectionManager = RealtimeCompanionConnectionManager()
+
+    static func prepareClient(baseURLs: [URL], bearerToken: String?) async {
+        guard let client = await makeClient(baseURLs: baseURLs, bearerToken: bearerToken) else {
+            return
+        }
+
+        do {
+            try await client.warmConnections()
+            CompanionDiagnostics.record("realtime:warm-success")
+        } catch {
+            CompanionDiagnostics.record("realtime:warm-failed error=\(error.localizedDescription)")
+        }
+    }
 
     static func makeClient(baseURLs: [URL], bearerToken: String?) async -> LooperRealtimeClient? {
         let mobileSessionHeader = CompanionMobileSessionStore.loadValidHeaderValue()
@@ -37,7 +51,10 @@ enum RealtimeCompanionClientFactory {
 
         let discoveredHealth = await discoverRealtimeHealth(baseURLs: baseURLs)
         for health in discoveredHealth {
-            for grpcBaseURL in health.grpcBaseURLsForConnection.compactMap(URL.init(string:)) {
+            let grpcBaseURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
+                health.grpcBaseURLsForConnection.compactMap(URL.init(string:))
+            )
+            for grpcBaseURL in grpcBaseURLs {
                 guard seen.insert(grpcBaseURL.absoluteString).inserted else {
                     continue
                 }
@@ -49,32 +66,41 @@ enum RealtimeCompanionClientFactory {
     }
 
     private static func discoverRealtimeHealth(baseURLs: [URL]) async -> [RealtimeHealthDiscovery] {
-        let candidateBaseURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(baseURLs)
+        let candidates = CompanionBaseURLRacePlan.candidates(for: baseURLs)
 
         return await withTaskGroup(
             of: RealtimeHealthDiscoveryResult?.self,
             returning: [RealtimeHealthDiscovery].self
         ) { group in
-            for (index, baseURL) in candidateBaseURLs.enumerated() {
+            for candidate in candidates {
                 group.addTask {
-                    guard let health = try? await loadHealth(baseURL: baseURL) else {
+                    do {
+                        if candidate.delay != .zero {
+                            try await Task.sleep(for: candidate.delay)
+                        }
+                        try Task.checkCancellation()
+                    } catch {
                         return nil
                     }
-                    return RealtimeHealthDiscoveryResult(index: index, health: health)
+
+                    guard let health = try? await loadHealth(baseURL: candidate.baseURL) else {
+                        return nil
+                    }
+                    return RealtimeHealthDiscoveryResult(health: health)
                 }
             }
 
-            var results: [RealtimeHealthDiscoveryResult] = []
+            var firstResult: RealtimeHealthDiscoveryResult?
             for await result in group {
                 guard let result else {
                     continue
                 }
-                results.append(result)
+                firstResult = result
+                group.cancelAll()
+                break
             }
 
-            return results
-                .sorted { $0.index < $1.index }
-                .map(\.health)
+            return firstResult.map { [$0.health] } ?? []
         }
     }
 
@@ -83,7 +109,7 @@ enum RealtimeCompanionClientFactory {
         request.httpMethod = "GET"
         request.timeoutInterval = requestTimeout
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await RealtimeDiscoveryURLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
               (200 ..< 300).contains(httpResponse.statusCode)
         else {
@@ -95,7 +121,7 @@ enum RealtimeCompanionClientFactory {
 }
 
 private actor RealtimeCompanionConnectionManager {
-    private let endpointCacheTimeToLive: TimeInterval = 30
+    private let endpointCacheTimeToLive: TimeInterval = 300
 
     private var endpointCache: [RealtimeEndpointCacheKey: RealtimeEndpointCacheEntry] = [:]
     private var clientCache: [RealtimeClientCacheKey: LooperRealtimeClient] = [:]
@@ -171,8 +197,17 @@ private struct RealtimeClientCacheKey: Hashable, Sendable {
 }
 
 private struct RealtimeHealthDiscoveryResult: Sendable {
-    let index: Int
     let health: RealtimeHealthDiscovery
+}
+
+private enum RealtimeDiscoveryURLSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = RealtimeCompanionClientFactory.requestTimeout
+        configuration.timeoutIntervalForResource = RealtimeCompanionClientFactory.resourceTimeout
+        return URLSession(configuration: configuration)
+    }()
 }
 
 private struct RealtimeHealthDiscovery: Decodable, Sendable {

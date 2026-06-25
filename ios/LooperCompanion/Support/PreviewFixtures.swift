@@ -1,6 +1,18 @@
 import Foundation
 
 enum PreviewFixtures {
+    private static let blockedGoal = SessionGoalSummary(
+        id: "goal-session-1",
+        title: "Make an iOS app for looper",
+        status: "blocked",
+        lifecycle: "blocked",
+        running: false,
+        tokenBudget: nil,
+        tokensUsed: nil,
+        timeUsedSeconds: nil,
+        updatedAtMs: nil
+    )
+
     static let notifications = [
         NotificationDestination(id: "telegram-main", label: "Telegram Main", channel: "telegram"),
         NotificationDestination(id: "slack-builds", label: "Slack Builds", channel: "slack")
@@ -37,7 +49,8 @@ enum PreviewFixtures {
                 lastUpdatedAt: Date().addingTimeInterval(-180).ISO8601Format(),
                 assistantPreview: "I’ve scaffolded the iPhone companion app and I’m wiring the simulator data source now.",
                 isArchived: false,
-                assistantClient: .codex
+                assistantClient: .codex,
+                goal: blockedGoal
             ),
             SessionSummary(
                 id: "session-2",
@@ -121,6 +134,7 @@ enum PreviewFixtures {
             latestAssistantMessage: "I’ve scaffolded the iPhone app and I’m wiring the simulator data source now. Next I’m finishing the session detail view and the Bun dev API so the simulator can show real looper-shaped state.",
             isArchived: false,
             assistantClient: .codex,
+            goal: blockedGoal,
             notificationIds: ["telegram-main"],
             completionCheckID: "check-1",
             completionCheckWaitForReply: true,

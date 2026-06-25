@@ -12,12 +12,14 @@ use tonic::transport::Server;
 use crate::control_plane::ControlPlane;
 
 mod auth;
+mod client_commands;
 mod service;
 
 pub mod proto {
     tonic::include_proto!("looper.v1");
 }
 
+pub(crate) use client_commands::submit_local_session_command;
 pub use service::LooperRealtimeService;
 
 const GRPC_HTTP2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);

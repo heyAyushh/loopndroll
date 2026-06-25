@@ -39,6 +39,12 @@ enum CompanionMobileSessionStore {
     }
 
     static func loadValidHeaderValue() -> String? {
+        #if DEBUG
+        if let liveMobileSession = UITestLaunchArguments.liveMobileSession {
+            return liveMobileSession
+        }
+        #endif
+
         guard let session = load() else {
             return nil
         }

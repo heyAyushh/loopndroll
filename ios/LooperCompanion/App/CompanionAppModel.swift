@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import LooperCompanionCore
+import LooperRealtime
 import Observation
 import UIKit
 import UserNotifications
@@ -12,6 +13,7 @@ private enum LaunchArgument {
 private enum CachedSnapshotRestoreReason {
     static let appLaunch = "app-launch"
     static let bundledConnectionChange = "bundled-connection-change"
+    static let storedConnectionChange = "stored-connection-change"
     static let handoffConnectionChange = "handoff-connection-change"
     static let loadFailure = "load-failure"
 }
@@ -19,6 +21,126 @@ private enum CachedSnapshotRestoreReason {
 private enum SiriDonationEvent {
     static let openSession = "open-session"
     static let setDefaultSession = "set-default-session"
+}
+
+private enum PromptDispatchFailure {
+    static let resumeFailedDetailPrefix = "prompt-resume-failed:"
+}
+
+private enum NotificationReplyOutboxRetry {
+    static let initialDelayNanoseconds: UInt64 = 250_000_000
+    static let maximumDelayNanoseconds: UInt64 = 30_000_000_000
+    static let backoffMultiplier: UInt64 = 2
+}
+
+private enum LocalFirstMutationError: LocalizedError {
+    case modeBarrierRejected
+
+    var errorDescription: String? {
+        switch self {
+        case .modeBarrierRejected:
+            return "Mode change was not accepted. Prompt stayed queued."
+        }
+    }
+}
+
+private enum PendingSessionModeSelection: Sendable {
+    case globalDefault
+    case preset(SessionMode)
+
+    var mode: SessionMode? {
+        switch self {
+        case .globalDefault:
+            return nil
+        case let .preset(mode):
+            return mode
+        }
+    }
+
+    init(_ mode: SessionMode?) {
+        if let mode {
+            self = .preset(mode)
+        } else {
+            self = .globalDefault
+        }
+    }
+}
+
+private struct ModeRollbackState: Sendable {
+    let snapshot: MobileSnapshot?
+    let detail: SessionDetail?
+}
+
+private struct PendingSessionModeMutation: Sendable {
+    let selection: PendingSessionModeSelection
+    let clientMutationID: String
+    let barrier: LocalFirstMutationBarrier
+
+    var mode: SessionMode? {
+        selection.mode
+    }
+
+    init(
+        mode: SessionMode?,
+        clientMutationID: String
+    ) {
+        selection = PendingSessionModeSelection(mode)
+        self.clientMutationID = clientMutationID
+        barrier = LocalFirstMutationBarrier()
+    }
+}
+
+private struct ModeMutationEnvelope: Sendable {
+    let sessionID: String
+    let selection: PendingSessionModeSelection
+    let clientMutationID: String
+    let barrier: LocalFirstMutationBarrier
+    let connectionRevision: Int
+    let rollbackState: ModeRollbackState?
+    let service: any CompanionService
+
+    var mode: SessionMode? {
+        selection.mode
+    }
+}
+
+private struct PromptMutationEnvelope: Sendable {
+    let sessionID: String
+    let prompt: String
+    let assistantSurface: CompanionAssistantSurface
+    let clientMutationID: String
+    let connectionRevision: Int
+    let service: any CompanionService
+    let pendingModeMutation: PendingSessionModeMutation?
+    let modeBarrierTask: Task<Bool, Never>?
+}
+
+private actor LocalFirstMutationBarrier {
+    private var result: Bool?
+    private var continuations: [CheckedContinuation<Bool, Never>] = []
+
+    func wait() async -> Bool {
+        if let result {
+            return result
+        }
+
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func resolve(_ accepted: Bool) {
+        guard result == nil else {
+            return
+        }
+
+        result = accepted
+        let continuations = continuations
+        self.continuations.removeAll()
+        for continuation in continuations {
+            continuation.resume(returning: accepted)
+        }
+    }
 }
 
 @MainActor
@@ -50,13 +172,14 @@ final class CompanionAppModel {
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
+    @ObservationIgnored private let sessionMiniLocalStore: CompanionSessionMiniLocalStore?
     @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
     @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
-    @ObservationIgnored private let realtimeController = CompanionRealtimeController()
+    @ObservationIgnored private var sessionMiniSyncTask: Task<Void, Never>?
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
     @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
     @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
@@ -71,6 +194,22 @@ final class CompanionAppModel {
     @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
     @ObservationIgnored private var isSavingAssistantSurface = false
     @ObservationIgnored private var connectionRevision = 0
+    @ObservationIgnored private var activeServiceConnectionFingerprint = ""
+    @ObservationIgnored private var modeMutationDrainTasksBySessionID: [String: Task<Bool, Never>] = [:]
+    @ObservationIgnored private var modeMutationDrainIDBySessionID: [String: String] = [:]
+    @ObservationIgnored private var pendingModeMutationsBySessionID: [String: [PendingSessionModeMutation]] = [:]
+    @ObservationIgnored private var modeRollbackStateBySessionID: [String: ModeRollbackState] = [:]
+    @ObservationIgnored private var latestModeMutationBySessionID: [String: PendingSessionModeMutation] = [:]
+    @ObservationIgnored private var latestModeMutationIDBySessionID: [String: String] = [:]
+    @ObservationIgnored private var latestModeMutationBarrierBySessionID: [String: LocalFirstMutationBarrier] = [:]
+    #if DEBUG
+    @ObservationIgnored private var modeDrainBeforeFinishHook: (() async -> Void)?
+    #endif
+    @ObservationIgnored private var notificationReplyOutboxDrainTask: Task<Void, Never>?
+    @ObservationIgnored private var notificationReplyOutboxDrainID: String?
+    @ObservationIgnored private var notificationReplyOutboxRetryTask: Task<Void, Never>?
+    @ObservationIgnored private var notificationReplyOutboxRetryDelayNanoseconds =
+        NotificationReplyOutboxRetry.initialDelayNanoseconds
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private let spotlightSyncWorker = SpotlightIndexSyncWorker()
     @ObservationIgnored private var didClearSpotlightIndexForCachedSnapshotThisLaunch = false
@@ -79,27 +218,35 @@ final class CompanionAppModel {
         environment: CompanionEnvironment,
         notificationManager: LocalNotificationManager = LocalNotificationManager(),
         remotePushRegistrar: RemotePushRegistrar = .shared,
-        spotlightIndexer: SessionSpotlightIndexer = .shared
+        spotlightIndexer: SessionSpotlightIndexer = .shared,
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = CompanionSessionMiniLocalStore.liveDefault()
     ) {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.remotePushRegistrar = remotePushRegistrar
         self.spotlightIndexer = spotlightIndexer
+        self.sessionMiniLocalStore = sessionMiniLocalStore
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
+        activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
         if didActivateBundledConnection {
             CompanionDiagnostics.record("model:bundled-connection-activated")
         }
 
-        let didScheduleCachedSnapshotRestore = !configuredBaseURL.isEmpty
+        let didRestoreSessionMiniSnapshot = restoreCachedSessionMiniSnapshotIfAvailable(
+            reason: CachedSnapshotRestoreReason.appLaunch
+        )
+        let didScheduleCachedSnapshotRestore = !didRestoreSessionMiniSnapshot && !configuredBaseURL.isEmpty
         if didScheduleCachedSnapshotRestore {
             scheduleCachedSnapshotRestoreIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
         }
 
         configureStopQuickActions()
+        SessionQuickActionCenter.shared.configureLocalStore(sessionMiniLocalStore)
+        registerSessionQuickActionHandler()
         registerNotificationObservers()
         CompanionDiagnostics.lifecycle.info(
             "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore, privacy: .public)"
@@ -280,18 +427,24 @@ final class CompanionAppModel {
     }
 
     func prepareForActiveState() async {
-        if reloadsServiceFromStoredConnection, CompanionConfiguration.activateBundledConnectionIfNeeded() {
-            CompanionDiagnostics.lifecycle.info("Bundled connection changed during active-state preparation")
-            _ = resetConnectionStateForStoredConnection(
+        let didResetConnectionForActiveState: Bool
+        let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
+            CompanionConfiguration.activateBundledConnectionIfNeeded()
+        if reloadsServiceFromStoredConnection,
+           didActivateBundledConnection || shouldReloadServiceFromStoredConnection() {
+            CompanionDiagnostics.lifecycle.info("Stored connection changed during active-state preparation")
+            _ = await resetConnectionStateForStoredConnection(
                 clearsSnapshotCache: false,
-                cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.bundledConnectionChange
+                cachedSnapshotRestoreReason: didActivateBundledConnection
+                    ? CachedSnapshotRestoreReason.bundledConnectionChange
+                    : CachedSnapshotRestoreReason.storedConnectionChange
             )
+            didResetConnectionForActiveState = true
+        } else {
+            didResetConnectionForActiveState = false
         }
 
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        if reloadsServiceFromStoredConnection {
-            service = CompanionEnvironment.live().service
-        }
         CompanionDiagnostics.lifecycle.info(
             "Preparing active state baseURL=\(self.configuredBaseURL, privacy: .public) hasSnapshot=\(self.snapshot != nil, privacy: .public)"
         )
@@ -300,30 +453,139 @@ final class CompanionAppModel {
         )
         configureStopQuickActions()
         await refreshLocalNotificationStatus()
-
-        if snapshot == nil {
-            await loadSnapshot()
-        } else {
-            await refresh()
+        if !didResetConnectionForActiveState {
+            prepareRealtimeConnectionInBackground()
         }
+        startRealtimeSessionSyncIfNeeded()
+        startNotificationReplyOutboxDrainIfNeeded()
 
-        await registerForRemoteNotificationsIfPossible()
-        startMobileEventStreamIfNeeded()
+        CompanionDiagnostics.record("snapshot:load-skip-state-mini-prepare")
+        registerForRemoteNotificationsInBackground()
     }
 
-    func stopMobileEventStream() {
-        realtimeController.stop()
-        Task {
-            await RealtimeCompanionClientFactory.disconnectCachedClients()
+    private func shouldReloadServiceFromStoredConnection() -> Bool {
+        CompanionConfiguration.resolvedConnectionFingerprint() != activeServiceConnectionFingerprint
+    }
+
+    func stopRealtimeSessionSync() {
+        stopRealtimeSessionSync(disconnectCachedClients: true)
+    }
+
+    private func stopRealtimeSessionSync(disconnectCachedClients: Bool) {
+        stopSessionMiniSync()
+        if disconnectCachedClients {
+            Task {
+                await RealtimeCompanionClientFactory.disconnectCachedClients()
+            }
         }
     }
 
-    func startMobileEventStreamIfNeeded() {
-        realtimeController.startIfNeeded(
-            client: service.makeMobileEventStreamClient(),
-            connectionRevision: connectionRevision,
-            delegate: self
+    func startRealtimeSessionSyncIfNeeded() {
+        startSessionMiniSyncIfNeeded()
+    }
+
+    private func startSessionMiniSyncIfNeeded() {
+        guard sessionMiniSyncTask == nil,
+              let sessionMiniLocalStore
+        else {
+            return
+        }
+
+        let service = service
+        let connectionRevision = connectionRevision
+        let synchronizer = LooperRealtimeStateMiniSynchronizer(
+            store: sessionMiniLocalStore.realtimeLocalStore,
+            transport: DeferredCompanionStateMiniSyncTransport(service: service)
         )
+
+        sessionMiniSyncTask = Task { [weak self] in
+            await synchronizer.runUntilCancelled { [weak self] update in
+                await self?.applySessionMiniSyncUpdate(
+                    update,
+                    connectionRevision: connectionRevision
+                )
+            }
+        }
+    }
+
+    #if DEBUG
+    func runSessionMiniSyncCycleForSelfTest(
+        transport: any LooperRealtimeStateMiniSyncTransport
+    ) async -> LooperRealtimeStateMiniSyncCycleResult {
+        guard let sessionMiniLocalStore else {
+            return .retry(
+                latestSeq: 0,
+                errorDescription: "session mini local store unavailable"
+            )
+        }
+
+        let connectionRevision = connectionRevision
+        let synchronizer = LooperRealtimeStateMiniSynchronizer(
+            store: sessionMiniLocalStore.realtimeLocalStore,
+            transport: transport
+        )
+        return await synchronizer.runOneCycle { [weak self] update in
+            await self?.applySessionMiniSyncUpdate(
+                update,
+                connectionRevision: connectionRevision
+            )
+        }
+    }
+    #endif
+
+    private func stopSessionMiniSync() {
+        sessionMiniSyncTask?.cancel()
+        sessionMiniSyncTask = nil
+    }
+
+    private func applySessionMiniSyncUpdate(
+        _ update: LooperRealtimeStateMiniSyncUpdate,
+        connectionRevision: Int
+    ) {
+        guard connectionRevision == self.connectionRevision,
+              let sessionMiniLocalStore
+        else {
+            CompanionDiagnostics.record("session-mini:sync-stale-skip")
+            return
+        }
+
+        do {
+            guard let cachedSnapshot = try sessionMiniLocalStore.cachedSnapshot() else {
+                return
+            }
+
+            applyCachedSnapshot(cachedSnapshot, reason: "session-mini-sync-\(update.reason.rawValue)")
+            connectionState = .connected
+            lastUpdatedAt = Date()
+            CompanionDiagnostics.record(
+                "session-mini:sync-applied reason=\(update.reason.rawValue) seq=\(update.snapshot.latestSeq)"
+            )
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:sync-apply-failed reason=\(update.reason.rawValue) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func prepareRealtimeConnectionInBackground() {
+        let service = service
+        Task.detached(priority: .userInitiated) {
+            await service.prepareRealtimeConnection()
+        }
+    }
+
+    private func startSnapshotLoadInBackground(allowsConcurrentConnectionReload: Bool) {
+        Task { @MainActor [weak self] in
+            await self?.loadSnapshot(
+                allowsConcurrentConnectionReload: allowsConcurrentConnectionReload
+            )
+        }
+    }
+
+    private func registerForRemoteNotificationsInBackground() {
+        Task { @MainActor [weak self] in
+            await self?.registerForRemoteNotificationsIfPossible()
+        }
     }
 
     func saveConnectionBaseURL(_ value: String) async {
@@ -383,34 +645,43 @@ final class CompanionAppModel {
     }
 
     private func reloadConnection() async {
-        let shouldRestartEventStream = resetConnectionStateForStoredConnection(
+        let shouldRestartEventStream = await resetConnectionStateForStoredConnection(
             clearsSnapshotCache: true,
             cachedSnapshotRestoreReason: nil
         )
-        await loadSnapshot(allowsConcurrentConnectionReload: true)
         if shouldRestartEventStream {
-            startMobileEventStreamIfNeeded()
+            startRealtimeSessionSyncIfNeeded()
         }
+        await loadSnapshot(allowsConcurrentConnectionReload: true)
     }
 
     @discardableResult
     private func resetConnectionStateForStoredConnection(
         clearsSnapshotCache: Bool,
         cachedSnapshotRestoreReason: String?
-    ) -> Bool {
-        let shouldRestartEventStream = realtimeController.isActive
+    ) async -> Bool {
+        let shouldRestartEventStream = sessionMiniSyncTask != nil
         connectionRevision += 1
         cancelCachedSnapshotRestore()
         cancelSnapshotLoad()
-        stopMobileEventStream()
-        Task {
-            await RealtimeCompanionClientFactory.invalidateCachedConnections()
-        }
+        stopRealtimeSessionSync(disconnectCachedClients: false)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         selectedAssistantSurface = .defaultSurface
         hasUserSelectedAssistantSurface = false
         pendingAssistantSurfaceSave = nil
         isSavingAssistantSurface = false
+        modeMutationDrainTasksBySessionID.values.forEach { task in
+            task.cancel()
+        }
+        await resolveModeMutationBarriers(false)
+        modeMutationDrainTasksBySessionID = [:]
+        modeMutationDrainIDBySessionID = [:]
+        pendingModeMutationsBySessionID = [:]
+        modeRollbackStateBySessionID = [:]
+        stopNotificationReplyOutboxDrain()
+        latestModeMutationBySessionID = [:]
+        latestModeMutationIDBySessionID = [:]
+        latestModeMutationBarrierBySessionID = [:]
         lastAppliedRealtimeRevision = nil
         hasValidatedCurrentSnapshotWithHTTP = false
         hasPendingSnapshotLoad = false
@@ -427,10 +698,13 @@ final class CompanionAppModel {
         if reloadsServiceFromStoredConnection {
             configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
             service = CompanionEnvironment.live().service
+            activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
             resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
         } else {
             resetSnapshotState(cachedSnapshotRestoreReason: nil)
         }
+        await RealtimeCompanionClientFactory.invalidateCachedConnections()
+        prepareRealtimeConnectionInBackground()
         return shouldRestartEventStream
     }
 
@@ -689,7 +963,7 @@ final class CompanionAppModel {
                 let health = resolvedHealth.health
                 serverHealth = health
                 reachedBaseURL = resolvedHealth.reachedBaseURL
-                adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
+                await adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
             } catch {
                 guard !isCancellationError(error) else {
                     throw error
@@ -742,7 +1016,10 @@ final class CompanionAppModel {
                 didRestoreCachedSnapshot = false
             }
             let hasUsableSnapshot = snapshot != nil
-            let nextConnectionState = connectionState(for: error)
+            let nextConnectionState = connectionStateAfterSnapshotLoadFailure(
+                error,
+                hasUsableSnapshot: hasUsableSnapshot
+            )
             connectionState = nextConnectionState
             clearConnectionRouteStateIfNeeded(for: nextConnectionState)
             errorMessage = shouldSuppressSnapshotLoadError(
@@ -758,24 +1035,41 @@ final class CompanionAppModel {
         }
     }
 
+    private func connectionStateAfterSnapshotLoadFailure(
+        _ error: Error,
+        hasUsableSnapshot: Bool
+    ) -> ConnectivityState {
+        let nextState = connectionState(for: error)
+        guard hasUsableSnapshot, nextState == .offline else {
+            return nextState
+        }
+
+        guard connectionState == .connected || serverHealth != nil || reachedBaseURL != nil else {
+            return nextState
+        }
+
+        CompanionDiagnostics.record(
+            "snapshot:load-failed-preserve-connected error=\(error.localizedDescription)"
+        )
+        return .connected
+    }
+
     func refresh() async {
         await loadSnapshot()
     }
 
     func refreshFromFallbackTimer() async {
-        guard !realtimeController.isActive || snapshot == nil else {
-            CompanionDiagnostics.record("root:refresh-skip realtime-active")
+        guard sessionMiniSyncTask == nil || snapshot == nil else {
+            CompanionDiagnostics.record("root:refresh-skip session-sync-active")
             return
         }
 
         await refresh()
     }
 
-    private var currentSnapshotRevision: String? {
-        lastAppliedRealtimeRevision ?? CompanionRealtimeSync.normalizedRevision(snapshot?.revision)
-    }
-
-    private func adoptServerHealthBaseURLsIfNeeded(_ resolvedHealth: ResolvedCompanionServerHealth) {
+    private func adoptServerHealthBaseURLsIfNeeded(
+        _ resolvedHealth: ResolvedCompanionServerHealth
+    ) async {
         let health = resolvedHealth.health
         let activeTailscaleBaseURL = health.tailscale?.running == true ? health.tailscale?.baseURL : nil
         let advertisedBaseURLValues = [health.baseURL] +
@@ -809,10 +1103,9 @@ final class CompanionAppModel {
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
-        Task {
-            await RealtimeCompanionClientFactory.invalidateCachedConnections()
-        }
-        restartMobileEventStreamIfActive()
+        await RealtimeCompanionClientFactory.invalidateCachedConnections()
+        prepareRealtimeConnectionInBackground()
+        restartRealtimeSessionSyncIfActive()
         CompanionDiagnostics.record(
             "health:base-urls-adopted count=\(nextBaseURLs.count) primary=\(configuredBaseURL)"
         )
@@ -842,13 +1135,21 @@ final class CompanionAppModel {
     }
 
     private static func nonEmptyURL(from value: String?) -> URL? {
+        guard let value = nonEmptyText(value) else {
+            return nil
+        }
+
+        return URL(string: value)
+    }
+
+    private static func nonEmptyText(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty
         else {
             return nil
         }
 
-        return URL(string: value)
+        return value
     }
 
     func continueFromMacActivity(_ activity: NSUserActivity) async {
@@ -864,7 +1165,7 @@ final class CompanionAppModel {
             return
         }
 
-        adoptHandoffBaseURLIfAvailable(from: activity)
+        await adoptHandoffBaseURLIfAvailable(from: activity)
         CompanionDiagnostics.lifecycle.info(
             "Continuation opening session id=\(sessionID, privacy: .public)"
         )
@@ -890,7 +1191,7 @@ final class CompanionAppModel {
             return
         }
 
-        adoptHandoffBaseURLIfAvailable(from: url)
+        await adoptHandoffBaseURLIfAvailable(from: url)
         CompanionDiagnostics.lifecycle.info(
             "Continuation URL opening session id=\(sessionID, privacy: .public)"
         )
@@ -983,23 +1284,23 @@ final class CompanionAppModel {
         return requestedSurface
     }
 
-    private func adoptHandoffBaseURLIfAvailable(from activity: NSUserActivity) {
+    private func adoptHandoffBaseURLIfAvailable(from activity: NSUserActivity) async {
         guard let handoffBaseURL = LooperContinuationActivity.baseURL(from: activity) else {
             return
         }
 
-        adoptHandoffBaseURL(handoffBaseURL)
+        await adoptHandoffBaseURL(handoffBaseURL)
     }
 
-    private func adoptHandoffBaseURLIfAvailable(from url: URL) {
+    private func adoptHandoffBaseURLIfAvailable(from url: URL) async {
         guard let handoffBaseURL = LooperContinuationActivity.baseURL(from: url) else {
             return
         }
 
-        adoptHandoffBaseURL(handoffBaseURL)
+        await adoptHandoffBaseURL(handoffBaseURL)
     }
 
-    private func adoptHandoffBaseURL(_ handoffBaseURL: URL) {
+    private func adoptHandoffBaseURL(_ handoffBaseURL: URL) async {
         let currentConnection = CompanionConfiguration.resolvedConnection()
         let nextBaseURLs = CompanionBaseURLSelection.mergedPreferredBaseURLs(
             reached: handoffBaseURL,
@@ -1019,12 +1320,12 @@ final class CompanionAppModel {
             ),
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
-        let shouldRestartEventStream = resetConnectionStateForStoredConnection(
+        let shouldRestartEventStream = await resetConnectionStateForStoredConnection(
             clearsSnapshotCache: false,
             cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.handoffConnectionChange
         )
         if shouldRestartEventStream {
-            startMobileEventStreamIfNeeded()
+            startRealtimeSessionSyncIfNeeded()
         }
         CompanionDiagnostics.lifecycle.info(
             "Handoff adopted baseURL=\(handoffBaseURL.absoluteString, privacy: .public)"
@@ -1032,13 +1333,13 @@ final class CompanionAppModel {
         CompanionDiagnostics.record("handoff:base-url-adopted baseURL=\(handoffBaseURL.absoluteString)")
     }
 
-    private func restartMobileEventStreamIfActive() {
-        guard realtimeController.isActive else {
+    private func restartRealtimeSessionSyncIfActive() {
+        guard sessionMiniSyncTask != nil else {
             return
         }
 
-        stopMobileEventStream()
-        startMobileEventStreamIfNeeded()
+        stopRealtimeSessionSync()
+        startRealtimeSessionSyncIfNeeded()
     }
 
     func loadSessionDetail(id: String) async {
@@ -1123,13 +1424,249 @@ final class CompanionAppModel {
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.setSessionMode(id: sessionID, preset: preset)
+        let drainTask = beginApplyMode(preset, to: sessionID)
+        _ = await drainTask.value
+    }
+
+    @discardableResult
+    func beginApplyMode(_ preset: SessionMode?, to sessionID: String) -> Task<Bool, Never> {
+        if modeRollbackStateBySessionID[sessionID] == nil {
+            modeRollbackStateBySessionID[sessionID] = ModeRollbackState(
+                snapshot: snapshot,
+                detail: detailBySessionID[sessionID]
+            )
         }
 
-        if didMutate, detailBySessionID[sessionID] != nil {
-            await refreshSessionDetail(id: sessionID)
+        let clientMutationID = makeClientMutationID()
+        let pendingMutation = PendingSessionModeMutation(
+            mode: preset,
+            clientMutationID: clientMutationID
+        )
+        applyOptimisticMode(preset, to: sessionID)
+        enqueueLocalModeCommand(
+            sessionID: sessionID,
+            preset: preset,
+            clientMutationID: clientMutationID
+        )
+        latestModeMutationBySessionID[sessionID] = pendingMutation
+        latestModeMutationIDBySessionID[sessionID] = clientMutationID
+        latestModeMutationBarrierBySessionID[sessionID] = pendingMutation.barrier
+
+        if modeMutationDrainTasksBySessionID[sessionID] != nil {
+            pendingModeMutationsBySessionID[sessionID, default: []].append(pendingMutation)
+            return modeMutationBarrierTask(pendingMutation.barrier)
         }
+
+        let envelope = makeModeMutationEnvelope(pendingMutation, sessionID: sessionID)
+        let drainID = makeClientMutationID()
+        let drainTask = makeModeMutationDrainTask(first: envelope, drainID: drainID)
+        modeMutationDrainTasksBySessionID[sessionID] = drainTask
+        modeMutationDrainIDBySessionID[sessionID] = drainID
+        return modeMutationBarrierTask(pendingMutation.barrier)
+    }
+
+    private func modeMutationBarrierTask(
+        _ barrier: LocalFirstMutationBarrier
+    ) -> Task<Bool, Never> {
+        Task.detached(priority: .userInitiated) {
+            await barrier.wait()
+        }
+    }
+
+    private func makeModeMutationDrainTask(
+        first envelope: ModeMutationEnvelope,
+        drainID: String
+    ) -> Task<Bool, Never> {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var nextEnvelope: ModeMutationEnvelope? = envelope
+            var didAcceptLatestMutation = true
+            while !Task.isCancelled, let currentEnvelope = nextEnvelope {
+                let didAcceptMutation = await Self.sendModeMutation(currentEnvelope, model: self)
+                await currentEnvelope.barrier.resolve(didAcceptMutation)
+                if !didAcceptMutation {
+                    didAcceptLatestMutation = false
+                    break
+                }
+                nextEnvelope = await self?.nextModeMutationEnvelope(for: currentEnvelope.sessionID)
+            }
+            if Task.isCancelled, let unresolvedEnvelope = nextEnvelope {
+                await unresolvedEnvelope.barrier.resolve(false)
+            }
+            #if DEBUG
+            await self?.runModeDrainBeforeFinishHookIfNeeded()
+            #endif
+            await self?.finishModeMutationDrain(for: envelope.sessionID, drainID: drainID)
+            return didAcceptLatestMutation && !Task.isCancelled
+        }
+    }
+
+    private func nextModeMutationEnvelope(for sessionID: String) -> ModeMutationEnvelope? {
+        guard var pendingMutations = pendingModeMutationsBySessionID[sessionID],
+              !pendingMutations.isEmpty
+        else {
+            return nil
+        }
+
+        let mutation = pendingMutations.removeFirst()
+        pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty ? nil : pendingMutations
+        return makeModeMutationEnvelope(mutation, sessionID: sessionID)
+    }
+
+    private func finishModeMutationDrain(for sessionID: String, drainID: String) {
+        guard modeMutationDrainIDBySessionID[sessionID] == drainID else {
+            CompanionDiagnostics.record("mode:stale-drain-finish-skip sessionID=\(sessionID)")
+            return
+        }
+
+        modeMutationDrainTasksBySessionID[sessionID] = nil
+        modeMutationDrainIDBySessionID[sessionID] = nil
+        guard let nextEnvelope = nextModeMutationEnvelope(for: sessionID) else {
+            modeRollbackStateBySessionID[sessionID] = nil
+            latestModeMutationBySessionID[sessionID] = nil
+            latestModeMutationIDBySessionID[sessionID] = nil
+            latestModeMutationBarrierBySessionID[sessionID] = nil
+            return
+        }
+
+        let nextDrainID = makeClientMutationID()
+        let drainTask = makeModeMutationDrainTask(first: nextEnvelope, drainID: nextDrainID)
+        modeMutationDrainTasksBySessionID[sessionID] = drainTask
+        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
+    }
+
+    private func resolveModeMutationBarriers(_ accepted: Bool) async {
+        let barriers = Array(latestModeMutationBarrierBySessionID.values)
+            + pendingModeMutationsBySessionID.values.flatMap { mutations in
+                mutations.map(\.barrier)
+            }
+        for barrier in barriers {
+            await barrier.resolve(accepted)
+        }
+    }
+
+    #if DEBUG
+    func setModeDrainBeforeFinishHookForSelfTest(_ hook: (() async -> Void)?) {
+        modeDrainBeforeFinishHook = hook
+    }
+
+    private func runModeDrainBeforeFinishHookIfNeeded() async {
+        guard let hook = modeDrainBeforeFinishHook else {
+            return
+        }
+
+        modeDrainBeforeFinishHook = nil
+        await hook()
+    }
+    #endif
+
+    private func makeModeMutationEnvelope(
+        _ mutation: PendingSessionModeMutation,
+        sessionID: String
+    ) -> ModeMutationEnvelope {
+        ModeMutationEnvelope(
+            sessionID: sessionID,
+            selection: mutation.selection,
+            clientMutationID: mutation.clientMutationID,
+            barrier: mutation.barrier,
+            connectionRevision: connectionRevision,
+            rollbackState: modeRollbackStateBySessionID[sessionID],
+            service: service
+        )
+    }
+
+    private nonisolated static func sendModeMutation(
+        _ envelope: ModeMutationEnvelope,
+        model: CompanionAppModel?
+    ) async -> Bool {
+        guard !Task.isCancelled else {
+            return false
+        }
+
+        do {
+            let result = try await envelope.service.setSessionMode(
+                id: envelope.sessionID,
+                preset: envelope.mode,
+                clientMutationID: envelope.clientMutationID
+            )
+            guard !Task.isCancelled else {
+                return false
+            }
+            return await model?.handleModeMutationSuccess(result, envelope: envelope) ?? false
+        } catch {
+            guard !Task.isCancelled else {
+                return false
+            }
+            return await model?.handleModeMutationFailure(error, envelope: envelope) ?? false
+        }
+    }
+
+    private func handleModeMutationSuccess(
+        _ result: CompanionSessionModeResult,
+        envelope: ModeMutationEnvelope
+    ) async -> Bool {
+        markLocalCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
+        guard envelope.connectionRevision == connectionRevision else {
+            CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(envelope.sessionID)")
+            return false
+        }
+
+        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
+            CompanionDiagnostics.record("mode:mutation-superseded-skip sessionID=\(envelope.sessionID)")
+            return true
+        }
+
+        await applyModeMutationResult(result, sessionID: envelope.sessionID)
+        return true
+    }
+
+    private func handleModeMutationFailure(
+        _ error: Error,
+        envelope: ModeMutationEnvelope
+    ) -> Bool {
+        guard envelope.connectionRevision == connectionRevision else {
+            CompanionDiagnostics.record(
+                "mode:mutation-stale-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
+            )
+            return false
+        }
+
+        guard latestModeMutationIDBySessionID[envelope.sessionID] == envelope.clientMutationID else {
+            CompanionDiagnostics.record(
+                "mode:mutation-superseded-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
+            )
+            return true
+        }
+
+        restoreOptimisticModeSnapshot(
+            envelope.rollbackState?.snapshot,
+            previousDetail: envelope.rollbackState?.detail,
+            sessionID: envelope.sessionID
+        )
+        connectionState = connectionState(for: error)
+        clearConnectionRouteStateIfNeeded(for: connectionState)
+        errorMessage = error.localizedDescription
+        Haptics.error()
+        return false
+    }
+
+    private func applyModeMutationResult(
+        _ result: CompanionSessionModeResult,
+        sessionID: String
+    ) async {
+        if let nextSnapshot = result.snapshot {
+            await applySnapshot(nextSnapshot)
+            if detailBySessionID[sessionID] != nil {
+                await refreshSessionDetail(id: sessionID)
+            }
+            return
+        }
+
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
+        )
     }
 
     func setSessionArchived(_ archived: Bool, sessionID: String) async {
@@ -1154,6 +1691,12 @@ final class CompanionAppModel {
 
     @discardableResult
     func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
+        let promptTask = beginSendSessionPrompt(prompt, to: sessionID)
+        return await promptTask.value
+    }
+
+    @discardableResult
+    func beginSendSessionPrompt(_ prompt: String, to sessionID: String) -> Task<Bool, Never> {
         let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
             ?? selectedAssistantSurface
 
@@ -1161,22 +1704,416 @@ final class CompanionAppModel {
         guard !trimmedPrompt.isEmpty else {
             errorMessage = "Prompt is required."
             Haptics.warning()
+            return Task.detached { false }
+        }
+
+        guard !mutatingSessionIDs.contains(sessionID) else {
+            return Task.detached { false }
+        }
+
+        let clientMutationID = makeClientMutationID()
+        let pendingModeMutation = service.supportsModePromptBatch
+            ? latestModeMutationBySessionID[sessionID]
+            : nil
+        let modeBarrierTask = pendingModeMutation.map {
+            modeMutationBarrierTask($0.barrier)
+        }
+        enqueueLocalPromptCommand(
+            sessionID: sessionID,
+            prompt: trimmedPrompt,
+            assistantSurface: targetSurface,
+            clientMutationID: clientMutationID
+        )
+
+        let mutationRevision = connectionRevision
+        setSessionMutation(true, sessionID: sessionID)
+        let envelope = PromptMutationEnvelope(
+            sessionID: sessionID,
+            prompt: trimmedPrompt,
+            assistantSurface: targetSurface,
+            clientMutationID: clientMutationID,
+            connectionRevision: mutationRevision,
+            service: service,
+            pendingModeMutation: pendingModeMutation,
+            modeBarrierTask: modeBarrierTask
+        )
+
+        return Task.detached(priority: .userInitiated) { [weak self] in
+            await Self.sendPromptMutation(envelope, model: self)
+        }
+    }
+
+    private nonisolated static func sendPromptMutation(
+        _ envelope: PromptMutationEnvelope,
+        model: CompanionAppModel?
+    ) async -> Bool {
+        if let pendingModeMutation = envelope.pendingModeMutation {
+            do {
+                let result = try await envelope.service.sendSessionPromptAfterMode(
+                    id: envelope.sessionID,
+                    modePreset: pendingModeMutation.mode,
+                    modeClientMutationID: pendingModeMutation.clientMutationID,
+                    prompt: envelope.prompt,
+                    assistantSurface: envelope.assistantSurface,
+                    promptClientMutationID: envelope.clientMutationID
+                )
+                return await model?.handleModePromptBatchSuccess(
+                    result,
+                    pendingModeMutation: pendingModeMutation,
+                    envelope: envelope
+                ) ?? false
+            } catch {
+                CompanionDiagnostics.record(
+                    "prompt:mode-batch-failed sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
+                )
+                return await model?.handlePromptMutationFailure(error, envelope: envelope) ?? false
+            }
+        }
+
+        if let modeBarrierTask = envelope.modeBarrierTask {
+            let didAcceptMode = await modeBarrierTask.value
+            guard didAcceptMode else {
+                return await model?.handlePromptMutationFailure(
+                    LocalFirstMutationError.modeBarrierRejected,
+                    envelope: envelope
+                ) ?? false
+            }
+        }
+
+        do {
+            let result = try await envelope.service.sendSessionPrompt(
+                id: envelope.sessionID,
+                prompt: envelope.prompt,
+                assistantSurface: envelope.assistantSurface,
+                clientMutationID: envelope.clientMutationID
+            )
+            return await model?.handlePromptMutationSuccess(result, envelope: envelope) ?? false
+        } catch {
+            return await model?.handlePromptMutationFailure(error, envelope: envelope) ?? false
+        }
+    }
+
+    private func handleModePromptBatchSuccess(
+        _ result: CompanionModePromptBatchResult,
+        pendingModeMutation: PendingSessionModeMutation,
+        envelope: PromptMutationEnvelope
+    ) async -> Bool {
+        markLocalCommandDelivered(result.mode.clientMutationID ?? pendingModeMutation.clientMutationID)
+        await finishModeMutationDeliveredByBatch(
+            pendingModeMutation,
+            sessionID: envelope.sessionID
+        )
+        return await handlePromptMutationSuccess(result.prompt, envelope: envelope)
+    }
+
+    private func finishModeMutationDeliveredByBatch(
+        _ mutation: PendingSessionModeMutation,
+        sessionID: String
+    ) async {
+        await mutation.barrier.resolve(true)
+
+        if var pendingMutations = pendingModeMutationsBySessionID[sessionID] {
+            pendingMutations.removeAll { pendingMutation in
+                pendingMutation.clientMutationID == mutation.clientMutationID
+            }
+            pendingModeMutationsBySessionID[sessionID] = pendingMutations.isEmpty
+                ? nil
+                : pendingMutations
+        }
+
+        let batchedMutationWasLatest =
+            latestModeMutationIDBySessionID[sessionID] == mutation.clientMutationID
+        if batchedMutationWasLatest {
+            latestModeMutationBySessionID[sessionID] = nil
+            latestModeMutationIDBySessionID[sessionID] = nil
+            latestModeMutationBarrierBySessionID[sessionID] = nil
+        }
+
+        modeMutationDrainTasksBySessionID[sessionID]?.cancel()
+        modeMutationDrainTasksBySessionID[sessionID] = nil
+        modeMutationDrainIDBySessionID[sessionID] = nil
+
+        guard let nextEnvelope = nextModeMutationEnvelope(for: sessionID) else {
+            if batchedMutationWasLatest {
+                modeRollbackStateBySessionID[sessionID] = nil
+            }
+            return
+        }
+
+        let nextDrainID = makeClientMutationID()
+        modeMutationDrainTasksBySessionID[sessionID] = makeModeMutationDrainTask(
+            first: nextEnvelope,
+            drainID: nextDrainID
+        )
+        modeMutationDrainIDBySessionID[sessionID] = nextDrainID
+    }
+
+    private func handlePromptMutationSuccess(
+        _ result: CompanionPromptSendResult,
+        envelope: PromptMutationEnvelope
+    ) async -> Bool {
+        defer {
+            setSessionMutation(false, sessionID: envelope.sessionID)
+        }
+
+        markLocalCommandDelivered(result.clientMutationID ?? envelope.clientMutationID)
+        guard envelope.connectionRevision == connectionRevision else {
+            CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(envelope.sessionID)")
             return false
         }
 
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.sendSessionPrompt(
-                id: sessionID,
-                prompt: trimmedPrompt,
-                assistantSurface: targetSurface
+        await applyPromptSendResult(
+            result,
+            sessionID: envelope.sessionID,
+            assistantSurface: envelope.assistantSurface
+        )
+        return true
+    }
+
+    private func handlePromptMutationFailure(
+        _ error: Error,
+        envelope: PromptMutationEnvelope
+    ) -> Bool {
+        defer {
+            setSessionMutation(false, sessionID: envelope.sessionID)
+        }
+
+        guard envelope.connectionRevision == connectionRevision else {
+            CompanionDiagnostics.record(
+                "prompt:mutation-stale-error-skip sessionID=\(envelope.sessionID) error=\(error.localizedDescription)"
             )
+            return false
         }
 
-        if didMutate, detailBySessionID[sessionID] != nil {
-            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
+        connectionState = connectionState(for: error)
+        clearConnectionRouteStateIfNeeded(for: connectionState)
+        errorMessage = error.localizedDescription
+        Haptics.error()
+        return false
+    }
+
+    @discardableResult
+    func submitNotificationReply(
+        notificationID: String,
+        prompt: String,
+        to sessionID: String,
+        clientMutationID providedClientMutationID: String? = nil
+    ) async -> Bool {
+        let trimmedNotificationID = notificationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNotificationID.isEmpty else {
+            errorMessage = "Notification reply is missing its delivery ID."
+            Haptics.warning()
+            return false
+        }
+        guard !trimmedPrompt.isEmpty else {
+            errorMessage = "Prompt is required."
+            Haptics.warning()
+            return false
         }
 
-        return didMutate
+        let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
+            ?? selectedAssistantSurface
+        let providedMutationID = providedClientMutationID?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clientMutationID = providedMutationID.isEmpty
+            ? SessionQuickActionRequest.notificationReplyClientMutationID(
+                notificationID: trimmedNotificationID
+            )
+            : providedMutationID
+        enqueueLocalNotificationReplyCommand(
+            notificationID: trimmedNotificationID,
+            sessionID: sessionID,
+            prompt: trimmedPrompt,
+            clientMutationID: clientMutationID
+        )
+
+        return await sendNotificationReplyCommand(
+            notificationID: trimmedNotificationID,
+            sessionID: sessionID,
+            prompt: trimmedPrompt,
+            targetSurface: targetSurface,
+            clientMutationID: clientMutationID
+        )
+    }
+
+    @discardableResult
+    private func sendNotificationReplyCommand(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        targetSurface: CompanionAssistantSurface,
+        clientMutationID: String
+    ) async -> Bool {
+        do {
+            let response = try await service.submitNotificationReply(
+                notificationID: notificationID,
+                sessionID: sessionID,
+                prompt: prompt,
+                assistantSurface: nil,
+                clientMutationID: clientMutationID
+            )
+            markLocalCommandDelivered(response.clientMutationID)
+            if nextPendingNotificationReplyCommand() == nil {
+                resetNotificationReplyOutboxRetry()
+            }
+            connectionState = .connected
+            errorMessage = nil
+            lastUpdatedAt = Date()
+            CompanionDiagnostics.record(
+                "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
+            )
+            if detailBySessionID[sessionID] != nil {
+                await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
+            }
+            return true
+        } catch {
+            connectionState = connectionState(for: error)
+            clearConnectionRouteStateIfNeeded(for: connectionState)
+            errorMessage = error.localizedDescription
+            Haptics.error()
+            CompanionDiagnostics.record(
+                "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
+            )
+            scheduleNotificationReplyOutboxRetryIfNeeded()
+            return false
+        }
+    }
+
+    func drainPendingNotificationReplies() async {
+        startNotificationReplyOutboxDrainIfNeeded()
+        await notificationReplyOutboxDrainTask?.value
+    }
+
+    private func startNotificationReplyOutboxDrainIfNeeded() {
+        guard notificationReplyOutboxDrainTask == nil,
+              nextPendingNotificationReplyCommand() != nil
+        else {
+            return
+        }
+
+        let drainID = makeClientMutationID()
+        cancelNotificationReplyOutboxRetry()
+        let drainTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await self.drainNotificationReplyOutbox(drainID: drainID)
+        }
+        notificationReplyOutboxDrainTask = drainTask
+        notificationReplyOutboxDrainID = drainID
+    }
+
+    private func drainNotificationReplyOutbox(drainID: String) async {
+        while !Task.isCancelled {
+            guard let command = nextPendingNotificationReplyCommand() else {
+                break
+            }
+            let didSend = await submitPendingNotificationReplyCommand(command)
+            if !didSend {
+                break
+            }
+        }
+        finishNotificationReplyOutboxDrain(drainID: drainID)
+    }
+
+    private func finishNotificationReplyOutboxDrain(drainID: String) {
+        guard notificationReplyOutboxDrainID == drainID else {
+            CompanionDiagnostics.record("notification-reply:stale-drain-finish-skip")
+            return
+        }
+
+        notificationReplyOutboxDrainTask = nil
+        notificationReplyOutboxDrainID = nil
+        if nextPendingNotificationReplyCommand() == nil {
+            resetNotificationReplyOutboxRetry()
+        }
+    }
+
+    private func stopNotificationReplyOutboxDrain() {
+        notificationReplyOutboxDrainTask?.cancel()
+        notificationReplyOutboxDrainTask = nil
+        notificationReplyOutboxDrainID = nil
+        cancelNotificationReplyOutboxRetry()
+    }
+
+    private func nextPendingNotificationReplyCommand() -> CompanionSessionMiniPendingCommand? {
+        sessionMiniLocalStore?.pendingCommands().first { command in
+            command.kind == .submitNotificationReply
+        }
+    }
+
+    @discardableResult
+    private func submitPendingNotificationReplyCommand(
+        _ command: CompanionSessionMiniPendingCommand
+    ) async -> Bool {
+        guard let notificationID = Self.nonEmptyText(command.notificationID),
+              let prompt = Self.nonEmptyText(command.prompt),
+              let sessionID = Self.nonEmptyText(command.threadID)
+        else {
+            CompanionDiagnostics.record(
+                "notification-reply:drop-malformed-outbox-command id=\(command.clientMutationID)"
+            )
+            markLocalCommandDelivered(command.clientMutationID)
+            return true
+        }
+
+        markLocalCommandAttempted(command.clientMutationID)
+        let targetSurface = sessionIndex.assistantSurface(containingSessionID: sessionID)
+            ?? selectedAssistantSurface
+        return await sendNotificationReplyCommand(
+            notificationID: notificationID,
+            sessionID: sessionID,
+            prompt: prompt,
+            targetSurface: targetSurface,
+            clientMutationID: command.clientMutationID
+        )
+    }
+
+    private func scheduleNotificationReplyOutboxRetryIfNeeded() {
+        guard notificationReplyOutboxRetryTask == nil,
+              nextPendingNotificationReplyCommand() != nil
+        else {
+            return
+        }
+
+        let delayNanoseconds = notificationReplyOutboxRetryDelayNanoseconds
+        notificationReplyOutboxRetryDelayNanoseconds = min(
+            delayNanoseconds * NotificationReplyOutboxRetry.backoffMultiplier,
+            NotificationReplyOutboxRetry.maximumDelayNanoseconds
+        )
+        CompanionDiagnostics.record(
+            "notification-reply:retry-scheduled delayNanoseconds=\(delayNanoseconds)"
+        )
+        notificationReplyOutboxRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.resumeNotificationReplyOutboxRetry()
+        }
+    }
+
+    private func resumeNotificationReplyOutboxRetry() {
+        notificationReplyOutboxRetryTask = nil
+        startNotificationReplyOutboxDrainIfNeeded()
+    }
+
+    private func resetNotificationReplyOutboxRetry() {
+        cancelNotificationReplyOutboxRetry()
+        notificationReplyOutboxRetryDelayNanoseconds =
+            NotificationReplyOutboxRetry.initialDelayNanoseconds
+    }
+
+    private func cancelNotificationReplyOutboxRetry() {
+        notificationReplyOutboxRetryTask?.cancel()
+        notificationReplyOutboxRetryTask = nil
     }
 
     func muteSession(_ sessionID: String) async {
@@ -1263,7 +2200,9 @@ final class CompanionAppModel {
     func performQuickAction(
         _ action: QuickActionOption,
         sessionID: String,
-        prompt: String? = nil
+        prompt: String? = nil,
+        notificationID: String? = nil,
+        clientMutationID: String? = nil
     ) async {
         switch action {
         case .openSession:
@@ -1279,11 +2218,34 @@ final class CompanionAppModel {
             }
             await sendSessionPrompt(snapshot?.globalSettings.defaultPrompt ?? "", to: sessionID)
         case .reply:
-            await sendSessionPrompt(prompt ?? "", to: sessionID)
+            if let notificationID = notificationID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !notificationID.isEmpty
+            {
+                await submitNotificationReply(
+                    notificationID: notificationID,
+                    prompt: prompt ?? "",
+                    to: sessionID,
+                    clientMutationID: clientMutationID
+                )
+            } else {
+                await sendSessionPrompt(prompt ?? "", to: sessionID)
+            }
         case .archive:
             await setSessionArchived(true, sessionID: sessionID)
         case .muteSession:
             await muteSession(sessionID)
+        }
+    }
+
+    private func registerSessionQuickActionHandler() {
+        SessionQuickActionCenter.shared.registerHandler { [weak self] request in
+            await self?.performQuickAction(
+                request.action,
+                sessionID: request.sessionID,
+                prompt: request.prompt,
+                notificationID: request.notificationID,
+                clientMutationID: request.clientMutationID
+            )
         }
     }
 
@@ -1338,6 +2300,92 @@ final class CompanionAppModel {
         }
 
         return await mutateSnapshot(operation)
+    }
+
+    private func applyOptimisticMode(_ preset: SessionMode?, to sessionID: String) {
+        var didUpdate = false
+
+        if var detail = detailBySessionID[sessionID] {
+            detail.effectiveMode = preset
+            detailBySessionID[sessionID] = detail
+            didUpdate = true
+        }
+
+        if var nextSnapshot = snapshot {
+            updateMode(preset, for: sessionID, in: &nextSnapshot.sessions, didUpdate: &didUpdate)
+            for surface in Array(nextSnapshot.surfaceSessions.keys) {
+                updateMode(
+                    preset,
+                    for: sessionID,
+                    in: &nextSnapshot.surfaceSessions[surface, default: []],
+                    didUpdate: &didUpdate
+                )
+            }
+
+            let visibleSnapshot = applySnapshotState(
+                nextSnapshot,
+                preferredSurface: selectedAssistantSurface
+            )
+            syncDetailCache(with: visibleSnapshot)
+        }
+
+        if didUpdate {
+            lastUpdatedAt = Date()
+        }
+    }
+
+    private func restoreOptimisticModeSnapshot(
+        _ previousSnapshot: MobileSnapshot?,
+        previousDetail: SessionDetail?,
+        sessionID: String
+    ) {
+        if let previousSnapshot {
+            let visibleSnapshot = applySnapshotState(
+                previousSnapshot,
+                preferredSurface: selectedAssistantSurface
+            )
+            syncDetailCache(with: visibleSnapshot)
+        }
+
+        detailBySessionID[sessionID] = previousDetail
+    }
+
+    private func updateMode(
+        _ preset: SessionMode?,
+        for sessionID: String,
+        in sessions: inout [SessionSummary],
+        didUpdate: inout Bool
+    ) {
+        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            return
+        }
+
+        sessions[sessionIndex].effectiveMode = preset
+        didUpdate = true
+    }
+
+    private func applyPromptSendResult(
+        _ result: CompanionPromptSendResult,
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) async {
+        if let nextSnapshot = result.snapshot {
+            await applySnapshot(nextSnapshot)
+            if detailBySessionID[sessionID] != nil {
+                await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)
+            }
+            return
+        }
+
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "prompt:accepted-without-snapshot sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown")"
+        )
+        if detailBySessionID[sessionID] != nil {
+            await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)
+        }
     }
 
     @discardableResult
@@ -1410,7 +2458,133 @@ final class CompanionAppModel {
         state: ConnectivityState,
         hasUsableSnapshot: Bool
     ) -> Bool {
-        hasUsableSnapshot && state == .offline
+        guard hasUsableSnapshot else {
+            return false
+        }
+
+        switch state {
+        case .connected, .offline:
+            return true
+        case .connecting, .locked, .unauthorized, .unpaired:
+            return false
+        }
+    }
+
+    @discardableResult
+    private func restoreCachedSessionMiniSnapshotIfAvailable(reason: String) -> Bool {
+        guard let sessionMiniLocalStore else {
+            return false
+        }
+
+        do {
+            guard let cachedSnapshot = try sessionMiniLocalStore.cachedSnapshot() else {
+                return false
+            }
+
+            applyCachedSnapshot(cachedSnapshot, reason: "session-mini-\(reason)")
+            CompanionDiagnostics.record(
+                "session-mini:cache-restore reason=\(reason) sessions=\(cachedSnapshot.sessions.count)"
+            )
+            return true
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:cache-restore-failed reason=\(reason) error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func makeClientMutationID() -> String {
+        UUID().uuidString
+    }
+
+    private func enqueueLocalModeCommand(
+        sessionID: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    ) {
+        do {
+            try sessionMiniLocalStore?.enqueueModeCommand(
+                threadID: sessionID,
+                preset: preset,
+                clientMutationID: clientMutationID
+            )
+            markLocalCommandAttempted(clientMutationID)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:mode-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func enqueueLocalPromptCommand(
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface,
+        clientMutationID: String
+    ) {
+        do {
+            try sessionMiniLocalStore?.enqueuePromptCommand(
+                threadID: sessionID,
+                prompt: prompt,
+                assistantSurface: assistantSurface,
+                clientMutationID: clientMutationID
+            )
+            markLocalCommandAttempted(clientMutationID)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:prompt-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func enqueueLocalNotificationReplyCommand(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        clientMutationID: String
+    ) {
+        do {
+            try sessionMiniLocalStore?.enqueueNotificationReplyCommand(
+                notificationID: notificationID,
+                threadID: sessionID,
+                prompt: prompt,
+                assistantSurface: nil,
+                clientMutationID: clientMutationID
+            )
+            markLocalCommandAttempted(clientMutationID)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:notification-reply-outbox-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func markLocalCommandAttempted(_ clientMutationID: String) {
+        do {
+            try sessionMiniLocalStore?.markAttempted(clientMutationID: clientMutationID)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:outbox-attempt-mark-failed id=\(clientMutationID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func markLocalCommandDelivered(_ clientMutationID: String?) {
+        guard let trimmedClientMutationID = clientMutationID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmedClientMutationID.isEmpty
+        else {
+            return
+        }
+
+        do {
+            try sessionMiniLocalStore?.markDelivered(clientMutationID: trimmedClientMutationID)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:outbox-delivery-mark-failed id=\(trimmedClientMutationID) error=\(error.localizedDescription)"
+            )
+        }
     }
 
     @discardableResult
@@ -1455,7 +2629,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         syncDetailCache(with: visibleSnapshot)
         clearSpotlightIndexForCachedSnapshot()
-        lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
+        lastAppliedRealtimeRevision = Self.normalizedRevision(visibleSnapshot.revision)
         hasValidatedCurrentSnapshotWithHTTP = false
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
@@ -1472,7 +2646,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
         syncDetailCache(with: visibleSnapshot)
-        lastAppliedRealtimeRevision = CompanionRealtimeSync.normalizedRevision(visibleSnapshot.revision)
+        lastAppliedRealtimeRevision = Self.normalizedRevision(visibleSnapshot.revision)
         hasValidatedCurrentSnapshotWithHTTP = true
 
         syncSpotlightIndex(with: sessionIndex.allSessions)
@@ -1738,28 +2912,6 @@ final class CompanionAppModel {
                     self.remotePushFailureMessage = message
                 }
             },
-            center.addObserver(
-                forName: .looperDidReceiveSessionQuickAction,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                guard let self,
-                      let sessionID = notification.userInfo?[
-                          LooperNotificationPayloadKey.sessionId
-                      ] as? String,
-                      let actionValue = notification.userInfo?[
-                          LooperNotificationPayloadKey.action
-                      ] as? String,
-                      let action = QuickActionOption(rawValue: actionValue)
-                else {
-                    return
-                }
-
-                let prompt = notification.userInfo?[LooperNotificationPayloadKey.prompt] as? String
-                Task { @MainActor in
-                    await self.performQuickAction(action, sessionID: sessionID, prompt: prompt)
-                }
-            },
         ]
     }
 
@@ -1805,62 +2957,12 @@ final class CompanionAppModel {
             Haptics.error()
         }
     }
-}
-
-extension CompanionAppModel: CompanionRealtimeControllerDelegate {
-    var realtimeCurrentSnapshotRevision: String? {
-        CompanionRealtimeSync.revisionForRealtimeGate(
-            currentRevision: currentSnapshotRevision,
-            hasValidatedSnapshotWithHTTP: hasValidatedCurrentSnapshotWithHTTP
-        )
-    }
-
-    var realtimeHasSnapshot: Bool {
-        CompanionRealtimeSync.hasRealtimeValidatedSnapshot(
-            hasSnapshot: snapshot != nil,
-            hasValidatedSnapshotWithHTTP: hasValidatedCurrentSnapshotWithHTTP
-        )
-    }
-
-    func handleRealtimeStreamFailure(_ error: Error) {
-        guard !isCancellationError(error) else {
-            return
+    private static func normalizedRevision(_ revision: String?) -> String? {
+        let trimmedRevision = revision?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmedRevision, !trimmedRevision.isEmpty else {
+            return nil
         }
-
-        let nextConnectionState = connectionState(for: error)
-        guard nextConnectionState != .connected else {
-            return
-        }
-
-        connectionState = nextConnectionState
-        clearConnectionRouteStateIfNeeded(for: nextConnectionState)
-        errorMessage = shouldSuppressSnapshotLoadError(
-            state: nextConnectionState,
-            hasUsableSnapshot: snapshot != nil
-        ) ? nil : error.localizedDescription
-        if snapshot != nil, !hasValidatedCurrentSnapshotWithHTTP {
-            CompanionDiagnostics.record("events:stream-failed-refresh-cached-snapshot")
-            Task { @MainActor [weak self] in
-                await self?.refresh()
-            }
-        }
-    }
-
-    func refreshRealtimeSnapshotAndLoadedDetails(for sessionIDs: Set<String>) async {
-        let refreshConnectionRevision = connectionRevision
-        await refresh()
-
-        guard refreshConnectionRevision == connectionRevision else {
-            CompanionDiagnostics.record("events:stale-coalesced-detail-skip")
-            return
-        }
-
-        for sessionID in sessionIDs where detailBySessionID[sessionID] != nil {
-            await refreshSessionDetail(
-                id: sessionID,
-                assistantSurface: sessionIndex.assistantSurface(containingSessionID: sessionID)
-            )
-        }
+        return trimmedRevision
     }
 }
 

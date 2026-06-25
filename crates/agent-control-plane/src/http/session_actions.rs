@@ -1,22 +1,7 @@
 use crate::control_plane::ControlPlane;
 use crate::mobile::session::MobileSessionError;
 
-use super::mobile_state::{
-    emit_all_mobile_sessions_changed, emit_mobile_lifecycle_changed, emit_mobile_session_changed,
-};
-
-pub(super) fn set_session_mode(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    preset: Option<&str>,
-) -> Result<(), MobileSessionError> {
-    control_plane
-        .mobile_session_service()
-        .set_session_preset(thread_id, preset)?;
-    emit_mobile_lifecycle_changed(control_plane, thread_id, preset.or(Some("mode-cleared")));
-    emit_mobile_session_changed(control_plane, Some(thread_id), Some("mode-updated"));
-    Ok(())
-}
+use super::mobile_state::{emit_all_mobile_sessions_changed, emit_mobile_session_changed};
 
 pub(super) fn set_session_archived(
     control_plane: &ControlPlane,

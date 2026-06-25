@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use serde_json::Value;
 
+use crate::grpc::proto;
+
 use self::args::{
     WAIT_FOR_REPLY_FLAG, WAIT_FOR_UPDATES_FLAG, joined_args, nullable_id, parse_global_args,
     split_csv, take_arg,
@@ -18,7 +20,7 @@ use self::args::{
 use self::doctor::run_doctor_command;
 use self::output::{OutputFormat, print_value};
 use self::server::ensure_server_ready;
-use self::transport::{delete_json, fetch_json, patch_json, post_json, print_get};
+use self::transport::{base_url, delete_json, fetch_json, patch_json, post_json, print_get};
 
 const SEND_ALL_TARGET: &str = "--all";
 const SEND_ACTIVE_TARGET: &str = "active";
@@ -471,12 +473,12 @@ async fn run_sessions_command(args: &[String], format: OutputFormat) -> Result<(
             print_get(&format!("/desktop/sessions/{}", args[1]), format).await
         }
         Some("mode") if args.len() >= 3 => {
-            post_json(
-                &format!("/desktop/sessions/{}/mode", args[1]),
-                serde_json::json!({ "preset": nullable_id(&args[2]) }),
-                format,
+            let ack = submit_session_command(
+                session_mode_command(&args[1], nullable_id(&args[2])),
+                format!("cli-mode-{}", uuid::Uuid::new_v4()),
             )
-            .await
+            .await?;
+            print_value(&session_command_ack_value("SetSessionMode", &ack), format)
         }
         Some("archive") if args.len() >= 2 => session_archive(&args[1], true, format).await,
         Some("unarchive") if args.len() >= 2 => session_archive(&args[1], false, format).await,
@@ -492,12 +494,19 @@ async fn run_sessions_command(args: &[String], format: OutputFormat) -> Result<(
             .await
         }
         Some("prompt") if args.len() >= 3 => {
-            post_json(
-                &format!("/desktop/sessions/{}/prompt", args[1]),
-                serde_json::json!({ "prompt": joined_args(&args[2..]) }),
+            let ack = submit_session_command(
+                session_prompt_command(
+                    &args[1],
+                    &joined_args(&args[2..]),
+                    format!("cli-prompt-{}", uuid::Uuid::new_v4()),
+                ),
+                String::new(),
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SendSessionPrompt", &ack),
                 format,
             )
-            .await
         }
         Some("prompt-mode") if args.len() >= 4 => {
             post_session_prompts(
@@ -716,16 +725,107 @@ async fn post_session_prompts(
     preset: Option<&str>,
     format: OutputFormat,
 ) -> Result<()> {
-    post_json(
-        "/desktop/session-prompts",
-        serde_json::json!({
-            "threadIds": thread_ids,
-            "prompt": prompt,
-            "preset": preset,
+    let mut accepted = Vec::new();
+    for thread_id in thread_ids {
+        if let Some(preset) = preset {
+            let mutation_id = format!("cli-mode-{}", uuid::Uuid::new_v4());
+            submit_session_command(
+                session_mode_command(&thread_id, nullable_id(preset)),
+                mutation_id,
+            )
+            .await?;
+        }
+        let mutation_id = format!("cli-prompt-{}", uuid::Uuid::new_v4());
+        submit_session_command(
+            session_prompt_command(&thread_id, prompt, mutation_id),
+            String::new(),
+        )
+        .await?;
+        accepted.push(thread_id);
+    }
+    print_value(
+        &serde_json::json!({
+            "prompted": accepted.len(),
+            "threadIds": accepted,
         }),
         format,
     )
-    .await
+}
+
+async fn submit_session_command(
+    command: proto::Command,
+    fallback_mutation_id: String,
+) -> Result<proto::CommandAck> {
+    let client_mutation_id = command_client_mutation_id(&command)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(fallback_mutation_id);
+    crate::grpc::submit_local_session_command(&base_url(), command, &client_mutation_id).await
+}
+
+fn session_mode_command(thread_id: &str, preset: Option<&str>) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetSessionMode(
+            proto::SetSessionModeRequest {
+                thread_id: thread_id.to_owned(),
+                preset: preset.unwrap_or_default().to_owned(),
+                client_mutation_id: format!("cli-mode-{}", uuid::Uuid::new_v4()),
+            },
+        )),
+    }
+}
+
+fn session_prompt_command(
+    thread_id: &str,
+    prompt: &str,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SendSessionPrompt(
+            proto::SendSessionPromptRequest {
+                thread_id: thread_id.to_owned(),
+                prompt: prompt.to_owned(),
+                assistant_surface: String::new(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn command_client_mutation_id(command: &proto::Command) -> Option<String> {
+    match command.command.as_ref()? {
+        proto::command::Command::SetSessionMode(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SendSessionPrompt(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SubmitNotificationReply(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+    }
+}
+
+fn session_command_ack_value(command_kind: &str, ack: &proto::CommandAck) -> Value {
+    serde_json::json!({
+        "accepted": ack.accepted,
+        "commandKind": command_kind,
+        "clientMutationId": ack.client_mutation_id,
+        "ackSeq": ack.ack_seq,
+        "entityId": ack.entity_id,
+        "revision": ack.revision,
+        "serverTime": ack.server_time,
+        "idempotentReplay": ack.idempotent_replay,
+        "errorCode": empty_string_as_null(&ack.error_code),
+        "rejectReason": empty_string_as_null(&ack.reject_reason),
+    })
+}
+
+fn empty_string_as_null(value: &str) -> Value {
+    if value.is_empty() {
+        Value::Null
+    } else {
+        Value::String(value.to_owned())
+    }
 }
 
 async fn active_thread_ids() -> Result<Vec<String>> {

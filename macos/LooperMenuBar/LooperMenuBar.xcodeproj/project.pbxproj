@@ -12,7 +12,7 @@
 		1C81624F3CFDC84FE035E443 /* notification-orb.png in Resources */ = {isa = PBXBuildFile; fileRef = 3F302E4B2186B4A0767D4C3A /* notification-orb.png */; };
 		1D30DC9BAD7A8BAEC9086C40 /* MobileRoutePreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */; };
 		1E04E1106F21E423553218DE /* LooperThreadOpenTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */; };
-		29287F400758C02F8450BB7B /* DesktopEventStreamCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */; };
+		2EB8FA27974D08920FF3D341 /* MenuBarSessionCommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85746EDC26FD4783960AAA70 /* MenuBarSessionCommandCenter.swift */; };
 		3D31F07BE1F94072ED79BE12 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 96F0764C78BFDF2404A48C88 /* AppIcon.icns */; };
 		3E3A1C04CCA435FAC88CFA55 /* LooperHandoffHotkeyOption.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */; };
 		5864B7033EE1E6075C896CD3 /* LooperHumanStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */; };
@@ -20,6 +20,7 @@
 		686E8D416CD7C4D25C8B226D /* LooperContinuationActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */; };
 		8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */; };
 		99F7D7D81D7C784D1983B5EF /* looper-server in CopyFiles */ = {isa = PBXBuildFile; fileRef = 060F24CC3357705E8AD2E9C3 /* looper-server */; };
+		A022EDEBD1F2EBF34CD163BC /* LooperDesktopNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75EF39E7A1EC928F37C3C0A2 /* LooperDesktopNotificationCenter.swift */; };
 		A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA18D48629D32130B01944A /* LooperMenuContent.swift */; };
 		A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */; };
 		A45F981DA29777D65DFAB0A6 /* LooperDiagnosticsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */; };
@@ -32,6 +33,7 @@
 		E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */; };
 		EF37339ED81D19FD868EB2C2 /* DesktopThreadDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */; };
 		F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */; };
+		F8EA43DD1C7F6E38A41E5921 /* MenuBarSessionMiniLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,15 +66,17 @@
 		060F24CC3357705E8AD2E9C3 /* looper-server */ = {isa = PBXFileReference; name = "looper-server"; path = "../../crates/agent-control-plane/target/release/looper-server"; sourceTree = "<group>"; };
 		064C6B683AB182FF0C614500 /* looper */ = {isa = PBXFileReference; name = looper; path = "../../crates/agent-control-plane/target/release/looper"; sourceTree = "<group>"; };
 		067E9A0BE745F3C5AF29DE91 /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
-		08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopEventStreamCoordinator.swift; sourceTree = "<group>"; };
 		0CDDFFC62E1D5559E52E031C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameResolver.swift; sourceTree = "<group>"; };
+		31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarSessionMiniLocalStore.swift; sourceTree = "<group>"; };
 		3F302E4B2186B4A0767D4C3A /* notification-orb.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "notification-orb.png"; sourceTree = "<group>"; };
 		60A96159D9D1C1727791745F /* LooperHandoffHotkeyOption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHotkeyOption.swift; sourceTree = "<group>"; };
 		7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleNetworkPattern.swift; sourceTree = "<group>"; };
 		758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRoutePreference.swift; sourceTree = "<group>"; };
+		75EF39E7A1EC928F37C3C0A2 /* LooperDesktopNotificationCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperDesktopNotificationCenter.swift; sourceTree = "<group>"; };
 		7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperThreadOpenTarget.swift; sourceTree = "<group>"; };
 		81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHandoffHoldDuration.swift; sourceTree = "<group>"; };
+		85746EDC26FD4783960AAA70 /* MenuBarSessionCommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarSessionCommandCenter.swift; sourceTree = "<group>"; };
 		85F17597EA8F7162B15BE63D /* LooperHumanStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperHumanStatus.swift; sourceTree = "<group>"; };
 		8EA18D48629D32130B01944A /* LooperMenuContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperMenuContent.swift; sourceTree = "<group>"; };
 		96F0764C78BFDF2404A48C88 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
@@ -159,6 +163,8 @@
 				CE5E93C35F50E0F406B8F014 /* LooperLifecycleCoordinator.swift */,
 				8EA18D48629D32130B01944A /* LooperMenuContent.swift */,
 				7F9E013517820FD779DA8FAE /* LooperThreadOpenTarget.swift */,
+				85746EDC26FD4783960AAA70 /* MenuBarSessionCommandCenter.swift */,
+				31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */,
 				D88BB63063D6A6E7F55C1B64 /* MenuRefreshCoordinator.swift */,
 				758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */,
 				2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */,
@@ -178,8 +184,8 @@
 		BF4B311E09B01B2CC3802128 /* LooperMenuBar */ = {
 			isa = PBXGroup;
 			children = (
-				08543751D2411EA58DB57692 /* DesktopEventStreamCoordinator.swift */,
 				D96AC307C7DD5B56D8C07716 /* LooperContinuationActivityPublisher.swift */,
+				75EF39E7A1EC928F37C3C0A2 /* LooperDesktopNotificationCenter.swift */,
 				CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */,
 				0CDDFFC62E1D5559E52E031C /* main.swift */,
 			);
@@ -266,9 +272,11 @@
 			buildRules = (
 			);
 			dependencies = (
+				F37B95FB37C95D21947E4C67 /* PBXTargetDependency */,
 			);
 			name = LooperMenuBarCore;
 			packageProductDependencies = (
+				698607AA8D46201478E2A2CE /* LooperRealtime */,
 			);
 			productName = LooperMenuBarCore;
 			productReference = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */;
@@ -382,6 +390,8 @@
 				A461015CF3FED94D759CF3BF /* LooperLifecycleCoordinator.swift in Sources */,
 				A329BB6D661492888E3609BE /* LooperMenuContent.swift in Sources */,
 				1E04E1106F21E423553218DE /* LooperThreadOpenTarget.swift in Sources */,
+				2EB8FA27974D08920FF3D341 /* MenuBarSessionCommandCenter.swift in Sources */,
+				F8EA43DD1C7F6E38A41E5921 /* MenuBarSessionMiniLocalStore.swift in Sources */,
 				085DA2DD962A12011A477017 /* MenuRefreshCoordinator.swift in Sources */,
 				1D30DC9BAD7A8BAEC9086C40 /* MobileRoutePreference.swift in Sources */,
 				B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */,
@@ -393,8 +403,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				29287F400758C02F8450BB7B /* DesktopEventStreamCoordinator.swift in Sources */,
 				8BEF227FE00EB8F960D3C9DD /* LooperContinuationActivityPublisher.swift in Sources */,
+				A022EDEBD1F2EBF34CD163BC /* LooperDesktopNotificationCenter.swift in Sources */,
 				A45F981DA29777D65DFAB0A6 /* LooperDiagnosticsWindowController.swift in Sources */,
 				17C600371FFAD51B82BD7530 /* main.swift in Sources */,
 			);
@@ -407,6 +417,10 @@
 			isa = PBXTargetDependency;
 			target = AAD7F57E2F0E115082EB5C7D /* LooperMenuBarCore */;
 			targetProxy = BE1C0955016B6CBF11C2AF7A /* PBXContainerItemProxy */;
+		};
+		F37B95FB37C95D21947E4C67 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 698607AA8D46201478E2A2CE /* LooperRealtime */;
 		};
 /* End PBXTargetDependency section */
 
@@ -658,6 +672,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		698607AA8D46201478E2A2CE /* LooperRealtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LooperRealtime;
+		};
 		70389F85999007457E33EA68 /* LooperRealtime */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LooperRealtime;

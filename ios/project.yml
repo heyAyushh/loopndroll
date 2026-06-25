@@ -61,6 +61,8 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: LooperCompanionTests
+        excludes:
+          - .test-artifacts/**
     dependencies:
       - target: LooperCompanion
     settings:

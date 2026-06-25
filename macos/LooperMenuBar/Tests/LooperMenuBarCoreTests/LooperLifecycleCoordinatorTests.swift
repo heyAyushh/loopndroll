@@ -106,8 +106,6 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .desktopSnapshot).url?.path == "/desktop/snapshot")
         #expect(client.request(for: .desktopSnapshot).url?.query == "profile=menu")
         #expect(client.request(for: .desktopConnections).url?.path == "/desktop/connections")
-        #expect(client.request(for: .desktopEvents).url?.path == "/desktop/events")
-        #expect(client.request(for: .desktopEvents).url?.query == nil)
         #expect(client.request(for: .acpClientHosts).url?.path == "/desktop/acp-client-hosts")
         #expect(client.request(for: .acpClientHost("devin")).url?.path == "/desktop/acp-client-hosts/devin")
         #expect(
@@ -131,15 +129,10 @@ struct HTTPControlPlaneClientTests {
         #expect(client.request(for: .mobileHealth).httpMethod == "GET")
         #expect(client.request(for: .desktopSnapshot).httpMethod == "GET")
         #expect(client.request(for: .desktopConnections).httpMethod == "GET")
-        #expect(client.request(for: .desktopEvents).httpMethod == "GET")
         #expect(client.request(for: .mobileHealth).timeoutInterval == LooperLifecycleDefaults.requestTimeoutSeconds)
         #expect(
             client.request(for: .desktopSnapshot).timeoutInterval
                 == LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
-        )
-        #expect(
-            client.request(for: .desktopEvents).timeoutInterval
-                == LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
         )
     }
 

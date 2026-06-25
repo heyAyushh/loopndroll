@@ -6,6 +6,7 @@ struct SessionDetailScreen: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draftPrompt = ""
+    @State private var contextualPromptSuggestions: [String] = []
     @State private var isSendingPrompt = false
     @State private var showingDeleteConfirmation = false
     @FocusState private var focusedInput: SessionDetailInput?
@@ -41,6 +42,10 @@ struct SessionDetailScreen: View {
 
     private var currentMetadata: SessionMetadata {
         detail?.metadata ?? session.metadata
+    }
+
+    private var currentGoal: SessionGoalSummary? {
+        detail?.goal ?? session.goal
     }
 
     private var currentLastActivityAt: String {
@@ -97,10 +102,16 @@ struct SessionDetailScreen: View {
                 } label: {
                     Label("Use with Siri", systemImage: "pin")
                 }
-                .disabled(isMutatingSession)
             }
 
             ToolbarItemGroup(placement: .keyboard) {
+                if focusedInput == .prompt {
+                    PromptSuggestionKeyboardBar(
+                        suggestions: keyboardPromptSuggestions,
+                        onSelect: usePromptSuggestion
+                    )
+                }
+
                 Spacer()
 
                 Button("Done") {
@@ -113,6 +124,9 @@ struct SessionDetailScreen: View {
             await model.refreshSessionDetail(id: session.id)
             await markCurrentSiriSession()
             await model.donateOpenedSiriSession(session)
+        }
+        .task(id: promptSuggestionContextKey) {
+            await refreshPromptSuggestions()
         }
         .refreshable {
             await model.refreshSessionDetail(id: session.id)
@@ -223,6 +237,11 @@ struct SessionDetailScreen: View {
             }
 
             LabeledContent("Status", value: currentStatus.label)
+            if let currentGoal {
+                LabeledContent("Goal") {
+                    SessionGoalStatusDetail(goal: currentGoal)
+                }
+            }
             if let currentLastMessageAt {
                 LabeledContent("Last Message") {
                     Text(ModelFormatting.relativeTimestamp(currentLastMessageAt))
@@ -259,16 +278,6 @@ struct SessionDetailScreen: View {
                 .focused($focusedInput, equals: .prompt)
                 .accessibilityIdentifier("session-detail.prompt-editor")
 
-            ForEach(Array(promptSuggestions.enumerated()), id: \.element) { index, suggestion in
-                Button {
-                    usePromptSuggestion(suggestion)
-                } label: {
-                    Label(suggestion, systemImage: "quote.bubble")
-                        .lineLimit(2)
-                }
-                .accessibilityIdentifier("session-detail.prompt-suggestion.\(index)")
-            }
-
             Button {
                 sendPrompt()
             } label: {
@@ -291,9 +300,7 @@ struct SessionDetailScreen: View {
         Section {
             ForEach(SessionMode.allCases, id: \.rawValue) { mode in
                 Button {
-                    Task {
-                        await model.applyMode(mode, to: session.id)
-                    }
+                    model.beginApplyMode(mode, to: session.id)
                 } label: {
                     HStack(spacing: 12) {
                         Label(mode.label, systemImage: mode.symbolName)
@@ -308,12 +315,11 @@ struct SessionDetailScreen: View {
                     }
                 }
                 .disabled(isMutatingSession)
+                .accessibilityIdentifier(mode.detailAccessibilityIdentifier)
             }
 
             Button {
-                Task {
-                    await model.applyMode(nil, to: session.id)
-                }
+                model.beginApplyMode(nil, to: session.id)
             } label: {
                 HStack {
                     Label("Use Global Default", systemImage: "dial.low")
@@ -324,7 +330,7 @@ struct SessionDetailScreen: View {
                     }
                 }
             }
-            .disabled(isMutatingSession)
+            .accessibilityIdentifier("session-detail.mode.global-default")
         } header: {
             Text("Mode")
         } footer: {
@@ -435,13 +441,49 @@ struct SessionDetailScreen: View {
         detail?.promptDeliveryUnavailableReason ?? session.promptDeliveryUnavailableReason
     }
 
-    private var promptSuggestions: [String] {
+    private var fallbackPromptSuggestions: [String] {
         LooperSessionContextEngine.fallbackSuggestions(
             title: detail?.title ?? session.title,
             status: currentStatus,
             assistantName: (detail?.assistantClient ?? session.assistantClient).displayTitle,
             taskKind: currentMetadata.taskKind
         )
+    }
+
+    private var promptSuggestions: [String] {
+        let suggestions = contextualPromptSuggestions.isEmpty
+            ? fallbackPromptSuggestions
+            : contextualPromptSuggestions
+        return Array(suggestions.prefix(SessionPromptSuggestionLayout.visibleSuggestionLimit))
+    }
+
+    private var keyboardPromptSuggestions: [String] {
+        focusedInput == .prompt ? promptSuggestions : []
+    }
+
+    private var promptSuggestionContextKey: String {
+        [
+            session.id,
+            detail?.lastActivityAt ?? session.lastActivityAt,
+            detail?.lastMessageAt ?? session.lastMessageAt ?? "",
+            currentStatus.rawValue,
+            currentMetadata.taskKind.rawValue,
+            currentTitle,
+        ]
+            .joined(separator: "|")
+    }
+
+    private func refreshPromptSuggestions() async {
+        contextualPromptSuggestions = fallbackPromptSuggestions
+        guard let detail else {
+            return
+        }
+
+        let suggestions = await LooperSessionContextEngine().suggestions(for: detail)
+        guard !Task.isCancelled else {
+            return
+        }
+        contextualPromptSuggestions = suggestions.isEmpty ? fallbackPromptSuggestions : suggestions
     }
 
     private func usePromptSuggestion(_ suggestion: String) {
@@ -455,13 +497,16 @@ struct SessionDetailScreen: View {
         }
 
         let prompt = trimmedPrompt
+        draftPrompt = ""
+        focusedInput = nil
+        let sendTask = model.beginSendSessionPrompt(prompt, to: session.id)
         isSendingPrompt = true
         Task {
-            let didSend = await model.sendSessionPrompt(prompt, to: session.id)
+            let didSend = await sendTask.value
             await MainActor.run {
-                if didSend {
-                    draftPrompt = ""
-                    focusedInput = nil
+                if !didSend {
+                    draftPrompt = prompt
+                    focusedInput = .prompt
                 }
                 isSendingPrompt = false
             }
@@ -486,4 +531,68 @@ struct SessionDetailScreen: View {
 
 private enum SessionDetailInput {
     case prompt
+}
+
+private struct SessionGoalStatusDetail: View {
+    let goal: SessionGoalSummary
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Label(goal.displayStatusLabel, systemImage: goal.displayStatusSymbolName)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(SessionGoalStatusVisuals.tint(for: goal))
+                .accessibilityIdentifier("session-detail.goal-status")
+
+            Text(goal.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(goal.displayStatusLabel)
+        .accessibilityValue(goal.title)
+    }
+}
+
+private enum SessionPromptSuggestionLayout {
+    static let visibleSuggestionLimit = 3
+    static let iconSpacing: CGFloat = 6
+    static let separatorHeight: CGFloat = 24
+    static let minimumSuggestionWidth: CGFloat = 96
+    static let maximumSuggestionWidth: CGFloat = 220
+}
+
+private struct PromptSuggestionKeyboardBar: View {
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: SessionPromptSuggestionLayout.iconSpacing) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
+                if index > 0 {
+                    Divider()
+                        .frame(height: SessionPromptSuggestionLayout.separatorHeight)
+                }
+
+                Button {
+                    onSelect(suggestion)
+                } label: {
+                    Text(suggestion)
+                        .lineLimit(1)
+                        .frame(
+                            minWidth: SessionPromptSuggestionLayout.minimumSuggestionWidth,
+                            maxWidth: SessionPromptSuggestionLayout.maximumSuggestionWidth
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("session-detail.prompt-suggestion.\(index)")
+            }
+        }
+        .accessibilityIdentifier("session-detail.prompt-suggestion-bar")
+    }
 }

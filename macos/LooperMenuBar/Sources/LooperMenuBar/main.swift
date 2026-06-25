@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 import LooperMenuBarCore
+import LooperRealtime
 import OSLog
 
 @MainActor
@@ -37,30 +38,49 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let preserveSettingsMenuTitle = "Preserve Settings"
     static let openSettingsMenuTitle = "Open Settings"
     static let openSettingsUnavailableTitle = "No editor settings files found"
+    static let notificationTargetMacOS = "macos"
   }
 
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
+  private let sessionMiniLocalStore: MenuBarSessionMiniLocalStore?
+  private let sessionCommandClient: MenuBarRealtimeSessionCommandClient
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
+  private lazy var sessionCommandCenter = MenuBarSessionCommandCenter(
+    client: sessionCommandClient,
+    localStore: sessionMiniLocalStore
+  )
   private var statusItem: NSStatusItem?
   private var menu: NSMenu?
+  private var cachedSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
   private var continuationRefreshTask: Task<Void, Never>?
+  private var sessionMiniSyncTask: Task<Void, Never>?
   private var mobileHealth: MobileHealthResponse?
   private var mobileState: DesktopMobileStateResponse?
   private var pushDevices: DesktopPushDevicesResponse?
   private var devinProbe: DevinAcpBridgeProbe?
   private let handoffHotkeyController = HandoffHotkeyController()
   private let diagnosticsWindowController = LooperDiagnosticsWindowController()
-  private lazy var desktopEventStream = DesktopEventStreamCoordinator(client: client) {
-    [weak self] in
-    await self?.refreshMenu(force: true)
-  }
+  private lazy var desktopNotifications = LooperDesktopNotificationCenter(
+    openSession: { [weak self] threadID in
+      await self?.openThreadFromNotification(threadID)
+    },
+    replyToSession: { [weak self] notificationID, threadID, prompt in
+      await self?.replyToThreadFromNotification(
+        notificationID: notificationID,
+        threadID: threadID,
+        prompt: prompt
+      )
+    }
+  )
 
   override init() {
     let endpointStore = ControlPlaneEndpointStore()
     let client = HTTPControlPlaneClient(endpointStore: endpointStore)
     self.client = client
+    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault()
+    self.sessionCommandClient = MenuBarRealtimeSessionCommandClient(controlPlaneClient: client)
     self.lifecycle = LooperLifecycleCoordinator(
       client: client,
       service: BundledControlPlaneService(endpointStore: endpointStore)
@@ -77,7 +97,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
     startContinuationRefreshLoop()
     installHandoffHotkey()
-    desktopEventStream.start()
+    desktopNotifications.start()
+    startSessionMiniSync()
     if diagnosticsRequestedFromLaunchArguments {
       diagnosticsWindowController.showLoading()
     }
@@ -92,7 +113,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   func applicationWillTerminate(_ notification: Notification) {
     continuationRefreshTask?.cancel()
-    desktopEventStream.stop()
+    stopSessionMiniSync()
+    Task {
+      await sessionCommandClient.disconnect()
+    }
     continuationPublisher.invalidate()
     if !detachServerOnQuit {
       _ = lifecycle.unregisterBeforeQuit()
@@ -134,13 +158,18 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     applyHumanStatus(.starting(detachOnQuit: detachServerOnQuit), to: item)
     continuationPublisher.attachHost(item.button)
 
-    let menu = makeMenu(snapshot: nil, error: nil)
+    let cachedMinis = restoreCachedSessionMiniSnapshot()
+    let menu = makeMenu(snapshot: nil, sessionMiniSnapshot: cachedMinis, error: nil)
     item.menu = menu
     self.menu = menu
     statusItem = item
   }
 
   private func refreshMenu(force: Bool = false) async {
+    if !force, restoreSessionMiniMenuIfAvailable() {
+      return
+    }
+
     let result = await menuRefreshCoordinator.refresh(force: force)
     if let snapshot = result.snapshot {
       updateMobileState(
@@ -156,7 +185,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       updateMobileState(nil, pushDevices: nil, health: nil)
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
-      replaceMenu(snapshot: nil, connections: nil, acpClientHosts: nil, error: result.error)
+      replaceMenu(
+        snapshot: nil,
+        sessionMiniSnapshot: cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot(),
+        connections: nil,
+        acpClientHosts: nil,
+        error: result.error
+      )
     }
   }
 
@@ -171,6 +206,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshContinuationActivity() async {
+    if restoreSessionMiniMenuIfAvailable() {
+      continuationPublisher.publishFallbackIfIdle(
+        LooperContinuationActivityBuilder.genericDescriptor())
+      return
+    }
+
     let result = await menuRefreshCoordinator.refresh()
     if let snapshot = result.snapshot {
       updateMobileState(
@@ -223,9 +264,75 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     let result = await menuRefreshCoordinator.refresh()
-    if let snapshot = result.snapshot,
-      let thread = snapshot.threads.first(where: { $0.threadId == threadID })
-    {
+    if let snapshot = result.snapshot {
+      return openTarget(for: threadID, snapshot: snapshot)
+    }
+
+    return openTarget(for: threadID, snapshot: nil)
+  }
+
+  private func shouldDeliverMacOSNotification(state: DesktopMobileStateResponse?) -> Bool {
+    (state?.defaultNotificationTargetIDs ?? [Layout.notificationTargetMacOS])
+      .contains(Layout.notificationTargetMacOS)
+  }
+
+  private func shouldDeliverMacOSNotification(for session: MenuBarSessionMini) -> Bool {
+    guard let notificationStatus = session.notificationStatus else {
+      return shouldDeliverMacOSNotification(state: mobileState)
+    }
+    guard notificationStatus.enabled else {
+      return false
+    }
+    if notificationStatus.usesDefault {
+      return shouldDeliverMacOSNotification(state: mobileState)
+    }
+    return notificationStatus.targetIds.contains(Layout.notificationTargetMacOS)
+  }
+
+  private func openThreadFromNotification(_ threadID: String) async {
+    let result = await menuRefreshCoordinator.refresh(force: true)
+    if let snapshot = result.snapshot {
+      updateMobileState(
+        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
+      _ = openThread(openTarget(for: threadID, snapshot: snapshot))
+      return
+    }
+
+    _ = openThread(openTarget(for: threadID, snapshot: nil))
+  }
+
+  private func replyToThreadFromNotification(
+    notificationID: String,
+    threadID: String,
+    prompt: String
+  ) async {
+    do {
+      _ = try await sessionCommandCenter.submitNotificationReply(
+        notificationID: notificationID,
+        threadID: threadID,
+        prompt: prompt,
+        assistantSurface: nil,
+        clientMutationID: "notification-reply:\(notificationID)"
+      )
+      replaceMenu(
+        snapshot: nil,
+        sessionMiniSnapshot: cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot(),
+        error: nil
+      )
+    } catch {
+      replaceMenu(
+        snapshot: nil,
+        sessionMiniSnapshot: cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot(),
+        error: error
+      )
+    }
+  }
+
+  private func openTarget(
+    for threadID: String,
+    snapshot: DesktopSnapshotResponse?
+  ) -> LooperThreadOpenTarget {
+    if let thread = snapshot?.threads.first(where: { $0.threadId == threadID }) {
       return LooperThreadOpenTarget(
         threadId: thread.threadId,
         transcriptPath: thread.transcriptPath,
@@ -243,6 +350,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func replaceMenu(
     snapshot: DesktopSnapshotResponse?,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot? = nil,
     connections: DesktopConnectionsResponse? = nil,
     acpClientHosts: AcpClientHostsResponse? = nil,
     error: Error?
@@ -250,6 +358,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     updateStatusItem(snapshot: snapshot, error: error)
     let menu = makeMenu(
       snapshot: snapshot,
+      sessionMiniSnapshot: sessionMiniSnapshot,
       connections: connections,
       acpClientHosts: acpClientHosts,
       error: error
@@ -260,6 +369,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func makeMenu(
     snapshot: DesktopSnapshotResponse?,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot? = nil,
     connections: DesktopConnectionsResponse? = nil,
     acpClientHosts: AcpClientHostsResponse? = nil,
     error: Error?
@@ -271,6 +381,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     if let snapshot {
       addSnapshotThreadSections(snapshot, to: menu)
+    } else if let sessionMiniSnapshot {
+      addSessionMiniThreadSections(sessionMiniSnapshot, to: menu)
     }
 
     menu.addItem(NSMenuItem.separator())
@@ -404,6 +516,116 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     addThreadSections(sections, to: menu)
+  }
+
+  private func addSessionMiniThreadSections(
+    _ snapshot: MenuBarSessionMiniLocalSnapshot,
+    to menu: NSMenu
+  ) {
+    let sections = LooperMenuContent.buildThreadSections(from: snapshot.sessions)
+    guard !sections.isEmpty else {
+      return
+    }
+
+    addThreadSections(sections, to: menu)
+  }
+
+  private func restoreCachedSessionMiniSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
+    guard let snapshot = try? sessionMiniLocalStore?.cachedSnapshot() else {
+      return nil
+    }
+    cachedSessionMiniSnapshot = snapshot
+    return snapshot
+  }
+
+  @discardableResult
+  private func restoreSessionMiniMenuIfAvailable() -> Bool {
+    guard let snapshot = cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot() else {
+      return false
+    }
+
+    replaceMenu(snapshot: nil, sessionMiniSnapshot: snapshot, connections: nil, acpClientHosts: nil, error: nil)
+    return true
+  }
+
+  private func startSessionMiniSync() {
+    guard sessionMiniSyncTask == nil,
+      let sessionMiniLocalStore
+    else {
+      return
+    }
+
+    let synchronizer = LooperRealtimeStateMiniSynchronizer(
+      store: sessionMiniLocalStore.realtimeLocalStore,
+      transport: MenuBarStateMiniSyncTransport(client: client)
+    )
+
+    sessionMiniSyncTask = Task { [weak self] in
+      await synchronizer.runUntilCancelled { [weak self] update in
+        await self?.applySessionMiniSyncUpdate(update)
+      }
+    }
+  }
+
+  private func stopSessionMiniSync() {
+    sessionMiniSyncTask?.cancel()
+    sessionMiniSyncTask = nil
+  }
+
+  private func applySessionMiniSyncUpdate(_ update: LooperRealtimeStateMiniSyncUpdate) {
+    let previousSnapshot = cachedSessionMiniSnapshot
+    guard let snapshot = try? sessionMiniLocalStore?.cachedSnapshot() else {
+      return
+    }
+
+    cachedSessionMiniSnapshot = snapshot
+    replaceMenu(snapshot: nil, sessionMiniSnapshot: snapshot, connections: nil, acpClientHosts: nil, error: nil)
+    Task { @MainActor [weak self] in
+      await self?.deliverSessionMiniStopNotifications(
+        previousSnapshot: previousSnapshot,
+        nextSnapshot: snapshot
+      )
+    }
+  }
+
+  private func deliverSessionMiniStopNotifications(
+    previousSnapshot: MenuBarSessionMiniLocalSnapshot?,
+    nextSnapshot: MenuBarSessionMiniLocalSnapshot
+  ) async {
+    var previousByID: [String: MenuBarSessionMini] = [:]
+    for session in previousSnapshot?.sessions ?? [] {
+      previousByID[session.sessionID] = session
+    }
+    for session in nextSnapshot.sessions where shouldNotifyForReplyableTransition(
+      session,
+      previous: previousByID[session.sessionID]
+    ) {
+      guard shouldDeliverMacOSNotification(for: session) else {
+        continue
+      }
+      _ = await desktopNotifications.deliverSessionStop(
+        notificationID: sessionStopNotificationID(for: session),
+        threadID: session.sessionID,
+        title: session.title,
+        body: session.assistantPreview
+      )
+    }
+  }
+
+  private func shouldNotifyForReplyableTransition(
+    _ session: MenuBarSessionMini,
+    previous: MenuBarSessionMini?
+  ) -> Bool {
+    session.replyable && !session.isArchived && previous?.replyable != true
+  }
+
+  private func sessionStopNotificationID(for session: MenuBarSessionMini) -> String {
+    [
+      "looper-macos-stop",
+      session.sessionID,
+      session.revision,
+    ]
+    .joined(separator: "-")
   }
 
   private func addUnavailableDetails(to menu: NSMenu) {
@@ -1602,6 +1824,41 @@ extension LooperHandoffHotkeyOption {
     flags.reduce(UInt32(0)) { partialResult, flag in
       partialResult | UInt32(flag)
     }
+  }
+}
+
+private struct MenuBarStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
+  let client: any ControlPlaneClient
+
+  func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+    let realtimeClient = try await makeRealtimeClient()
+    defer {
+      realtimeClient.disconnect()
+    }
+    return try await realtimeClient.getStateMiniSnapshot()
+  }
+
+  func streamStateMinis(
+    afterSeq: Int64,
+    onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
+  ) async throws {
+    let realtimeClient = try await makeRealtimeClient()
+    defer {
+      realtimeClient.disconnect()
+    }
+    try await realtimeClient.streamStateMinis(afterSeq: afterSeq, onDelta: onDelta)
+  }
+
+  private func makeRealtimeClient() async throws -> LooperRealtimeClient {
+    let health = try await client.fetchMobileHealth()
+    let endpoints = health.preferredRealtimeBaseURLs.map(LooperRealtimeEndpoint.init(baseURL:))
+    guard !endpoints.isEmpty else {
+      throw LooperRealtimeError.unavailable
+    }
+    return LooperRealtimeClient(
+      endpoints: endpoints,
+      credentials: LooperRealtimeCredentials(bearerToken: nil, mobileSessionHeader: nil)
+    )
   }
 }
 

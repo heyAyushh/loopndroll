@@ -118,7 +118,6 @@ public enum LooperDiagnosticsContent {
         appendSection("Routes", to: &lines)
         [
             ControlPlaneEndpoint.desktopSnapshot,
-            .desktopEvents,
             .desktopConnections,
             .controlPlaneStatus,
             .mobileHealth,

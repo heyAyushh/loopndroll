@@ -3,6 +3,16 @@ import CoreSpotlight
 import SwiftUI
 import UserNotifications
 
+#if DEBUG
+private enum UnitTestRuntime {
+    static var isRunning: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil ||
+            environment["XCTestBundlePath"] != nil
+    }
+}
+#endif
+
 @main
 struct LooperApp: App {
     @UIApplicationDelegateAdaptor(LooperAppDelegate.self) private var appDelegate
@@ -12,11 +22,36 @@ struct LooperApp: App {
     @State private var model: CompanionAppModel
 
     init() {
-        UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
-        LooperSiriShortcuts.updateAppShortcutParameters()
+        #if DEBUG
+        let isRunningUnitTests = UnitTestRuntime.isRunning
+        let g006SelfTestCase = G006LocalFirstSelfTest.requestedCase
+        let isRunningG006SelfTest = g006SelfTestCase != nil
+        #else
+        let isRunningUnitTests = false
+        let isRunningG006SelfTest = false
+        #endif
+
+        if !isRunningUnitTests, !isRunningG006SelfTest {
+            UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
+            LooperSiriShortcuts.updateAppShortcutParameters()
+        }
+
         Self.prepareUITestStateIfNeeded()
         _authenticator = State(initialValue: CompanionAppAuthenticator())
-        _model = State(initialValue: CompanionAppModel(environment: Self.environment()))
+        _model = State(
+            initialValue: CompanionAppModel(
+                environment: Self.environment(),
+                sessionMiniLocalStore: (isRunningUnitTests || isRunningG006SelfTest)
+                    ? nil
+                    : CompanionSessionMiniLocalStore.liveDefault()
+            )
+        )
+
+        #if DEBUG
+        if let g006SelfTestCase {
+            G006LocalFirstSelfTest.runSoon(g006SelfTestCase)
+        }
+        #endif
     }
 
     var body: some Scene {
@@ -58,6 +93,14 @@ struct LooperApp: App {
 
     private static func environment() -> CompanionEnvironment {
         #if DEBUG
+        if G006LocalFirstSelfTest.requestedCase != nil {
+            return CompanionEnvironment(service: MockCompanionService())
+        }
+
+        if UnitTestRuntime.isRunning {
+            return CompanionEnvironment(service: MockCompanionService())
+        }
+
         if UITestLaunchArguments.isMockModeEnabled {
             return CompanionEnvironment(service: MockCompanionService())
         }
@@ -68,12 +111,14 @@ struct LooperApp: App {
 
     private static func prepareUITestStateIfNeeded() {
         #if DEBUG
-        guard UITestLaunchArguments.isMockModeEnabled else {
+        guard UITestLaunchArguments.isUITestEnabled || UITestLaunchArguments.isMockModeEnabled else {
             return
         }
 
         if UITestLaunchArguments.shouldResetState {
             let defaults = UserDefaults.standard
+            CompanionConfiguration.storeConnection(CompanionConnection(baseURLs: [], bearerToken: nil))
+            CompanionSnapshotCache.clear()
             defaults.removeObject(forKey: OnboardingState.completionStorageKey)
             defaults.removeObject(forKey: QuickActionSettings.storageKey)
             defaults.removeObject(forKey: "appearanceMode")

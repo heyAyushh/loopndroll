@@ -160,27 +160,8 @@ async fn desktop_local_only_routes_reject_remote_callers() {
         ),
         (
             Method::POST,
-            "/desktop/sessions/thread-main/mode",
-            Some(serde_json::json!({ "preset": "max-turns-1" })),
-        ),
-        (
-            Method::POST,
             "/desktop/sessions/thread-main/archive",
             Some(serde_json::json!({ "archived": true })),
-        ),
-        (
-            Method::POST,
-            "/desktop/sessions/thread-main/prompt",
-            Some(serde_json::json!({ "prompt": "Continue." })),
-        ),
-        (
-            Method::POST,
-            "/desktop/session-prompts",
-            Some(serde_json::json!({
-                "threadIds": ["thread-main"],
-                "prompt": "Continue.",
-                "preset": "max-turns-1"
-            })),
         ),
         (Method::POST, "/desktop/sessions/thread-main/mute", None),
         (Method::DELETE, "/desktop/sessions/thread-main", None),

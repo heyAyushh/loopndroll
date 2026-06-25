@@ -18,6 +18,8 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - path: Sources/LooperMenuBarCore
+    dependencies:
+      - package: LooperRealtime
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar.core

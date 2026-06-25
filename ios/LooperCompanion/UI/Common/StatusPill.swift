@@ -18,6 +18,18 @@ struct StatusPill: View {
     }
 }
 
+enum SessionGoalStatusVisuals {
+    static func tint(for goal: SessionGoalSummary) -> Color {
+        if goal.isBlocked {
+            return .orange
+        }
+        if goal.running {
+            return .accentColor
+        }
+        return .secondary
+    }
+}
+
 enum ConnectionRouteVisuals {
     static let defaultIconSize: CGFloat = 16
 

@@ -11,6 +11,7 @@ use agent_control_plane::auth::{
     AuthManager, CloudAuthContract, LinkedIdentityMethod, MemorySecretStore,
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
+use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
     ClientFrame, Command, HealthRequest, Resume, SendSessionPromptRequest, ServerFrame,
     SetSessionModeRequest, SubmitNotificationReplyRequest, client_frame, command,
@@ -18,9 +19,7 @@ use agent_control_plane::grpc::proto::{
 };
 use agent_control_plane::http::build_router;
 use agent_control_plane::mobile::api::session_mini_projection_inputs;
-use agent_control_plane::mobile::events::{
-    MobileEventInput, MobileEventKind, MobileEventRecord, build_mobile_event, mobile_event_sse_name,
-};
+use agent_control_plane::mobile::events::MobileEventKind;
 use agent_control_plane::mobile::prompt_delivery::prime_delivery_action_cache;
 use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
@@ -46,7 +45,6 @@ const GOAL_FIXTURE_TOKENS_USED: i64 = 42;
 const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
 const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
 const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
-const SSE_CONNECTED_EVENT_TIMEOUT_SECONDS: u64 = 5;
 
 #[path = "isolated_control_plane/acp_hosts/mod.rs"]
 mod acp_hosts;
@@ -2220,23 +2218,10 @@ async fn mobile_session_controls_are_owned_by_rust() {
         serde_json::Value::Null
     );
 
-    let mode_snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/mode",
-        serde_json::json!({ "preset": "max-turns-1" }),
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert_eq!(
-        mobile_snapshot_session(&mode_snapshot, "thread-main")["effectiveMode"],
-        "max-turns-1"
-    );
-    assert_eq!(
-        mobile_snapshot_session(&mode_snapshot, "thread-main")["status"],
-        "stopped"
-    );
+    control_plane
+        .mobile_session_service()
+        .set_session_preset("thread-main", Some("max-turns-1"))
+        .expect("set session mode through Rust state owner");
 
     let detail = request_json_with_options(
         &router,
@@ -2295,55 +2280,52 @@ async fn mobile_session_controls_are_owned_by_rust() {
     .await;
     assert_eq!(stopped_detail["status"], "stopped");
 
-    let waiting_mode_snapshot = request_json_body_with_options(
+    control_plane
+        .mobile_session_service()
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("set waiting mode through Rust state owner");
+    let waiting_detail = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/mode",
-        serde_json::json!({ "preset": "await-reply" }),
+        Method::GET,
+        "/api/mobile/sessions/thread-main",
         &auth_headers,
         None,
     )
     .await;
-    let waiting_session = mobile_snapshot_session(&waiting_mode_snapshot, "thread-main");
-    assert_eq!(waiting_session["effectiveMode"], "await-reply");
-    assert_eq!(waiting_session["status"], "waiting");
+    assert_eq!(waiting_detail["effectiveMode"], "await-reply");
+    assert_eq!(waiting_detail["status"], "waiting");
 
-    let resumed_prompt_snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/prompt",
-        serde_json::json!({ "prompt": "Resume from phone." }),
-        &auth_headers,
-        None,
+    prime_state_mini_cache(&control_plane);
+    let resumed_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "thread-main".to_owned(),
+            prompt: "Resume from phone.".to_owned(),
+            assistant_surface: String::new(),
+            client_mutation_id: "mobile-controls-resume-prompt".to_owned(),
+        }),
     )
     .await;
-    assert_eq!(
-        mobile_snapshot_session(&resumed_prompt_snapshot, "thread-main")["id"],
-        "thread-main"
-    );
-    assert!(
-        control_plane
-            .store()
-            .mobile_events_since(0, 10)
-            .expect("mobile events")
-            .iter()
-            .any(|event| event.detail.as_deref() == Some("prompt-queued"))
-    );
+    assert!(resumed_ack.accepted);
+    assert_eq!(resumed_ack.entity_id, "thread-main");
+    wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
 
     record_thread_active(&control_plane, "thread-main");
-    let prompt_snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/prompt",
-        serde_json::json!({ "prompt": "Keep going." }),
-        &auth_headers,
-        None,
+    prime_state_mini_cache(&control_plane);
+    let prompt_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "thread-main".to_owned(),
+            prompt: "Keep going.".to_owned(),
+            assistant_surface: String::new(),
+            client_mutation_id: "mobile-controls-active-prompt".to_owned(),
+        }),
     )
     .await;
-    assert_eq!(
-        mobile_snapshot_session(&prompt_snapshot, "thread-main")["id"],
-        "thread-main"
-    );
+    assert!(prompt_ack.accepted);
+    assert_eq!(prompt_ack.entity_id, "thread-main");
 
     let mute_snapshot = request_json_body_with_options(
         &router,
@@ -3112,286 +3094,6 @@ async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
     assert!(grok_snapshot["grokBuild"]["hooks"]["health"].is_string());
 }
 
-#[test]
-fn mobile_event_payload_matches_ios_contract() {
-    let event = build_mobile_event(MobileEventInput {
-        kind: MobileEventKind::PromptQueued,
-        thread_id: Some("thread-main".to_owned()),
-        prompt_id: Some("prompt-123".to_owned()),
-        detail: None,
-    });
-    let payload = serde_json::to_string(&event).expect("json");
-    assert!(payload.contains("\"eventType\":\"prompt-queued\""));
-    assert!(payload.contains("\"threadId\":\"thread-main\""));
-    assert!(payload.contains("\"promptId\":\"prompt-123\""));
-    assert_eq!(mobile_event_sse_name(event.event_type), "prompt.queued");
-}
-
-async fn wait_for_sse_buffer(body: &mut Body, buffer: &mut String, needle: &str, label: &str) {
-    let deadline = tokio::time::sleep(std::time::Duration::from_secs(
-        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
-    ));
-    tokio::pin!(deadline);
-
-    loop {
-        tokio::select! {
-            frame = body.frame() => {
-                match frame {
-                    Some(Ok(frame)) => {
-                        if let Ok(chunk) = frame.into_data() {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            if buffer.contains(needle) {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Err(error)) => panic!("sse frame error: {error}"),
-                    None => panic!("sse stream ended early waiting for {label}. buffer={buffer}"),
-                }
-            }
-            _ = &mut deadline => {
-                panic!("timed out waiting for {label}. buffer={buffer}");
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn desktop_events_sse_streams_without_mobile_auth() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    let router = build_router(fixture.control_plane());
-
-    let request = axum::http::Request::builder()
-        .method(Method::GET)
-        .uri("/desktop/events")
-        .header(axum::http::header::ACCEPT, "text/event-stream")
-        .body(Body::empty())
-        .expect("request");
-    let response = router.oneshot(request).await.expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let content_type = response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    assert!(content_type.contains("text/event-stream"));
-
-    let mut body = response.into_body();
-    let mut buffer = String::new();
-    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(
-        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
-    ));
-    tokio::pin!(connected_deadline);
-
-    loop {
-        tokio::select! {
-            frame = body.frame() => {
-                match frame {
-                    Some(Ok(frame)) => {
-                        if let Ok(chunk) = frame.into_data() {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            if buffer.contains("event: connected") {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Err(error)) => panic!("sse frame error: {error}"),
-                    None => panic!("sse stream ended early: {buffer}"),
-                }
-            }
-            _ = &mut connected_deadline => {
-                panic!("timed out waiting for desktop SSE connection. buffer={buffer}");
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn mobile_events_sse_streams_broadcast_prompt_resumed_event() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    let control_plane = fixture.control_plane();
-    let service = control_plane.mobile_session_service();
-    service
-        .set_session_preset("thread-main", Some("await-reply"))
-        .expect("set mode");
-    record_thread_active(&control_plane, "thread-main");
-    let router = build_router(control_plane.clone());
-    let authorization = issue_mobile_authorization_header(&router).await;
-
-    let request = axum::http::Request::builder()
-        .method(Method::GET)
-        .uri("/api/mobile/events")
-        .header(axum::http::header::AUTHORIZATION, authorization.as_str())
-        .header(axum::http::header::ACCEPT, "text/event-stream")
-        .body(Body::empty())
-        .expect("request");
-    let response = router.clone().oneshot(request).await.expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let content_type = response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    assert!(content_type.contains("text/event-stream"));
-
-    let mut body = response.into_body();
-    let mut buffer = String::new();
-    let connected_deadline = tokio::time::sleep(std::time::Duration::from_secs(
-        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
-    ));
-    tokio::pin!(connected_deadline);
-
-    loop {
-        tokio::select! {
-            frame = body.frame() => {
-                match frame {
-                    Some(Ok(frame)) => {
-                        if let Ok(chunk) = frame.into_data() {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            if buffer.contains("event: connected")
-                            {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Err(error)) => panic!("sse frame error: {error}"),
-                    None => panic!("sse stream ended early: {buffer}"),
-                }
-            }
-            _ = &mut connected_deadline => {
-                panic!("timed out waiting for connected SSE event. buffer={buffer}");
-            }
-        }
-    }
-
-    let _snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/prompt",
-        serde_json::json!({ "prompt": "Keep going from phone." }),
-        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
-        None,
-    )
-    .await;
-
-    let resumed_deadline = tokio::time::sleep(std::time::Duration::from_secs(
-        SSE_CONNECTED_EVENT_TIMEOUT_SECONDS,
-    ));
-    tokio::pin!(resumed_deadline);
-
-    loop {
-        tokio::select! {
-            frame = body.frame() => {
-                match frame {
-                    Some(Ok(frame)) => {
-                        if let Ok(chunk) = frame.into_data() {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk));
-                            if buffer.contains("event: session.changed")
-                                && buffer.contains("\"detail\":\"prompt-resumed\"")
-                            {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Err(error)) => panic!("sse frame error: {error}"),
-                    None => panic!("sse stream ended early: {buffer}"),
-                }
-            }
-            _ = &mut resumed_deadline => {
-                panic!("timed out waiting for prompt-resumed SSE event. buffer={buffer}");
-            }
-        }
-    }
-
-    assert!(buffer.contains("event: connected"));
-    assert!(buffer.contains("\"threadId\":\"thread-main\""));
-}
-
-#[tokio::test]
-async fn mobile_events_sse_replays_same_millisecond_backfill_after_live_event() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    let control_plane = fixture.control_plane();
-    control_plane
-        .store()
-        .initialize()
-        .expect("initialize events");
-    let router = build_router(control_plane.clone());
-    let authorization = issue_mobile_authorization_header(&router).await;
-
-    let request = axum::http::Request::builder()
-        .method(Method::GET)
-        .uri("/api/mobile/events")
-        .header(axum::http::header::AUTHORIZATION, authorization.as_str())
-        .header(axum::http::header::ACCEPT, "text/event-stream")
-        .body(Body::empty())
-        .expect("request");
-    let response = router.clone().oneshot(request).await.expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let mut body = response.into_body();
-    let mut buffer = String::new();
-    wait_for_sse_buffer(
-        &mut body,
-        &mut buffer,
-        "event: connected",
-        "connected SSE event",
-    )
-    .await;
-
-    let connection = Connection::open(control_plane.store().path()).expect("open events");
-    for (event_id, detail) in [
-        ("event-a", "same-ms-live"),
-        ("event-b", "same-ms-backfill-b"),
-        ("event-c", "same-ms-backfill-c"),
-    ] {
-        connection
-            .execute(
-                "insert into mobile_event_log (
-                    event_id, event_type, thread_id, prompt_id, detail, created_at_ms
-                ) values (?1, 'session.changed', 'thread-main', null, ?2, 42)",
-                rusqlite::params![event_id, detail],
-            )
-            .expect("insert mobile event");
-    }
-    control_plane
-        .mobile_event_hub()
-        .publish_persisted(MobileEventRecord {
-            event_id: "event-a".to_owned(),
-            event_type: MobileEventKind::SessionChanged,
-            thread_id: Some("thread-main".to_owned()),
-            prompt_id: None,
-            detail: Some("same-ms-live".to_owned()),
-            created_at_ms: 42,
-        });
-
-    wait_for_sse_buffer(
-        &mut body,
-        &mut buffer,
-        "same-ms-backfill-c",
-        "same millisecond backfill",
-    )
-    .await;
-
-    assert!(buffer.contains("same-ms-live"));
-    assert!(buffer.contains("same-ms-backfill-b"));
-    assert!(buffer.contains("same-ms-backfill-c"));
-}
-
-#[tokio::test]
-async fn mobile_events_endpoint_requires_mobile_auth() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    let router = build_router(fixture.control_plane());
-
-    let response =
-        request_with_options(&router, Method::GET, "/api/mobile/events", &[], None).await;
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
 #[tokio::test]
 async fn grpc_health_allows_no_mobile_auth() {
     let fixture = IsolatedCodexFixture::new();
@@ -3410,19 +3112,17 @@ async fn grpc_health_allows_no_mobile_auth() {
 }
 
 #[tokio::test]
-async fn grpc_session_requires_mobile_auth() {
+async fn grpc_session_allows_loopback_without_mobile_auth() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     let (_server, mut client) = spawn_grpc_client(control_plane).await;
     let request = tonic::Request::new(tokio_stream::iter(Vec::<ClientFrame>::new()));
 
-    let error = client
+    client
         .session(request)
         .await
-        .expect_err("Session stream should require auth");
-
-    assert_eq!(error.code(), tonic::Code::Unauthenticated);
+        .expect("loopback Session stream should not require mobile auth");
 }
 
 #[tokio::test]
@@ -3496,34 +3196,25 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
-    let service = control_plane.mobile_session_service();
-    service
-        .set_session_preset("thread-main", Some("await-reply"))
-        .expect("set mode");
     record_thread_active(&control_plane, "thread-main");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
-    let _snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/prompt",
-        serde_json::json!({ "prompt": "Keep going from phone." }),
-        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
-        None,
+    prime_state_mini_cache(&control_plane);
+    let ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "thread-main".to_owned(),
+            prompt: "Keep going from phone.".to_owned(),
+            assistant_surface: String::new(),
+            client_mutation_id: "codex-mobile-prompt-resumed-event".to_owned(),
+        }),
     )
     .await;
+    assert!(ack.accepted);
 
-    let events = control_plane
-        .store()
-        .mobile_events_since(0, 10)
-        .expect("mobile events");
-    assert!(
-        events
-            .iter()
-            .any(|event| event.event_type == MobileEventKind::SessionChanged
-                && event.detail.as_deref() == Some("prompt-resumed"))
-    );
+    wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-resumed").await;
 }
 
 #[tokio::test]
@@ -3544,35 +3235,29 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
-    let queued = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
-        serde_json::json!({ "prompt": "Keep going from phone." }),
-        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
-        None,
+    seed_replyable_session_mini_for_thread(
+        &control_plane,
+        "devin:devin-cli:brindle-cadet",
+        "devin",
+        "devin-local-hook-mini",
+        4,
+    );
+    let ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "devin:devin-cli:brindle-cadet".to_owned(),
+            prompt: "Keep going from phone.".to_owned(),
+            assistant_surface: String::new(),
+            client_mutation_id: "devin-mobile-prompt-queue".to_owned(),
+        }),
     )
     .await;
-    assert!(
-        queued["sessions"]
-            .as_array()
-            .expect("sessions")
-            .iter()
-            .any(|session| session["id"] == "devin:devin-cli:brindle-cadet")
-    );
+    assert!(ack.accepted);
+    assert_eq!(ack.entity_id, "devin:devin-cli:brindle-cadet");
 
-    let events = control_plane
-        .store()
-        .mobile_events_since(0, 10)
-        .expect("mobile events");
-    let queued_event = events
-        .iter()
-        .find(|event| {
-            event.event_type == MobileEventKind::PromptQueued
-                && event.thread_id.as_deref() == Some("devin:devin-cli:brindle-cadet")
-        })
-        .expect("prompt should queue");
-    let queued_prompt_id = queued_event.prompt_id.as_deref().expect("queued prompt id");
+    let queued_prompt_id =
+        wait_for_prompt_queued(&control_plane, "devin:devin-cli:brindle-cadet").await;
 
     let outcome = control_plane
         .mobile_session_service()
@@ -3589,12 +3274,12 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
     assert_eq!(decision.reason, "Keep going from phone.");
     assert_eq!(
         outcome.delivered_prompt_id.as_deref(),
-        Some(queued_prompt_id)
+        Some(queued_prompt_id.as_str())
     );
 }
 
 #[tokio::test]
-async fn devin_mobile_prompt_rejects_stopped_local_devin_hook_delivery() {
+async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_session();
@@ -3607,37 +3292,27 @@ async fn devin_mobile_prompt_rejects_stopped_local_devin_hook_delivery() {
         .mobile_session_service()
         .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
         .expect("set Devin session mode");
-    let router = build_router(control_plane);
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
 
-    let body = serde_json::to_vec(&serde_json::json!({
-        "prompt": "Keep going from phone."
-    }))
-    .expect("json body");
-    let response = request_with_body_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/devin:devin-cli:brindle-cadet/prompt",
-        body,
-        &[
-            (axum::http::header::AUTHORIZATION, authorization.as_str()),
-            (axum::http::header::CONTENT_TYPE, "application/json"),
-        ],
-        None,
+    prime_state_mini_cache(&control_plane);
+    let ack = submit_grpc_session_command(
+        control_plane,
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "devin:devin-cli:brindle-cadet".to_owned(),
+            prompt: "Keep going from phone.".to_owned(),
+            assistant_surface: String::new(),
+            client_mutation_id: "devin-mobile-prompt-stopped".to_owned(),
+        }),
     )
     .await;
 
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("body")
-        .to_bytes();
-    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-    assert_eq!(
-        payload["message"],
-        "This Devin Local session must be running before Looper can deliver prompts through hooks."
+    assert!(!ack.accepted);
+    assert_eq!(ack.error_code, "failed_precondition");
+    assert!(
+        ack.reject_reason
+            .contains("prompt delivery action cache is cold")
     );
 }
 
@@ -3774,28 +3449,6 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
         archived["sessions"]["thread-main"]["archived"],
         serde_json::json!(true)
     );
-
-    record_thread_active(&control_plane, "thread-child");
-    let prompted = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/session-prompts",
-        serde_json::json!({
-            "threadIds": ["thread-child"],
-            "preset": "max-turns-1",
-            "prompt": "Continue from the cockpit."
-        }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(prompted["prompted"], 1);
-    assert_eq!(prompted["threadIds"][0], "thread-child");
-    assert_eq!(
-        prompted["promptIds"].as_array().expect("prompt ids").len(),
-        0
-    );
-    assert_eq!(prompted["resumedThreadIds"][0], "thread-child");
 
     let deleted_route = request_json_with_options(
         &router,
@@ -4337,6 +3990,104 @@ async fn spawn_grpc_client(
         .await
         .expect("connect gRPC client");
     (server, client)
+}
+
+async fn submit_grpc_session_command(
+    control_plane: ControlPlane,
+    authorization: &str,
+    command: command::Command,
+) -> agent_control_plane::grpc::proto::CommandAck {
+    let (_server, mut client) = spawn_grpc_client(control_plane).await;
+    let command_frame = ClientFrame {
+        frame: Some(client_frame::Frame::Command(Command {
+            command: Some(command),
+        })),
+    };
+    let mut request = tonic::Request::new(tokio_stream::iter(vec![command_frame]));
+    request.metadata_mut().insert(
+        "authorization",
+        authorization.parse().expect("authorization metadata"),
+    );
+    let mut stream = client
+        .session(request)
+        .await
+        .expect("Session command stream")
+        .into_inner();
+    let frame = stream
+        .message()
+        .await
+        .expect("Session command frame result")
+        .expect("Session command ACK frame");
+
+    match frame.frame {
+        Some(server_frame::Frame::Ack(ack)) => ack,
+        other => panic!("expected Session ACK frame, got {other:?}"),
+    }
+}
+
+async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &str, detail: &str) {
+    for _ in 0..80 {
+        let found = control_plane
+            .store()
+            .mobile_events_since(0, 1_000)
+            .expect("mobile events")
+            .iter()
+            .any(|event| {
+                event.thread_id.as_deref() == Some(thread_id)
+                    && event.detail.as_deref() == Some(detail)
+            });
+        if found {
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for {detail} mobile event for {thread_id}");
+}
+
+async fn wait_for_prompt_queued(control_plane: &ControlPlane, thread_id: &str) -> String {
+    for _ in 0..80 {
+        if let Some(event) = control_plane
+            .store()
+            .mobile_events_since(0, 1_000)
+            .expect("mobile events")
+            .iter()
+            .find(|event| {
+                event.thread_id.as_deref() == Some(thread_id)
+                    && event.event_type == MobileEventKind::PromptQueued
+            })
+        {
+            return event.prompt_id.clone().expect("queued prompt id");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for prompt queued event for {thread_id}");
+}
+
+fn seed_replyable_session_mini_for_thread(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: &str,
+    revision: &str,
+    seq: i64,
+) {
+    control_plane
+        .store()
+        .replace_mobile_session_minis(
+            vec![MobileSessionMiniProjectionInput {
+                session_id: thread_id.to_owned(),
+                assistant_surface: assistant_surface.to_owned(),
+                body_json: serde_json::json!({
+                    "sessionId": thread_id,
+                    "assistantSurface": assistant_surface,
+                    "effectiveMode": "await-reply",
+                    "replyable": true,
+                    "canSendPrompt": true,
+                }),
+            }],
+            seq,
+            revision,
+        )
+        .expect("seed replyable session mini");
 }
 
 struct IsolatedCodexFixture {

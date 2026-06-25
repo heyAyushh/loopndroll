@@ -1,5 +1,6 @@
 import Foundation
 import LooperCompanionCore
+import LooperRealtime
 
 private let mockCompanionBaseURL = "preview://looper"
 private let millisecondsPerSecond: TimeInterval = 1_000
@@ -257,12 +258,7 @@ actor MockCompanionStore {
 struct MockCompanionService: CompanionService {
     private let store = MockCompanionStore()
 
-    func makeMobileEventStreamClient() -> MobileEventStreamClient {
-        MobileEventStreamClient(
-            baseURLs: [URL(string: mockCompanionBaseURL)!],
-            bearerToken: nil
-        )
-    }
+    func prepareRealtimeConnection() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
@@ -286,8 +282,12 @@ struct MockCompanionService: CompanionService {
         await store.sessionDetail(id: id, surface: surface)
     }
 
-    func setSessionMode(id: String, preset: SessionMode?) async throws -> MobileSnapshot {
-        await store.setMode(id: id, preset: preset)
+    func setSessionMode(
+        id: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    ) async throws -> CompanionSessionModeResult {
+        .snapshot(await store.setMode(id: id, preset: preset), clientMutationID: clientMutationID)
     }
 
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
@@ -301,9 +301,32 @@ struct MockCompanionService: CompanionService {
     func sendSessionPrompt(
         id: String,
         prompt: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        await store.sendPrompt(id: id, prompt: prompt)
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID: String
+    ) async throws -> CompanionPromptSendResult {
+        .snapshot(await store.sendPrompt(id: id, prompt: prompt), clientMutationID: clientMutationID)
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID: String
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        _ = await store.sendPrompt(id: sessionID, prompt: prompt)
+        return LooperRealtimeNotificationReplyResponse(
+            accepted: true,
+            dispatchKind: "mock",
+            promptID: nil,
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: clientMutationID,
+            ackSeq: 0,
+            entityID: sessionID,
+            revision: "",
+            idempotentReplay: false,
+            notificationID: notificationID
+        )
     }
 
     func muteSession(id: String) async throws -> MobileSnapshot {

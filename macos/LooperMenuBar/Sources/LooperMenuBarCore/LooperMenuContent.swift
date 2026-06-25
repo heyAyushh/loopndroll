@@ -11,6 +11,38 @@ public struct LooperMenuRow: Equatable, Sendable {
     public let subtitle: String
     public let archived: Bool
     public let openTarget: LooperThreadOpenTarget
+    public let effectiveMode: String?
+    public let replyable: Bool?
+    public let blockedGoalTitle: String?
+    public let queueCount: Int?
+    public let lifecycle: String?
+    public let notificationTitle: String?
+
+    public init(
+        threadId: String,
+        title: String,
+        subtitle: String,
+        archived: Bool,
+        openTarget: LooperThreadOpenTarget,
+        effectiveMode: String? = nil,
+        replyable: Bool? = nil,
+        blockedGoalTitle: String? = nil,
+        queueCount: Int? = nil,
+        lifecycle: String? = nil,
+        notificationTitle: String? = nil
+    ) {
+        self.threadId = threadId
+        self.title = title
+        self.subtitle = subtitle
+        self.archived = archived
+        self.openTarget = openTarget
+        self.effectiveMode = effectiveMode
+        self.replyable = replyable
+        self.blockedGoalTitle = blockedGoalTitle
+        self.queueCount = queueCount
+        self.lifecycle = lifecycle
+        self.notificationTitle = notificationTitle
+    }
 }
 
 public struct LooperAcpTargetRow: Equatable, Sendable {
@@ -44,6 +76,21 @@ public enum LooperMenuContent {
             .map(makeThreadRow)
         let archivedRows = threads
             .filter(\.archived)
+            .map(makeThreadRow)
+
+        return [
+            activeRows.isEmpty ? nil : LooperMenuSection(title: "Active Chats", rows: activeRows),
+            archivedRows.isEmpty ? nil : LooperMenuSection(title: "Archived Chats", rows: archivedRows),
+        ]
+        .compactMap { $0 }
+    }
+
+    public static func buildThreadSections(from minis: [MenuBarSessionMini]) -> [LooperMenuSection] {
+        let activeRows = minis
+            .filter { !$0.isArchived }
+            .map(makeThreadRow)
+        let archivedRows = minis
+            .filter(\.isArchived)
             .map(makeThreadRow)
 
         return [
@@ -94,6 +141,26 @@ public enum LooperMenuContent {
                 workingDirectory: thread.cwd,
                 agentPath: thread.capabilities.agentPath
             )
+        )
+    }
+
+    private static func makeThreadRow(_ mini: MenuBarSessionMini) -> LooperMenuRow {
+        LooperMenuRow(
+            threadId: mini.sessionID,
+            title: mini.title,
+            subtitle: subtitleText(for: mini),
+            archived: mini.isArchived,
+            openTarget: LooperThreadOpenTarget(
+                threadId: mini.sessionID,
+                transcriptPath: nil,
+                workingDirectory: mini.projectPath
+            ),
+            effectiveMode: mini.effectiveMode,
+            replyable: mini.replyable,
+            blockedGoalTitle: mini.blockedGoal?.title,
+            queueCount: mini.queueCount,
+            lifecycle: mini.lifecycle,
+            notificationTitle: notificationText(for: mini.notificationStatus)
         )
     }
 
@@ -148,6 +215,90 @@ public enum LooperMenuContent {
         )
         .joined(separator: " - ")
         return thread.archived ? "Archived - \(subtitle)" : subtitle
+    }
+
+    private static func subtitleText(for mini: MenuBarSessionMini) -> String {
+        let subtitle = [
+            modeText(for: mini.effectiveMode),
+            mini.replyable ? "Reply ready" : mini.promptUnavailableReason,
+            blockedGoalText(for: mini.blockedGoal),
+            queueText(for: mini.queueCount),
+            lifecycleText(for: mini.lifecycle),
+            notificationText(for: mini.notificationStatus),
+            mini.projectName,
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: " - ")
+        let fallback = subtitle.isEmpty ? mini.assistantSurface : subtitle
+        return mini.isArchived ? "Archived - \(fallback)" : fallback
+    }
+
+    private static func modeText(for mode: String?) -> String? {
+        guard let mode else {
+            return nil
+        }
+
+        switch mode {
+        case "infinite":
+            return "Infinite"
+        case "await-reply":
+            return "Await Reply"
+        case "completion-checks":
+            return "Completion Checks"
+        case "max-turns-1":
+            return "Max Turns 1"
+        case "max-turns-2":
+            return "Max Turns 2"
+        case "max-turns-3":
+            return "Max Turns 3"
+        default:
+            return mode
+        }
+    }
+
+    private static func blockedGoalText(for goal: MenuBarSessionMiniBlockedGoal?) -> String? {
+        guard let goal else {
+            return nil
+        }
+        let title = goal.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty {
+            return "Blocked: \(title)"
+        }
+        let reason = goal.reason ?? goal.status
+        return reason.map { "Blocked: \($0)" }
+    }
+
+    private static func queueText(for queueCount: Int) -> String? {
+        guard queueCount > 0 else {
+            return nil
+        }
+        return "Queue \(queueCount)"
+    }
+
+    private static func lifecycleText(for lifecycle: String?) -> String? {
+        guard let lifecycle = lifecycle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !lifecycle.isEmpty
+        else {
+            return nil
+        }
+        return "State \(lifecycle)"
+    }
+
+    private static func notificationText(
+        for status: MenuBarSessionMiniNotificationStatus?
+    ) -> String? {
+        guard let status else {
+            return nil
+        }
+        guard status.enabled else {
+            return "Notify off"
+        }
+        guard !status.targetIds.isEmpty else {
+            return "Notify ready"
+        }
+        let targets = status.targetIds.joined(separator: "/")
+        return "Notify \(targets)"
     }
 
     private static func sourceLabels(for thread: DesktopThreadSummary) -> [String] {

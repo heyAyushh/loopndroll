@@ -109,7 +109,7 @@ pub fn snapshot_revision_changed_event(revision: String) -> MobileEvent {
     }
 }
 
-pub fn mobile_event_sse_name(kind: MobileEventKind) -> &'static str {
+pub fn mobile_event_wire_name(kind: MobileEventKind) -> &'static str {
     match kind {
         MobileEventKind::SessionChanged => "session.changed",
         MobileEventKind::PromptQueued => "prompt.queued",

@@ -10,12 +10,54 @@ private enum ControlTapMetrics {
     static let textViewTopFocusInset: CGFloat = 24
     static let keyboardDismissXFraction: CGFloat = 0.5
     static let keyboardDismissYFraction: CGFloat = 0.12
+    static let keyboardFocusTimeout: TimeInterval = 0.5
+    static let keyboardDismissSwipeLimit = 3
+    static let notificationDeliveryTimeout: TimeInterval = 8
     static let promptQueueTimeout: TimeInterval = 12
     static let mutationControlTimeout: TimeInterval = 15
 }
 
+private enum LiveLatencyMetrics {
+    static let baseURLsEnvironmentKey = "LOOPER_LIVE_LATENCY_BASE_URLS"
+    static let bearerTokenEnvironmentKey = "LOOPER_LIVE_LATENCY_BEARER_TOKEN"
+    static let mobileSessionEnvironmentKey = "LOOPER_LIVE_LATENCY_MOBILE_SESSION"
+    static let outputEnvironmentKey = "LOOPER_LIVE_LATENCY_OUTPUT"
+    static let sessionTitleEnvironmentKey = "LOOPER_LIVE_LATENCY_SESSION_TITLE"
+    static let appBaseURLsEnvironmentKey = "LOOPER_UI_TEST_API_BASE_URLS"
+    static let appBearerTokenEnvironmentKey = "LOOPER_UI_TEST_API_BEARER_TOKEN"
+    static let appMobileSessionEnvironmentKey = "LOOPER_UI_TEST_MOBILE_SESSION"
+    static let uiTestEnvironmentKey = "LOOPER_UI_TEST"
+    static let defaultSessionTitle = "Looper latency fixture"
+    static let promptText = "Live latency prompt"
+    static let awaitReplyModeIdentifier = "session-detail.mode.await-reply"
+    static let infiniteModeIdentifier = "session-detail.mode.infinite"
+    static let millisecondsPerSecond = 1_000.0
+    static let connectionTimeout: TimeInterval = 8
+    static let detailTimeout: TimeInterval = 6
+    static let mutationTimeout: TimeInterval = 6
+    static let promptAckTimeout: TimeInterval = 6
+    static let pollInterval: TimeInterval = 0.05
+}
+
+private struct LiveLatencyConfiguration {
+    let baseURLs: String
+    let bearerToken: String
+    let mobileSession: String
+    let outputPath: String?
+    let sessionTitle: String
+}
+
+private struct LiveLatencyResult: Encodable {
+    let connectMilliseconds: Int
+    let modeSwitchMilliseconds: Int
+    let promptAckMilliseconds: Int
+    let totalMilliseconds: Int
+    let sessionTitle: String
+}
+
 private enum ControlFlowLaunchArgument {
     static let openOrbScannerOnLaunch = "--open-orb-scanner-on-launch"
+    static let sendTestAlertOnLaunch = "--send-test-alert-on-launch"
 }
 
 private enum SystemAppBundleID {
@@ -87,6 +129,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
         XCTAssertTrue(waitForText("Sessions"))
         XCTAssertTrue(waitForText("Make an iOS app for looper"))
+        XCTAssertTrue(waitForText("Goal blocked"))
         recordSurfaceEvidence("ios-sessions-list")
 
         for surfaceID in ["claude-code", "zed", "devin", "grok-build", "codex"] {
@@ -107,16 +150,17 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
         app.staticTexts["Make an iOS app for looper"].tap()
         XCTAssertTrue(waitForButton("Use with Siri"))
+        XCTAssertTrue(waitForText("Goal blocked"))
         recordSurfaceEvidence("ios-session-detail")
 
+        let promptEditor = app.textViews["session-detail.prompt-editor"].firstMatch
+        scrollToElementFrame(promptEditor)
+        focusTextView(promptEditor)
         let firstPromptSuggestion = app.buttons["session-detail.prompt-suggestion.0"].firstMatch
-        scrollToElement(firstPromptSuggestion)
+        XCTAssertTrue(firstPromptSuggestion.waitForExistence(timeout: 2))
         firstPromptSuggestion.tap()
-        typeText(
-            "UI test prompt",
-            inTextView: "session-detail.prompt-editor",
-            keyboardDoneIdentifier: "session-detail.keyboard-done"
-        )
+        focusTextView(promptEditor)
+        promptEditor.typeText(" UI test prompt")
         dismissKeyboard(identifier: "session-detail.keyboard-done")
         scrollToElement(app.buttons["session-detail.send-prompt"])
         let sendPromptButton = app.buttons["session-detail.send-prompt"].firstMatch
@@ -209,8 +253,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
         typeText(
             " UI test",
-            inTextView: "settings.default-prompt-editor",
-            keyboardDoneIdentifier: "settings.keyboard-done"
+            inTextView: "settings.default-prompt-editor"
         )
         dismissKeyboard(identifier: "settings.keyboard-done")
         XCTAssertTrue(app.buttons["settings.save"].isEnabled)
@@ -259,7 +302,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         launchApp(extraArguments: ["--looper-seed-recent-searches"])
 
         XCTAssertTrue(waitForText("Sessions"))
-        app.buttons["Search"].tap()
+        XCTAssertTrue(tapBottomSearchTab())
         XCTAssertTrue(waitForText("Search"))
         recordSurfaceEvidence("ios-search")
 
@@ -320,6 +363,21 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         XCTAssertTrue(waitForText("Search"))
     }
 
+    func testLaunchVerificationAlertReachesSimulatorNotifications() throws {
+        launchApp(extraArguments: [ControlFlowLaunchArgument.sendTestAlertOnLaunch])
+        handleNotificationPromptIfNeeded()
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCTAssertTrue(
+            waitForSpringboardText(
+                "Local alerts enabled",
+                in: springboard,
+                timeout: ControlTapMetrics.notificationDeliveryTimeout
+            )
+        )
+        recordSurfaceEvidence("ios-local-notification-delivered")
+    }
+
     func testSiriAppSurfaceCanOpenFromSimulator() throws {
         launchApp()
         XCTAssertTrue(waitForText("Sessions"))
@@ -334,6 +392,65 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
         siriIcon.tap()
         XCTAssertTrue(waitForSiriSurface(springboard: springboard))
+    }
+
+    func testLiveRealtimeLatencyWorkflow() throws {
+        let configuration = try liveLatencyConfiguration()
+
+        launchLiveLatencyApp(configuration)
+        let connectStartedAt = Date()
+        XCTAssertTrue(
+            pollForText(
+                configuration.sessionTitle,
+                timeout: LiveLatencyMetrics.connectionTimeout,
+                allowsPartial: true
+            )
+        )
+        let connectMilliseconds = elapsedMilliseconds(since: connectStartedAt)
+        XCTAssertTrue(pollForText("Sessions", timeout: 1))
+
+        app.staticTexts[configuration.sessionTitle].firstMatch.tap()
+        XCTAssertTrue(pollForButton("Use with Siri", timeout: LiveLatencyMetrics.detailTimeout))
+
+        let modeControl = app.buttons[LiveLatencyMetrics.awaitReplyModeIdentifier].firstMatch
+        scrollToElement(modeControl)
+        let modeStartedAt = Date()
+        modeControl.tap()
+        let modeReadinessControl = app.buttons[LiveLatencyMetrics.infiniteModeIdentifier].firstMatch
+        XCTAssertTrue(
+            pollForEnabledButton(
+                modeReadinessControl,
+                timeout: LiveLatencyMetrics.mutationTimeout
+            )
+        )
+        let modeSwitchMilliseconds = elapsedMilliseconds(since: modeStartedAt)
+
+        typeText(
+            LiveLatencyMetrics.promptText,
+            inTextView: "session-detail.prompt-editor"
+        )
+        dismissKeyboard(identifier: "session-detail.keyboard-done")
+        let sendPromptButton = app.buttons["session-detail.send-prompt"].firstMatch
+
+        scrollToElement(sendPromptButton)
+        XCTAssertTrue(waitForEnabledButton(sendPromptButton, timeout: LiveLatencyMetrics.mutationTimeout))
+
+        let promptStartedAt = Date()
+        sendPromptButton.tap()
+        XCTAssertTrue(
+            pollForPromptEditorCleared(timeout: LiveLatencyMetrics.promptAckTimeout)
+        )
+        let promptAckMilliseconds = elapsedMilliseconds(since: promptStartedAt)
+        let totalMilliseconds = connectMilliseconds + modeSwitchMilliseconds + promptAckMilliseconds
+
+        let result = LiveLatencyResult(
+            connectMilliseconds: connectMilliseconds,
+            modeSwitchMilliseconds: modeSwitchMilliseconds,
+            promptAckMilliseconds: promptAckMilliseconds,
+            totalMilliseconds: totalMilliseconds,
+            sessionTitle: configuration.sessionTitle
+        )
+        recordLiveLatencyResult(result, outputPath: configuration.outputPath)
     }
 
     private func launchApp(showOnboarding: Bool = false, extraArguments: [String] = []) {
@@ -351,11 +468,91 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         app.launch()
     }
 
+    private func launchLiveLatencyApp(_ configuration: LiveLatencyConfiguration) {
+        app = XCUIApplication()
+        app.terminate()
+        app.launchArguments = [
+            "--looper-reset-ui-test-state"
+        ]
+        app.launchEnvironment[LiveLatencyMetrics.uiTestEnvironmentKey] = "1"
+        app.launchEnvironment[LiveLatencyMetrics.appBaseURLsEnvironmentKey] = configuration.baseURLs
+        app.launchEnvironment[LiveLatencyMetrics.appBearerTokenEnvironmentKey] = configuration.bearerToken
+        app.launchEnvironment[LiveLatencyMetrics.appMobileSessionEnvironmentKey] = configuration.mobileSession
+        app.launch()
+    }
+
+    private func liveLatencyConfiguration() throws -> LiveLatencyConfiguration {
+        let environment = ProcessInfo.processInfo.environment
+        guard let baseURLs = nonEmptyEnvironmentValue(
+            LiveLatencyMetrics.baseURLsEnvironmentKey,
+            environment: environment
+        ) else {
+            throw XCTSkip("Live mobile latency check requires isolated server base URLs.")
+        }
+        guard let bearerToken = nonEmptyEnvironmentValue(
+            LiveLatencyMetrics.bearerTokenEnvironmentKey,
+            environment: environment
+        ) else {
+            throw XCTSkip("Live mobile latency check requires a pairing bearer token.")
+        }
+        guard let mobileSession = nonEmptyEnvironmentValue(
+            LiveLatencyMetrics.mobileSessionEnvironmentKey,
+            environment: environment
+        ) else {
+            throw XCTSkip("Live mobile latency check requires a passkey mobile session.")
+        }
+
+        return LiveLatencyConfiguration(
+            baseURLs: baseURLs,
+            bearerToken: bearerToken,
+            mobileSession: mobileSession,
+            outputPath: nonEmptyEnvironmentValue(
+                LiveLatencyMetrics.outputEnvironmentKey,
+                environment: environment
+            ),
+            sessionTitle: nonEmptyEnvironmentValue(
+                LiveLatencyMetrics.sessionTitleEnvironmentKey,
+                environment: environment
+            ) ?? LiveLatencyMetrics.defaultSessionTitle
+        )
+    }
+
+    private func nonEmptyEnvironmentValue(_ key: String, environment: [String: String]) -> String? {
+        let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
+    }
+
     private func openPrimarySessionDetail() {
         XCTAssertTrue(waitForText("Sessions"))
         XCTAssertTrue(waitForText("Make an iOS app for looper"))
         app.staticTexts["Make an iOS app for looper"].tap()
         XCTAssertTrue(waitForButton("Use with Siri"))
+    }
+
+    private func recordLiveLatencyResult(_ result: LiveLatencyResult, outputPath: String?) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = (try? encoder.encode(result)) ?? Data()
+        if let outputPath, !data.isEmpty {
+            try? data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        }
+
+        let payload = String(data: data, encoding: .utf8) ?? "{}"
+        let attachment = XCTAttachment(string: payload)
+        attachment.name = "mobile-realtime-latency.json"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print(
+            "MOBILE_REALTIME_LATENCY " +
+                "connectMs=\(result.connectMilliseconds) " +
+                "modeSwitchMs=\(result.modeSwitchMilliseconds) " +
+                "promptAckMs=\(result.promptAckMilliseconds) " +
+                "totalMs=\(result.totalMilliseconds)"
+        )
+    }
+
+    private func elapsedMilliseconds(since startDate: Date) -> Int {
+        Int((Date().timeIntervalSince(startDate) * LiveLatencyMetrics.millisecondsPerSecond).rounded())
     }
 
     private func recordSurfaceEvidence(_ name: String) {
@@ -419,6 +616,26 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         }
 
         return false
+    }
+
+    private func waitForSpringboardText(
+        _ text: String,
+        in springboard: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let textPredicate = NSPredicate(format: "label CONTAINS[c] %@", text)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if springboard.descendants(matching: .any).matching(textPredicate).firstMatch.exists ||
+                app.descendants(matching: .any).matching(textPredicate).firstMatch.exists {
+                return true
+            }
+
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: ControlTapMetrics.systemAppPollInterval))
+        }
+
+        return springboard.descendants(matching: .any).matching(textPredicate).firstMatch.exists ||
+            app.descendants(matching: .any).matching(textPredicate).firstMatch.exists
     }
 
     private func systemSurfaceShowsSiri(_ application: XCUIApplication) -> Bool {
@@ -587,19 +804,60 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
     private func clearSearchField() {
         let searchField = app.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 4))
+        if searchFieldIsEmpty(searchField) {
+            return
+        }
+
+        if resetSearchInteraction() {
+            return
+        }
+
         searchField.tap()
 
         let clearButton = searchField.buttons.firstMatch
         if clearButton.waitForExistence(timeout: 1) {
             clearButton.tap()
-            return
+            if searchFieldIsEmpty(searchField) {
+                return
+            }
         }
 
         searchField.press(forDuration: 0.5)
         if app.menuItems["Select All"].waitForExistence(timeout: 1) {
             app.menuItems["Select All"].tap()
             searchField.typeText(XCUIKeyboardKey.delete.rawValue)
+            if searchFieldIsEmpty(searchField) {
+                return
+            }
         }
+
+        searchField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 32))
+        XCTAssertTrue(searchFieldIsEmpty(searchField), "Search field did not clear before next query")
+    }
+
+    private func resetSearchInteraction() -> Bool {
+        let closeButton = app.buttons["Close"].firstMatch
+        guard closeButton.waitForExistence(timeout: 1) else {
+            return false
+        }
+
+        closeButton.tap()
+        guard tapBottomSearchTab() else { return false }
+        let searchField = app.searchFields.firstMatch
+        return searchField.waitForExistence(timeout: 6) && searchFieldIsEmpty(searchField)
+    }
+
+    private func tapBottomSearchTab() -> Bool {
+        let predicate = NSPredicate(format: "label ==[c] %@ OR identifier ==[c] %@", "Search", "Search")
+        let buttons = app.buttons.matching(predicate).allElementsBoundByIndex
+        guard let searchTab = buttons.first(where: { button in
+            isVisibleFrame(button.frame) && button.frame.midY > app.frame.midY
+        }) else {
+            return false
+        }
+
+        tapCenterWithoutScrolling(searchTab)
+        return true
     }
 
     private func searchFieldContains(_ expectedText: String) -> Bool {
@@ -612,57 +870,32 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         return value.localizedCaseInsensitiveContains(expectedText)
     }
 
+    private func searchFieldIsEmpty(_ searchField: XCUIElement) -> Bool {
+        let value = String(describing: searchField.value ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty || value == "Sessions, settings, actions"
+    }
+
     private func tapSearchScope(_ rawValue: String) {
-        if tapSearchScopeButton(rawValue) {
+        let title = searchScopeTitle(rawValue)
+        if tapNativeSearchScopeButton(title) {
             return
         }
 
-        let scopeScroller = app.scrollViews["search.scope.scroller"].firstMatch
-        if scopeScroller.waitForExistence(timeout: 1) {
-            for _ in 0..<4 {
-                scopeScroller.swipeLeft()
-                if tapSearchScopeButton(rawValue) {
-                    return
-                }
-            }
-
-            for _ in 0..<4 {
-                scopeScroller.swipeRight()
-                if tapSearchScopeButton(rawValue) {
-                    return
-                }
-            }
-        }
-
-        let stableScopeMenu = app.buttons["search.scope.menu"].firstMatch
-        let scopeMenu = stableScopeMenu.waitForExistence(timeout: 1) ?
-            stableScopeMenu :
-            app.buttons["Filter search scope"].firstMatch
-        XCTAssertTrue(scopeMenu.waitForExistence(timeout: ControlTapMetrics.scopeMenuTimeout))
-        scopeMenu.tap()
-
-        let title = searchScopeTitle(rawValue)
-        let menuItem = app.buttons[title].firstMatch
-        XCTAssertTrue(menuItem.waitForExistence(timeout: ControlTapMetrics.scopeMenuTimeout))
-        menuItem.tap()
+        XCTFail("Could not tap native search scope: \(title)")
     }
 
-    private func tapSearchScopeButton(_ rawValue: String) -> Bool {
-        let scopeButton = app.buttons["search.scope.\(rawValue)"].firstMatch
-        if scopeButton.waitForExistence(timeout: 1), scopeButton.isHittable {
-            scopeButton.tap()
-            return true
+    private func tapNativeSearchScopeButton(_ title: String) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", title)
+        let buttons = app.buttons.matching(predicate).allElementsBoundByIndex
+        guard let scopeButton = buttons.first(where: { button in
+            isVisibleFrame(button.frame) && button.frame.midY < app.frame.midY
+        }) else {
+            return false
         }
 
-        let scope = app.descendants(matching: .any)
-            .matching(identifier: "search.scope.\(rawValue)")
-            .firstMatch
-        if scope.waitForExistence(timeout: 1), isVisibleFrame(scope.frame) {
-            tapCenter(of: scope)
-            return true
-        }
-
-        return false
+        scopeButton.tap()
+        return true
     }
 
     private func searchScopeTitle(_ rawValue: String) -> String {
@@ -724,22 +957,42 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
             return
         }
 
+        dismissKeyboardWithInteractiveScroll()
+        if !app.keyboards.firstMatch.exists {
+            return
+        }
+
         let identifiedDoneButton = app.buttons[identifier].firstMatch
-        if identifiedDoneButton.waitForExistence(timeout: 1), tapIfFrameIsInsideApp(identifiedDoneButton) {
+        if identifiedDoneButton.waitForExistence(timeout: ControlTapMetrics.keyboardFocusTimeout),
+           tapIfFrameIsInsideApp(identifiedDoneButton)
+        {
             return
         }
 
         let keyboardDoneButton = app.keyboards.buttons["Done"].firstMatch
-        if keyboardDoneButton.waitForExistence(timeout: 1), tapIfFrameIsInsideApp(keyboardDoneButton) {
+        if keyboardDoneButton.waitForExistence(timeout: ControlTapMetrics.keyboardFocusTimeout),
+           tapIfFrameIsInsideApp(keyboardDoneButton)
+        {
             return
         }
 
         let keyboardDoneKey = app.keyboards.keys["Done"].firstMatch
-        if keyboardDoneKey.waitForExistence(timeout: 1), tapIfFrameIsInsideApp(keyboardDoneKey) {
+        if keyboardDoneKey.waitForExistence(timeout: ControlTapMetrics.keyboardFocusTimeout),
+           tapIfFrameIsInsideApp(keyboardDoneKey)
+        {
             return
         }
 
         tapKeyboardDismissSafeArea()
+    }
+
+    private func dismissKeyboardWithInteractiveScroll() {
+        for _ in 0..<ControlTapMetrics.keyboardDismissSwipeLimit {
+            guard app.keyboards.firstMatch.exists else {
+                return
+            }
+            app.swipeDown()
+        }
     }
 
     private func tapKeyboardDismissSafeArea() {
@@ -772,16 +1025,15 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
     private func typeText(
         _ text: String,
-        inTextView identifier: String,
-        keyboardDoneIdentifier: String
+        inTextView identifier: String
     ) {
         let textView = app.textViews[identifier].firstMatch
         scrollToElementFrame(textView)
-        focusTextView(textView, keyboardDoneIdentifier: keyboardDoneIdentifier)
+        focusTextView(textView)
         textView.typeText(text)
     }
 
-    private func focusTextView(_ textView: XCUIElement, keyboardDoneIdentifier: String) {
+    private func focusTextView(_ textView: XCUIElement) {
         let frame = textView.frame
         let leadingTopCoordinate = app.coordinate(withNormalizedOffset: .zero).withOffset(
             CGVector(
@@ -791,15 +1043,66 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         )
         leadingTopCoordinate.tap()
 
-        if app.buttons[keyboardDoneIdentifier].firstMatch.waitForExistence(timeout: 2) {
+        if app.keyboards.firstMatch.waitForExistence(timeout: ControlTapMetrics.keyboardFocusTimeout) {
             return
         }
 
         textView.tap()
-        XCTAssertTrue(
-            app.buttons[keyboardDoneIdentifier].firstMatch.waitForExistence(timeout: 2),
-            "Text view did not expose the keyboard toolbar: \(textView)"
-        )
+        _ = app.keyboards.firstMatch.waitForExistence(timeout: ControlTapMetrics.keyboardFocusTimeout)
+    }
+
+    private func pollForEnabledButton(_ label: String, timeout: TimeInterval) -> Bool {
+        let button = app.buttons[label].firstMatch
+        return pollForEnabledButton(button, timeout: timeout)
+    }
+
+    private func pollForEnabledButton(_ button: XCUIElement, timeout: TimeInterval) -> Bool {
+        return pollUntil(timeout: timeout) {
+            button.exists && button.isEnabled
+        }
+    }
+
+    private func pollForButton(_ label: String, timeout: TimeInterval) -> Bool {
+        let button = app.buttons[label].firstMatch
+        return pollUntil(timeout: timeout) {
+            button.exists
+        }
+    }
+
+    private func pollForText(
+        _ text: String,
+        timeout: TimeInterval,
+        allowsPartial: Bool = false
+    ) -> Bool {
+        let predicate: NSPredicate
+        if allowsPartial {
+            predicate = NSPredicate(format: "label CONTAINS[c] %@", text)
+        } else {
+            predicate = NSPredicate(format: "label == %@", text)
+        }
+        let element = app.descendants(matching: .any).matching(predicate).firstMatch
+        return pollUntil(timeout: timeout) {
+            element.exists
+        }
+    }
+
+    private func pollForPromptEditorCleared(timeout: TimeInterval) -> Bool {
+        let textView = app.textViews["session-detail.prompt-editor"].firstMatch
+        return pollUntil(timeout: timeout) {
+            !String(describing: textView.value ?? "").contains(LiveLatencyMetrics.promptText)
+        }
+    }
+
+    private func pollUntil(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if predicate() {
+                return true
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: LiveLatencyMetrics.pollInterval))
+        } while Date() < deadline
+
+        return predicate()
     }
 
     private func tapButtonInScrollView(identifier: String, maxSwipes: Int = 10) {

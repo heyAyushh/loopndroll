@@ -21,7 +21,7 @@ ios/
 | Task | Location | Notes |
 | --- | --- | --- |
 | App entry | `LooperCompanion/App/LooperCompanionApp.swift` | `@main` app, URL/activity handling, pending-open draining. |
-| App state/realtime | `LooperCompanion/App/CompanionAppModel.swift`, `Services/` | Snapshot, connectivity, event stream, prompt mutations. |
+| App state/realtime | `LooperCompanion/App/CompanionAppModel.swift`, `Services/` | Cached session minis, connectivity, Session stream sync, prompt mutations. |
 | Models | `LooperCompanion/Models/CompanionModels.swift` | Keep in sync with Rust mobile API JSON. |
 | Sessions UI | `LooperCompanion/UI/Sessions/` | Search, details, rows, device hub, management controls. |
 | Settings/scanner | `LooperCompanion/UI/Settings/`, `UI/Scanner/` | Connection setup and diagnostics surfaces. |
@@ -59,7 +59,7 @@ bash scripts/build-orb-code-ios-package.sh
 ## TEST HOTSPOTS
 
 - `LooperCompanionUITests/LooperCompanionControlFlowUITests.swift`: onboarding, scanner, sessions, settings, search, session control.
-- `LooperCompanionTests/CompanionRealtimeSyncTests.swift`: realtime snapshot refresh decisions.
+- `LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift`: cached Session mini sync and local-first behavior.
 - `LooperCompanionTests/SessionSummaryTimingTests.swift`: mobile timing display behavior.
 - `LooperCompanionCore/Tests/LooperCompanionCoreTests/LooperCurrentSessionResolutionTests.swift`: current/default session routing.
 - `LooperCompanionCore/Tests/LooperCompanionCoreTests/LooperSessionFreshnessTests.swift`: activity ordering.

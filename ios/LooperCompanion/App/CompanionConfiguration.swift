@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import LooperCompanionCore
+import LooperRealtime
 import Security
 
 struct CompanionConnection: Sendable {
@@ -95,6 +96,10 @@ enum CompanionConfiguration {
         return CompanionConnection(baseURLs: [], bearerToken: nil)
     }
 
+    static func resolvedConnectionFingerprint() -> String {
+        bundledConnectionFingerprint(for: resolvedConnection())
+    }
+
     static func hasAuthenticatedConnection() -> Bool {
         #if DEBUG
         if UITestLaunchArguments.isMockModeEnabled {
@@ -107,6 +112,18 @@ enum CompanionConfiguration {
     }
 
     private static func resolvedBundledConnection() -> CompanionConnection {
+        #if DEBUG
+        if let liveBaseURLs = UITestLaunchArguments.liveBaseURLs {
+            let liveURLs = normalizedBaseURLs(from: liveBaseURLs)
+            if !liveURLs.isEmpty {
+                return CompanionConnection(
+                    baseURLs: liveURLs,
+                    bearerToken: nonEmptyString(UITestLaunchArguments.liveBearerToken)
+                )
+            }
+        }
+        #endif
+
         let bundledValue = (
             Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
                 ?? Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
@@ -331,7 +348,7 @@ enum CompanionConfiguration {
             throw CompanionConfigurationError.invalidConnectionCode
         }
 
-        return url
+        return CompanionBaseURLRouting.canonicalHTTPAPIBaseURL(for: url)
     }
 
     private static func normalizedBaseURLs(from value: String) -> [URL] {
@@ -606,9 +623,7 @@ struct UnconfiguredCompanionService: CompanionService {
         self.error = error
     }
 
-    func makeMobileEventStreamClient() -> MobileEventStreamClient {
-        MobileEventStreamClient(baseURLs: [], bearerToken: nil)
-    }
+    func prepareRealtimeConnection() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
@@ -616,7 +631,11 @@ struct UnconfiguredCompanionService: CompanionService {
         id _: String,
         surface _: CompanionAssistantSurface?
     ) async throws -> SessionDetail { throw error }
-    func setSessionMode(id _: String, preset _: SessionMode?) async throws -> MobileSnapshot {
+    func setSessionMode(
+        id _: String,
+        preset _: SessionMode?,
+        clientMutationID _: String
+    ) async throws -> CompanionSessionModeResult {
         throw error
     }
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
@@ -626,8 +645,18 @@ struct UnconfiguredCompanionService: CompanionService {
     func sendSessionPrompt(
         id _: String,
         prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID _: String
+    ) async throws -> CompanionPromptSendResult {
+        throw error
+    }
+    func submitNotificationReply(
+        notificationID _: String,
+        sessionID _: String,
+        prompt _: String,
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID _: String
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
         throw error
     }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }

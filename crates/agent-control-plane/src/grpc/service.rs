@@ -8,7 +8,7 @@ use crate::control_plane::ControlPlane;
 use crate::events::{
     MobileCommandAckRecord, MobileCommandAckResult, MobileStateEventGap, MobileStateEventRecord,
 };
-use crate::grpc::auth::authorize_mobile_api_request;
+use crate::grpc::auth::authorize_mobile_api_request_from_peer;
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::{
@@ -16,7 +16,7 @@ use crate::mobile::api::{
 };
 use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
-    mobile_event_now, mobile_event_sse_name,
+    mobile_event_now, mobile_event_wire_name,
 };
 use crate::mobile::prompt_delivery::{
     accept_session_prompt, dispatch_session_prompt_after_ack, invalidate_delivery_action_cache,
@@ -89,7 +89,11 @@ impl LooperRealtime for LooperRealtimeService {
         &self,
         request: Request<tonic::Streaming<proto::ClientFrame>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
-        authorize_mobile_api_request(&self.control_plane, request.metadata())?;
+        authorize_mobile_api_request_from_peer(
+            &self.control_plane,
+            request.metadata(),
+            request.remote_addr(),
+        )?;
         let mut inbound = request.into_inner();
         let control_plane = self.control_plane.clone();
         let output = stream! {
@@ -470,7 +474,7 @@ fn proto_event_kind(kind: MobileEventKind) -> i32 {
 }
 
 fn proto_event_name(kind: MobileEventKind) -> &'static str {
-    mobile_event_sse_name(kind)
+    mobile_event_wire_name(kind)
 }
 
 fn status_code_name(code: tonic::Code) -> &'static str {

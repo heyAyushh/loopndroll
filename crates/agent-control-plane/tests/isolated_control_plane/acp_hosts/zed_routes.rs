@@ -6,7 +6,7 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
-    let router = build_router(control_plane);
+    let router = build_router(control_plane.clone());
     // SAFE-EXPECT: integration test fixture assertions should fail at the broken setup step.
     let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
 
@@ -108,10 +108,6 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
-    let auth_json_headers = [
-        (axum::http::header::AUTHORIZATION, authorization.as_str()),
-        (axum::http::header::CONTENT_TYPE, "application/json"),
-    ];
     let mobile_zed_snapshot = request_json_body_with_options(
         &router,
         Method::POST,
@@ -128,18 +124,20 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
     assert_eq!(zed_session["assistantClient"], "zed");
     assert_eq!(zed_session["canSendPrompt"], serde_json::json!(false));
 
-    let mobile_prompted = request_with_body_options(
-        &router,
-        Method::POST,
-        "/api/mobile/sessions/zed:codex:codex-session-1/prompt",
-        serde_json::to_vec(&serde_json::json!({ "prompt": "Continue from iPhone." }))
-            // SAFE-EXPECT: integration test fixture assertions should fail at the broken setup step.
-            .expect("prompt body"),
-        &auth_json_headers,
-        None,
+    prime_state_mini_cache(&control_plane);
+    let mobile_prompted = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SendSessionPrompt(SendSessionPromptRequest {
+            thread_id: "zed:codex:codex-session-1".to_owned(),
+            prompt: "Continue from iPhone.".to_owned(),
+            assistant_surface: "zed".to_owned(),
+            client_mutation_id: "zed-stale-mobile-prompt".to_owned(),
+        }),
     )
     .await;
-    assert_eq!(mobile_prompted.status(), StatusCode::CONFLICT);
+    assert!(!mobile_prompted.accepted);
+    assert_eq!(mobile_prompted.error_code, "failed_precondition");
 
     let stale_desktop_prompt = request_with_body_options(
         &router,

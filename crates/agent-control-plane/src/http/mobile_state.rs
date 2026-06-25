@@ -191,22 +191,6 @@ pub(super) fn emit_mobile_session_changed(
     }
 }
 
-pub(super) fn emit_mobile_lifecycle_changed(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    detail: Option<&str>,
-) {
-    control_plane.emit_mobile_session_event(
-        MobileEventInput {
-            kind: MobileEventKind::LifecycleChanged,
-            thread_id: Some(thread_id.to_owned()),
-            prompt_id: None,
-            detail: detail.map(str::to_owned),
-        },
-        thread_id,
-    );
-}
-
 pub(super) fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, detail: &str) {
     control_plane.emit_mobile_all_sessions_event(MobileEventInput {
         kind: MobileEventKind::SessionChanged,

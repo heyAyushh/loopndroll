@@ -15,7 +15,12 @@ let package = Package(
         .package(path: "../../swift/LooperRealtime")
     ],
     targets: [
-        .target(name: "LooperMenuBarCore"),
+        .target(
+            name: "LooperMenuBarCore",
+            dependencies: [
+                .product(name: "LooperRealtime", package: "LooperRealtime"),
+            ]
+        ),
         .executableTarget(
             name: "LooperMenuBar",
             dependencies: [
@@ -25,7 +30,10 @@ let package = Package(
         ),
         .testTarget(
             name: "LooperMenuBarCoreTests",
-            dependencies: ["LooperMenuBarCore"]
+            dependencies: [
+                "LooperMenuBarCore",
+                .product(name: "LooperRealtime", package: "LooperRealtime"),
+            ]
         ),
     ]
 )

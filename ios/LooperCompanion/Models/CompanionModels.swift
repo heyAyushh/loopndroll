@@ -578,6 +578,10 @@ enum SessionMode: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    var detailAccessibilityIdentifier: String {
+        "session-detail.mode.\(rawValue)"
+    }
+
     var symbolName: String {
         switch self {
         case .infinite:
@@ -680,8 +684,16 @@ enum QuickActionSettings {
     private static let separator: Character = ","
     private static let storageSeparator = String(separator)
 
-    static let defaultActions: Set<QuickActionOption> = [.openSession, .continueChat]
+    static let defaultActions: Set<QuickActionOption> = [.reply, .continueChat, .openSession]
+    static let notificationPresentationOrder: [QuickActionOption] = [
+        .reply,
+        .continueChat,
+        .openSession,
+        .archive,
+        .muteSession,
+    ]
     static let defaultStorageValue = storageValue(for: defaultActions)
+    private static let legacyDefaultActions: Set<QuickActionOption> = [.openSession, .continueChat]
 
     static func loadSelectedActions(
         userDefaults: UserDefaults = .standard
@@ -690,7 +702,8 @@ enum QuickActionSettings {
             return defaultActions
         }
 
-        return actions(from: storedValue)
+        let storedActions = actions(from: storedValue)
+        return storedActions == legacyDefaultActions ? defaultActions : storedActions
     }
 
     static func actions(from storageValue: String) -> Set<QuickActionOption> {
@@ -702,7 +715,7 @@ enum QuickActionSettings {
     }
 
     static func storageValue(for actions: Set<QuickActionOption>) -> String {
-        QuickActionOption.allCases
+        notificationPresentationOrder
             .filter { actions.contains($0) }
             .map(\.rawValue)
             .joined(separator: storageSeparator)
@@ -1357,6 +1370,74 @@ struct SessionGoalSummary: Codable, Hashable, Sendable {
     var updatedAtMs: Int64?
 }
 
+extension SessionGoalSummary {
+    private enum GoalStatusValue {
+        static let blocked = "blocked"
+        static let paused = "paused"
+        static let pursuing = "pursuing"
+        static let achieved = "achieved"
+        static let unmet = "unmet"
+        static let usageLimited = "usage-limited"
+        static let budgetLimited = "budget-limited"
+    }
+
+    private var normalizedStatus: String {
+        status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+    }
+
+    var isBlocked: Bool {
+        normalizedStatus == GoalStatusValue.blocked
+    }
+
+    var displayStatusLabel: String {
+        switch normalizedStatus {
+        case GoalStatusValue.blocked:
+            return "Goal blocked"
+        case GoalStatusValue.paused:
+            return "Goal paused"
+        case GoalStatusValue.pursuing:
+            return "Goal running"
+        case GoalStatusValue.achieved:
+            return "Goal complete"
+        case GoalStatusValue.unmet:
+            return "Goal unmet"
+        case GoalStatusValue.usageLimited:
+            return "Goal usage limited"
+        case GoalStatusValue.budgetLimited:
+            return "Goal budget limited"
+        default:
+            return running ? "Goal running" : "Goal status unknown"
+        }
+    }
+
+    var cardStatusLabel: String? {
+        if isBlocked || running {
+            return displayStatusLabel
+        }
+        return nil
+    }
+
+    var displayStatusSymbolName: String {
+        switch normalizedStatus {
+        case GoalStatusValue.blocked:
+            return "exclamationmark.octagon.fill"
+        case GoalStatusValue.paused:
+            return "pause.circle.fill"
+        case GoalStatusValue.achieved:
+            return "checkmark.circle.fill"
+        case GoalStatusValue.unmet:
+            return "xmark.circle.fill"
+        case GoalStatusValue.usageLimited, GoalStatusValue.budgetLimited:
+            return "gauge"
+        default:
+            return running ? "target" : "questionmark.circle"
+        }
+    }
+}
+
 struct MobileWorkStatusGoal: Codable, Hashable, Sendable {
     var id: String
     var title: String
@@ -1855,8 +1936,16 @@ extension SessionSummary {
         goal?.running == true
     }
 
+    var hasBlockedGoal: Bool {
+        goal?.isBlocked == true
+    }
+
     var workStatusLabel: String? {
-        hasRunningGoal ? "Goal running" : nil
+        goal?.cardStatusLabel
+    }
+
+    var workStatusSymbolName: String {
+        goal?.displayStatusSymbolName ?? "target"
     }
 
     static func isNewerOrLowerRef(
@@ -2293,6 +2382,8 @@ struct SessionIndex: Equatable, Sendable {
                 session.lastActivityAt,
                 session.lastMessageAt ?? "",
                 session.goal?.id ?? "",
+                session.goal?.status ?? "",
+                session.goal?.lifecycle ?? "",
                 session.goal?.running == true ? "goal-running" : "goal-idle",
                 String(session.goal?.updatedAtMs ?? 0),
                 session.isArchived ? "archived" : "visible",
@@ -2331,6 +2422,11 @@ struct SessionSections: Sendable {
             }
 
             active.append(session)
+
+            if session.hasBlockedGoal {
+                needsAttention.append(session)
+                continue
+            }
 
             switch session.status {
             case .active:

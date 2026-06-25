@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 
@@ -7,10 +9,15 @@ use crate::mobile::auth::{MobileAuthError, parse_mobile_authorization_header};
 const AUTHORIZATION_METADATA: &str = "authorization";
 const MOBILE_SESSION_METADATA: &str = "x-looper-mobile-session";
 
-pub fn authorize_mobile_api_request(
+pub fn authorize_mobile_api_request_from_peer(
     control_plane: &ControlPlane,
     metadata: &MetadataMap,
+    peer_addr: Option<SocketAddr>,
 ) -> Result<(), Status> {
+    if peer_addr.is_some_and(|address| address.ip().is_loopback()) {
+        return Ok(());
+    }
+
     let authorization = metadata_value(metadata, AUTHORIZATION_METADATA);
     let credential = parse_mobile_authorization_header(authorization)
         .ok_or_else(|| Status::unauthenticated("pairing token required"))?;

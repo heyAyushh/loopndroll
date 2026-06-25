@@ -447,7 +447,8 @@ struct LooperSiriSessionClient: Sendable {
         _ = try await service.sendSessionPrompt(
             id: entity.sessionID,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            assistantSurface: entity.assistantSurface ?? .codex
+            assistantSurface: entity.assistantSurface ?? .codex,
+            clientMutationID: UUID().uuidString
         )
     }
 
@@ -528,6 +529,10 @@ struct LooperFoundationSessionSummarizer: Sendable {
             return fallbackSummary
         }
 
+        guard looperFoundationModelsRuntimeIsEnabled() else {
+            return fallbackSummary
+        }
+
         return await summarizeWithFoundationModel(detail, fallbackSummary: fallbackSummary)
         #else
         return fallbackSummary
@@ -580,6 +585,10 @@ struct LooperSessionContextEngine: Sendable {
             return fallbackPrompt
         }
 
+        guard looperFoundationModelsRuntimeIsEnabled() else {
+            return fallbackPrompt
+        }
+
         return await contextualPromptWithFoundationModel(
             userPrompt: userPrompt,
             detail: detail,
@@ -595,6 +604,10 @@ struct LooperSessionContextEngine: Sendable {
 
         #if canImport(FoundationModels)
         guard #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) else {
+            return fallbackSuggestions
+        }
+
+        guard looperFoundationModelsRuntimeIsEnabled() else {
             return fallbackSuggestions
         }
 
@@ -745,6 +758,19 @@ private extension Array where Element == LooperSessionEntity {
 }
 
 #if canImport(FoundationModels)
+private func looperFoundationModelsRuntimeIsEnabled() -> Bool {
+    #if os(iOS)
+    // Crash reports from iOS 27 beta terminate the app in LanguageModelSession
+    // profile setup with CODESIGNING Invalid Page. Keep Looper usable and rely
+    // on deterministic fallbacks until this runtime path is stable.
+    if #available(iOS 27.0, *) {
+        return false
+    }
+    #endif
+
+    return true
+}
+
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
 private func looperLanguageModelSession(
     model: SystemLanguageModel,

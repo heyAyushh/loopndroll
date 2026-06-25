@@ -45,7 +45,21 @@ struct SessionRow: View {
 
                 Spacer(minLength: 12)
 
-                StatusPill(text: session.status.label, tint: tint)
+                VStack(alignment: .trailing, spacing: 6) {
+                    StatusPill(text: session.status.label, tint: tint)
+                        .accessibilityIdentifier("session-row.session-status")
+
+                    if session.hasBlockedGoal,
+                       let goal = session.goal,
+                       let workStatusLabel = session.workStatusLabel
+                    {
+                        StatusPill(
+                            text: workStatusLabel,
+                            tint: SessionGoalStatusVisuals.tint(for: goal)
+                        )
+                        .accessibilityIdentifier("session-row.goal-status")
+                    }
+                }
             }
 
             if let assistantPreview = session.assistantPreview, !assistantPreview.isEmpty {
@@ -74,7 +88,11 @@ struct SessionRow: View {
                 }
 
                 if let workStatusLabel = session.workStatusLabel {
-                    Label(workStatusLabel, systemImage: "target")
+                    Label(workStatusLabel, systemImage: session.workStatusSymbolName)
+                        .foregroundStyle(
+                            session.goal.map(SessionGoalStatusVisuals.tint(for:)) ?? .secondary
+                        )
+                        .accessibilityIdentifier("session-row.goal-work-status")
                 }
 
                 if session.metadata.taskKind != .unknown {

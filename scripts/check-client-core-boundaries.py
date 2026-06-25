@@ -53,9 +53,15 @@ STRICT_RUNTIME_PATTERNS = (
     (
         "forbidden rewrite-only runtime surface",
         re.compile(
-            r"SubscribeMobileEvents|SubscribeDesktopEvents|MobileEventStream|"
-            r"DesktopEventStreamCoordinator|\.setSessionMode\(|"
-            r"\.sendSessionPrompt\(|\.submitNotificationReply\("
+            r"SubscribeMobileEvents|SubscribeDesktopEvents|SubscribeEventsRequest|"
+            r"MobileEventStream|CompanionRealtimeController|CompanionRealtimeSync|"
+            r"DesktopEventStreamCoordinator|text/event-stream|"
+            r"Server-Sent Events|\bSSE\b|/api/mobile/events|/desktop/events|"
+            r"/api/mobile/sessions/[^\"']+/(mode|prompt)|"
+            r"/desktop/sessions/[^\"']+/(mode|prompt|notification-reply)|"
+            r"/desktop/session-prompts|streamMobileEvents|streamDesktopEvents|"
+            r"SetSessionModeResponse|SendSessionPromptResponse|"
+            r"SubmitNotificationReplyResponse|mobile_event_sse_name"
         ),
     ),
 )
@@ -121,6 +127,7 @@ def main() -> int:
             scan_files(
                 roots=tuple(Path(root) for root in RUNTIME_ROOTS),
                 patterns=STRICT_RUNTIME_PATTERNS,
+                include_markdown=False,
             )
         )
 
@@ -213,10 +220,14 @@ def cargo_metadata() -> dict:
 
 
 def scan_files(
-    roots: tuple[Path, ...], patterns: tuple[tuple[str, re.Pattern[str]], ...]
+    roots: tuple[Path, ...],
+    patterns: tuple[tuple[str, re.Pattern[str]], ...],
+    include_markdown: bool = True,
 ) -> list[Finding]:
     findings: list[Finding] = []
     for path in tracked_source_files(roots):
+        if not include_markdown and path.suffix == ".md":
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         relative_path = path.relative_to(ROOT_DIR)
         for line_number, line in enumerate(text.splitlines(), start=1):

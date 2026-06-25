@@ -1,12 +1,6 @@
 import SwiftUI
 import UIKit
 
-private enum SearchScopeFilterLayout {
-    static let horizontalSpacing: CGFloat = 8
-    static let horizontalPadding: CGFloat = 12
-    static let verticalPadding: CGFloat = 6
-}
-
 struct SessionSearchScreen: View {
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
@@ -24,8 +18,6 @@ struct SessionSearchScreen: View {
     var body: some View {
         NavigationStack(path: $searchPath) {
             List {
-                scopeFilterSection
-
                 if trimmedSearchText.isEmpty {
                     recentSearchesSection
                     topResultsSection(title: "Suggested")
@@ -102,75 +94,10 @@ struct SessionSearchScreen: View {
         }
 
         ToolbarItemGroup(placement: .keyboard) {
-            searchScopeMenu
-
-            Spacer()
-
             Button("Done") {
                 dismissSearch()
             }
         }
-    }
-
-    private var searchScopeMenu: some View {
-        Menu {
-            Picker("Scope", selection: $selectedScope) {
-                ForEach(SessionSearchScope.allCases) { scope in
-                    Label(scope.title, systemImage: scope.systemImage)
-                        .tag(scope)
-                        .accessibilityIdentifier("search.scope.\(scope.rawValue)")
-                }
-            }
-        } label: {
-            Label(selectedScope.title, systemImage: selectedScope.systemImage)
-        }
-        .accessibilityLabel("Filter search scope")
-        .accessibilityIdentifier("search.scope.menu")
-    }
-
-    private var scopeFilterSection: some View {
-        Section {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: SearchScopeFilterLayout.horizontalSpacing) {
-                    ForEach(SessionSearchScope.allCases) { scope in
-                        searchScopeButton(for: scope)
-                    }
-                }
-                .padding(.vertical, SearchScopeFilterLayout.verticalPadding)
-            }
-            .accessibilityIdentifier("search.scope.scroller")
-            .listRowInsets(
-                EdgeInsets(
-                    top: 0,
-                    leading: SearchScopeFilterLayout.horizontalPadding,
-                    bottom: 0,
-                    trailing: SearchScopeFilterLayout.horizontalPadding
-                )
-            )
-        }
-    }
-
-    private func searchScopeButton(for scope: SessionSearchScope) -> some View {
-        Button {
-            selectedScope = scope
-            Haptics.selectionChanged()
-        } label: {
-            Label(scope.title, systemImage: scope.systemImage)
-                .font(.footnote.weight(scope == selectedScope ? .semibold : .regular))
-                .padding(.horizontal, SearchScopeFilterLayout.horizontalPadding)
-                .padding(.vertical, SearchScopeFilterLayout.verticalPadding)
-                .background(
-                    scope == selectedScope ?
-                        Color.accentColor.opacity(0.16) :
-                        Color.secondary.opacity(0.10),
-                    in: Capsule()
-                )
-                .foregroundStyle(scope == selectedScope ? Color.accentColor : Color.primary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("search.scope.\(scope.rawValue)")
-        .accessibilityLabel("\(scope.title) search scope")
-        .accessibilityValue(scope == selectedScope ? "Selected" : "")
     }
 
     @ViewBuilder

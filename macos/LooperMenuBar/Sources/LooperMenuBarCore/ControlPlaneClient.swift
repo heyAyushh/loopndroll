@@ -1,4 +1,5 @@
 import Foundation
+import LooperRealtime
 
 public enum HookRepairTarget: String, CaseIterable, Equatable, Sendable {
   case codex
@@ -34,16 +35,8 @@ public enum HookRepairTarget: String, CaseIterable, Equatable, Sendable {
 }
 
 public enum LooperLifecycleDefaults {
-  private enum Time {
-    static let secondsPerMinute: TimeInterval = 60
-    static let minutesPerHour: TimeInterval = 60
-    static let hoursPerDay: TimeInterval = 24
-  }
-
   public static let requestTimeoutSeconds: TimeInterval = 2
   public static let desktopSnapshotRequestTimeoutSeconds: TimeInterval = 6
-  public static let desktopEventStreamRequestTimeoutSeconds: TimeInterval =
-    Time.hoursPerDay * Time.minutesPerHour * Time.secondsPerMinute
   public static let quitCleanupTimeoutSeconds: TimeInterval = 2
 }
 
@@ -66,7 +59,6 @@ public enum ControlPlaneEndpoint: Equatable {
   case mobileHealth
   case controlPlaneStatus
   case desktopSnapshot
-  case desktopEvents
   case devinAcpBridgeProbe
   case devinAcpBridgeInstall
 
@@ -108,8 +100,6 @@ public enum ControlPlaneEndpoint: Equatable {
       "/status/control-plane"
     case .desktopSnapshot:
       "/desktop/snapshot"
-    case .desktopEvents:
-      "/desktop/events"
     case .devinAcpBridgeProbe:
       "/desktop/devin/acp-bridge/probe"
     case .devinAcpBridgeInstall:
@@ -125,7 +115,7 @@ public enum ControlPlaneEndpoint: Equatable {
       .devinAcpBridgeInstall, .defaultNotificationTargets:
       "POST"
     case .acpClientHosts, .acpClientHost, .desktopConnections, .desktopMobileState,
-      .desktopPushDevices, .controlPlaneStatus, .desktopSnapshot, .desktopEvents, .mobileHealth:
+      .desktopPushDevices, .controlPlaneStatus, .desktopSnapshot, .mobileHealth:
       "GET"
     }
   }
@@ -139,7 +129,9 @@ public enum ControlPlaneEndpoint: Equatable {
       .registerHooks, .registerTargetHooks, .unregisterHooks, .unregisterTargetHooks,
       .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
       .desktopMobileState, .desktopPushDevices, .defaultNotificationTargets, .mobileHealth,
-      .controlPlaneStatus, .desktopEvents, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
+      .controlPlaneStatus,
+      .devinAcpBridgeProbe,
+      .devinAcpBridgeInstall:
       []
     }
   }
@@ -148,14 +140,13 @@ public enum ControlPlaneEndpoint: Equatable {
     switch self {
     case .desktopSnapshot:
       LooperLifecycleDefaults.desktopSnapshotRequestTimeoutSeconds
-    case .desktopEvents:
-      LooperLifecycleDefaults.desktopEventStreamRequestTimeoutSeconds
     case .acpClientHosts, .acpClientHost, .acpClientHostProbe, .acpClientHostInstall,
       .desktopConnections,
       .registerHooks, .registerTargetHooks, .unregisterHooks, .unregisterTargetHooks,
       .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
       .desktopMobileState, .desktopPushDevices, .defaultNotificationTargets, .mobileHealth,
-      .controlPlaneStatus, .devinAcpBridgeProbe, .devinAcpBridgeInstall:
+      .controlPlaneStatus, .devinAcpBridgeProbe,
+      .devinAcpBridgeInstall:
       LooperLifecycleDefaults.requestTimeoutSeconds
     }
   }
@@ -378,6 +369,17 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
     let (data, response) = try await session.data(for: request)
     try validate(response)
     return try JSONDecoder().decode(responseType, from: data)
+  }
+
+  private func postStatus<Request: Encodable>(
+    to endpoint: ControlPlaneEndpoint,
+    body: Request
+  ) async throws {
+    var request = request(for: endpoint)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(body)
+    let (_, response) = try await session.data(for: request)
+    try validate(response)
   }
 
   private func runRequest(

@@ -43,7 +43,7 @@ pub(crate) fn set_base_url(base_url: String) {
     let _ = BASE_URL_OVERRIDE.set(base_url);
 }
 
-fn base_url() -> String {
+pub(crate) fn base_url() -> String {
     BASE_URL_OVERRIDE
         .get()
         .cloned()
