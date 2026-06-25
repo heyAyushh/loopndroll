@@ -27,10 +27,10 @@ struct SessionsScreen: View {
     @State private var showsAllArchivedSessions = false
 
     private var hasVisibleSessions: Bool {
-        !model.needsAttentionSessions.isEmpty ||
-            !model.runningSessions.isEmpty ||
-            !model.stoppedSessions.isEmpty ||
-            !model.archivedSessions.isEmpty
+        !model.viewState.needsAttentionSessions.isEmpty ||
+            !model.viewState.runningSessions.isEmpty ||
+            !model.viewState.stoppedSessions.isEmpty ||
+            !model.viewState.archivedSessions.isEmpty
     }
 
     var body: some View {
@@ -38,26 +38,26 @@ struct SessionsScreen: View {
             List {
                 connectionSection
 
-                if !model.needsAttentionSessions.isEmpty {
+                if !model.viewState.needsAttentionSessions.isEmpty {
                     sessionSection(
                         title: "Needs Attention",
-                        sessions: model.needsAttentionSessions,
+                        sessions: model.viewState.needsAttentionSessions,
                         isExpanded: $showsAllNeedsAttentionSessions
                     )
                 }
 
-                if !model.runningSessions.isEmpty {
+                if !model.viewState.runningSessions.isEmpty {
                     sessionSection(
                         title: "Active",
-                        sessions: model.runningSessions,
+                        sessions: model.viewState.runningSessions,
                         isExpanded: $showsAllRunningSessions
                     )
                 }
 
-                if !model.stoppedSessions.isEmpty {
+                if !model.viewState.stoppedSessions.isEmpty {
                     sessionSection(
                         title: "Recent",
-                        sessions: model.stoppedSessions,
+                        sessions: model.viewState.stoppedSessions,
                         isExpanded: .constant(false),
                         showsCount: false,
                         allowsExpansion: false,
@@ -65,10 +65,10 @@ struct SessionsScreen: View {
                     )
                 }
 
-                if !model.archivedSessions.isEmpty {
+                if !model.viewState.archivedSessions.isEmpty {
                     sessionSection(
                         title: "Archived",
-                        sessions: model.archivedSessions,
+                        sessions: model.viewState.archivedSessions,
                         isExpanded: $showsAllArchivedSessions
                     )
                 }
@@ -130,11 +130,11 @@ struct SessionsScreen: View {
     private var connectionSection: some View {
         Section {
             SessionConnectionRow(
-                title: model.connectivityHeadline,
+                title: model.viewState.connectivityHeadline,
                 subtitle: connectionSubtitle,
                 statusText: model.connectionState.label,
                 statusTint: CompanionTint.tint(for: model.connectionState),
-                routePresentation: model.connectionRoutePresentation,
+                routePresentation: model.viewState.connectionRoutePresentation,
                 openSettings: openSettings,
                 assistantPicker: {
                     assistantPicker
@@ -167,7 +167,7 @@ struct SessionsScreen: View {
                 get: { model.selectedAssistantSurface },
                 set: { updateAssistantSurface($0) }
             ),
-            isDisabled: !model.canSwitchAssistantSurface
+            isDisabled: !model.viewState.canSwitchAssistantSurface
         )
         .padding(.top, AssistantSurfaceControlMetrics.controlTopPadding)
     }
@@ -180,7 +180,7 @@ struct SessionsScreen: View {
             return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.activeSessionCount) active / \(devinDesktop.sessionCount) total · \(devinDesktop.enabledAgentCount) agents"
         }
 
-        return model.connectivitySummary
+        return model.viewState.connectivitySummary
     }
 
     private func sessionSection(
@@ -239,7 +239,7 @@ struct SessionsScreen: View {
     }
 
     private var recentSectionFooter: String {
-        guard model.stoppedSessions.count > SessionDisplayPolicy.collapsedSectionLimit else {
+        guard model.viewState.stoppedSessions.count > SessionDisplayPolicy.collapsedSectionLimit else {
             return "Stopped sessions stay here until archived."
         }
 
@@ -290,7 +290,7 @@ struct SessionsScreen: View {
 
     private var emptyStateDescription: String {
         guard model.connectionState == .connected else {
-            return model.connectivitySummary
+            return model.viewState.connectivitySummary
         }
 
         switch model.selectedAssistantSurface {
@@ -306,7 +306,7 @@ struct SessionsScreen: View {
             }
             return "Devin Desktop sessions appear here when Devin is running on your Mac."
         case .codex:
-            return model.connectivitySummary
+            return model.viewState.connectivitySummary
         }
     }
 

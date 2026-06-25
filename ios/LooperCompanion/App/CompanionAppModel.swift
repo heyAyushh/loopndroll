@@ -125,20 +125,8 @@ final class CompanionAppModel {
         )
     }
 
-    var activeSessions: [SessionSummary] {
-        sessionSections.active
-    }
-
-    var runningSessions: [SessionSummary] {
-        sessionSections.running
-    }
-
-    var waitingSessions: [SessionSummary] {
-        sessionSections.waiting
-    }
-
-    var stoppedSessions: [SessionSummary] {
-        sessionSections.stopped
+    var viewState: CompanionAppViewState {
+        CompanionAppViewState(model: self)
     }
 
     private var sessionMutations: CompanionSessionMutationCoordinator {
@@ -174,160 +162,6 @@ final class CompanionAppModel {
             preconditionFailure("Snapshot load coordinator used before initialization")
         }
         return snapshotLoadCoordinator
-    }
-
-    var needsAttentionSessions: [SessionSummary] {
-        sessionSections.needsAttention
-    }
-
-    var archivedSessions: [SessionSummary] {
-        sessionSections.archived
-    }
-
-    var sessionsBadgeCount: Int {
-        sessionSections.needsAttentionCount
-    }
-
-    var canSwitchAssistantSurface: Bool {
-        snapshot != nil || connectionState == .connected
-    }
-
-    var connectivityHeadline: String {
-        switch connectionState {
-        case .connected:
-            return snapshot?.host.name ?? "Connected"
-        case .connecting:
-            return "Connecting to your Mac"
-        case .offline:
-            return "Mac connection offline"
-        case .unauthorized:
-            return "Connection needs approval"
-        case .locked:
-            return "Unlock looper"
-        case .unpaired:
-            return "Set up your Mac link"
-        }
-    }
-
-    var connectivitySummary: String {
-        if connectionState == .connected, snapshot != nil {
-            return connectedStatusSummary
-        }
-
-        return connectionState.summary
-    }
-
-    private var connectedStatusSummary: String {
-        var parts: [String] = []
-
-        if let connectionRoutePresentation {
-            parts.append("\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)")
-        } else if let serverHealth, serverHealth.ok {
-            parts.append("API running at \(serverHealth.baseURL)")
-        }
-
-        if let workSummary = snapshot?.workStatus.displaySummary {
-            parts.append(workSummary)
-        }
-
-        if let coverageSummary = snapshot?.workStatus.coverageSummary {
-            parts.append(coverageSummary)
-        }
-
-        if let lastSyncedAt = snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
-            parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
-        }
-
-        return parts.isEmpty ? "Connected and ready to monitor sessions." : "\(parts.joined(separator: " · "))."
-    }
-
-    var connectionRoutePresentation: CompanionConnectionRoutePresentation? {
-        guard let baseURL = activeConnectionRouteBaseURL else {
-            return nil
-        }
-
-        return CompanionConnectionRoutePresentation(
-            baseURL: baseURL,
-            tailscaleDetail: serverHealth?.tailscale?.detailLabel
-        )
-    }
-
-    var activeConnectionRouteBaseURLString: String? {
-        activeConnectionRouteBaseURL?.absoluteString
-    }
-
-    var localNotificationStatusLabel: String {
-        switch localNotificationStatus {
-        case .authorized:
-            return "Allowed"
-        case .provisional:
-            return "Provisional"
-        case .ephemeral:
-            return "Temporary"
-        case .denied:
-            return "Off"
-        case .notDetermined:
-            return "Not set"
-        @unknown default:
-            return "Unknown"
-        }
-    }
-
-    var remotePushStatusLabel: String {
-        if isRegisteringRemotePush {
-            return "Registering"
-        }
-
-        if let remotePushRegistration {
-            return remotePushRegistration.state.label
-        }
-
-        if remotePushFailureMessage != nil {
-            return "Registration failed"
-        }
-
-        return canSendLocalNotifications ? "Waiting for APNs" : "Not set"
-    }
-
-    var remotePushDetailMessage: String {
-        if let remotePushFailureMessage {
-            return remotePushFailureMessage
-        }
-
-        if let remotePushRegistration {
-            return remotePushRegistration.message
-        }
-
-        return canSendLocalNotifications
-            ? "looper will keep local fallback alerts until APNs is ready on the Mac."
-            : "Enable notifications on iPhone to receive stop alerts."
-    }
-
-    var shouldUseLocalFallbackNotifications: Bool {
-        remotePushRegistration?.state != .enabled
-    }
-
-    var canSendLocalNotifications: Bool {
-        switch localNotificationStatus {
-        case .authorized, .ephemeral, .provisional:
-            return true
-        case .denied, .notDetermined:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-    var areLocalNotificationsDenied: Bool {
-        localNotificationStatus == .denied
-    }
-
-    func detail(for sessionID: String) -> SessionDetail? {
-        detailBySessionID[sessionID]
-    }
-
-    func isMutatingSession(_ sessionID: String) -> Bool {
-        mutatingSessionIDs.contains(sessionID)
     }
 
     func prepareForActiveState() async {
@@ -725,7 +559,7 @@ final class CompanionAppModel {
         )
     }
 
-    private var activeConnectionRouteBaseURL: URL? {
+    var activeConnectionRouteBaseURL: URL? {
         guard connectionState.allowsConnectionRoutePresentation else {
             return nil
         }
@@ -1552,7 +1386,7 @@ final class CompanionAppModel {
         previousSnapshot: MobileSnapshot?,
         currentSnapshot: MobileSnapshot
     ) {
-        guard shouldUseLocalFallbackNotifications, let previousSnapshot else {
+        guard viewState.shouldUseLocalFallbackNotifications, let previousSnapshot else {
             return
         }
 
@@ -1932,11 +1766,11 @@ extension CompanionAppModel: CompanionNotificationCoordinatorDelegate {
     }
 
     var notificationCanSendLocalNotifications: Bool {
-        canSendLocalNotifications
+        viewState.canSendLocalNotifications
     }
 
     var notificationAreLocalNotificationsDenied: Bool {
-        areLocalNotificationsDenied
+        viewState.areLocalNotificationsDenied
     }
 
     var notificationRemotePushRegistration: RemotePushRegistrationResponse? {

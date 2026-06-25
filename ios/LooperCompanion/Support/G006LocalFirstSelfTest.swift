@@ -126,7 +126,7 @@ enum G006LocalFirstSelfTest {
             "cached SessionMini did not hydrate snapshot"
         )
         try require(
-            model.activeSessions.map { $0.id } == [Constants.cachedThreadID],
+            model.viewState.activeSessions.map { $0.id } == [Constants.cachedThreadID],
             "cached SessionMini did not hydrate active session sections"
         )
         try require(service.loadSnapshotCallCount == 0, "HTTP snapshot loaded during cached restore")

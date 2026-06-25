@@ -483,8 +483,8 @@ enum SessionSearchEngine {
     @MainActor
     static func suggestedTopResults(model: CompanionAppModel) -> [GlobalSearchResult] {
         suggestedTopResults(
-            needsAttentionSessions: model.needsAttentionSessions,
-            stoppedSessions: model.stoppedSessions
+            needsAttentionSessions: model.viewState.needsAttentionSessions,
+            stoppedSessions: model.viewState.stoppedSessions
         )
     }
 

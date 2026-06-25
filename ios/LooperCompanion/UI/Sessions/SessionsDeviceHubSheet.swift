@@ -60,29 +60,29 @@ struct SessionsDeviceHubSheet: View {
     }
 
     private var alertActionTitle: String {
-        if model.areLocalNotificationsDenied {
+        if model.viewState.areLocalNotificationsDenied {
             return "Open Notification Settings"
         }
 
-        return model.canSendLocalNotifications ? "Send Test Alert" : "Enable Notifications"
+        return model.viewState.canSendLocalNotifications ? "Send Test Alert" : "Enable Notifications"
     }
 
     private var alertActionSubtitle: String {
-        if model.areLocalNotificationsDenied {
+        if model.viewState.areLocalNotificationsDenied {
             return "Notifications are off for this iPhone."
         }
 
-        return model.canSendLocalNotifications
+        return model.viewState.canSendLocalNotifications
             ? "Confirm delivery on this iPhone."
             : "Allow alerts before you rely on stop notifications."
     }
 
     private var alertActionSystemImageName: String {
-        if model.areLocalNotificationsDenied {
+        if model.viewState.areLocalNotificationsDenied {
             return "gear"
         }
 
-        return model.canSendLocalNotifications ? "bell.badge" : "bell"
+        return model.viewState.canSendLocalNotifications ? "bell.badge" : "bell"
     }
 
     private var personalDeviceName: String {
@@ -126,9 +126,9 @@ struct SessionsDeviceHubSheet: View {
                     LabeledContent("Software", value: deviceSoftwareLabel)
                     LabeledContent("Mac", value: model.snapshot?.host.name ?? "No Mac Connected")
                     LabeledContent("API", value: serverStatusLabel)
-                    if let routePresentation = model.connectionRoutePresentation {
+                    if let routePresentation = model.viewState.connectionRoutePresentation {
                         ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)
-                    } else if let baseURL = model.activeConnectionRouteBaseURLString {
+                    } else if let baseURL = model.viewState.activeConnectionRouteBaseURLString {
                         LabeledContent("Current Route", value: baseURL)
                     }
                     LabeledContent("Access", value: loginStatusLabel)
@@ -147,8 +147,8 @@ struct SessionsDeviceHubSheet: View {
                 .listRowBackground(Color.clear)
 
                 Section("Alerts") {
-                    LabeledContent("Notifications", value: model.localNotificationStatusLabel)
-                    LabeledContent("Remote Push", value: model.remotePushStatusLabel)
+                    LabeledContent("Notifications", value: model.viewState.localNotificationStatusLabel)
+                    LabeledContent("Remote Push", value: model.viewState.remotePushStatusLabel)
 
                     Button {
                         Task {
@@ -192,7 +192,7 @@ struct SessionsDeviceHubSheet: View {
     }
 
     private func runAlertAction() async {
-        if model.areLocalNotificationsDenied {
+        if model.viewState.areLocalNotificationsDenied {
             guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else {
                 return
             }
@@ -201,7 +201,7 @@ struct SessionsDeviceHubSheet: View {
             return
         }
 
-        if model.canSendLocalNotifications {
+        if model.viewState.canSendLocalNotifications {
             await model.sendTestAlert()
             return
         }

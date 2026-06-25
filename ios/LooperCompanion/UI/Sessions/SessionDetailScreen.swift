@@ -12,7 +12,7 @@ struct SessionDetailScreen: View {
     @FocusState private var focusedInput: SessionDetailInput?
 
     private var detail: SessionDetail? {
-        model.detail(for: session.id)
+        model.viewState.detail(for: session.id)
     }
 
     private var currentStatus: SessionStatus {
@@ -65,7 +65,7 @@ struct SessionDetailScreen: View {
     }
 
     private var isMutatingSession: Bool {
-        model.isMutatingSession(session.id)
+        model.viewState.isMutatingSession(session.id)
     }
 
     var body: some View {

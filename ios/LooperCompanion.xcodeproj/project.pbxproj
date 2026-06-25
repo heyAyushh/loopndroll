@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0583817A50770F13A097D723 /* SessionSpotlightIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A415685A0D0A05E2D83C2E80 /* SessionSpotlightIndexer.swift */; };
 		073E41EA71909E5B707E6C8F /* CompanionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C79B6AF7BC32D952CE288D /* CompanionService.swift */; };
+		079855BEAB9C8AA1BB86EBB5 /* CompanionAppViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBAD33EF68710E006996824 /* CompanionAppViewState.swift */; };
 		0A72C7E22AABFE981A697D61 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D6DADF770C736556DE619E8 /* HapticManager.swift */; };
 		0DFE46F6448C0F444E813EDA /* PinballGameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */; };
 		0F392FC0AA2338C0A74E24AC /* SessionsDeviceHubSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C041FA6A8D2D06E5EE214F91 /* SessionsDeviceHubSheet.swift */; };
@@ -187,6 +188,7 @@
 		D19E934D92F2115337B79EB6 /* CompanionAppAuthenticator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppAuthenticator.swift; sourceTree = "<group>"; };
 		D525E23B82E5CD10CC90FDC3 /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
 		DB14C4FA82BF7D389C6F98E1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		DDBAD33EF68710E006996824 /* CompanionAppViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppViewState.swift; sourceTree = "<group>"; };
 		E26E5665E69C8705992001B8 /* SessionSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchModel.swift; sourceTree = "<group>"; };
 		E52815FD9D7E14A86DCB78CE /* PinballGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballGameView.swift; sourceTree = "<group>"; };
 		E617D40EED3319CDBD4B375F /* PinballSettingsKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballSettingsKeys.swift; sourceTree = "<group>"; };
@@ -369,6 +371,7 @@
 			children = (
 				D19E934D92F2115337B79EB6 /* CompanionAppAuthenticator.swift */,
 				64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */,
+				DDBAD33EF68710E006996824 /* CompanionAppViewState.swift */,
 				150B19C23F529638DF99E573 /* CompanionConfiguration.swift */,
 				CF358D2391C7291C45B052B8 /* CompanionDevicePasskeyStore.swift */,
 				EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */,
@@ -634,6 +637,7 @@
 				3D5A7809C8C19205CAEE478D /* AssistantClientGlyph.swift in Sources */,
 				BA1A26A088E5157DCA412AC3 /* CompanionAppAuthenticator.swift in Sources */,
 				614C19333A96B2CAB6FA5888 /* CompanionAppModel.swift in Sources */,
+				079855BEAB9C8AA1BB86EBB5 /* CompanionAppViewState.swift in Sources */,
 				AEE02BA4C8872FDFB121F4F2 /* CompanionConfiguration.swift in Sources */,
 				5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */,
 				B17C9F2AEA6D0C42142A0661 /* CompanionDevicePasskeyStore.swift in Sources */,

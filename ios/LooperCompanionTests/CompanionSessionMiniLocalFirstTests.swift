@@ -38,7 +38,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
-        #expect(model.activeSessions.map { $0.id } == [Constants.cachedThreadID])
+        #expect(model.viewState.activeSessions.map { $0.id } == [Constants.cachedThreadID])
         #expect(service.loadSnapshotCallCount == 0)
     }
 

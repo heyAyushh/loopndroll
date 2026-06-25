@@ -324,10 +324,10 @@ struct SessionSearchScreen: View {
         let searchText = trimmedSearchText
         let currentScope = selectedScope
         let allSessions = model.sessionIndex.allSessions
-        let needsAttentionSessions = model.needsAttentionSessions
-        let runningSessions = model.runningSessions
-        let stoppedSessions = model.stoppedSessions
-        let archivedSessions = model.archivedSessions
+        let needsAttentionSessions = model.viewState.needsAttentionSessions
+        let runningSessions = model.viewState.runningSessions
+        let stoppedSessions = model.viewState.stoppedSessions
+        let archivedSessions = model.viewState.archivedSessions
         let spotlightResultSessionIDs = spotlightResultIDs
 
         let nextResults = await Task.detached(priority: .userInitiated) {

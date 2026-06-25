@@ -147,7 +147,7 @@ struct SettingsScreen: View {
             }
             .pickerStyle(.segmented)
 
-            if let routePresentation = model.connectionRoutePresentation {
+            if let routePresentation = model.viewState.connectionRoutePresentation {
                 ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)
             } else {
                 LabeledContent {

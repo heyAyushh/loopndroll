@@ -144,7 +144,7 @@ struct OnboardingScreen: View {
 
     private var notificationsSection: some View {
         Section {
-            LabeledContent("Status", value: model.localNotificationStatusLabel)
+            LabeledContent("Status", value: model.viewState.localNotificationStatusLabel)
 
             Button {
                 Task {
@@ -154,7 +154,7 @@ struct OnboardingScreen: View {
                 Label("Enable Notifications", systemImage: "bell.badge")
             }
 
-            Text(model.remotePushDetailMessage)
+            Text(model.viewState.remotePushDetailMessage)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         } header: {
