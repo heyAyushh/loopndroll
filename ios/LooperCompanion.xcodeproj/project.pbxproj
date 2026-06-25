@@ -77,6 +77,7 @@
 		BA1A26A088E5157DCA412AC3 /* CompanionAppAuthenticator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D19E934D92F2115337B79EB6 /* CompanionAppAuthenticator.swift */; };
 		C7FDB71A399DED377B511A0F /* StatusPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D9AC6F0B6668F69F4314D1 /* StatusPill.swift */; };
 		C8D57262A2803BA61F7ECDCC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9B53B1A0B059EE4D0710267A /* Assets.xcassets */; };
+		C92208423C54AA12BD80295D /* CompanionNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A2A96C023EF2E0BA44E996 /* CompanionNotificationCoordinator.swift */; };
 		CFEA7233B0827765E88A1346 /* SessionsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F3F5A6F101C8D0578A7CA7 /* SessionsScreen.swift */; };
 		DB8D397922B1F1D52B93AC00 /* codex-logo-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = AAC18AF27E6A1E8F0909C45F /* codex-logo-poster.png */; };
 		DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */; };
@@ -159,6 +160,7 @@
 		80DC6E68627D2DF8604A322B /* MotionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionController.swift; sourceTree = "<group>"; };
 		8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */ = {isa = PBXFileReference; path = "codex-logo-dark.mp4"; sourceTree = "<group>"; };
 		87FA042B24EC95034F4916F9 /* LooperCompanion.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Debug.entitlements; sourceTree = "<group>"; };
+		90A2A96C023EF2E0BA44E996 /* CompanionNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionNotificationCoordinator.swift; sourceTree = "<group>"; };
 		9311389A18A6C387B3DE1AEE /* MazeGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeGeneration.swift; sourceTree = "<group>"; };
 		95DECA57A9C3520B2610DF89 /* SessionDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailScreen.swift; sourceTree = "<group>"; };
 		97689277AC6F86ED5E681D2D /* UITestLaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchArguments.swift; sourceTree = "<group>"; };
@@ -343,6 +345,7 @@
 			isa = PBXGroup;
 			children = (
 				64F157A38686F69FE4685AC3 /* CompanionConnectionCoordinator.swift */,
+				90A2A96C023EF2E0BA44E996 /* CompanionNotificationCoordinator.swift */,
 				6D0DD7FEBBE1C3353B828485 /* CompanionNotificationReplyCoordinator.swift */,
 				56C79B6AF7BC32D952CE288D /* CompanionService.swift */,
 				1C788690C3676F6C3E679F85 /* CompanionSessionMiniController.swift */,
@@ -634,6 +637,7 @@
 				8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */,
 				DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */,
 				98570EE0A02C19145C52A031 /* CompanionModels.swift in Sources */,
+				C92208423C54AA12BD80295D /* CompanionNotificationCoordinator.swift in Sources */,
 				8F7CB6A4E80D99E28BC0F6DA /* CompanionNotificationReplyCoordinator.swift in Sources */,
 				815F93B4B67E08B8B6EC1403 /* CompanionPasskeyAuthenticationClient.swift in Sources */,
 				073E41EA71909E5B707E6C8F /* CompanionService.swift in Sources */,

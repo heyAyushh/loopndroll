@@ -3,12 +3,7 @@ import Foundation
 import LooperCompanionCore
 import LooperRealtime
 import Observation
-import UIKit
 import UserNotifications
-
-private enum LaunchArgument {
-    static let sendTestAlertOnLaunch = "--send-test-alert-on-launch"
-}
 
 private enum CachedSnapshotRestoreReason {
     static let appLaunch = "app-launch"
@@ -54,18 +49,15 @@ final class CompanionAppModel {
     @ObservationIgnored private var service: any CompanionService
     @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
-    @ObservationIgnored private let remotePushRegistrar: RemotePushRegistrar
     @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
+    @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var notificationReplyCoordinator: CompanionNotificationReplyCoordinator?
     @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
-    @ObservationIgnored private var notificationObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
-    @ObservationIgnored private var didRequestRemotePushRegistrationThisLaunch = false
-    @ObservationIgnored private var didSendLaunchVerificationAlertThisLaunch = false
     @ObservationIgnored private var lastAppliedRealtimeRevision: String?
     @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
     @ObservationIgnored private var cachedSnapshotRestoreTask: Task<Void, Never>?
@@ -94,7 +86,6 @@ final class CompanionAppModel {
     ) {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
-        self.remotePushRegistrar = remotePushRegistrar
         self.spotlightIndexer = spotlightIndexer
         self.sessionMiniController = CompanionSessionMiniController(localStore: sessionMiniLocalStore)
 
@@ -102,6 +93,11 @@ final class CompanionAppModel {
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
+        notificationCoordinator = CompanionNotificationCoordinator(
+            notificationManager: notificationManager,
+            remotePushRegistrar: remotePushRegistrar,
+            delegate: self
+        )
         notificationReplyCoordinator = CompanionNotificationReplyCoordinator(
             sessionMiniController: sessionMiniController,
             delegate: self
@@ -124,7 +120,6 @@ final class CompanionAppModel {
         configureStopQuickActions()
         SessionQuickActionCenter.shared.configureLocalStore(sessionMiniController.localStore)
         registerSessionQuickActionHandler()
-        registerNotificationObservers()
         CompanionDiagnostics.lifecycle.info(
             "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore, privacy: .public)"
         )
@@ -161,6 +156,13 @@ final class CompanionAppModel {
             preconditionFailure("Connection coordinator used before initialization")
         }
         return connectionCoordinator
+    }
+
+    private var notifications: CompanionNotificationCoordinator {
+        guard let notificationCoordinator else {
+            preconditionFailure("Notification coordinator used before initialization")
+        }
+        return notificationCoordinator
     }
 
     private var notificationReplies: CompanionNotificationReplyCoordinator {
@@ -358,7 +360,7 @@ final class CompanionAppModel {
         startNotificationReplyOutboxDrainIfNeeded()
 
         CompanionDiagnostics.record("snapshot:load-skip-state-mini-prepare")
-        registerForRemoteNotificationsInBackground()
+        notifications.registerForRemoteNotificationsInBackground()
     }
 
     private func shouldReloadServiceFromStoredConnection() -> Bool {
@@ -445,12 +447,6 @@ final class CompanionAppModel {
             await self?.loadSnapshot(
                 allowsConcurrentConnectionReload: allowsConcurrentConnectionReload
             )
-        }
-    }
-
-    private func registerForRemoteNotificationsInBackground() {
-        Task { @MainActor [weak self] in
-            await self?.registerForRemoteNotificationsIfPossible()
         }
     }
 
@@ -603,102 +599,19 @@ final class CompanionAppModel {
     }
 
     func refreshLocalNotificationStatus() async {
-        localNotificationStatus = await notificationManager.currentAuthorizationStatus()
+        await notifications.refreshLocalNotificationStatus()
     }
 
     func enableLocalNotifications() async {
-        configureStopQuickActions()
-        #if DEBUG
-        if UITestLaunchArguments.isMockModeEnabled {
-            localNotificationStatus = .authorized
-            Haptics.success()
-            return
-        }
-        #endif
-
-        localNotificationStatus = await notificationManager.requestAuthorizationIfNeeded()
-
-        if canSendLocalNotifications {
-            Haptics.success()
-            await registerForRemoteNotificationsIfPossible(force: true)
-        } else if areLocalNotificationsDenied {
-            Haptics.warning()
-        }
+        await notifications.enableLocalNotifications()
     }
 
     func sendTestAlert() async {
-        if !canSendLocalNotifications {
-            await enableLocalNotifications()
-        }
-
-        guard canSendLocalNotifications else {
-            return
-        }
-
-        if remotePushRegistration?.state == .enabled {
-            do {
-                let response = try await service.sendTestPush(
-                    installationID: remotePushRegistrar.installationIdentifier()
-                )
-                remotePushFailureMessage = response.delivered ? nil : response.message
-
-                if response.delivered {
-                    Haptics.success()
-                } else {
-                    Haptics.warning()
-                }
-
-                return
-            } catch {
-                remotePushFailureMessage = error.localizedDescription
-                Haptics.error()
-                return
-            }
-        }
-
-        let didSend = await notificationManager.sendTestNotification()
-
-        if didSend {
-            Haptics.success()
-        } else {
-            Haptics.error()
-        }
+        await notifications.sendTestAlert()
     }
 
     func sendLaunchVerificationAlertIfRequested() async {
-        guard ProcessInfo.processInfo.arguments.contains(LaunchArgument.sendTestAlertOnLaunch) else {
-            return
-        }
-
-        guard !didSendLaunchVerificationAlertThisLaunch else {
-            return
-        }
-
-        didSendLaunchVerificationAlertThisLaunch = true
-
-        if !canSendLocalNotifications {
-            localNotificationStatus = await notificationManager.requestAuthorizationIfNeeded()
-        }
-
-        guard canSendLocalNotifications else {
-            NSLog("looper: launch verification alert skipped because notifications are disabled")
-            return
-        }
-
-        try? await Task.sleep(for: .seconds(1))
-
-        let didSend = await notificationManager.sendTestNotification()
-        NSLog(
-            didSend
-                ? "looper: launch verification notification scheduled"
-                : "looper: launch verification notification failed"
-        )
-
-        if didSend {
-            Haptics.success()
-        } else {
-            Haptics.error()
-        }
+        await notifications.sendLaunchVerificationAlertIfRequested()
     }
 
     func loadSnapshot(allowsConcurrentConnectionReload: Bool = false) async {
@@ -1454,7 +1367,7 @@ final class CompanionAppModel {
     }
 
     func configureStopQuickActions() {
-        notificationManager.configureStopQuickActions(QuickActionSettings.loadSelectedActions())
+        notifications.configureStopQuickActions()
     }
 
     func consumePendingOpenSessionID() -> String? {
@@ -2031,85 +1944,6 @@ final class CompanionAppModel {
         }
     }
 
-    private func registerNotificationObservers() {
-        let center = NotificationCenter.default
-        notificationObservers = [
-            center.addObserver(
-                forName: .looperDidRegisterRemotePush,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                guard let self,
-                      let deviceToken = notification.userInfo?["deviceToken"] as? String
-                else {
-                    return
-                }
-
-                Task { @MainActor in
-                    await self.registerRemotePushToken(deviceToken)
-                }
-            },
-            center.addObserver(
-                forName: .looperDidFailRemotePushRegistration,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                guard let self,
-                      let message = notification.userInfo?["message"] as? String
-                else {
-                    return
-                }
-
-                Task { @MainActor in
-                    self.isRegisteringRemotePush = false
-                    self.remotePushFailureMessage = message
-                }
-            },
-        ]
-    }
-
-    private func registerForRemoteNotificationsIfPossible(force: Bool = false) async {
-        guard canSendLocalNotifications else {
-            return
-        }
-
-        guard force || !didRequestRemotePushRegistrationThisLaunch else {
-            return
-        }
-
-        didRequestRemotePushRegistrationThisLaunch = true
-        isRegisteringRemotePush = true
-        remotePushFailureMessage = nil
-        remotePushRegistrar.registerForRemoteNotifications()
-    }
-
-    private func registerRemotePushToken(_ deviceToken: String) async {
-        guard let bundleID = Bundle.main.bundleIdentifier?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ), !bundleID.isEmpty else {
-            isRegisteringRemotePush = false
-            remotePushFailureMessage = "The app bundle ID is missing."
-            return
-        }
-
-        do {
-            remotePushRegistration = try await service.registerPushDevice(
-                RemotePushRegistrationRequest(
-                    installationId: remotePushRegistrar.installationIdentifier(),
-                    deviceToken: deviceToken,
-                    bundleId: bundleID,
-                    environment: .currentBuild,
-                    deviceName: UIDevice.current.name
-                )
-            )
-            isRegisteringRemotePush = false
-            remotePushFailureMessage = nil
-        } catch {
-            isRegisteringRemotePush = false
-            remotePushFailureMessage = error.localizedDescription
-            Haptics.error()
-        }
-    }
     private static func normalizedRevision(_ revision: String?) -> String? {
         let trimmedRevision = revision?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trimmedRevision, !trimmedRevision.isEmpty else {
@@ -2263,6 +2097,40 @@ extension CompanionAppModel: CompanionConnectionCoordinatorDelegate {
 
     func connectionCoordinatorReloadConnection() async {
         await reloadConnection()
+    }
+}
+
+extension CompanionAppModel: CompanionNotificationCoordinatorDelegate {
+    var notificationService: any CompanionService {
+        service
+    }
+
+    var notificationCanSendLocalNotifications: Bool {
+        canSendLocalNotifications
+    }
+
+    var notificationAreLocalNotificationsDenied: Bool {
+        areLocalNotificationsDenied
+    }
+
+    var notificationRemotePushRegistration: RemotePushRegistrationResponse? {
+        remotePushRegistration
+    }
+
+    func notificationApplyLocalAuthorizationStatus(_ status: UNAuthorizationStatus) {
+        localNotificationStatus = status
+    }
+
+    func notificationSetRemotePushRegistration(_ registration: RemotePushRegistrationResponse?) {
+        remotePushRegistration = registration
+    }
+
+    func notificationSetRemotePushRegistrationInFlight(_ isRegistering: Bool) {
+        isRegisteringRemotePush = isRegistering
+    }
+
+    func notificationSetRemotePushFailureMessage(_ message: String?) {
+        remotePushFailureMessage = message
     }
 }
 
