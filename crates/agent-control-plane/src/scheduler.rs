@@ -76,6 +76,10 @@ impl AutomationRunner {
 
 fn automation_dispatch_result(dispatch: PromptDispatch) -> (&'static str, Option<String>) {
     match dispatch {
+        PromptDispatch::Accepted => (
+            AUTOMATION_RESULT_FAILED,
+            Some("prompt accepted without synchronous delivery".to_owned()),
+        ),
         PromptDispatch::Queued { prompt_id } => (
             AUTOMATION_RESULT_QUEUED,
             Some(format!("queued prompt {prompt_id}")),

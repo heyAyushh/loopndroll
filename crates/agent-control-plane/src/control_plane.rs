@@ -48,17 +48,21 @@ use crate::devin::{
     inspect_devin_desktop_for_home, inspect_devin_hooks, install_looper_acp_agent_for_home,
     register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
-use crate::events::{AutomationRunInput, AutomationRunRecord, EventStore};
+use crate::events::{
+    AutomationRunInput, AutomationRunRecord, EventStore, MobileSessionMiniProjectionInput,
+};
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
     GrokHookOwner, GrokHookStatus, discover_grok_sessions, grok_session_to_desktop_thread,
     inspect_grok_hooks, register_owned_grok_hooks, unregister_owned_grok_hooks,
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
+use crate::mobile::api::{latest_session_mini_revision, session_mini_projection_inputs};
 use crate::mobile::auth::MobileAuthService;
 use crate::mobile::events::{
-    MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
+    MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
 };
+use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, mobile_desktop_snapshot};
 use crate::mobile::push::MobilePushService;
 use crate::mobile::session::{MobileSessionService, MobileSessionState};
 use crate::sync_manifest::SyncManifest;
@@ -166,6 +170,7 @@ pub struct ControlPlane {
     devin_acp_runtime: DevinAcpRuntime,
     zed_acp_runtime: LooperAcpRuntime,
     response_cache: Arc<ControlPlaneResponseCache>,
+    prompt_delivery_cache: Arc<PromptDeliveryActionCache>,
 }
 
 struct ControlPlaneResponseCache {
@@ -427,6 +432,7 @@ impl ControlPlane {
             devin_acp_runtime: DevinAcpRuntime::default(),
             zed_acp_runtime: LooperAcpRuntime::new(ZED_CLIENT_ID),
             response_cache: Arc::new(ControlPlaneResponseCache::new()),
+            prompt_delivery_cache: Arc::new(PromptDeliveryActionCache::default()),
         }
     }
 
@@ -451,13 +457,137 @@ impl ControlPlane {
             .mobile_snapshot_revision()
             .ok()
             .filter(|revision| !revision.is_empty());
-        match self.store.record_mobile_event(&event) {
+        self.persist_and_publish_mobile_event(event, None);
+    }
+
+    pub fn emit_mobile_session_event(&self, input: MobileEventInput, thread_id: &str) {
+        let mut event = build_mobile_event(input);
+        let revision = self
+            .mobile_snapshot_revision()
+            .ok()
+            .filter(|revision| !revision.is_empty());
+        event.revision = revision.clone();
+        let mini = revision
+            .as_deref()
+            .and_then(|revision| self.session_mini_projection_input(thread_id, revision).ok())
+            .flatten()
+            .map(|mini| vec![mini]);
+        self.persist_and_publish_mobile_event(event, mini);
+    }
+
+    pub fn emit_mobile_session_event_without_projection(&self, input: MobileEventInput) {
+        let mut event = build_mobile_event(input);
+        event.revision = self
+            .store
+            .mobile_session_minis()
+            .ok()
+            .and_then(|records| latest_session_mini_revision(&records));
+        self.persist_and_publish_mobile_event(event, None);
+    }
+
+    pub fn publish_mobile_session_event_without_persisting(&self, input: MobileEventInput) {
+        let mut event = build_mobile_event(input);
+        event.revision = self
+            .store
+            .mobile_session_minis()
+            .ok()
+            .and_then(|records| latest_session_mini_revision(&records));
+        self.mobile_events.publish_ephemeral(event);
+    }
+
+    pub fn emit_mobile_session_event_with_cached_minis(
+        &self,
+        input: MobileEventInput,
+        minis: Vec<MobileSessionMiniProjectionInput>,
+    ) {
+        let mut event = build_mobile_event(input);
+        event.revision = self
+            .store
+            .mobile_session_minis()
+            .ok()
+            .and_then(|records| latest_session_mini_revision(&records));
+        self.persist_and_publish_mobile_event(event, Some(minis));
+    }
+
+    pub fn emit_mobile_all_sessions_event(&self, input: MobileEventInput) {
+        let mut event = build_mobile_event(input);
+        let revision = self
+            .mobile_snapshot_revision()
+            .ok()
+            .filter(|revision| !revision.is_empty());
+        event.revision = revision.clone();
+        let minis = revision
+            .as_deref()
+            .and_then(|revision| self.session_mini_projection_inputs(revision).ok());
+        self.persist_replace_and_publish_mobile_event(event, minis);
+    }
+
+    fn persist_and_publish_mobile_event(
+        &self,
+        event: MobileEvent,
+        minis: Option<Vec<MobileSessionMiniProjectionInput>>,
+    ) {
+        let result = match minis {
+            Some(minis) => self
+                .store
+                .record_mobile_event_with_session_minis(&event, minis),
+            None => self.store.record_mobile_event(&event),
+        };
+        match result {
             Ok(record) => self.mobile_events.publish_persisted(record),
             Err(error) => {
                 eprintln!("mobile event persistence failed: {error}");
                 self.mobile_events.publish_ephemeral(event);
             }
         }
+    }
+
+    fn persist_replace_and_publish_mobile_event(
+        &self,
+        event: MobileEvent,
+        minis: Option<Vec<MobileSessionMiniProjectionInput>>,
+    ) {
+        let result = match minis {
+            Some(minis) => self
+                .store
+                .record_mobile_event_replacing_session_minis(&event, minis),
+            None => self.store.record_mobile_event(&event),
+        };
+        match result {
+            Ok(record) => self.mobile_events.publish_persisted(record),
+            Err(error) => {
+                eprintln!("mobile event persistence failed: {error}");
+                self.mobile_events.publish_ephemeral(event);
+            }
+        }
+    }
+
+    fn session_mini_projection_input(
+        &self,
+        thread_id: &str,
+        revision: &str,
+    ) -> Result<Option<MobileSessionMiniProjectionInput>> {
+        Ok(self
+            .session_mini_projection_inputs(revision)?
+            .into_iter()
+            .find(|mini| mini.session_id == thread_id))
+    }
+
+    fn session_mini_projection_inputs(
+        &self,
+        revision: &str,
+    ) -> Result<Vec<MobileSessionMiniProjectionInput>> {
+        let snapshot = mobile_desktop_snapshot(self)?;
+        let session_state = self.mobile_session_service().state()?;
+        let queued_prompt_counts = self.mobile_session_service().queued_prompt_counts()?;
+        let latest_seq = self.store.latest_mobile_state_event_seq()?;
+        Ok(session_mini_projection_inputs(
+            &snapshot,
+            &session_state,
+            &queued_prompt_counts,
+            latest_seq,
+            revision,
+        ))
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
@@ -682,6 +812,10 @@ impl ControlPlane {
 
     pub fn store(&self) -> &EventStore {
         &self.store
+    }
+
+    pub fn prompt_delivery_action_cache(&self) -> &PromptDeliveryActionCache {
+        &self.prompt_delivery_cache
     }
 
     pub fn mobile_auth_service(&self) -> MobileAuthService {

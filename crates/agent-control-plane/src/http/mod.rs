@@ -31,6 +31,9 @@ use crate::mobile::prompt_delivery::{
     BatchPromptInput, mobile_desktop_snapshot, queue_desktop_batch_prompt, send_session_prompt,
 };
 use crate::mobile::push::MobilePushRegistrationRequest;
+use crate::mobile::realtime_commands::{
+    RealtimeCommandError, SubmitNotificationReplyInput, submit_notification_reply_command,
+};
 use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
@@ -51,18 +54,19 @@ use self::mobile_access::{
     request_advertised_mobile_pairing_base_urls,
 };
 use self::mobile_state::{
-    desktop_mobile_state_response, emit_mobile_lifecycle_changed, emit_mobile_session_changed,
-    missing_mobile_session_rejection, mobile_snapshot_response,
+    desktop_mobile_state_response, emit_all_mobile_sessions_changed, emit_mobile_session_changed,
+    missing_mobile_session_rejection, mobile_session_minis_delta_response,
+    mobile_session_minis_snapshot_response, mobile_snapshot_response,
 };
 use self::requests::{
     AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest,
     DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
     DesktopConnectionRenameRequest, DesktopDefaultNotificationTargetsRequest,
-    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationRequest,
-    DesktopScopeRequest, DesktopSessionBatchPromptRequest, DesktopSessionNotificationsRequest,
-    DesktopSnapshotQuery, DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest,
-    DevinAcpSessionPromptRequest, MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
-    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
+    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationReplyRequest,
+    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionBatchPromptRequest,
+    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
+    DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest, MobileAssistantSurfaceRequest,
+    MobileDefaultPromptRequest, MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
     MobileSessionPromptQuery, MobileSessionPromptRequest, MobileSiriCurrentSessionRequest,
     MobileSiriDefaultSessionRequest,
@@ -271,6 +275,10 @@ fn desktop_session_routes() -> Router<ControlPlane> {
             post(desktop_session_prompt),
         )
         .route(
+            "/desktop/sessions/:thread_id/notification-reply",
+            post(desktop_session_notification_reply),
+        )
+        .route(
             "/desktop/sessions/:thread_id/mute",
             post(desktop_session_mute),
         )
@@ -310,6 +318,14 @@ fn mobile_routes() -> Router<ControlPlane> {
             get(mobile_connection_orb),
         )
         .route("/api/mobile/snapshot", get(mobile_snapshot_handler))
+        .route(
+            "/api/mobile/session-minis",
+            get(mobile_session_minis_handler),
+        )
+        .route(
+            "/api/mobile/session-minis/snapshot",
+            get(mobile_session_minis_snapshot_handler),
+        )
         .route("/api/mobile/events", get(mobile_events_handler))
         .route(
             "/api/mobile/sessions/:thread_id",
@@ -709,6 +725,13 @@ struct AcpClientHostWebsocketQuery {
     agent_id: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct MobileSessionMinisQuery {
+    #[serde(rename = "afterSeq", alias = "after_seq")]
+    after_seq: Option<i64>,
+    limit: Option<usize>,
+}
+
 async fn run_acp_socket(runtime: LooperAcpRuntime, socket: WebSocket, agent_id: Option<String>) {
     let (mut socket_sender, mut socket_receiver) = socket.split();
     let (outbound_sender, mut outbound_receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -975,7 +998,10 @@ async fn desktop_assistant_surface(
         .mobile_session_service()
         .set_assistant_surface(&input.assistant_surface)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(&control_plane, "assistant-surface-updated");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -992,7 +1018,10 @@ async fn desktop_global_preset(
         .mobile_session_service()
         .set_global_preset(input.preset.as_deref())
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(&control_plane, "global-preset-updated");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1009,7 +1038,10 @@ async fn desktop_global_notification(
         .mobile_session_service()
         .set_global_notification(input.notification_id.as_deref())
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(&control_plane, "global-notification-updated");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1026,7 +1058,13 @@ async fn desktop_default_notification_targets(
         .mobile_session_service()
         .set_default_notification_targets(&input.notification_target_ids)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(
+                &control_plane,
+                "default-notification-targets-updated",
+            );
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1045,7 +1083,10 @@ async fn desktop_global_completion_check(
             input.completion_check_id.as_deref(),
             input.wait_for_reply_after_completion,
         ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(&control_plane, "global-completion-check-updated");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1070,7 +1111,10 @@ async fn desktop_notification_upsert(
             chat_username: input.chat_username,
             chat_display_name: input.chat_display_name,
         }) {
-        Ok(_) => desktop_mobile_state_response(&control_plane),
+        Ok(_) => {
+            emit_all_mobile_sessions_changed(&control_plane, "notification-route-updated");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1087,7 +1131,10 @@ async fn desktop_notification_delete(
         .mobile_session_service()
         .delete_notification_route(&notification_id)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_all_mobile_sessions_changed(&control_plane, "notification-route-deleted");
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1160,7 +1207,14 @@ async fn desktop_session_notifications(
         .mobile_session_service()
         .set_session_notifications(&thread_id, &input.notification_ids)
     {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_session_changed(
+                &control_plane,
+                Some(&thread_id),
+                Some("notifications-updated"),
+            );
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1203,7 +1257,14 @@ async fn desktop_session_completion_check(
             input.completion_check_id.as_deref(),
             input.wait_for_reply_after_completion,
         ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Ok(()) => {
+            emit_mobile_session_changed(
+                &control_plane,
+                Some(&thread_id),
+                Some("completion-check-updated"),
+            );
+            desktop_mobile_state_response(&control_plane)
+        }
         Err(error) => mobile_session_error_response(error),
     }
 }
@@ -1250,6 +1311,30 @@ async fn desktop_session_prompt(
     match send_session_prompt(&control_plane, &thread_id, None, &input.prompt) {
         Ok(_) => desktop_mobile_state_response(&control_plane),
         Err(error) => mobile_session_error_response(error),
+    }
+}
+
+async fn desktop_session_notification_reply(
+    State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(thread_id): Path<String>,
+    Json(input): Json<DesktopNotificationReplyRequest>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match submit_notification_reply_command(
+        &control_plane,
+        SubmitNotificationReplyInput {
+            notification_id: &input.notification_id,
+            thread_id: &thread_id,
+            prompt: &input.prompt,
+            assistant_surface: input.assistant_surface.as_deref(),
+            client_mutation_id: &input.client_mutation_id,
+        },
+    ) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => realtime_command_error_response(error),
     }
 }
 
@@ -1312,6 +1397,32 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
         std::process::exit(0);
     });
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+}
+
+fn realtime_command_error_response(error: RealtimeCommandError) -> Response {
+    match error {
+        RealtimeCommandError::InvalidArgument(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+        RealtimeCommandError::AlreadyExists(message) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+        RealtimeCommandError::NotFound(message) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+        RealtimeCommandError::MobileSession(error) => mobile_session_error_response(error),
+        RealtimeCommandError::Internal(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+    }
 }
 
 async fn sync_manifest(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
@@ -1553,6 +1664,31 @@ async fn mobile_snapshot_handler(
     mobile_snapshot_response(&control_plane, &headers)
 }
 
+async fn mobile_session_minis_handler(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+    Query(query): Query<MobileSessionMinisQuery>,
+) -> impl IntoResponse {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+    mobile_session_minis_delta_response(
+        &control_plane,
+        query.after_seq.unwrap_or_default(),
+        query.limit,
+    )
+}
+
+async fn mobile_session_minis_snapshot_handler(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+    mobile_session_minis_snapshot_response(&control_plane)
+}
+
 async fn mobile_session_detail_handler(
     State(control_plane): State<ControlPlane>,
     headers: HeaderMap,
@@ -1729,12 +1865,7 @@ async fn mobile_assistant_surface(
         .set_assistant_surface(&input.assistant_surface)
     {
         Ok(()) => {
-            emit_mobile_lifecycle_changed(
-                &control_plane,
-                "global",
-                Some(input.assistant_surface.as_str()),
-            );
-            emit_mobile_session_changed(&control_plane, None, Some("assistant-surface-updated"));
+            emit_all_mobile_sessions_changed(&control_plane, "assistant-surface-updated");
             mobile_snapshot_response(&control_plane, &headers)
         }
         Err(error) => mobile_session_error_response(error),

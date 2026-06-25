@@ -20,6 +20,7 @@ const THREAD_GOALS_TABLE_NAME: &str = "thread_goals";
 pub enum GoalStatus {
     Pursuing,
     Paused,
+    Blocked,
     Achieved,
     Unmet,
     UsageLimited,
@@ -442,7 +443,8 @@ fn parse_status(value: Option<&str>) -> GoalStatus {
         "pursuing" | "active" | "open" | "todo" | "in_progress" | "in-progress" => {
             GoalStatus::Pursuing
         }
-        "paused" | "blocked" => GoalStatus::Paused,
+        "paused" => GoalStatus::Paused,
+        "blocked" => GoalStatus::Blocked,
         "achieved" | "done" | "complete" | "completed" | "closed" => GoalStatus::Achieved,
         "unmet" | "failed" => GoalStatus::Unmet,
         "usage-limited" | "usage_limited" | "usage limited" => GoalStatus::UsageLimited,

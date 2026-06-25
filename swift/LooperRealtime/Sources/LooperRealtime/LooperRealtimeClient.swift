@@ -21,13 +21,26 @@ public final class LooperRealtimeClient: Sendable {
         connections.disconnectAll()
     }
 
+    public func warmConnections() async throws {
+        try await withFirstAvailableService { service, _ in
+            let response = try await service.health(
+                Looper_V1_HealthRequest(),
+                options: LooperRealtimeLatencyPolicy.warmupCallOptions
+            )
+            guard response.ok else {
+                throw LooperRealtimeError.unavailable
+            }
+        }
+    }
+
     public func streamMobileEvents(
         onEvent: @escaping @Sendable (LooperRealtimeEvent) async -> Void
     ) async throws {
         try await withFirstAvailableService { service, metadata in
             try await service.subscribeMobileEvents(
                 Looper_V1_SubscribeEventsRequest(),
-                metadata: metadata
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.streamCallOptions
             ) { response in
                 for try await event in response.messages {
                     await onEvent(LooperRealtimeEvent(event))
@@ -40,7 +53,10 @@ public final class LooperRealtimeClient: Sendable {
         onEvent: @escaping @Sendable (LooperRealtimeEvent) async -> Void
     ) async throws {
         try await withFirstAvailableService { service, _ in
-            try await service.subscribeDesktopEvents(Looper_V1_SubscribeEventsRequest()) { response in
+            try await service.subscribeDesktopEvents(
+                Looper_V1_SubscribeEventsRequest(),
+                options: LooperRealtimeLatencyPolicy.streamCallOptions
+            ) { response in
                 for try await event in response.messages {
                     await onEvent(LooperRealtimeEvent(event))
                 }
@@ -48,19 +64,69 @@ public final class LooperRealtimeClient: Sendable {
         }
     }
 
+    public func setSessionMode(
+        threadID: String,
+        preset: String?,
+        clientMutationID: String = UUID().uuidString
+    ) async throws -> LooperRealtimeModeResponse {
+        try await withFirstAvailableService { service, metadata in
+            var request = Looper_V1_SetSessionModeRequest()
+            request.threadID = threadID
+            request.preset = preset ?? ""
+            request.clientMutationID = clientMutationID
+
+            let response = try await service.setSessionMode(
+                request,
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.modeCallOptions
+            )
+            return LooperRealtimeModeResponse(response)
+        }
+    }
+
     public func sendSessionPrompt(
         threadID: String,
         prompt: String,
-        assistantSurface: String?
+        assistantSurface: String?,
+        clientMutationID: String = UUID().uuidString
     ) async throws -> LooperRealtimePromptResponse {
         try await withFirstAvailableService { service, metadata in
             var request = Looper_V1_SendSessionPromptRequest()
             request.threadID = threadID
             request.prompt = prompt
             request.assistantSurface = assistantSurface ?? ""
+            request.clientMutationID = clientMutationID
 
-            let response = try await service.sendSessionPrompt(request, metadata: metadata)
+            let response = try await service.sendSessionPrompt(
+                request,
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.promptCallOptions
+            )
             return LooperRealtimePromptResponse(response)
+        }
+    }
+
+    public func submitNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String?,
+        clientMutationID: String = UUID().uuidString
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        try await withFirstAvailableService { service, metadata in
+            var request = Looper_V1_SubmitNotificationReplyRequest()
+            request.notificationID = notificationID
+            request.threadID = threadID
+            request.prompt = prompt
+            request.assistantSurface = assistantSurface ?? ""
+            request.clientMutationID = clientMutationID
+
+            let response = try await service.submitNotificationReply(
+                request,
+                metadata: metadata,
+                options: LooperRealtimeLatencyPolicy.promptCallOptions
+            )
+            return LooperRealtimeNotificationReplyResponse(response)
         }
     }
 
@@ -119,7 +185,8 @@ private final class LooperRealtimeConnectionPool: Sendable {
 
             let transport = try TransportServices(
                 target: .dns(host: host, port: port),
-                transportSecurity: endpoint.usesTLS ? .tls : .plaintext
+                transportSecurity: endpoint.usesTLS ? .tls : .plaintext,
+                config: LooperRealtimeLatencyPolicy.transportConfig
             )
             let client = ManagedClient(transport: transport)
             let connectionTask = Task {
@@ -166,6 +233,58 @@ private struct LooperRealtimeConnection: Sendable {
     }
 }
 
+enum LooperRealtimeLatencyPolicy {
+    static let keepaliveTime: Duration = .seconds(20)
+    static let keepaliveTimeout: Duration = .seconds(5)
+    static let reconnectInitialBackoff: Duration = .milliseconds(200)
+    static let reconnectMaxBackoff: Duration = .seconds(2)
+    static let warmupTimeout: Duration = .milliseconds(1_500)
+    static let modeTimeout: Duration = .milliseconds(300)
+    static let promptTimeout: Duration = .milliseconds(900)
+    static let reconnectMultiplier = 1.2
+    static let reconnectJitter = 0.1
+
+    static var transportConfig: HTTP2ClientTransport.TransportServices.Config {
+        .defaults { config in
+            config.connection.maxIdleTime = nil
+            config.connection.keepalive = HTTP2ClientTransport.Config.Keepalive(
+                time: keepaliveTime,
+                timeout: keepaliveTimeout,
+                allowWithoutCalls: true
+            )
+            config.backoff = HTTP2ClientTransport.Config.Backoff(
+                initial: reconnectInitialBackoff,
+                max: reconnectMaxBackoff,
+                multiplier: reconnectMultiplier,
+                jitter: reconnectJitter
+            )
+        }
+    }
+
+    static var warmupCallOptions: CallOptions {
+        failFastCallOptions(timeout: warmupTimeout)
+    }
+
+    static var modeCallOptions: CallOptions {
+        failFastCallOptions(timeout: modeTimeout)
+    }
+
+    static var promptCallOptions: CallOptions {
+        failFastCallOptions(timeout: promptTimeout)
+    }
+
+    static var streamCallOptions: CallOptions {
+        failFastCallOptions(timeout: nil)
+    }
+
+    private static func failFastCallOptions(timeout: Duration?) -> CallOptions {
+        var options = CallOptions.defaults
+        options.timeout = timeout
+        options.waitForReady = false
+        return options
+    }
+}
+
 private extension LooperRealtimeCredentials {
     var metadata: Metadata {
         var metadata = Metadata()
@@ -192,12 +311,65 @@ private extension LooperRealtimeEvent {
     }
 }
 
+private extension LooperRealtimeCommandAck {
+    init(_ ack: Looper_V1_CommandAck) {
+        self.init(
+            accepted: ack.accepted,
+            clientMutationID: ack.clientMutationID,
+            ackSeq: ack.ackSeq,
+            entityID: ack.entityID,
+            revision: ack.revision,
+            serverTime: ack.serverTime.nilIfEmpty,
+            idempotentReplay: ack.idempotentReplay
+        )
+    }
+}
+
+private extension LooperRealtimeModeResponse {
+    init(_ response: Looper_V1_SetSessionModeResponse) {
+        self.init(
+            accepted: response.accepted,
+            threadID: response.threadID,
+            preset: response.preset.nilIfEmpty,
+            serverTime: response.serverTime.nilIfEmpty,
+            clientMutationID: response.clientMutationID,
+            ackSeq: response.ackSeq,
+            entityID: response.entityID,
+            revision: response.revision,
+            idempotentReplay: response.idempotentReplay
+        )
+    }
+}
+
 private extension LooperRealtimePromptResponse {
     init(_ response: Looper_V1_SendSessionPromptResponse) {
         self.init(
             accepted: response.accepted,
             dispatchKind: response.dispatchKind,
-            promptID: response.promptID.nilIfEmpty
+            promptID: response.promptID.nilIfEmpty,
+            serverTime: response.serverTime.nilIfEmpty,
+            clientMutationID: response.clientMutationID,
+            ackSeq: response.ackSeq,
+            entityID: response.entityID,
+            revision: response.revision,
+            idempotentReplay: response.idempotentReplay
+        )
+    }
+}
+
+private extension LooperRealtimeNotificationReplyResponse {
+    init(_ response: Looper_V1_SubmitNotificationReplyResponse) {
+        self.init(
+            accepted: response.accepted,
+            dispatchKind: response.dispatchKind,
+            promptID: response.promptID.nilIfEmpty,
+            serverTime: response.serverTime.nilIfEmpty,
+            clientMutationID: response.clientMutationID,
+            ackSeq: response.ackSeq,
+            entityID: response.entityID,
+            revision: response.revision,
+            idempotentReplay: response.idempotentReplay,
+            notificationID: response.notificationID
         )
     }
 }

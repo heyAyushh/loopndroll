@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::completion_checks::{
@@ -77,6 +79,22 @@ impl MobileSessionService {
             ],
         )?;
         Ok(record)
+    }
+
+    pub fn queued_prompt_counts(&self) -> MobileSessionResult<BTreeMap<String, i64>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.store_path)?;
+        let mut statement = connection.prepare(
+            "select thread_id, count(*)
+             from mobile_remote_prompts
+             where status = ?1
+             group by thread_id",
+        )?;
+        let rows = statement.query_map([REMOTE_PROMPT_STATUS_QUEUED], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        rows.collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(MobileSessionError::Store)
     }
 
     pub fn hook_decision_for_payload(

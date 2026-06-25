@@ -129,27 +129,36 @@ async fn run_hook_mode_with_input(
     let outcome = service.hook_outcome_for_payload(&payload)?;
     service.record_hook_lifecycle(&payload, outcome.decision.is_some())?;
     if let Some(thread_id) = payload.session_id.as_deref() {
-        control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
-            kind: crate::mobile::events::MobileEventKind::SessionChanged,
-            thread_id: Some(thread_id.to_owned()),
-            prompt_id: None,
-            detail: Some(payload.hook_event_name.clone()),
-        });
-        if let Some(prompt_id) = outcome.delivered_prompt_id.as_deref() {
-            control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
-                kind: crate::mobile::events::MobileEventKind::PromptDelivered,
-                thread_id: Some(thread_id.to_owned()),
-                prompt_id: Some(prompt_id.to_owned()),
-                detail: None,
-            });
-        }
-        if let Some(decision) = outcome.decision.as_ref() {
-            control_plane.emit_mobile_event(crate::mobile::events::MobileEventInput {
-                kind: crate::mobile::events::MobileEventKind::LifecycleChanged,
+        control_plane.emit_mobile_session_event(
+            crate::mobile::events::MobileEventInput {
+                kind: crate::mobile::events::MobileEventKind::SessionChanged,
                 thread_id: Some(thread_id.to_owned()),
                 prompt_id: None,
-                detail: Some(decision.reason.clone()),
-            });
+                detail: Some(payload.hook_event_name.clone()),
+            },
+            thread_id,
+        );
+        if let Some(prompt_id) = outcome.delivered_prompt_id.as_deref() {
+            control_plane.emit_mobile_session_event(
+                crate::mobile::events::MobileEventInput {
+                    kind: crate::mobile::events::MobileEventKind::PromptDelivered,
+                    thread_id: Some(thread_id.to_owned()),
+                    prompt_id: Some(prompt_id.to_owned()),
+                    detail: None,
+                },
+                thread_id,
+            );
+        }
+        if let Some(decision) = outcome.decision.as_ref() {
+            control_plane.emit_mobile_session_event(
+                crate::mobile::events::MobileEventInput {
+                    kind: crate::mobile::events::MobileEventKind::LifecycleChanged,
+                    thread_id: Some(thread_id.to_owned()),
+                    prompt_id: None,
+                    detail: Some(decision.reason.clone()),
+                },
+                thread_id,
+            );
         }
     }
     if outcome.decision.is_none()

@@ -12,12 +12,15 @@ use agent_control_plane::auth::{
 };
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::grpc::proto::{
-    SendSessionPromptRequest, SubscribeEventsRequest, looper_realtime_client::LooperRealtimeClient,
+    SendSessionPromptRequest, SetSessionModeRequest, SubmitNotificationReplyRequest,
+    SubscribeEventsRequest, looper_realtime_client::LooperRealtimeClient,
 };
 use agent_control_plane::http::build_router;
+use agent_control_plane::mobile::api::session_mini_projection_inputs;
 use agent_control_plane::mobile::events::{
     MobileEventInput, MobileEventKind, MobileEventRecord, build_mobile_event, mobile_event_sse_name,
 };
+use agent_control_plane::mobile::prompt_delivery::prime_delivery_action_cache;
 use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
@@ -371,6 +374,7 @@ async fn goal_lifecycle_states_match_codex_goal_surface() {
     for (id, status) in [
         ("pursuing-goal", "pursuing"),
         ("paused-goal", "paused"),
+        ("blocked-goal", "blocked"),
         ("achieved-goal", "achieved"),
         ("unmet-goal", "unmet"),
         ("budget-goal", "budget-limited"),
@@ -397,7 +401,14 @@ status = "{status}"
         .collect::<Vec<_>>();
     assert_eq!(
         statuses,
-        vec!["achieved", "budget-limited", "paused", "pursuing", "unmet"]
+        vec![
+            "achieved",
+            "blocked",
+            "budget-limited",
+            "paused",
+            "pursuing",
+            "unmet"
+        ]
     );
 
     let manifest = request_json(&router, "/sync/manifest").await;
@@ -1733,6 +1744,362 @@ async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
 }
 
 #[tokio::test]
+async fn session_mini_projection_includes_card_blocked_goal_and_notification_state() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_thread_goal(
+        "thread-main",
+        "goal-blocked-main",
+        "Unblock the mobile card",
+        "blocked",
+    );
+    let control_plane = fixture.control_plane();
+    let service = control_plane.mobile_session_service();
+    service
+        .upsert_notification_route(
+            agent_control_plane::mobile::session::UpsertMobileNotificationRoute {
+                id: Some("route-telegram".to_owned()),
+                label: Some("Telegram DM".to_owned()),
+                channel: "telegram".to_owned(),
+                bot_token: Some("bot-token".to_owned()),
+                chat_id: Some("chat-1".to_owned()),
+                ..agent_control_plane::mobile::session::UpsertMobileNotificationRoute::default()
+            },
+        )
+        .expect("upsert notification");
+    service
+        .set_default_notification_targets(&["iphone".to_owned(), "route-telegram".to_owned()])
+        .expect("set default notification targets");
+    service
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("set await reply mode");
+    service
+        .queue_prompt("thread-main", "Reply from phone.")
+        .expect("queue prompt");
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(snapshot["latestSeq"], snapshot["latest_seq"]);
+    let session = session_mini_snapshot_session(&snapshot, "thread-main");
+    assert_eq!(session["id"], "thread-main");
+    assert_eq!(session["sessionId"], "thread-main");
+    assert_eq!(session["title"], "Main task");
+    assert_eq!(session["ref"], "T2");
+    assert_eq!(session["assistantSurface"], "codex");
+    assert_eq!(session["effectiveMode"], "await-reply");
+    assert_eq!(session["canSendPrompt"], serde_json::json!(true));
+    assert_eq!(session["replyable"], serde_json::json!(true));
+    assert_eq!(
+        session["promptDeliveryUnavailableReason"],
+        serde_json::Value::Null
+    );
+    assert_eq!(session["blockedGoal"]["status"], "blocked");
+    assert_eq!(session["blockedGoal"]["title"], "Unblock the mobile card");
+    assert_eq!(session["queueCount"], 1);
+    assert_eq!(session["status"], "waiting");
+    assert_eq!(session["lifecycle"], "waiting");
+    assert_eq!(session["notificationStatus"]["enabled"], true);
+    assert_eq!(
+        session["notificationStatus"]["targetIds"],
+        serde_json::json!(["iphone", "macos", "route-telegram"])
+    );
+    assert_eq!(session["notificationStatus"]["usesDefault"], true);
+    assert_eq!(session["metadata"]["projectPath"], "/tmp/project");
+}
+
+#[tokio::test]
+async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let initial = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let initial_session = session_mini_snapshot_session(&initial, "thread-main");
+    let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
+    let initial_revision = initial_session["revision"]
+        .as_str()
+        .expect("initial revision")
+        .to_owned();
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/settings/global-preset",
+        serde_json::json!({ "preset": "await-reply" }),
+        &[],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+
+    let replayed_minis = control_plane
+        .store()
+        .mobile_session_minis_after_seq(initial_seq, 10)
+        .expect("mini replay after seq");
+    assert!(replayed_minis.iter().any(|record| {
+        record.session_id == "thread-main"
+            && record.assistant_surface == "codex"
+            && record.seq > initial_seq
+            && record
+                .body_json
+                .contains("\"effectiveMode\":\"await-reply\"")
+    }));
+    let replayed = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={initial_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let replayed_session = session_mini_snapshot_session(&replayed, "thread-main");
+    assert_eq!(replayed["replace"], true);
+    assert_eq!(replayed_session["assistantSurface"], "codex");
+    assert_eq!(replayed_session["effectiveMode"], "await-reply");
+    assert!(
+        replayed_session["seq"]
+            .as_i64()
+            .expect("replayed session seq")
+            > initial_seq
+    );
+
+    let updated = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let updated_session = session_mini_snapshot_session(&updated, "thread-main");
+    let updated_seq = updated["latestSeq"].as_i64().expect("updated latest seq");
+
+    assert!(updated_seq > initial_seq);
+    assert!(updated_session["seq"].as_i64().expect("session seq") >= updated_seq);
+    assert_ne!(
+        updated_session["revision"]
+            .as_str()
+            .expect("updated revision"),
+        initial_revision
+    );
+    assert_eq!(updated_session["effectiveMode"], "await-reply");
+    assert_eq!(updated_session["status"], "waiting");
+}
+
+#[tokio::test]
+async fn session_mini_projection_replays_default_notification_target_mutation() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .mobile_session_service()
+        .upsert_notification_route(
+            agent_control_plane::mobile::session::UpsertMobileNotificationRoute {
+                id: Some("route-telegram".to_owned()),
+                label: Some("Telegram DM".to_owned()),
+                channel: "telegram".to_owned(),
+                bot_token: Some("bot-token".to_owned()),
+                chat_id: Some("chat-1".to_owned()),
+                ..agent_control_plane::mobile::session::UpsertMobileNotificationRoute::default()
+            },
+        )
+        .expect("upsert notification");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let initial = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/settings/default-notification-targets",
+        serde_json::json!({
+            "notificationTargetIds": ["iphone", "route-telegram"]
+        }),
+        &[],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+
+    let replayed = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={initial_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let session = session_mini_snapshot_session(&replayed, "thread-main");
+
+    assert_eq!(replayed["replace"], true);
+    assert!(
+        session["seq"].as_i64().expect("session seq") > initial_seq,
+        "default notification target mutation must advance mini seq"
+    );
+    assert_eq!(session["notificationStatus"]["enabled"], true);
+    assert_eq!(
+        session["notificationStatus"]["targetIds"],
+        serde_json::json!(["iphone", "macos", "route-telegram"])
+    );
+    assert_eq!(session["notificationStatus"]["usesDefault"], true);
+}
+
+#[tokio::test]
+async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.write_devin_next_session();
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let initial = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert!(session_mini_snapshot_has_session(&initial, "thread-main"));
+    let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
+
+    request_json_body_with_options(
+        &router,
+        Method::DELETE,
+        "/api/mobile/sessions/thread-main",
+        serde_json::json!({}),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    let after_delete = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={initial_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(after_delete["replace"], true);
+    assert!(!session_mini_snapshot_has_session(
+        &after_delete,
+        "thread-main"
+    ));
+    let delete_seq = after_delete["latestSeq"]
+        .as_i64()
+        .expect("delete latest seq");
+    assert!(delete_seq > initial_seq);
+
+    request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/api/mobile/settings/assistant-surface",
+        serde_json::json!({ "assistantSurface": "devin" }),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    let after_surface = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={delete_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(after_surface["replace"], true);
+
+    assert!(!session_mini_snapshot_has_session(
+        &after_surface,
+        "thread-main"
+    ));
+    assert!(session_mini_snapshot_has_session(
+        &after_surface,
+        "devin:devin-cli:brindle-cadet"
+    ));
+}
+
+#[tokio::test]
+async fn session_mini_snapshot_is_recovery_only() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert!(snapshot.get("sessions").is_some());
+    assert!(snapshot.get("latestSeq").is_some());
+    assert!(snapshot.get("latest_seq").is_some());
+    assert_eq!(snapshot["replace"], true);
+    assert!(snapshot.get("surfaceSessions").is_none());
+    assert!(snapshot.get("globalSettings").is_none());
+    assert!(snapshot.get("notifications").is_none());
+    assert!(snapshot.get("completionChecks").is_none());
+    let session = session_mini_snapshot_session(&snapshot, "thread-main");
+    assert!(session.get("latestAssistantMessage").is_none());
+    assert!(session.get("availableNotifications").is_none());
+    assert!(session.get("availableCompletionChecks").is_none());
+
+    let gap_response = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis?after_seq=999999",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(gap_response.status(), StatusCode::CONFLICT);
+    let body = gap_response
+        .into_body()
+        .collect()
+        .await
+        .expect("gap body")
+        .to_bytes();
+    let gap: serde_json::Value = serde_json::from_slice(&body).expect("gap json");
+    assert_eq!(gap["error"], "seq_gap");
+    assert_eq!(gap["recovery"], "/api/mobile/session-minis/snapshot");
+}
+
+#[tokio::test]
 async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -1959,7 +2326,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
             .mobile_events_since(0, 10)
             .expect("mobile events")
             .iter()
-            .any(|event| event.detail.as_deref() == Some("prompt-resumed"))
+            .any(|event| event.detail.as_deref() == Some("prompt-queued"))
     );
 
     record_thread_active(&control_plane, "thread-main");
@@ -3065,20 +3432,18 @@ async fn grpc_mobile_prompt_records_prompt_resumed_event() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
-    let service = control_plane.mobile_session_service();
-    service
-        .set_session_preset("thread-main", Some("await-reply"))
-        .expect("set mode");
     record_thread_active(&control_plane, "thread-main");
 
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    prime_state_mini_cache(&control_plane);
 
     let mut request = tonic::Request::new(SendSessionPromptRequest {
         thread_id: "thread-main".to_owned(),
         prompt: "Keep going from gRPC.".to_owned(),
         assistant_surface: String::new(),
+        client_mutation_id: "grpc-prompt-records-event-1".to_owned(),
     });
     request.metadata_mut().insert(
         "authorization",
@@ -3092,17 +3457,23 @@ async fn grpc_mobile_prompt_records_prompt_resumed_event() {
         .into_inner();
 
     assert!(response.accepted);
-    assert_eq!(response.dispatch_kind, "resumed");
+    assert_eq!(response.dispatch_kind, "accepted");
 
-    let events = control_plane
-        .store()
-        .mobile_events_since(0, 32)
-        .expect("mobile events");
-    assert!(events.iter().any(|event| {
-        event.thread_id.as_deref() == Some("thread-main")
-            && event.event_type == MobileEventKind::SessionChanged
-            && event.detail.as_deref() == Some("prompt-resumed")
-    }));
+    for _ in 0..80 {
+        let events = control_plane
+            .store()
+            .mobile_events_since(0, 32)
+            .expect("mobile events");
+        if events.iter().any(|event| {
+            event.thread_id.as_deref() == Some("thread-main")
+                && event.event_type == MobileEventKind::SessionChanged
+                && event.detail.as_deref() == Some("prompt-resumed")
+        }) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for prompt-resumed event");
 }
 
 #[tokio::test]
@@ -3725,6 +4096,26 @@ fn mobile_snapshot_session<'a>(
         .expect("session")
 }
 
+fn session_mini_snapshot_session<'a>(
+    snapshot: &'a serde_json::Value,
+    session_id: &str,
+) -> &'a serde_json::Value {
+    snapshot["sessions"]
+        .as_array()
+        .expect("session minis")
+        .iter()
+        .find(|session| session["id"] == session_id)
+        .expect("session mini")
+}
+
+fn session_mini_snapshot_has_session(snapshot: &serde_json::Value, session_id: &str) -> bool {
+    snapshot["sessions"]
+        .as_array()
+        .expect("session minis")
+        .iter()
+        .any(|session| session["id"] == session_id)
+}
+
 fn mobile_surface_session<'a>(
     snapshot: &'a serde_json::Value,
     surface: &str,
@@ -3786,6 +4177,36 @@ fn record_thread_active(control_plane: &ControlPlane, thread_id: &str) {
             false,
         )
         .expect("record active mobile lifecycle");
+}
+
+fn prime_state_mini_cache(control_plane: &ControlPlane) {
+    let snapshot = control_plane
+        .desktop_mobile_snapshot()
+        .expect("desktop snapshot");
+    let session_state = control_plane
+        .mobile_session_service()
+        .state()
+        .expect("mobile session state");
+    prime_delivery_action_cache(control_plane, &snapshot, &session_state);
+    let queued_prompt_counts = control_plane
+        .mobile_session_service()
+        .queued_prompt_counts()
+        .expect("queued prompt counts");
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile seq");
+    let minis = session_mini_projection_inputs(
+        &snapshot,
+        &session_state,
+        &queued_prompt_counts,
+        latest_seq,
+        &snapshot.revision,
+    );
+    control_plane
+        .store()
+        .replace_mobile_session_minis(minis, latest_seq, &snapshot.revision)
+        .expect("replace state minis");
 }
 
 async fn request_json_with_options(
@@ -3961,8 +4382,61 @@ done
         executable
     }
 
+    fn slow_codex_resume_stub(&self) -> std::path::PathBuf {
+        let executable = self.temp_dir.path().join("codex-resume-slow-stub");
+        if executable.is_file() {
+            return executable;
+        }
+        fs::write(
+            &executable,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":"looper-initialize"'*)
+      printf '%s\n' '{"id":"looper-initialize","result":{}}'
+      ;;
+    *'"id":"looper-thread-resume"'*)
+      sleep 3
+      printf '%s\n' '{"id":"looper-thread-resume","result":{"thread":{"id":"thread-stub"}}}'
+      ;;
+    *'"id":"looper-turn-start"'*)
+      thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      if [ -z "$thread_id" ]; then
+        thread_id="thread-stub"
+      fi
+      printf '%s\n' '{"id":"looper-turn-start","result":{"turn":{"id":"turn-stub","status":"inProgress"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"'"$thread_id"'","turn":{"id":"turn-stub","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        )
+        .expect("write slow codex resume stub");
+        let mut permissions = fs::metadata(&executable)
+            .expect("slow codex resume stub metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("chmod slow codex resume stub");
+        executable
+    }
+
     fn control_plane(&self) -> ControlPlane {
         self.control_plane_with_zed_processes(Vec::new())
+    }
+
+    fn control_plane_with_codex_executable(
+        &self,
+        codex_executable: std::path::PathBuf,
+    ) -> ControlPlane {
+        ControlPlane::new(ControlPlaneConfig {
+            codex_home: self.codex_home.clone(),
+            codex_executable: Some(codex_executable.display().to_string()),
+            grok_home: self.grok_home(),
+            store_path: self.temp_dir.path().join("control-plane.sqlite"),
+            hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
+            home_path: self.temp_dir.path().to_path_buf(),
+            zed_process_commands: Some(Vec::new()),
+        })
     }
 
     fn control_plane_with_running_zed(&self) -> ControlPlane {
@@ -4704,4 +5178,96 @@ create table thread_goals (
         )
         .expect("rollout");
     }
+}
+
+// ── Delivery-action resolution micro-benchmark ────────────────────────────────
+//
+// Times the two paths that `resolve_delivery_action` can take:
+//
+//   MISS  – `mobile_desktop_snapshot` (SQLite + file scan) +
+//            `mobile_session_service().state()` (SQLite) +
+//            `prompt_delivery_action_for_target` (pure in-memory)
+//
+//   HIT   – a single `HashMap::get + clone`  (reproduces the exact work
+//            inside `delivery_action_cache().lock().unwrap().get(...).cloned()`
+//            which is private, so we replicate it locally)
+//
+// Run with:
+//   cargo test --manifest-path crates/agent-control-plane/Cargo.toml \
+//       bench_delivery_action_miss_vs_hit -- --nocapture --ignored
+#[test]
+#[ignore]
+fn bench_delivery_action_miss_vs_hit() {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use agent_control_plane::mobile::api::{
+        PromptDeliveryAction, PromptResumeTarget, prompt_delivery_action_for_target,
+    };
+    use agent_control_plane::mobile::prompt_delivery::mobile_desktop_snapshot;
+
+    const ITERATIONS: u32 = 1_000;
+    const THREAD_ID: &str = "thread-main";
+
+    // ── Setup ──────────────────────────────────────────────────────────────
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db(); // seeds thread-main + thread-child in SQLite
+    let control_plane = fixture.control_plane();
+
+    // Warm up: one full miss so SQLite page cache is hot.
+    {
+        let snapshot = mobile_desktop_snapshot(&control_plane).expect("warm-up snapshot");
+        let session_state = control_plane
+            .mobile_session_service()
+            .state()
+            .expect("warm-up state");
+        let _ = prompt_delivery_action_for_target(&snapshot, &session_state, THREAD_ID);
+    }
+
+    // ── MISS path benchmark ────────────────────────────────────────────────
+    let mut miss_us: Vec<u64> = Vec::with_capacity(ITERATIONS as usize);
+    for _ in 0..ITERATIONS {
+        let t0 = Instant::now();
+        let snapshot = mobile_desktop_snapshot(&control_plane).expect("snapshot");
+        let session_state = control_plane
+            .mobile_session_service()
+            .state()
+            .expect("state");
+        let _ = prompt_delivery_action_for_target(&snapshot, &session_state, THREAD_ID)
+            .expect("action");
+        miss_us.push(t0.elapsed().as_micros() as u64);
+    }
+    miss_us.sort_unstable();
+    let miss_mean_us = miss_us.iter().sum::<u64>() / miss_us.len() as u64;
+    let miss_median_us = miss_us[miss_us.len() / 2];
+    let miss_p99_us = miss_us[(miss_us.len() * 99) / 100];
+
+    // ── HIT path benchmark (HashMap::get + clone) ─────────────────────────
+    let cached_action = PromptDeliveryAction::ResumeCodex(PromptResumeTarget {
+        thread_id: THREAD_ID.to_owned(),
+        cwd: None,
+    });
+    let mut cache: HashMap<String, PromptDeliveryAction> = HashMap::new();
+    cache.insert(THREAD_ID.to_owned(), cached_action);
+
+    let mut hit_us: Vec<u64> = Vec::with_capacity(ITERATIONS as usize);
+    for _ in 0..ITERATIONS {
+        let t0 = Instant::now();
+        let _action: Option<PromptDeliveryAction> = cache.get(THREAD_ID).cloned();
+        hit_us.push(t0.elapsed().as_micros() as u64);
+    }
+    hit_us.sort_unstable();
+    let hit_mean_us = hit_us.iter().sum::<u64>() / hit_us.len() as u64;
+    let hit_median_us = hit_us[hit_us.len() / 2];
+    let hit_p99_us = hit_us[(hit_us.len() * 99) / 100];
+
+    // ── Report ─────────────────────────────────────────────────────────────
+    let delta_median_us = miss_median_us.saturating_sub(hit_median_us);
+    println!();
+    println!("=== delivery-action resolution: MISS vs HIT (N={ITERATIONS}) ===");
+    println!("MISS  median={miss_median_us}µs  mean={miss_mean_us}µs  p99={miss_p99_us}µs");
+    println!("HIT   median={hit_median_us}µs   mean={hit_mean_us}µs   p99={hit_p99_us}µs");
+    println!("DELTA (miss-hit) median={delta_median_us}µs");
+    println!("LAN RTT reference: ~300-2000µs");
+    println!("=================================================================");
 }

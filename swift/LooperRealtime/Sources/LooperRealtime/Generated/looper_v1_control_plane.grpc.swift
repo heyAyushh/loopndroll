@@ -33,6 +33,19 @@ public enum Looper_V1_LooperRealtime: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SetSessionMode" metadata.
+        public enum SetSessionMode: Sendable {
+            /// Request type for "SetSessionMode".
+            public typealias Input = Looper_V1_SetSessionModeRequest
+            /// Response type for "SetSessionMode".
+            public typealias Output = Looper_V1_SetSessionModeResponse
+            /// Descriptor for "SetSessionMode".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "looper.v1.LooperRealtime"),
+                method: "SetSessionMode",
+                type: .unary
+            )
+        }
         /// Namespace for "SendSessionPrompt" metadata.
         public enum SendSessionPrompt: Sendable {
             /// Request type for "SendSessionPrompt".
@@ -43,6 +56,19 @@ public enum Looper_V1_LooperRealtime: Sendable {
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "looper.v1.LooperRealtime"),
                 method: "SendSessionPrompt",
+                type: .unary
+            )
+        }
+        /// Namespace for "SubmitNotificationReply" metadata.
+        public enum SubmitNotificationReply: Sendable {
+            /// Request type for "SubmitNotificationReply".
+            public typealias Input = Looper_V1_SubmitNotificationReplyRequest
+            /// Response type for "SubmitNotificationReply".
+            public typealias Output = Looper_V1_SubmitNotificationReplyResponse
+            /// Descriptor for "SubmitNotificationReply".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "looper.v1.LooperRealtime"),
+                method: "SubmitNotificationReply",
                 type: .unary
             )
         }
@@ -75,7 +101,9 @@ public enum Looper_V1_LooperRealtime: Sendable {
         /// Descriptors for all methods in the "looper.v1.LooperRealtime" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Health.descriptor,
+            SetSessionMode.descriptor,
             SendSessionPrompt.descriptor,
+            SubmitNotificationReply.descriptor,
             SubscribeMobileEvents.descriptor,
             SubscribeDesktopEvents.descriptor
         ]
@@ -116,6 +144,25 @@ extension Looper_V1_LooperRealtime {
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_HealthResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
+        /// Call the "SetSessionMode" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Looper_V1_SetSessionModeRequest` message.
+        ///   - serializer: A serializer for `Looper_V1_SetSessionModeRequest` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_SetSessionModeResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func setSessionMode<Result>(
+            request: GRPCCore.ClientRequest<Looper_V1_SetSessionModeRequest>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_SetSessionModeRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_SetSessionModeResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SetSessionModeResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "SendSessionPrompt" method.
         ///
         /// - Parameters:
@@ -133,6 +180,25 @@ extension Looper_V1_LooperRealtime {
             deserializer: some GRPCCore.MessageDeserializer<Looper_V1_SendSessionPromptResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SendSessionPromptResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SubmitNotificationReply" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Looper_V1_SubmitNotificationReplyRequest` message.
+        ///   - serializer: A serializer for `Looper_V1_SubmitNotificationReplyRequest` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_SubmitNotificationReplyResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func submitNotificationReply<Result>(
+            request: GRPCCore.ClientRequest<Looper_V1_SubmitNotificationReplyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_SubmitNotificationReplyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_SubmitNotificationReplyResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SubmitNotificationReplyResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "SubscribeMobileEvents" method.
@@ -220,6 +286,36 @@ extension Looper_V1_LooperRealtime {
             )
         }
 
+        /// Call the "SetSessionMode" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Looper_V1_SetSessionModeRequest` message.
+        ///   - serializer: A serializer for `Looper_V1_SetSessionModeRequest` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_SetSessionModeResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func setSessionMode<Result>(
+            request: GRPCCore.ClientRequest<Looper_V1_SetSessionModeRequest>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_SetSessionModeRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_SetSessionModeResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SetSessionModeResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Looper_V1_LooperRealtime.Method.SetSessionMode.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "SendSessionPrompt" method.
         ///
         /// - Parameters:
@@ -243,6 +339,36 @@ extension Looper_V1_LooperRealtime {
             try await self.client.unary(
                 request: request,
                 descriptor: Looper_V1_LooperRealtime.Method.SendSessionPrompt.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SubmitNotificationReply" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Looper_V1_SubmitNotificationReplyRequest` message.
+        ///   - serializer: A serializer for `Looper_V1_SubmitNotificationReplyRequest` messages.
+        ///   - deserializer: A deserializer for `Looper_V1_SubmitNotificationReplyResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func submitNotificationReply<Result>(
+            request: GRPCCore.ClientRequest<Looper_V1_SubmitNotificationReplyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Looper_V1_SubmitNotificationReplyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Looper_V1_SubmitNotificationReplyResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SubmitNotificationReplyResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Looper_V1_LooperRealtime.Method.SubmitNotificationReply.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -336,6 +462,31 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
         )
     }
 
+    /// Call the "SetSessionMode" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Looper_V1_SetSessionModeRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setSessionMode<Result>(
+        request: GRPCCore.ClientRequest<Looper_V1_SetSessionModeRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SetSessionModeResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.setSessionMode(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Looper_V1_SetSessionModeRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Looper_V1_SetSessionModeResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "SendSessionPrompt" method.
     ///
     /// - Parameters:
@@ -356,6 +507,31 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Looper_V1_SendSessionPromptRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Looper_V1_SendSessionPromptResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SubmitNotificationReply" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Looper_V1_SubmitNotificationReplyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func submitNotificationReply<Result>(
+        request: GRPCCore.ClientRequest<Looper_V1_SubmitNotificationReplyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SubmitNotificationReplyResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.submitNotificationReply(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Looper_V1_SubmitNotificationReplyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Looper_V1_SubmitNotificationReplyResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -440,6 +616,35 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
         )
     }
 
+    /// Call the "SetSessionMode" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setSessionMode<Result>(
+        _ message: Looper_V1_SetSessionModeRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SetSessionModeResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Looper_V1_SetSessionModeRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.setSessionMode(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "SendSessionPrompt" method.
     ///
     /// - Parameters:
@@ -463,6 +668,35 @@ extension Looper_V1_LooperRealtime.ClientProtocol {
             metadata: metadata
         )
         return try await self.sendSessionPrompt(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SubmitNotificationReply" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func submitNotificationReply<Result>(
+        _ message: Looper_V1_SubmitNotificationReplyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Looper_V1_SubmitNotificationReplyResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Looper_V1_SubmitNotificationReplyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.submitNotificationReply(
             request: request,
             options: options,
             onResponse: handleResponse

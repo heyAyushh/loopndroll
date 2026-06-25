@@ -14,6 +14,8 @@ artifacts
 /docs/superpowers/plans
 .DS_Store
 *.log
+__pycache__/
+*.pyc
 .env
 .env.local
 .env.*.local
@@ -51,3 +53,4 @@ docs/generated-orbs/
 # Local browser/device verification artifacts
 .playwright-mcp/
 /looper-ios-sim-*.png
+ios/LooperCompanionTests/.test-artifacts/

@@ -4,4 +4,6 @@ pub mod events;
 pub mod network;
 pub mod prompt_delivery;
 pub mod push;
+pub(crate) mod realtime_ack;
+pub mod realtime_commands;
 pub mod session;

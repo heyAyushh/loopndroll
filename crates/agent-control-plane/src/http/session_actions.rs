@@ -1,7 +1,9 @@
 use crate::control_plane::ControlPlane;
 use crate::mobile::session::MobileSessionError;
 
-use super::mobile_state::{emit_mobile_lifecycle_changed, emit_mobile_session_changed};
+use super::mobile_state::{
+    emit_all_mobile_sessions_changed, emit_mobile_lifecycle_changed, emit_mobile_session_changed,
+};
 
 pub(super) fn set_session_mode(
     control_plane: &ControlPlane,
@@ -50,6 +52,6 @@ pub(super) fn delete_session(
     control_plane
         .mobile_session_service()
         .delete_session(thread_id)?;
-    emit_mobile_session_changed(control_plane, Some(thread_id), Some("deleted"));
+    emit_all_mobile_sessions_changed(control_plane, "deleted");
     Ok(())
 }

@@ -101,12 +101,15 @@ impl ControlPlane {
             .ok_or(LooperAcpControlError::SessionNotFound)?;
         let result = runtime.prompt_control_session(session_id, prompt)?;
         self.response_cache.invalidate_desktop_menu_surfaces();
-        self.emit_mobile_event(MobileEventInput {
-            kind: MobileEventKind::PromptDelivered,
-            thread_id: Some(result.public_thread_id.clone()),
-            prompt_id: Some(result.prompt_id.clone()),
-            detail: Some(format!("{client_id}-acp-control")),
-        });
+        self.emit_mobile_session_event(
+            MobileEventInput {
+                kind: MobileEventKind::PromptDelivered,
+                thread_id: Some(result.public_thread_id.clone()),
+                prompt_id: Some(result.prompt_id.clone()),
+                detail: Some(format!("{client_id}-acp-control")),
+            },
+            &result.public_thread_id,
+        );
         self.emit_acp_session_changed(&result.public_thread_id, "prompt-delivered");
         Ok(LooperAcpControlPromptResponse {
             prompt_id: result.prompt_id,
@@ -126,12 +129,15 @@ impl ControlPlane {
             .ok_or(LooperAcpControlError::SessionNotFound)?;
         let result = runtime.cancel_control_session(session_id)?;
         self.response_cache.invalidate_desktop_menu_surfaces();
-        self.emit_mobile_event(MobileEventInput {
-            kind: MobileEventKind::LifecycleChanged,
-            thread_id: Some(result.public_thread_id.clone()),
-            prompt_id: None,
-            detail: Some(format!("{client_id}-acp-cancelled")),
-        });
+        self.emit_mobile_session_event(
+            MobileEventInput {
+                kind: MobileEventKind::LifecycleChanged,
+                thread_id: Some(result.public_thread_id.clone()),
+                prompt_id: None,
+                detail: Some(format!("{client_id}-acp-cancelled")),
+            },
+            &result.public_thread_id,
+        );
         self.emit_acp_session_changed(&result.public_thread_id, "session-cancelled");
         Ok(LooperAcpControlCancelResponse {
             session: result.session,
@@ -140,12 +146,15 @@ impl ControlPlane {
     }
 
     fn emit_acp_session_changed(&self, thread_id: &str, detail: &str) {
-        self.emit_mobile_event(MobileEventInput {
-            kind: MobileEventKind::SessionChanged,
-            thread_id: Some(thread_id.to_owned()),
-            prompt_id: None,
-            detail: Some(detail.to_owned()),
-        });
+        self.emit_mobile_session_event(
+            MobileEventInput {
+                kind: MobileEventKind::SessionChanged,
+                thread_id: Some(thread_id.to_owned()),
+                prompt_id: None,
+                detail: Some(detail.to_owned()),
+            },
+            thread_id,
+        );
     }
 }
 

@@ -4,7 +4,9 @@ package looper.v1;
 
 service LooperRealtime {
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc SetSessionMode(SetSessionModeRequest) returns (SetSessionModeResponse);
   rpc SendSessionPrompt(SendSessionPromptRequest) returns (SendSessionPromptResponse);
+  rpc SubmitNotificationReply(SubmitNotificationReplyRequest) returns (SubmitNotificationReplyResponse);
   rpc SubscribeMobileEvents(SubscribeEventsRequest) returns (stream MobileEvent);
   rpc SubscribeDesktopEvents(SubscribeEventsRequest) returns (stream MobileEvent);
 }
@@ -17,16 +19,75 @@ message HealthResponse {
   string server_time = 3;
 }
 
+message SetSessionModeRequest {
+  string thread_id = 1;
+  string preset = 2;
+  string client_mutation_id = 3;
+}
+
+message SetSessionModeResponse {
+  bool accepted = 1;
+  string thread_id = 2;
+  string preset = 3;
+  string server_time = 4;
+  string client_mutation_id = 5;
+  int64 ack_seq = 6;
+  string entity_id = 7;
+  string revision = 8;
+  bool idempotent_replay = 9;
+  CommandAck ack = 10;
+}
+
 message SendSessionPromptRequest {
   string thread_id = 1;
   string prompt = 2;
   string assistant_surface = 3;
+  string client_mutation_id = 4;
 }
 
 message SendSessionPromptResponse {
   bool accepted = 1;
   string dispatch_kind = 2;
   string prompt_id = 3;
+  string server_time = 4;
+  string client_mutation_id = 5;
+  int64 ack_seq = 6;
+  string entity_id = 7;
+  string revision = 8;
+  bool idempotent_replay = 9;
+  CommandAck ack = 10;
+}
+
+message SubmitNotificationReplyRequest {
+  string notification_id = 1;
+  string thread_id = 2;
+  string prompt = 3;
+  string assistant_surface = 4;
+  string client_mutation_id = 5;
+}
+
+message SubmitNotificationReplyResponse {
+  bool accepted = 1;
+  string dispatch_kind = 2;
+  string prompt_id = 3;
+  string server_time = 4;
+  string client_mutation_id = 5;
+  int64 ack_seq = 6;
+  string entity_id = 7;
+  string revision = 8;
+  bool idempotent_replay = 9;
+  CommandAck ack = 10;
+  string notification_id = 11;
+}
+
+message CommandAck {
+  bool accepted = 1;
+  string client_mutation_id = 2;
+  int64 ack_seq = 3;
+  string entity_id = 4;
+  string revision = 5;
+  string server_time = 6;
+  bool idempotent_replay = 7;
 }
 
 message SubscribeEventsRequest {}

@@ -71,6 +71,15 @@ pub(super) struct MobileSessionPromptRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct DesktopNotificationReplyRequest {
+    pub(super) notification_id: String,
+    pub(super) prompt: String,
+    pub(super) assistant_surface: Option<String>,
+    pub(super) client_mutation_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct MobileSessionDetailQuery {
     pub(super) assistant_surface: Option<String>,
 }

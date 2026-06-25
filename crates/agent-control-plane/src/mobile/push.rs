@@ -23,6 +23,7 @@ const APNS_SUCCESS_STATUS: u16 = 200;
 const APNS_TEST_BODY: &str = "Remote notifications are working.";
 const APNS_TEST_SUBTITLE: &str = "TestFlight push ready";
 const APNS_TEST_TITLE: &str = "Looper";
+const APNS_CATEGORY_SESSION_STOP: &str = "looper-session-stop";
 const APNS_SESSION_STOP_KIND: &str = "session-stop";
 const APNS_SESSION_STOP_SUBTITLE: &str = "Session stopped";
 const APNS_SESSION_STOP_TITLE: &str = "Looper";
@@ -585,6 +586,7 @@ impl StoredPushDeviceSummary {
 #[derive(Clone, Debug)]
 struct ApnsAlertMessage {
     body: String,
+    category: Option<String>,
     subtitle: String,
     title: String,
     thread_id: String,
@@ -706,16 +708,22 @@ fn create_apns_jwt(config: &ApnsProviderConfig, issued_at: i64) -> MobilePushRes
 }
 
 fn apns_body(message: &ApnsAlertMessage) -> Value {
+    let mut aps = json!({
+        "alert": {
+            "title": message.title,
+            "subtitle": message.subtitle,
+            "body": message.body,
+        },
+        "sound": APNS_SOUND_DEFAULT,
+        "thread-id": message.thread_id,
+    });
+    if let Some(category) = message.category.as_deref().and_then(normalized_optional)
+        && let Some(aps_object) = aps.as_object_mut()
+    {
+        aps_object.insert("category".to_owned(), json!(category));
+    }
     let mut body = json!({
-        "aps": {
-            "alert": {
-                "title": message.title,
-                "subtitle": message.subtitle,
-                "body": message.body,
-            },
-            "sound": APNS_SOUND_DEFAULT,
-            "thread-id": message.thread_id,
-        }
+        "aps": aps
     });
     merge_user_info(&mut body, &message.user_info);
     body
@@ -752,6 +760,7 @@ fn apns_rejection_reason(response_body: String) -> Option<String> {
 fn test_push_message(device: &StoredPushDevice) -> ApnsAlertMessage {
     ApnsAlertMessage {
         title: APNS_TEST_TITLE.to_owned(),
+        category: None,
         subtitle: APNS_TEST_SUBTITLE.to_owned(),
         body: APNS_TEST_BODY.to_owned(),
         thread_id: device.installation_id.clone(),
@@ -762,12 +771,14 @@ fn test_push_message(device: &StoredPushDevice) -> ApnsAlertMessage {
 fn session_stop_push_message(thread_id: &str, message: &str) -> ApnsAlertMessage {
     ApnsAlertMessage {
         title: APNS_SESSION_STOP_TITLE.to_owned(),
+        category: Some(APNS_CATEGORY_SESSION_STOP.to_owned()),
         subtitle: APNS_SESSION_STOP_SUBTITLE.to_owned(),
         body: message.to_owned(),
         thread_id: thread_id.to_owned(),
         user_info: json!({
             "notificationKind": APNS_SESSION_STOP_KIND,
             "sessionId": thread_id,
+            "sessionRef": thread_id,
         }),
     }
 }
@@ -970,6 +981,7 @@ mod tests {
     fn apns_body_preserves_alert_and_user_info() {
         let body = apns_body(&ApnsAlertMessage {
             title: "Title".to_owned(),
+            category: Some("category-1".to_owned()),
             subtitle: "Subtitle".to_owned(),
             body: "Body".to_owned(),
             thread_id: "thread-1".to_owned(),
@@ -980,6 +992,7 @@ mod tests {
         });
 
         assert_eq!(body["aps"]["alert"]["title"], "Title");
+        assert_eq!(body["aps"]["category"], "category-1");
         assert_eq!(body["aps"]["sound"], APNS_SOUND_DEFAULT);
         assert_eq!(body["notificationKind"], "test");
         assert_eq!(body["sessionId"], "thread-1");
@@ -993,7 +1006,9 @@ mod tests {
         assert_eq!(body["aps"]["alert"]["subtitle"], APNS_SESSION_STOP_SUBTITLE);
         assert_eq!(body["aps"]["alert"]["body"], "Done.");
         assert_eq!(body["aps"]["thread-id"], "thread-1");
+        assert_eq!(body["aps"]["category"], APNS_CATEGORY_SESSION_STOP);
         assert_eq!(body["notificationKind"], APNS_SESSION_STOP_KIND);
         assert_eq!(body["sessionId"], "thread-1");
+        assert_eq!(body["sessionRef"], "thread-1");
     }
 }

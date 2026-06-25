@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LooperRealtimeEndpoint: Equatable, Hashable, Sendable {
+public struct LooperRealtimeEndpoint: Codable, Equatable, Hashable, Sendable {
     public let baseURL: URL
 
     public init(baseURL: URL) {
@@ -20,7 +20,7 @@ public struct LooperRealtimeEndpoint: Equatable, Hashable, Sendable {
     }
 }
 
-public struct LooperRealtimeCredentials: Equatable, Sendable {
+public struct LooperRealtimeCredentials: Codable, Equatable, Sendable {
     public let bearerToken: String?
     public let mobileSessionHeader: String?
 
@@ -30,7 +30,7 @@ public struct LooperRealtimeCredentials: Equatable, Sendable {
     }
 }
 
-public struct LooperRealtimeEvent: Equatable, Sendable {
+public struct LooperRealtimeEvent: Codable, Equatable, Sendable {
     public let eventName: String
     public let threadID: String?
     public let promptID: String?
@@ -55,15 +55,172 @@ public struct LooperRealtimeEvent: Equatable, Sendable {
     }
 }
 
-public struct LooperRealtimePromptResponse: Equatable, Sendable {
+public struct LooperRealtimeCommandAck: Codable, Equatable, Sendable {
+    public let accepted: Bool
+    public let clientMutationID: String
+    public let ackSeq: Int64
+    public let entityID: String
+    public let revision: String
+    public let serverTime: String?
+    public let idempotentReplay: Bool
+
+    public init(
+        accepted: Bool,
+        clientMutationID: String,
+        ackSeq: Int64,
+        entityID: String,
+        revision: String,
+        serverTime: String?,
+        idempotentReplay: Bool
+    ) {
+        self.accepted = accepted
+        self.clientMutationID = clientMutationID
+        self.ackSeq = ackSeq
+        self.entityID = entityID
+        self.revision = revision
+        self.serverTime = serverTime
+        self.idempotentReplay = idempotentReplay
+    }
+}
+
+public struct LooperRealtimeModeResponse: Codable, Equatable, Sendable {
+    public let accepted: Bool
+    public let threadID: String
+    public let preset: String?
+    public let serverTime: String?
+    public let clientMutationID: String
+    public let ackSeq: Int64
+    public let entityID: String
+    public let revision: String
+    public let idempotentReplay: Bool
+
+    public var ack: LooperRealtimeCommandAck {
+        LooperRealtimeCommandAck(
+            accepted: accepted,
+            clientMutationID: clientMutationID,
+            ackSeq: ackSeq,
+            entityID: entityID,
+            revision: revision,
+            serverTime: serverTime,
+            idempotentReplay: idempotentReplay
+        )
+    }
+
+    public init(
+        accepted: Bool,
+        threadID: String,
+        preset: String?,
+        serverTime: String?,
+        clientMutationID: String = "",
+        ackSeq: Int64 = 0,
+        entityID: String = "",
+        revision: String = "",
+        idempotentReplay: Bool = false
+    ) {
+        self.accepted = accepted
+        self.threadID = threadID
+        self.preset = preset
+        self.serverTime = serverTime
+        self.clientMutationID = clientMutationID
+        self.ackSeq = ackSeq
+        self.entityID = entityID
+        self.revision = revision
+        self.idempotentReplay = idempotentReplay
+    }
+}
+
+public struct LooperRealtimePromptResponse: Codable, Equatable, Sendable {
     public let accepted: Bool
     public let dispatchKind: String
     public let promptID: String?
+    public let serverTime: String?
+    public let clientMutationID: String
+    public let ackSeq: Int64
+    public let entityID: String
+    public let revision: String
+    public let idempotentReplay: Bool
 
-    public init(accepted: Bool, dispatchKind: String, promptID: String?) {
+    public var ack: LooperRealtimeCommandAck {
+        LooperRealtimeCommandAck(
+            accepted: accepted,
+            clientMutationID: clientMutationID,
+            ackSeq: ackSeq,
+            entityID: entityID,
+            revision: revision,
+            serverTime: serverTime,
+            idempotentReplay: idempotentReplay
+        )
+    }
+
+    public init(
+        accepted: Bool,
+        dispatchKind: String,
+        promptID: String?,
+        serverTime: String? = nil,
+        clientMutationID: String = "",
+        ackSeq: Int64 = 0,
+        entityID: String = "",
+        revision: String = "",
+        idempotentReplay: Bool = false
+    ) {
         self.accepted = accepted
         self.dispatchKind = dispatchKind
         self.promptID = promptID
+        self.serverTime = serverTime
+        self.clientMutationID = clientMutationID
+        self.ackSeq = ackSeq
+        self.entityID = entityID
+        self.revision = revision
+        self.idempotentReplay = idempotentReplay
+    }
+}
+
+public struct LooperRealtimeNotificationReplyResponse: Codable, Equatable, Sendable {
+    public let accepted: Bool
+    public let dispatchKind: String
+    public let promptID: String?
+    public let serverTime: String?
+    public let clientMutationID: String
+    public let ackSeq: Int64
+    public let entityID: String
+    public let revision: String
+    public let idempotentReplay: Bool
+    public let notificationID: String
+
+    public var ack: LooperRealtimeCommandAck {
+        LooperRealtimeCommandAck(
+            accepted: accepted,
+            clientMutationID: clientMutationID,
+            ackSeq: ackSeq,
+            entityID: entityID,
+            revision: revision,
+            serverTime: serverTime,
+            idempotentReplay: idempotentReplay
+        )
+    }
+
+    public init(
+        accepted: Bool,
+        dispatchKind: String,
+        promptID: String?,
+        serverTime: String?,
+        clientMutationID: String,
+        ackSeq: Int64,
+        entityID: String,
+        revision: String,
+        idempotentReplay: Bool,
+        notificationID: String
+    ) {
+        self.accepted = accepted
+        self.dispatchKind = dispatchKind
+        self.promptID = promptID
+        self.serverTime = serverTime
+        self.clientMutationID = clientMutationID
+        self.ackSeq = ackSeq
+        self.entityID = entityID
+        self.revision = revision
+        self.idempotentReplay = idempotentReplay
+        self.notificationID = notificationID
     }
 }
 
