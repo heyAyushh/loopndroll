@@ -1024,12 +1024,12 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
+        appendPromptClientMutationID(clientMutationID)
         if let promptError {
             throw promptError
         }
 
         try await delayResponseIfNeeded()
-        appendPromptClientMutationID(clientMutationID)
         return .accepted(
             promptID: "prompt-1",
             dispatchKind: "resume",

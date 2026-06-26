@@ -64,10 +64,6 @@ struct SessionDetailScreen: View {
         detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })
     }
 
-    private var isMutatingSession: Bool {
-        model.viewState.isMutatingSession(session.id)
-    }
-
     var body: some View {
         Form {
             summarySection
@@ -138,10 +134,6 @@ struct SessionDetailScreen: View {
             titleVisibility: .visible
         ) {
             Button("Delete Session", role: .destructive) {
-                guard !isMutatingSession else {
-                    return
-                }
-
                 Task {
                     await model.deleteSession(session.id)
                     if model.errorMessage == nil {
@@ -281,7 +273,7 @@ struct SessionDetailScreen: View {
             Button {
                 sendPrompt()
             } label: {
-                if isSendingPrompt || isMutatingSession {
+                if isSendingPrompt {
                     ProgressView()
                 } else {
                     Label("Send Prompt", systemImage: "paperplane")
@@ -314,7 +306,6 @@ struct SessionDetailScreen: View {
                         }
                     }
                 }
-                .disabled(isMutatingSession)
                 .accessibilityIdentifier(mode.detailAccessibilityIdentifier)
             }
 
@@ -391,18 +382,12 @@ struct SessionDetailScreen: View {
                         : "archivebox"
                 )
             }
-            .disabled(isMutatingSession)
             .accessibilityIdentifier("session-detail.archive-toggle")
 
             Button("Delete Session", role: .destructive) {
                 showingDeleteConfirmation = true
             }
-            .disabled(isMutatingSession)
             .accessibilityIdentifier("session-detail.delete")
-
-            if isMutatingSession {
-                ProgressView("Updating Session")
-            }
         } header: {
             Text("Manage")
         } footer: {
@@ -416,7 +401,6 @@ struct SessionDetailScreen: View {
 
     private var canSendPrompt: Bool {
         !isSendingPrompt &&
-            !isMutatingSession &&
             !trimmedPrompt.isEmpty &&
             promptDeliveryIsAvailable &&
             currentMode != nil &&
@@ -514,10 +498,6 @@ struct SessionDetailScreen: View {
     }
 
     private func setSiriDefaultSession() {
-        guard !isMutatingSession else {
-            return
-        }
-
         Task {
             await model.setSiriDefaultSession(session)
         }

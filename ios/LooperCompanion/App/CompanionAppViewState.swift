@@ -217,10 +217,6 @@ struct CompanionAppViewState {
         model.snapshotState.detail(for: sessionID)
     }
 
-    func isMutatingSession(_ sessionID: String) -> Bool {
-        model.mutatingSessionIDs.contains(sessionID)
-    }
-
     private var connectedStatusSummary: String {
         var parts: [String] = []
 

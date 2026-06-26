@@ -175,7 +175,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(!didSendPrompt)
         #expect(didApplyMode)
         #expect(service.modeClientMutationIDs.count == 1)
-        #expect(service.promptClientMutationIDs.isEmpty)
+        #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.loadSnapshotCallCount == 0)
         #expect(store.pendingCommands().isEmpty)
     }
@@ -470,11 +470,11 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
+        appendPromptClientMutationID(clientMutationID)
         if let promptError {
             throw promptError
         }
 
-        appendPromptClientMutationID(clientMutationID)
         return .accepted(
             promptID: "prompt-1",
             dispatchKind: "resume",

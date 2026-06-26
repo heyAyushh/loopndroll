@@ -43,7 +43,6 @@ final class CompanionAppModel {
     var remotePushFailureMessage: String?
     var isRegisteringRemotePush = false
     private(set) var isSavingDefaultPrompt = false
-    private(set) var mutatingSessionIDs: Set<String> = []
     var pendingOpenSessionID: String?
     var pendingSettingsTarget: SettingsSearchTarget?
 
@@ -972,18 +971,9 @@ final class CompanionAppModel {
             return false
         }
 
-        guard !mutatingSessionIDs.contains(sessionID) else {
-            return false
-        }
-
         let clientMutationID = makeClientMutationID()
         let targetService = service
         let targetRevision = connectionRevision
-
-        setSessionMutation(true, sessionID: sessionID)
-        defer {
-            setSessionMutation(false, sessionID: sessionID)
-        }
 
         do {
             let result = try await targetService.sendSessionPrompt(
@@ -1213,15 +1203,6 @@ final class CompanionAppModel {
         sessionID: String,
         _ operation: () async throws -> MobileSnapshot
     ) async -> Bool {
-        guard !mutatingSessionIDs.contains(sessionID) else {
-            return false
-        }
-
-        setSessionMutation(true, sessionID: sessionID)
-        defer {
-            setSessionMutation(false, sessionID: sessionID)
-        }
-
         return await mutateSnapshot(operation)
     }
 
@@ -1291,16 +1272,6 @@ final class CompanionAppModel {
             Haptics.error()
             return false
         }
-    }
-
-    private func setSessionMutation(_ isMutating: Bool, sessionID: String) {
-        var nextMutatingSessionIDs = mutatingSessionIDs
-        if isMutating {
-            nextMutatingSessionIDs.insert(sessionID)
-        } else {
-            nextMutatingSessionIDs.remove(sessionID)
-        }
-        mutatingSessionIDs = nextMutatingSessionIDs
     }
 
     private func connectionState(for error: Error) -> ConnectivityState {
