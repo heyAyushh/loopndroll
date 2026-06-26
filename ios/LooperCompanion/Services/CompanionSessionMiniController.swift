@@ -11,10 +11,6 @@ final class CompanionSessionMiniController {
 
     let sessionRuntime: CompanionSessionRuntime?
 
-    var localStore: CompanionSessionMiniLocalStore? {
-        sessionRuntime?.localStore
-    }
-
     private var syncTask: Task<Void, Never>?
     private var notificationReplyOutboxDrainTask: Task<Void, Never>?
 

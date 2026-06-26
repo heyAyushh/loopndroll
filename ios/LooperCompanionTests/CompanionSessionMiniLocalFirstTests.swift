@@ -20,14 +20,13 @@ struct CompanionSessionMiniLocalFirstTests {
     func testAppModelRestoresCachedSessionMinisBeforeNetwork() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 7,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 7, revision: "mini-revision-7"),
@@ -52,7 +51,6 @@ struct CompanionSessionMiniLocalFirstTests {
         let storeFileURL = try Self.temporaryStoreFileURL()
         try Self.seedMalformedMiniCache(at: storeFileURL)
         let runtime = try CompanionSessionRuntime(fileURL: storeFileURL)
-        let store = runtime.localStore
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -66,7 +64,7 @@ struct CompanionSessionMiniLocalFirstTests {
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
 
         #expect(!didSend)
-        #expect(store.pendingCommands().isEmpty)
+        #expect(runtime.pendingCommands().isEmpty)
     }
 
     @MainActor
@@ -74,14 +72,13 @@ struct CompanionSessionMiniLocalFirstTests {
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
@@ -104,7 +101,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.promptClientMutationIDs.first?.isEmpty == false)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
     }
 
     @MainActor
@@ -113,14 +110,13 @@ struct CompanionSessionMiniLocalFirstTests {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         service.modeResponseDelayNanoseconds = 200_000_000
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
@@ -146,7 +142,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
 
         try await Task.sleep(nanoseconds: Constants.delayedModeDrainProbeNanoseconds)
         #expect(service.modeClientMutationIDs.count == 1)
@@ -159,14 +155,13 @@ struct CompanionSessionMiniLocalFirstTests {
         service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
         service.modeResponseDelayNanoseconds = 200_000_000
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
@@ -187,7 +182,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
     }
 
     @MainActor
@@ -195,14 +190,13 @@ struct CompanionSessionMiniLocalFirstTests {
     func testNotificationReplyUsesDurableAckCommandWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .stopped
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 12,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
@@ -228,14 +222,13 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.notificationReplyIDs == [notificationID])
         #expect(service.promptClientMutationIDs.isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().isEmpty)
+        #expect(runtime.pendingCommands().isEmpty)
     }
 
     @MainActor
     @Test
     func testNotificationReplyPersistsBeforeHandlerAndDedupesOfflineRetry() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let notificationID = "notif-offline-1"
         let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
@@ -253,7 +246,7 @@ struct CompanionSessionMiniLocalFirstTests {
             )
         )
 
-        var pendingCommands = store.pendingCommands()
+        var pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.threadID == Constants.cachedThreadID)
@@ -275,7 +268,7 @@ struct CompanionSessionMiniLocalFirstTests {
             notificationID: notificationID
         )
 
-        pendingCommands = store.pendingCommands()
+        pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.attemptCount == 0)
@@ -287,14 +280,13 @@ struct CompanionSessionMiniLocalFirstTests {
             assistantSurface: nil,
             clientMutationID: clientMutationID
         )
-        #expect(store.pendingCommands().count == 1)
+        #expect(runtime.pendingCommands().count == 1)
     }
 
     @MainActor
     @Test
     func testNotificationReplyQuickActionSubmitDoesNotWaitForNetworkHandler() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let notificationID = "notif-fast-completion-1"
         let center = SessionQuickActionCenter(
             sessionRuntime: runtime
@@ -315,8 +307,8 @@ struct CompanionSessionMiniLocalFirstTests {
         let elapsedNanoseconds = DispatchTime.now().uptimeNanoseconds - startNanoseconds
 
         #expect(elapsedNanoseconds < Constants.quickActionSubmitBudgetNanoseconds)
-        #expect(store.pendingCommands().count == 1)
-        #expect(store.pendingCommands().first?.notificationID == notificationID)
+        #expect(runtime.pendingCommands().count == 1)
+        #expect(runtime.pendingCommands().first?.notificationID == notificationID)
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
@@ -331,7 +323,7 @@ struct CompanionSessionMiniLocalFirstTests {
                 isDirectory: true
             )
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        return directoryURL.appendingPathComponent(CompanionSessionMiniLocalStore.defaultFileName)
+        return directoryURL.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
     }
 
     private static func seedMalformedMiniCache(at fileURL: URL) throws {

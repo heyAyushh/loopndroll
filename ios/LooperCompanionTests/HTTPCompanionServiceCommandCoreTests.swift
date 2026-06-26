@@ -35,7 +35,6 @@ struct HTTPCompanionServiceCommandCoreTests {
     @Test
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let service = HTTPCompanionService(
             baseURLs: [],
             bearerToken: nil,
@@ -50,8 +49,8 @@ struct HTTPCompanionServiceCommandCoreTests {
             )
         }
         #expect(try service.commandOutboxDepthForSelfTest() == 1)
-        #expect(store.pendingCommands().count == 1)
-        #expect(store.pendingCommands().first?.attemptCount == 1)
+        #expect(runtime.pendingCommands().count == 1)
+        #expect(runtime.pendingCommands().first?.attemptCount == 1)
 
         await #expect(throws: Error.self) {
             _ = try await service.sendSessionPrompt(
@@ -63,8 +62,8 @@ struct HTTPCompanionServiceCommandCoreTests {
         }
 
         #expect(try service.commandOutboxDepthForSelfTest() == 2)
-        #expect(store.pendingCommands().count == 2)
-        #expect(store.pendingCommands().map(\.clientMutationID) == [
+        #expect(runtime.pendingCommands().count == 2)
+        #expect(runtime.pendingCommands().map(\.clientMutationID) == [
             "mutation-mode",
             "mutation-prompt",
         ])
@@ -73,7 +72,6 @@ struct HTTPCompanionServiceCommandCoreTests {
     @Test
     func generatedCommandMutationsComeFromRustCore() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let store = runtime.localStore
         let service = HTTPCompanionService(
             baseURLs: [],
             bearerToken: nil,
@@ -94,9 +92,9 @@ struct HTTPCompanionServiceCommandCoreTests {
             )
         }
 
-        #expect(store.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
-        #expect(store.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
-        #expect(store.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
+        #expect(runtime.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
+        #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
+        #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
@@ -109,7 +107,7 @@ struct HTTPCompanionServiceCommandCoreTests {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return try CompanionSessionRuntime(
             fileURL: directoryURL.appendingPathComponent(
-                CompanionSessionMiniLocalStore.defaultFileName
+                CompanionSessionRuntime.defaultFileName
             )
         )
     }

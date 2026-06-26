@@ -103,14 +103,13 @@ enum G006LocalFirstSelfTest {
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 7,
             records: [
                 miniRecord(session: cachedSession, seq: 7, revision: "mini-revision-7"),
@@ -140,7 +139,6 @@ enum G006LocalFirstSelfTest {
         let storeFileURL = try temporaryStoreFileURL()
         try seedMalformedMiniCache(at: storeFileURL)
         let runtime = try CompanionSessionRuntime(fileURL: storeFileURL)
-        let store = runtime.localStore
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -158,7 +156,7 @@ enum G006LocalFirstSelfTest {
         try require(!didSend, "failed prompt unexpectedly returned success")
 
         try require(
-            store.pendingCommands().isEmpty,
+            runtime.pendingCommands().isEmpty,
             "mode/prompt commands should not enter the Swift mini-store outbox"
         )
 
@@ -168,14 +166,13 @@ enum G006LocalFirstSelfTest {
     private static func runOptimisticCommands() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 11,
             records: [
                 miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
@@ -211,7 +208,7 @@ enum G006LocalFirstSelfTest {
         try require(!promptMutationID.isEmpty, "prompt clientMutationID is empty")
         try require(modeMutationID != promptMutationID, "mode and prompt reused the same clientMutationID")
         try require(service.loadSnapshotCallCount == 0, "ACK-only commands triggered snapshot load")
-        try require(store.pendingCommands().isEmpty, "ACK-only commands did not clear outbox")
+        try require(runtime.pendingCommands().isEmpty, "ACK-only commands did not clear outbox")
 
         let handoffService = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
         handoffService.modeResponseDelayNanosecondsByCall = [
@@ -219,8 +216,7 @@ enum G006LocalFirstSelfTest {
             Constants.handoffModeResponseDelayNanoseconds,
         ]
         let handoffRuntime = try temporarySessionRuntime()
-        let handoffStore = handoffRuntime.localStore
-        try handoffStore.replace(
+        try handoffRuntime.replace(
             latestSeq: 13,
             records: [
                 miniRecord(session: cachedSession, seq: 13, revision: "mini-revision-13"),
@@ -262,14 +258,13 @@ enum G006LocalFirstSelfTest {
     private static func runNotificationReplyAck() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .stopped
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 12,
             records: [
                 miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
@@ -298,14 +293,13 @@ enum G006LocalFirstSelfTest {
         try require(service.notificationReplyIDs == [notificationID], "notification id was not forwarded")
         try require(service.promptClientMutationIDs.isEmpty, "notification reply used generic prompt command")
         try require(service.loadSnapshotCallCount == 0, "notification reply triggered snapshot load")
-        try require(store.pendingCommands().isEmpty, "ACK did not clear notification reply outbox")
+        try require(runtime.pendingCommands().isEmpty, "ACK did not clear notification reply outbox")
 
         return "notificationID=\(notificationID) clientMutationID=\(clientMutationID)"
     }
 
     private static func runNotificationReplyOfflineDedupe() async throws -> String {
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let notificationID = "notif-offline-1"
         let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
@@ -323,7 +317,7 @@ enum G006LocalFirstSelfTest {
             )
         )
 
-        var pendingCommands = store.pendingCommands()
+        var pendingCommands = runtime.pendingCommands()
         var pendingCommand = try requireValue(pendingCommands.first, "missing pre-handler pending command")
         try require(pendingCommands.count == 1, "pre-handler notification reply was not durable")
         try require(pendingCommand.kind == .submitNotificationReply, "pending command has wrong kind")
@@ -346,7 +340,7 @@ enum G006LocalFirstSelfTest {
             notificationID: notificationID
         )
 
-        pendingCommands = store.pendingCommands()
+        pendingCommands = runtime.pendingCommands()
         pendingCommand = try requireValue(pendingCommands.first, "missing retry pending command")
         try require(pendingCommands.count == 1, "retry created duplicate pending command")
         try require(pendingCommand.kind == .submitNotificationReply, "retry command has wrong kind")
@@ -366,7 +360,7 @@ enum G006LocalFirstSelfTest {
             assistantSurface: nil,
             clientMutationID: clientMutationID
         )
-        try require(store.pendingCommands().count == 1, "duplicate enqueue created second notification command")
+        try require(runtime.pendingCommands().count == 1, "duplicate enqueue created second notification command")
 
         service.promptError = nil
         await model.prepareForActiveState()
@@ -377,14 +371,13 @@ enum G006LocalFirstSelfTest {
             service.notificationReplyClientMutationIDs == [clientMutationID],
             "notification reply drain did not retry durable command once"
         )
-        try require(store.pendingCommands().isEmpty, "notification reply drain did not clear outbox")
+        try require(runtime.pendingCommands().isEmpty, "notification reply drain did not clear outbox")
 
         return "notificationID=\(notificationID) clientMutationID=\(clientMutationID) deliveredAfterRetry=true"
     }
 
     private static func runMiniSyncResync() async throws -> String {
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -397,7 +390,7 @@ enum G006LocalFirstSelfTest {
             ref: "C1",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 20,
             records: [
                 miniRecord(session: cachedSession, seq: 20, revision: "mini-revision-20"),
@@ -412,7 +405,7 @@ enum G006LocalFirstSelfTest {
         )
 
         let appliedSnapshot = try requireValue(
-            try store.apply(
+            try runtime.applyStateMiniDelta(
                 stateMiniDelta(
                     session: syncedSession,
                     seq: 21,
@@ -428,9 +421,9 @@ enum G006LocalFirstSelfTest {
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Synced Mini",
             "mini sync did not apply delta"
         )
-        try require(store.currentStateMiniSnapshot().latestSeq == 21, "mini sync did not finish at latest seq 21")
+        try require(runtime.currentStateMiniSnapshot().latestSeq == 21, "mini sync did not finish at latest seq 21")
         try require(service.loadSnapshotCallCount == 0, "mini sync triggered full snapshot")
-        return "previousSeq=20 latestSeq=\(store.currentStateMiniSnapshot().latestSeq) loadSnapshotCallCount=0"
+        return "previousSeq=20 latestSeq=\(runtime.currentStateMiniSnapshot().latestSeq) loadSnapshotCallCount=0"
     }
 
     private static func runLatencyBudget() async throws -> String {
@@ -466,14 +459,13 @@ enum G006LocalFirstSelfTest {
     private static func assertSnapshotTimeoutPreservesConnectedMiniState() async throws {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Connected Mini",
             ref: "C7",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: 31,
             records: [
                 miniRecord(session: cachedSession, seq: 31, revision: "connected-mini-31"),
@@ -490,7 +482,7 @@ enum G006LocalFirstSelfTest {
             status: .active
         )
         let appliedSnapshot = try requireValue(
-            try store.apply(
+            try runtime.applyStateMiniDelta(
                 stateMiniDelta(
                     session: syncedSession,
                     seq: 32,
@@ -501,7 +493,7 @@ enum G006LocalFirstSelfTest {
         )
         model.snapshot = appliedSnapshot
         model.connectionState = .connected
-        try require(store.currentStateMiniSnapshot().latestSeq == 32, "connected mini sync did not finish at seq 32")
+        try require(runtime.currentStateMiniSnapshot().latestSeq == 32, "connected mini sync did not finish at seq 32")
 
         service.snapshotError = URLError(.timedOut)
         await model.refresh()
@@ -522,14 +514,13 @@ enum G006LocalFirstSelfTest {
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
         let runtime = try temporarySessionRuntime()
-        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Latency Mini",
             ref: "L\(sampleIndex)",
             status: .active
         )
-        try store.replace(
+        try runtime.replace(
             latestSeq: Int64(100 + sampleIndex),
             records: [
                 miniRecord(
@@ -564,7 +555,7 @@ enum G006LocalFirstSelfTest {
             to: Constants.cachedThreadID
         )
         try await waitUntilFast("prompt command was not durable before ACK") {
-            store.pendingCommands().contains { command in
+            runtime.pendingCommands().contains { command in
                 command.kind == .sendSessionPrompt && command.threadID == Constants.cachedThreadID
             }
         }
@@ -586,7 +577,7 @@ enum G006LocalFirstSelfTest {
             )
         )
         try require(
-            store.pendingCommands().contains { command in
+            runtime.pendingCommands().contains { command in
                 command.kind == .submitNotificationReply && command.notificationID == notificationID
             },
             "notification reply was not persisted locally"
@@ -602,7 +593,7 @@ enum G006LocalFirstSelfTest {
         let streamSeq = Int64(200 + sampleIndex)
         let streamStartedAt = uptimeNanoseconds()
         let appliedSnapshot = try requireValue(
-            try store.apply(
+            try runtime.applyStateMiniDelta(
                 stateMiniDelta(
                     session: syncedSession,
                     seq: streamSeq,
@@ -618,7 +609,7 @@ enum G006LocalFirstSelfTest {
             "stream delta did not render locally"
         )
         try require(
-            store.currentStateMiniSnapshot().latestSeq == streamSeq,
+            runtime.currentStateMiniSnapshot().latestSeq == streamSeq,
             "latency stream did not finish at seq \(streamSeq)"
         )
         let streamApplyMs = elapsedMilliseconds(since: streamStartedAt)
@@ -792,7 +783,7 @@ enum G006LocalFirstSelfTest {
             isDirectory: true
         )
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        return directoryURL.appendingPathComponent(CompanionSessionMiniLocalStore.defaultFileName)
+        return directoryURL.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
     }
 
     private static func seedMalformedMiniCache(at fileURL: URL) throws {

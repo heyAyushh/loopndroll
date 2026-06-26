@@ -41,7 +41,7 @@ typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
 
 typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -> Void
 
-final class CompanionSessionMiniLocalStore: @unchecked Sendable {
+private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
     fileprivate unowned let sessionManager: LooperClientCoreSessionManager
@@ -156,7 +156,9 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 }
 
 final class CompanionSessionRuntime: @unchecked Sendable {
-    let localStore: CompanionSessionMiniLocalStore
+    static let defaultFileName = CompanionSessionMiniLocalStore.defaultFileName
+
+    private let localStore: CompanionSessionMiniLocalStore
     private let decoder = JSONDecoder()
     private let sessionManager: LooperClientCoreSessionManager
 
@@ -230,6 +232,19 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     @discardableResult
     func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws -> MobileSnapshot? {
         try localStore.replace(with: snapshot)
+    }
+
+    @discardableResult
+    func replace(
+        latestSeq: Int64,
+        records: [CompanionSessionMiniRecord],
+        serverTime: String? = nil
+    ) throws -> MobileSnapshot? {
+        try localStore.replace(
+            latestSeq: latestSeq,
+            records: records,
+            serverTime: serverTime
+        )
     }
 
     @discardableResult
