@@ -271,7 +271,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.attemptCount == 0)
         #expect(service.notificationReplyClientMutationIDs.isEmpty)
-        try store.enqueueNotificationReplyCommand(
+        try CompanionSessionRuntime(localStore: store).enqueueNotificationReplyCommand(
             notificationID: notificationID,
             threadID: Constants.cachedThreadID,
             prompt: "offline reply",

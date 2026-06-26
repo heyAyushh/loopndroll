@@ -9,7 +9,11 @@ final class CompanionSessionMiniController {
     typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
     typealias NotificationReplySubmitter = @MainActor @Sendable () async -> Bool
 
-    let localStore: CompanionSessionMiniLocalStore?
+    let sessionRuntime: CompanionSessionRuntime?
+
+    var localStore: CompanionSessionMiniLocalStore? {
+        sessionRuntime?.localStore
+    }
 
     private var syncTask: Task<Void, Never>?
     private var notificationReplyOutboxDrainTask: Task<Void, Never>?
@@ -18,8 +22,8 @@ final class CompanionSessionMiniController {
         syncTask != nil
     }
 
-    init(localStore: CompanionSessionMiniLocalStore?) {
-        self.localStore = localStore
+    init(sessionRuntime: CompanionSessionRuntime?) {
+        self.sessionRuntime = sessionRuntime
     }
 
     func startSyncIfNeeded(
@@ -27,13 +31,13 @@ final class CompanionSessionMiniController {
         connectionRevision: Int,
         onUpdate: @escaping SyncUpdateHandler
     ) {
-        guard syncTask == nil, let localStore else {
+        guard syncTask == nil, let sessionRuntime else {
             return
         }
 
         syncTask = Task { @MainActor in
             await service.prepareSessionRuntime()
-            await localStore.runClientCoreStateMiniSync(
+            await sessionRuntime.runStateMiniSync(
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)
                 },
@@ -54,12 +58,12 @@ final class CompanionSessionMiniController {
         reason: String,
         applySnapshot: SnapshotApplyHandler
     ) -> Bool {
-        guard let localStore else {
+        guard let sessionRuntime else {
             return false
         }
 
         do {
-            guard let cachedSnapshot = try localStore.cachedSnapshot() else {
+            guard let cachedSnapshot = try sessionRuntime.cachedSnapshot() else {
                 return false
             }
 
@@ -77,7 +81,7 @@ final class CompanionSessionMiniController {
     }
 
     func cachedSnapshot() throws -> MobileSnapshot? {
-        try localStore?.cachedSnapshot()
+        try sessionRuntime?.cachedSnapshot()
     }
 
     @discardableResult

@@ -33,16 +33,23 @@ final class SessionQuickActionCenter {
         static let pendingRequestCount = 16
     }
 
-    private var localStore: CompanionSessionMiniLocalStore?
+    private var sessionRuntime: CompanionSessionRuntime?
     private var handler: Handler?
     private var pendingRequests: [SessionQuickActionRequest] = []
 
-    init(localStore: CompanionSessionMiniLocalStore? = CompanionSessionMiniLocalStore.liveDefault()) {
-        self.localStore = localStore
+    init(
+        sessionRuntime: CompanionSessionRuntime? = nil,
+        localStore: CompanionSessionMiniLocalStore? = nil
+    ) {
+        self.sessionRuntime = sessionRuntime ?? localStore.map(CompanionSessionRuntime.init)
+    }
+
+    func configureSessionRuntime(_ sessionRuntime: CompanionSessionRuntime?) {
+        self.sessionRuntime = sessionRuntime
     }
 
     func configureLocalStore(_ localStore: CompanionSessionMiniLocalStore?) {
-        self.localStore = localStore
+        self.sessionRuntime = localStore.map(CompanionSessionRuntime.init)
     }
 
     func registerHandler(_ handler: @escaping Handler) {
@@ -106,14 +113,14 @@ final class SessionQuickActionCenter {
         var clientMutationID = request.clientMutationID?.nilIfBlank
         do {
             if clientMutationID == nil {
-                clientMutationID = try localStore?.enqueueNotificationReplyCommand(
+                clientMutationID = try sessionRuntime?.enqueueNotificationReplyCommand(
                     notificationID: notificationID,
                     threadID: request.sessionID,
                     prompt: prompt,
                     assistantSurface: nil
                 )
             } else if let clientMutationID {
-                try localStore?.enqueueNotificationReplyCommand(
+                try sessionRuntime?.enqueueNotificationReplyCommand(
                     notificationID: notificationID,
                     threadID: request.sessionID,
                     prompt: prompt,

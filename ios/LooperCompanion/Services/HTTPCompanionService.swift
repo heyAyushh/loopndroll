@@ -79,27 +79,27 @@ struct HTTPCompanionService: CompanionService {
 
     let baseURLs: [URL]
     let bearerToken: String?
-    private let sessionManager: LooperClientCoreSessionManager?
+    private let sessionRuntime: CompanionSessionRuntime?
 
     init(
         baseURL: URL,
-        sessionManager: LooperClientCoreSessionManager? = nil,
+        sessionRuntime: CompanionSessionRuntime? = nil,
         sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
     ) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
-        self.sessionManager = sessionManager ?? sessionMiniLocalStore?.sessionManager
+        self.sessionRuntime = sessionRuntime ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
     }
 
     init(
         baseURLs: [URL],
         bearerToken: String? = nil,
-        sessionManager: LooperClientCoreSessionManager? = nil,
+        sessionRuntime: CompanionSessionRuntime? = nil,
         sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
     ) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
-        self.sessionManager = sessionManager ?? sessionMiniLocalStore?.sessionManager
+        self.sessionRuntime = sessionRuntime ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
     }
 
     func prepareSessionRuntime() async {
@@ -142,9 +142,9 @@ struct HTTPCompanionService: CompanionService {
         id: String,
         preset: SessionMode?
     ) async throws -> CompanionSessionModeResult {
-        let envelope = try await requiredSessionManager().setMode(
+        let envelope = try await requiredSessionRuntime().setMode(
             threadID: id,
-            preset: preset?.rawValue ?? ""
+            preset: preset
         )
         return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
     }
@@ -154,9 +154,9 @@ struct HTTPCompanionService: CompanionService {
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
-        let envelope = try await requiredSessionManager().setMode(
+        let envelope = try await requiredSessionRuntime().setMode(
             threadID: id,
-            preset: preset?.rawValue ?? "",
+            preset: preset,
             clientMutationID: clientMutationID
         )
         return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
@@ -200,10 +200,10 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> CompanionPromptSendResult {
-        let envelope = try await requiredSessionManager().sendPrompt(
+        let envelope = try await requiredSessionRuntime().sendPrompt(
             threadID: id,
             prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? ""
+            assistantSurface: assistantSurface
         )
         return try Self.promptSendResult(from: envelope, sessionID: id)
     }
@@ -214,10 +214,10 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
-        let envelope = try await requiredSessionManager().sendPrompt(
+        let envelope = try await requiredSessionRuntime().sendPrompt(
             threadID: id,
             prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? "",
+            assistantSurface: assistantSurface,
             clientMutationID: clientMutationID
         )
         return try Self.promptSendResult(from: envelope, sessionID: id)
@@ -250,11 +250,11 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let envelope = try await requiredSessionManager().submitNotificationReplyWithGeneratedMutation(
+        let envelope = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
             prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? ""
+            assistantSurface: assistantSurface
         )
         return try Self.notificationReplyResponse(
             from: envelope,
@@ -270,11 +270,11 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let envelope = try await requiredSessionManager().submitNotificationReply(
+        let envelope = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
             prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? "",
+            assistantSurface: assistantSurface,
             clientMutationID: clientMutationID
         )
         return try Self.notificationReplyResponse(
@@ -286,7 +286,7 @@ struct HTTPCompanionService: CompanionService {
 
     func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await requiredSessionManager().drainNotificationReplyOutbox()
+        let envelope = try await requiredSessionRuntime().drainNotificationReplyOutbox()
         guard envelope.ack.accepted else {
             CompanionDiagnostics.record(
                 "notification-reply:grpc-pending-invalid id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId)"
@@ -303,15 +303,15 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    private func requiredSessionManager() throws -> LooperClientCoreSessionManager {
-        guard let sessionManager else {
+    private func requiredSessionRuntime() throws -> CompanionSessionRuntime {
+        guard let sessionRuntime else {
             throw HTTPCompanionServiceError.localStoreUnavailable
         }
-        return sessionManager
+        return sessionRuntime
     }
 
     private func prepareCommandRuntimeIfNeeded() async {
-        guard (try? sessionManager?.isRuntimeConfigured()) != true else {
+        guard (try? sessionRuntime?.isConfigured()) != true else {
             return
         }
         do {
@@ -334,9 +334,9 @@ struct HTTPCompanionService: CompanionService {
         guard !endpoints.isEmpty else {
             throw HTTPCompanionServiceError.invalidResponse
         }
-        _ = try requiredSessionManager().start(
+        _ = try requiredSessionRuntime().start(
             endpoints: endpoints,
-            bearerToken: bearerToken ?? "",
+            bearerToken: bearerToken,
             mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
         )
     }
@@ -393,7 +393,7 @@ struct HTTPCompanionService: CompanionService {
 
     #if DEBUG
     func commandOutboxDepthForSelfTest() throws -> UInt32 {
-        try requiredSessionManager().outboxDepth()
+        try requiredSessionRuntime().outboxDepth()
     }
     #endif
 

@@ -351,7 +351,7 @@ enum G006LocalFirstSelfTest {
             "failed notification reply should not record delivered mutation id"
         )
 
-        try store.enqueueNotificationReplyCommand(
+        try CompanionSessionRuntime(localStore: store).enqueueNotificationReplyCommand(
             notificationID: notificationID,
             threadID: Constants.cachedThreadID,
             prompt: "offline reply",

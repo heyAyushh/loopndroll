@@ -64,13 +64,16 @@ final class CompanionAppModel {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
-        self.sessionMiniController = CompanionSessionMiniController(localStore: sessionMiniLocalStore)
+        let sessionRuntime = environment.sessionRuntime
+            ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
+        self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection
             ? CompanionEnvironment.live(
-                sessionMiniLocalStore: sessionMiniLocalStore
+                sessionMiniLocalStore: sessionRuntime?.localStore,
+                sessionRuntime: sessionRuntime
             ).service
             : environment.service
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
@@ -95,7 +98,7 @@ final class CompanionAppModel {
         }
 
         configureStopQuickActions()
-        SessionQuickActionCenter.shared.configureLocalStore(sessionMiniController.localStore)
+        SessionQuickActionCenter.shared.configureSessionRuntime(sessionMiniController.sessionRuntime)
         registerSessionQuickActionHandler()
         CompanionDiagnostics.lifecycle.info(
             "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore, privacy: .public)"
@@ -526,7 +529,8 @@ final class CompanionAppModel {
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
         CompanionEnvironment.live(
-            sessionMiniLocalStore: sessionMiniController.localStore
+            sessionMiniLocalStore: sessionMiniController.localStore,
+            sessionRuntime: sessionMiniController.sessionRuntime
         )
     }
 
@@ -1240,11 +1244,11 @@ final class CompanionAppModel {
         _ preset: SessionMode?,
         to sessionID: String
     ) -> String? {
-        guard let localStore = sessionMiniController.localStore else {
+        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
             return nil
         }
         do {
-            guard let queuedSnapshot = try localStore.queueSetModeWithGeneratedMutation(
+            guard let queuedSnapshot = try sessionRuntime.queueSetModeWithGeneratedMutation(
                 threadID: sessionID,
                 preset: preset
             ) else {
