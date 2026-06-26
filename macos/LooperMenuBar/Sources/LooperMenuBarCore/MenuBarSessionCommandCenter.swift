@@ -26,16 +26,16 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyThreadID
     case emptyNotificationID
     case emptyPrompt
-    case localStoreUnavailable
+    case sessionRuntimeUnavailable
 }
 
 public actor MenuBarSessionCommandCenter {
-    private let localStore: MenuBarSessionMiniLocalStore?
+    private let sessionRuntime: MenuBarSessionRuntime?
 
     public init(
-        localStore: MenuBarSessionMiniLocalStore?
+        sessionRuntime: MenuBarSessionRuntime?
     ) {
-        self.localStore = localStore
+        self.sessionRuntime = sessionRuntime
     }
 
     @discardableResult
@@ -45,21 +45,13 @@ public actor MenuBarSessionCommandCenter {
         clientMutationID: String? = nil
     ) async throws -> MenuBarSessionModeCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
-        let sessionManager = try requiredSessionManager()
+        let sessionRuntime = try requiredSessionRuntime()
         let normalizedPreset = preset?.nilIfBlank ?? ""
-        let envelope: ClientCommandAckEnvelope
-        if let clientMutationID {
-            envelope = try await sessionManager.setMode(
-                threadID: normalizedThreadID,
-                preset: normalizedPreset,
-                clientMutationID: clientMutationID
-            )
-        } else {
-            envelope = try await sessionManager.setMode(
-                threadID: normalizedThreadID,
-                preset: normalizedPreset
-            )
-        }
+        let envelope = try await sessionRuntime.setSessionMode(
+            threadID: normalizedThreadID,
+            preset: normalizedPreset,
+            clientMutationID: clientMutationID
+        )
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionModeCommandResult(
             clientMutationID: acknowledgedMutationID,
@@ -77,23 +69,14 @@ public actor MenuBarSessionCommandCenter {
     ) async throws -> MenuBarSessionPromptCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        let sessionManager = try requiredSessionManager()
+        let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let envelope: ClientCommandAckEnvelope
-        if let clientMutationID {
-            envelope = try await sessionManager.sendPrompt(
-                threadID: normalizedThreadID,
-                prompt: normalizedPrompt,
-                assistantSurface: normalizedAssistantSurface,
-                clientMutationID: clientMutationID
-            )
-        } else {
-            envelope = try await sessionManager.sendPrompt(
-                threadID: normalizedThreadID,
-                prompt: normalizedPrompt,
-                assistantSurface: normalizedAssistantSurface
-            )
-        }
+        let envelope = try await sessionRuntime.sendPrompt(
+            threadID: normalizedThreadID,
+            prompt: normalizedPrompt,
+            assistantSurface: normalizedAssistantSurface,
+            clientMutationID: clientMutationID
+        )
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionPromptCommandResult(
             clientMutationID: acknowledgedMutationID,
@@ -117,25 +100,15 @@ public actor MenuBarSessionCommandCenter {
         )
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        let sessionManager = try requiredSessionManager()
+        let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let envelope: ClientCommandAckEnvelope
-        if let clientMutationID {
-            envelope = try await sessionManager.submitNotificationReply(
-                notificationID: normalizedNotificationID,
-                threadID: normalizedThreadID,
-                prompt: normalizedPrompt,
-                assistantSurface: normalizedAssistantSurface,
-                clientMutationID: clientMutationID
-            )
-        } else {
-            envelope = try await sessionManager.submitNotificationReplyWithGeneratedMutation(
-                notificationID: normalizedNotificationID,
-                threadID: normalizedThreadID,
-                prompt: normalizedPrompt,
-                assistantSurface: normalizedAssistantSurface
-            )
-        }
+        let envelope = try await sessionRuntime.submitNotificationReply(
+            notificationID: normalizedNotificationID,
+            threadID: normalizedThreadID,
+            prompt: normalizedPrompt,
+            assistantSurface: normalizedAssistantSurface,
+            clientMutationID: clientMutationID
+        )
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarNotificationReplyCommandResult(
             notificationID: envelope.notificationId.nilIfBlank ?? normalizedNotificationID,
@@ -146,11 +119,11 @@ public actor MenuBarSessionCommandCenter {
         )
     }
 
-    private func requiredSessionManager() throws -> LooperClientCoreSessionManager {
-        guard let sessionManager = localStore?.sessionManager else {
-            throw MenuBarSessionCommandError.localStoreUnavailable
+    private func requiredSessionRuntime() throws -> MenuBarSessionRuntime {
+        guard let sessionRuntime else {
+            throw MenuBarSessionCommandError.sessionRuntimeUnavailable
         }
-        return sessionManager
+        return sessionRuntime
     }
 
     private func normalizedRequired(

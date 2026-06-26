@@ -44,10 +44,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
-  private let sessionMiniLocalStore: MenuBarSessionMiniLocalStore?
+  private let sessionRuntime: MenuBarSessionRuntime?
+  private var sessionMiniLocalStore: MenuBarSessionMiniLocalStore? {
+    sessionRuntime?.localStore
+  }
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
   private lazy var sessionCommandCenter = MenuBarSessionCommandCenter(
-    localStore: sessionMiniLocalStore
+    sessionRuntime: sessionRuntime
   )
   private var statusItem: NSStatusItem?
   private var menu: NSMenu?
@@ -78,7 +81,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let endpointStore = ControlPlaneEndpointStore()
     let client = HTTPControlPlaneClient(endpointStore: endpointStore)
     self.client = client
-    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault()
+    self.sessionRuntime = MenuBarSessionRuntime.liveDefault()
     self.lifecycle = LooperLifecycleCoordinator(
       client: client,
       service: BundledControlPlaneService(endpointStore: endpointStore)
@@ -112,7 +115,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   func applicationWillTerminate(_ notification: Notification) {
     continuationRefreshTask?.cancel()
     stopSessionMiniSync()
-    _ = try? sessionMiniLocalStore?.sessionManager.stop()
+    sessionRuntime?.stop()
     continuationPublisher.invalidate()
     if !detachServerOnQuit {
       _ = lifecycle.unregisterBeforeQuit()
@@ -708,12 +711,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func startSessionMiniSync() {
     guard sessionMiniSyncTask == nil,
-      let sessionMiniLocalStore
+      let sessionRuntime
     else {
       return
     }
 
-    sessionMiniSyncTask = Task { [weak self, sessionMiniLocalStore] in
+    sessionMiniSyncTask = Task { [weak self, sessionRuntime] in
       guard let self else {
         return
       }
@@ -723,7 +726,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         os_log(.debug, log: .default, "session mini runtime failed: %{public}@", error.localizedDescription)
         return
       }
-      await sessionMiniLocalStore.runClientCoreStateMiniSync(
+      await sessionRuntime.runStateMiniSync(
         onSnapshot: { [weak self] snapshot in
           self?.applySessionMiniSnapshot(snapshot)
         },
@@ -735,24 +738,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func configureSessionClientCoreRuntimeIfNeeded() async throws {
-    guard let sessionManager = sessionMiniLocalStore?.sessionManager else {
+    guard let sessionRuntime else {
       throw MenuBarSessionRuntimeError.noRealtimeEndpoint
     }
-    if (try? sessionManager.isRuntimeConfigured()) == true {
-      return
+    _ = try await sessionRuntime.startIfNeeded {
+      let health = try await client.fetchMobileHealth()
+      return health.preferredRealtimeBaseURLs
     }
-    let health = try await client.fetchMobileHealth()
-    let endpoints = health.preferredRealtimeBaseURLs.map {
-      ClientEndpoint(url: $0.absoluteString, lastGood: false)
-    }
-    guard !endpoints.isEmpty else {
-      throw MenuBarSessionRuntimeError.noRealtimeEndpoint
-    }
-    _ = try sessionManager.start(
-      endpoints: endpoints,
-      bearerToken: "",
-      mobileSessionHeader: ""
-    )
   }
 
   private func stopSessionMiniSync() {
@@ -2022,17 +2014,6 @@ extension LooperHandoffHotkeyOption {
   private static func carbonModifierFlags(_ flags: Int...) -> UInt32 {
     flags.reduce(UInt32(0)) { partialResult, flag in
       partialResult | UInt32(flag)
-    }
-  }
-}
-
-private enum MenuBarSessionRuntimeError: LocalizedError {
-  case noRealtimeEndpoint
-
-  var errorDescription: String? {
-    switch self {
-    case .noRealtimeEndpoint:
-      "No realtime endpoint available"
     }
   }
 }

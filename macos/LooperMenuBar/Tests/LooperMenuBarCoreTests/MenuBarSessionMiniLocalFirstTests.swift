@@ -135,9 +135,10 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(fallbackMiniSnapshot == nil)
         #expect(fallbackSections.first?.rows.first?.threadId == "thread-main")
 
-        let outboxStore = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        let outboxRuntime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        let outboxStore = outboxRuntime.localStore
         let commandCenter = MenuBarSessionCommandCenter(
-            localStore: outboxStore
+            sessionRuntime: outboxRuntime
         )
 
         await expectThrows {
@@ -166,8 +167,9 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("menu actions enqueue durable Rust-core commands before transport")
     func testMenuActionsEnqueueDurableRustCoreCommandsBeforeTransport() async throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        let store = runtime.localStore
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
             _ = try await commandCenter.setSessionMode(
@@ -194,8 +196,9 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("menu actions can use Rust-core generated mutation IDs")
     func testMenuActionsUseRustCoreGeneratedMutationIDs() async throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        let store = runtime.localStore
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
             _ = try await commandCenter.setSessionMode(
@@ -219,8 +222,9 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("notification replies enter durable Rust-core outbox before transport")
     func testNotificationRepliesEnterDurableRustCoreOutboxBeforeTransport() async throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        let store = runtime.localStore
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
             _ = try await commandCenter.submitNotificationReply(
@@ -242,8 +246,9 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("failed notification reply stays durable and dedupes retry")
     func testFailedNotificationReplyStaysDurableAndDedupesRetry() async throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        let store = runtime.localStore
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         for _ in 0..<2 {
             await expectThrows {

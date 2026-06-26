@@ -133,10 +133,14 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         static let applicationSupportDirectoryName = "looper"
     }
 
-    public let sessionManager: LooperClientCoreSessionManager
+    private let sessionManager: LooperClientCoreSessionManager
 
     public init(fileURL: URL) throws {
         self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
+    }
+
+    fileprivate init(sessionManager: LooperClientCoreSessionManager) {
+        self.sessionManager = sessionManager
     }
 
     public static func liveDefault() -> MenuBarSessionMiniLocalStore? {
@@ -196,7 +200,95 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         (try? sessionManager.localSnapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
-    public func nextClientCoreMenuSnapshotStreamResult() async throws
+    fileprivate static func defaultFileURL() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        .appendingPathComponent(Defaults.applicationSupportDirectoryName, isDirectory: true)
+        .appendingPathComponent(defaultFileName)
+    }
+
+    private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
+        -> MenuBarSessionMiniLocalSnapshot?
+    {
+        let projection = try reduceStateMinisMenuSnapshot(snapshot: snapshot)
+        guard !projection.sessions.isEmpty else {
+            return nil
+        }
+        return MenuBarSessionMiniLocalSnapshot(projection)
+    }
+}
+
+public final class MenuBarSessionRuntime: @unchecked Sendable {
+    public let localStore: MenuBarSessionMiniLocalStore
+
+    private let sessionManager: LooperClientCoreSessionManager
+
+    public init(fileURL: URL) throws {
+        let sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
+        self.sessionManager = sessionManager
+        self.localStore = MenuBarSessionMiniLocalStore(sessionManager: sessionManager)
+    }
+
+    public static func liveDefault() -> MenuBarSessionRuntime? {
+        do {
+            return try MenuBarSessionRuntime(fileURL: MenuBarSessionMiniLocalStore.defaultFileURL())
+        } catch {
+            return nil
+        }
+    }
+
+    public static func available(fileURL: URL) -> MenuBarSessionRuntime? {
+        try? MenuBarSessionRuntime(fileURL: fileURL)
+    }
+
+    private func isConfigured() -> Bool {
+        (try? sessionManager.isRuntimeConfigured()) == true
+    }
+
+    @discardableResult
+    public func startIfNeeded(
+        bearerToken: String = "",
+        mobileSessionHeader: String = "",
+        preferredRealtimeEndpointURLs: @MainActor () async throws -> [URL]
+    ) async throws -> ClientStateSnapshot? {
+        if isConfigured() {
+            return nil
+        }
+        let endpoints = try await preferredRealtimeEndpointURLs().map {
+            ClientEndpoint(url: $0.absoluteString, lastGood: false)
+        }
+        guard !endpoints.isEmpty else {
+            throw MenuBarSessionRuntimeError.noRealtimeEndpoint
+        }
+        return try start(
+            endpoints: endpoints,
+            bearerToken: bearerToken,
+            mobileSessionHeader: mobileSessionHeader
+        )
+    }
+
+    @discardableResult
+    private func start(
+        endpoints: [ClientEndpoint],
+        bearerToken: String,
+        mobileSessionHeader: String
+    ) throws -> ClientStateSnapshot {
+        return try sessionManager.start(
+            endpoints: endpoints,
+            bearerToken: bearerToken,
+            mobileSessionHeader: mobileSessionHeader
+        )
+    }
+
+    public func stop() {
+        _ = try? sessionManager.stop()
+    }
+
+    public func nextMenuSnapshotStreamResult() async throws
         -> MenuBarClientCoreMenuSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMenuSnapshotChange()
@@ -215,20 +307,16 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    public func stopClientCoreStateMiniStream() {
-        _ = try? sessionManager.stop()
-    }
-
-    public func runClientCoreStateMiniSync(
+    public func runStateMiniSync(
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async {
         defer {
-            stopClientCoreStateMiniStream()
+            stop()
         }
 
         do {
-            try await drainClientCoreStateMiniSync(
+            try await drainStateMiniSync(
                 onSnapshot: onSnapshot,
                 onDebugMessage: onDebugMessage
             )
@@ -237,23 +325,78 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         }
     }
 
-    private static func defaultFileURL() throws -> URL {
-        try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
+    @discardableResult
+    public func setSessionMode(
+        threadID: String,
+        preset: String,
+        clientMutationID: String?
+    ) async throws -> ClientCommandAckEnvelope {
+        if let clientMutationID {
+            return try await sessionManager.setMode(
+                threadID: threadID,
+                preset: preset,
+                clientMutationID: clientMutationID
+            )
+        }
+        return try await sessionManager.setMode(
+            threadID: threadID,
+            preset: preset
         )
-        .appendingPathComponent(Defaults.applicationSupportDirectoryName, isDirectory: true)
-        .appendingPathComponent(defaultFileName)
     }
 
-    private func drainClientCoreStateMiniSync(
+    @discardableResult
+    public func sendPrompt(
+        threadID: String,
+        prompt: String,
+        assistantSurface: String,
+        clientMutationID: String?
+    ) async throws -> ClientCommandAckEnvelope {
+        if let clientMutationID {
+            return try await sessionManager.sendPrompt(
+                threadID: threadID,
+                prompt: prompt,
+                assistantSurface: assistantSurface,
+                clientMutationID: clientMutationID
+            )
+        }
+        return try await sessionManager.sendPrompt(
+            threadID: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    @discardableResult
+    public func submitNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String,
+        clientMutationID: String?
+    ) async throws -> ClientCommandAckEnvelope {
+        if let clientMutationID {
+            return try await sessionManager.submitNotificationReply(
+                notificationID: notificationID,
+                threadID: threadID,
+                prompt: prompt,
+                assistantSurface: assistantSurface,
+                clientMutationID: clientMutationID
+            )
+        }
+        return try await sessionManager.submitNotificationReplyWithGeneratedMutation(
+            notificationID: notificationID,
+            threadID: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    private func drainStateMiniSync(
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async throws {
         while !Task.isCancelled {
-            let result = try await nextClientCoreMenuSnapshotStreamResult()
+            let result = try await nextMenuSnapshotStreamResult()
             if let snapshot = result.snapshot {
                 await onSnapshot(snapshot)
             }
@@ -265,15 +408,16 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             }
         }
     }
+}
 
-    private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
-        -> MenuBarSessionMiniLocalSnapshot?
-    {
-        let projection = try reduceStateMinisMenuSnapshot(snapshot: snapshot)
-        guard !projection.sessions.isEmpty else {
-            return nil
+public enum MenuBarSessionRuntimeError: LocalizedError {
+    case noRealtimeEndpoint
+
+    public var errorDescription: String? {
+        switch self {
+        case .noRealtimeEndpoint:
+            "No realtime endpoint available"
         }
-        return MenuBarSessionMiniLocalSnapshot(projection)
     }
 }
 
