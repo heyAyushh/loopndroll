@@ -168,14 +168,18 @@ and undefined behavior into deterministic, testable rejections.
 
 ## ADR-004 — One client core in Rust, shared by all three surfaces
 
-**Decision.** The client (connect, the duplex stream, the reducer mirror, optimistic-mutation
-tracking, reconnect/backoff, the FSM mirror) is written **once in Rust** and shipped to Swift via
-**UniFFI**, reusing the existing Rust-staticlib → XCFramework pipeline already used by `orb-code`
-(`scripts/build-orb-code-ios-package.sh`).
+**Decision.** SwiftUI owns the app/scene lifecycle: object creation, environment injection,
+foreground activation, suspension, and task cancellation stay in the SwiftUI `App`/root scene.
+Below that lifecycle boundary, the client core (connect, the duplex stream, the reducer mirror,
+optimistic-mutation tracking, reconnect/backoff, and the FSM mirror) is written **once in Rust**
+and shipped to Swift via **UniFFI**, reusing the existing Rust-staticlib → XCFramework pipeline
+already used by `orb-code` (`scripts/build-orb-code-ios-package.sh`).
 
 ```
+SwiftUI App/scene lifecycle
+   owns: create client manager · active/suspended transitions · dependency injection
 Rust client core (tonic + reducer mirror + optimistic tracker + FSM mirror + reconnect)
-   exposes:  connect(endpoints) · setMode(thread, preset) · sendPrompt(...) · observe() -> state stream
+   exposes: start(endpoints) · stop() · setMode(thread, preset) · sendPrompt(...) · observe() -> state stream
    ┌──────────────┬──────────────┐
   TUI (native)   macOS (UniFFI)  iOS (UniFFI)   ← VIEW ONLY
 ```
@@ -189,12 +193,15 @@ reconnect + mutation tracking — three reducers, three drift sources. One Rust 
 
 **Do**
 - Shrink Swift to an `@Observable` wrapper over the core's emitted immutable state snapshots.
+- Drive the wrapper from SwiftUI lifecycle hooks (`App`, `scenePhase`, `.task`, cancellation);
+  do not start streams from leaf views or duplicate lifecycle handling across views/services.
 - Rewrite iOS first onto the Rust core, then macOS, then remove the parallel Swift gRPC client.
 - Prefer compile-time removal of old routes and reducers over runtime flags. A flag is allowed only
   for internal development while the same PR removes the old path before merge.
 
 **Don't**
-- Put route logic, SQL, reconcile/merge logic, or session-control state in Swift or the TUI.
+- Put route logic, SQL, reconcile/merge logic, reconnect/outbox loops, or session-control state in
+  Swift or the TUI.
 - Hand-edit generated gRPC/protobuf files (`swift/LooperRealtime/.../Generated`).
 
 **Where.** New crate e.g. `crates/looper-client-core`. Consumers: `ios/LooperCompanion`,

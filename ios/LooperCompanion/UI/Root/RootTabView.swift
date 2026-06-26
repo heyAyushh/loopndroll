@@ -72,12 +72,6 @@ struct RootTabView: View {
             await refreshForActiveSceneIfNeeded()
         }
         .onChange(of: scenePhase) { _, nextPhase in
-            if nextPhase == .active, authenticator.isUnlocked {
-                model.startRealtimeSessionSyncIfNeeded()
-            } else {
-                model.stopRealtimeSessionSync()
-            }
-
             guard nextPhase != .active else {
                 return
             }

@@ -77,6 +77,9 @@ struct LooperApp: App {
                 .onAppear {
                     drainPendingOpenRequests()
                 }
+                .task(id: realtimeLifecycleTaskID) {
+                    applyRealtimeLifecycle()
+                }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else {
                         return
@@ -89,6 +92,10 @@ struct LooperApp: App {
 
     private var appearanceMode: CompanionAppearanceMode {
         CompanionAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
+    }
+
+    private var realtimeLifecycleTaskID: String {
+        "\(scenePhase)-\(authenticator.isUnlocked)"
     }
 
     private static func environment() -> CompanionEnvironment {
@@ -163,5 +170,14 @@ struct LooperApp: App {
             }
             await model.continueFromPendingSiriOpenSessionRequest()
         }
+    }
+
+    private func applyRealtimeLifecycle() {
+        guard scenePhase == .active, authenticator.isUnlocked else {
+            model.stopRealtimeSessionSync()
+            return
+        }
+
+        model.startRealtimeSessionSyncIfNeeded()
     }
 }
