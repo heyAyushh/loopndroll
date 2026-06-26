@@ -158,7 +158,9 @@ struct HTTPCompanionService: CompanionService {
         return .accepted(
             mode: Self.sessionMode(from: envelope.preset) ?? preset,
             serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationId
+            clientMutationID: envelope.ack.clientMutationId,
+            ackSeq: envelope.ack.ackSeq,
+            revision: envelope.ack.revision
         )
     }
 
@@ -196,7 +198,10 @@ struct HTTPCompanionService: CompanionService {
         return .accepted(
             promptID: Self.nonEmpty(envelope.promptId),
             dispatchKind: Self.dispatchKind(from: envelope.dispatchKind),
-            clientMutationID: envelope.ack.clientMutationId
+            serverTime: envelope.ack.serverTime,
+            clientMutationID: envelope.ack.clientMutationId,
+            ackSeq: envelope.ack.ackSeq,
+            revision: envelope.ack.revision
         )
     }
 

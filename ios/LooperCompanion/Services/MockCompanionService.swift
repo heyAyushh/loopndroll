@@ -288,7 +288,13 @@ struct MockCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
         _ = await store.setMode(id: id, preset: preset)
-        return .accepted(mode: preset, serverTime: Date().ISO8601Format(), clientMutationID: clientMutationID)
+        return .accepted(
+            mode: preset,
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: clientMutationID,
+            ackSeq: 0,
+            revision: "mock"
+        )
     }
 
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
@@ -306,7 +312,14 @@ struct MockCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
         _ = await store.sendPrompt(id: id, prompt: prompt)
-        return .accepted(promptID: nil, dispatchKind: "mock", clientMutationID: clientMutationID)
+        return .accepted(
+            promptID: nil,
+            dispatchKind: "mock",
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: clientMutationID,
+            ackSeq: 0,
+            revision: "mock"
+        )
     }
 
     func submitNotificationReply(

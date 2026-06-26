@@ -9,17 +9,26 @@ struct ResolvedCompanionServerHealth: Sendable {
 struct CompanionPromptSendResult: Sendable {
     let promptID: String?
     let dispatchKind: String?
+    let serverTime: String?
     let clientMutationID: String?
+    let ackSeq: Int64
+    let revision: String?
 
     static func accepted(
         promptID: String?,
         dispatchKind: String?,
-        clientMutationID: String?
+        serverTime: String? = nil,
+        clientMutationID: String?,
+        ackSeq: Int64 = 0,
+        revision: String? = nil
     ) -> Self {
         Self(
             promptID: promptID,
             dispatchKind: dispatchKind,
-            clientMutationID: clientMutationID
+            serverTime: serverTime,
+            clientMutationID: clientMutationID,
+            ackSeq: ackSeq,
+            revision: revision
         )
     }
 }
@@ -28,16 +37,22 @@ struct CompanionSessionModeResult: Sendable {
     let acceptedMode: SessionMode?
     let serverTime: String?
     let clientMutationID: String?
+    let ackSeq: Int64
+    let revision: String?
 
     static func accepted(
         mode: SessionMode?,
         serverTime: String?,
-        clientMutationID: String?
+        clientMutationID: String?,
+        ackSeq: Int64 = 0,
+        revision: String? = nil
     ) -> Self {
         Self(
             acceptedMode: mode,
             serverTime: serverTime,
-            clientMutationID: clientMutationID
+            clientMutationID: clientMutationID,
+            ackSeq: ackSeq,
+            revision: revision
         )
     }
 }
