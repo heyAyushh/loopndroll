@@ -1949,23 +1949,6 @@ extension SessionSummary {
         goal?.displayStatusSymbolName ?? "target"
     }
 
-    static func isNewerOrLowerRef(
-        leftSession: SessionSummary,
-        rightSession: SessionSummary
-    ) -> Bool {
-        if let leftActivityMs = leftSession.lastActivityAtMs,
-           let rightActivityMs = rightSession.lastActivityAtMs,
-           leftActivityMs != rightActivityMs
-        {
-            return leftActivityMs > rightActivityMs
-        }
-
-        return SessionFreshnessSortItem.isNewerOrLowerRef(
-            leftItem: SessionFreshnessSortItem(session: leftSession),
-            rightItem: SessionFreshnessSortItem(session: rightSession)
-        )
-    }
-
     private func date(fromMilliseconds milliseconds: Int64?) -> Date? {
         guard let milliseconds else {
             return nil
@@ -1975,32 +1958,55 @@ extension SessionSummary {
     }
 }
 
-struct SessionFreshnessSortItem {
-    let session: SessionSummary
-    private let activitySortKey: LooperSessionFreshness.ActivitySortKey
+extension Sequence where Element == SessionSummary {
+    func sortedBySessionFreshness() -> [SessionSummary] {
+        let sessions = Array(self)
+        guard !sessions.isEmpty else {
+            return []
+        }
 
-    init(session: SessionSummary) {
-        self.session = session
-        activitySortKey = LooperSessionFreshness.activitySortKey(
-            lastActivityAt: session.lastActivityAt,
-            ref: session.ref
-        )
-    }
-
-    static func isNewerOrLowerRef(
-        leftItem: SessionFreshnessSortItem,
-        rightItem: SessionFreshnessSortItem
-    ) -> Bool {
-        return LooperSessionFreshness.isNewerActivityOrLowerReference(
-            leftKey: leftItem.activitySortKey,
-            rightKey: rightItem.activitySortKey
-        )
+        let projection = SessionFreshnessOrderProjectionCodec.projectFreshnessOrder(sessions)
+        return SessionFreshnessOrderProjectionCodec.sessions(from: projection, sessions: sessions)
     }
 }
 
-extension Sequence where Element == SessionSummary {
-    func sortedBySessionFreshness() -> [SessionSummary] {
-        sorted(by: SessionSummary.isNewerOrLowerRef)
+private enum SessionFreshnessOrderProjectionCodec {
+    static func projectFreshnessOrder(_ sessions: [SessionSummary])
+        -> ClientSessionFreshnessOrderProjection
+    {
+        do {
+            return try reduceSessionFreshnessOrder(
+                sessionsJson: encode(sessions)
+            )
+        } catch {
+            fatalError("Session freshness projection failed: \(error)")
+        }
+    }
+
+    static func sessions(
+        from projection: ClientSessionFreshnessOrderProjection,
+        sessions: [SessionSummary]
+    ) -> [SessionSummary] {
+        projection.indexes.map { index in
+            let sessionIndex = Int(index)
+            guard sessions.indices.contains(sessionIndex) else {
+                fatalError("Session freshness projection returned invalid index \(sessionIndex)")
+            }
+            return sessions[sessionIndex]
+        }
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) -> String {
+        do {
+            let data = try JSONEncoder().encode(value)
+            guard let json = String(data: data, encoding: .utf8) else {
+                fatalError("Session freshness payload was not valid UTF-8")
+            }
+
+            return json
+        } catch {
+            fatalError("Session freshness payload encoding failed: \(error)")
+        }
     }
 }
 

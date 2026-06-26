@@ -309,18 +309,12 @@ struct SessionSearchResults: Sendable {
             return []
         }
 
-        let sessionItemsByID = allSessions.reduce(into: [String: SessionFreshnessSortItem]()) { itemsByID, session in
-            let sessionItem = SessionFreshnessSortItem(session: session)
-            if let existingItem = itemsByID[session.id],
-               !SessionFreshnessSortItem.isNewerOrLowerRef(
-                   leftItem: sessionItem,
-                   rightItem: existingItem
-               )
-            {
+        let sessionsByID = allSessions.sortedBySessionFreshness().reduce(into: [String: SessionSummary]()) { sessionsByID, session in
+            if sessionsByID[session.id] != nil {
                 return
             }
 
-            itemsByID[session.id] = sessionItem
+            sessionsByID[session.id] = session
         }
         var seenSessionIDs = Set<String>()
         let sessions = spotlightResultSessionIDs.compactMap { resultID -> SessionSummary? in
@@ -328,7 +322,7 @@ struct SessionSearchResults: Sendable {
             guard seenSessionIDs.insert(sessionID).inserted else {
                 return nil
             }
-            return sessionItemsByID[sessionID]?.session
+            return sessionsByID[sessionID]
         }
         return sessions.sortedBySessionFreshness()
     }
@@ -351,7 +345,7 @@ enum SessionSearchEngine {
     private struct ScoredSessionMatch {
         let session: SessionSummary
         let score: Int
-        let freshnessSortItem: SessionFreshnessSortItem
+        let freshnessRank: Int
     }
 
     static func normalized(_ searchText: String) -> String {
@@ -377,7 +371,10 @@ enum SessionSearchEngine {
             }
         }
 
-        let matches: [ScoredSessionMatch] = sessions.compactMap { session in
+        let matches: [ScoredSessionMatch] = sessions
+            .sortedBySessionFreshness()
+            .enumerated()
+            .compactMap { freshnessRank, session in
             let score = bestMatchScore(
                 query: query,
                 candidates: [
@@ -411,7 +408,7 @@ enum SessionSearchEngine {
             return ScoredSessionMatch(
                 session: session,
                 score: score,
-                freshnessSortItem: SessionFreshnessSortItem(session: session)
+                freshnessRank: freshnessRank
             )
         }
 
@@ -420,10 +417,7 @@ enum SessionSearchEngine {
                 return lhs.score < rhs.score
             }
 
-            return SessionFreshnessSortItem.isNewerOrLowerRef(
-                leftItem: lhs.freshnessSortItem,
-                rightItem: rhs.freshnessSortItem
-            )
+            return lhs.freshnessRank < rhs.freshnessRank
         }
         .map { match in
             (session: match.session, score: match.score)

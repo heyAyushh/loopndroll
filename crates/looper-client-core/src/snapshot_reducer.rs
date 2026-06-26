@@ -59,6 +59,11 @@ pub struct ClientSessionSectionsProjection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionFreshnessOrderProjection {
+    pub indexes: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientSessionIndexEntry {
     pub surface: String,
     pub session_index: u32,
@@ -312,6 +317,29 @@ pub fn reduce_session_sections(
     let sessions: Vec<SessionDocument> =
         serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
     Ok(project_session_sections(sessions))
+}
+
+#[uniffi::export]
+pub fn reduce_session_freshness_order(
+    sessions_json: String,
+) -> Result<ClientSessionFreshnessOrderProjection, ClientCoreError> {
+    let sessions: Vec<SessionDocument> =
+        serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    let mut sortable_sessions = sessions
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| SortableSession {
+            original_index: index as u32,
+            session,
+        })
+        .collect::<Vec<_>>();
+    sort_sessions_by_freshness(&mut sortable_sessions);
+    Ok(ClientSessionFreshnessOrderProjection {
+        indexes: sortable_sessions
+            .into_iter()
+            .map(|session| session.original_index)
+            .collect(),
+    })
 }
 
 #[uniffi::export]
@@ -1077,6 +1105,67 @@ mod tests {
 
         assert_eq!(projection.active_indexes, vec![1, 0]);
         assert_eq!(projection.running_indexes, vec![1, 0]);
+    }
+
+    #[test]
+    fn session_freshness_order_uses_milliseconds_before_strings() {
+        let projection = reduce_session_freshness_order(
+            r#"[
+                {
+                    "id":"older",
+                    "ref":"S1",
+                    "status":"active",
+                    "lastActivityAtMs":1781596920123,
+                    "lastActivityAt":"2026-06-16T08:03:00Z",
+                    "isArchived":false
+                },
+                {
+                    "id":"newer",
+                    "ref":"S2",
+                    "status":"active",
+                    "lastActivityAtMs":1781596920321,
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false
+                }
+            ]"#
+            .to_owned(),
+        )
+        .expect("project freshness order");
+
+        assert_eq!(projection.indexes, vec![1, 0]);
+    }
+
+    #[test]
+    fn session_freshness_order_parses_fractional_seconds_and_refs() {
+        let projection = reduce_session_freshness_order(
+            r#"[
+                {
+                    "id":"whole",
+                    "ref":"S2",
+                    "status":"active",
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false
+                },
+                {
+                    "id":"fractional",
+                    "ref":"S3",
+                    "status":"active",
+                    "lastActivityAt":"2026-06-16T08:00:00.500Z",
+                    "isArchived":false
+                },
+                {
+                    "id":"lower-ref",
+                    "ref":"S1",
+                    "status":"active",
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false
+                }
+            ]"#
+            .to_owned(),
+        )
+        .expect("project freshness order");
+
+        assert_eq!(projection.indexes, vec![1, 2, 0]);
     }
 
     #[test]

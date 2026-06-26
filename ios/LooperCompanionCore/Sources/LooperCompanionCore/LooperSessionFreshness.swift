@@ -1,12 +1,6 @@
 import Foundation
 
 public enum LooperSessionFreshness {
-    public struct ActivitySortKey: Sendable {
-        fileprivate let date: Date?
-        fileprivate let lastActivityAt: String
-        fileprivate let ref: String
-    }
-
     private static let parser = LockedISO8601DateParser()
 
     public static func displayTimestamp(lastActivityAt: String) -> String {
@@ -23,47 +17,6 @@ public enum LooperSessionFreshness {
 
     public static func date(from value: String) -> Date? {
         parser.date(from: value)
-    }
-
-    public static func activitySortKey(
-        lastActivityAt: String,
-        ref: String
-    ) -> ActivitySortKey {
-        ActivitySortKey(
-            date: date(from: lastActivityAt),
-            lastActivityAt: lastActivityAt,
-            ref: ref
-        )
-    }
-
-    public static func isNewerActivityOrLowerReference(
-        leftLastActivityAt: String,
-        leftRef: String,
-        rightLastActivityAt: String,
-        rightRef: String
-    ) -> Bool {
-        isNewerActivityOrLowerReference(
-            leftKey: activitySortKey(lastActivityAt: leftLastActivityAt, ref: leftRef),
-            rightKey: activitySortKey(lastActivityAt: rightLastActivityAt, ref: rightRef)
-        )
-    }
-
-    public static func isNewerActivityOrLowerReference(
-        leftKey: ActivitySortKey,
-        rightKey: ActivitySortKey
-    ) -> Bool {
-        if let leftDate = leftKey.date,
-           let rightDate = rightKey.date,
-           leftDate != rightDate
-        {
-            return leftDate > rightDate
-        }
-
-        if leftKey.lastActivityAt != rightKey.lastActivityAt {
-            return leftKey.lastActivityAt > rightKey.lastActivityAt
-        }
-
-        return leftKey.ref < rightKey.ref
     }
 }
 

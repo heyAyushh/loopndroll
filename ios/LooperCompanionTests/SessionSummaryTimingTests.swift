@@ -55,7 +55,6 @@ struct SessionSummaryTimingTests {
             messageMilliseconds: Constants.messageMilliseconds
         )
 
-        #expect(SessionSummary.isNewerOrLowerRef(leftSession: newer, rightSession: older))
         #expect([older, newer].sortedBySessionFreshness().map(\.id) == ["newer-thread", "older-thread"])
     }
 

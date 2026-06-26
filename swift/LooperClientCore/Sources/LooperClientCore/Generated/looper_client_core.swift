@@ -2422,6 +2422,56 @@ public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMu
 }
 
 
+public struct ClientSessionFreshnessOrderProjection: Equatable, Hashable {
+    public var indexes: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(indexes: [UInt32]) {
+        self.indexes = indexes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionFreshnessOrderProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionFreshnessOrderProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionFreshnessOrderProjection {
+        return
+            try ClientSessionFreshnessOrderProjection(
+                indexes: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionFreshnessOrderProjection, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt32.write(value.indexes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionFreshnessOrderProjection_lift(_ buf: RustBuffer) throws -> ClientSessionFreshnessOrderProjection {
+    return try FfiConverterTypeClientSessionFreshnessOrderProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionFreshnessOrderProjection_lower(_ value: ClientSessionFreshnessOrderProjection) -> RustBuffer {
+    return FfiConverterTypeClientSessionFreshnessOrderProjection.lower(value)
+}
+
+
 public struct ClientSessionIndexEntry: Equatable, Hashable {
     public var surface: String
     public var sessionIndex: UInt32
@@ -4333,6 +4383,13 @@ public func reduceSessionDetailOptimisticMode(detailJson: String, preset: String
     )
 })
 }
+public func reduceSessionFreshnessOrder(sessionsJson: String)throws  -> ClientSessionFreshnessOrderProjection  {
+    return try  FfiConverterTypeClientSessionFreshnessOrderProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_session_freshness_order(
+        FfiConverterString.lower(sessionsJson),$0
+    )
+})
+}
 public func reduceSessionIndex(snapshotJson: String, assistantSurfaceOrder: [String])throws  -> ClientSessionIndexProjection  {
     return try  FfiConverterTypeClientSessionIndexProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_session_index(
@@ -4406,6 +4463,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_session_freshness_order() != 44887) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_index() != 6913) {

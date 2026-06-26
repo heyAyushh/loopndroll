@@ -43,10 +43,11 @@ pub use race_plan::{
 pub use session_runtime::LooperClientCoreSessionRuntime;
 pub use snapshot_reducer::{
     ClientAssistantSurfaceSelection, ClientDetailCacheProjection, ClientDetailModeProjection,
-    ClientOptimisticModeProjection, ClientSessionIndexEntry, ClientSessionIndexProjection,
-    ClientSessionSectionsProjection, ClientSiriSessionEntityProjection, ClientSnapshotProjection,
+    ClientOptimisticModeProjection, ClientSessionFreshnessOrderProjection, ClientSessionIndexEntry,
+    ClientSessionIndexProjection, ClientSessionSectionsProjection,
+    ClientSiriSessionEntityProjection, ClientSnapshotProjection,
     reduce_assistant_surface_selection, reduce_mobile_snapshot_detail_cache,
     reduce_mobile_snapshot_optimistic_mode, reduce_mobile_snapshot_projection,
-    reduce_session_detail_optimistic_mode, reduce_session_index, reduce_session_sections,
-    reduce_siri_session_entities,
+    reduce_session_detail_optimistic_mode, reduce_session_freshness_order, reduce_session_index,
+    reduce_session_sections, reduce_siri_session_entities,
 };
