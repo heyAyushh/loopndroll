@@ -753,9 +753,21 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta) throws  -> ClientStateMiniDeltaApplyResult
 
+    func clearModeMutations() throws
+
     func connect(endpoints: [ClientEndpoint]) throws  -> ClientStateSnapshot
 
     func disconnect() throws  -> ClientStateSnapshot
+
+    func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String) throws  -> ClientModeMutationEnqueueResult
+
+    func finishBatchedModeMutation(sessionId: String, clientMutationId: String) throws  -> ClientModeMutationBatchFinish
+
+    func finishModeDrain(sessionId: String, drainId: String) throws  -> ClientModeMutationDrainFinish
+
+    func isLatestModeMutation(sessionId: String, clientMutationId: String) throws  -> Bool
+
+    func latestModeMutation(sessionId: String) throws  -> ClientModeMutationOption
 
     func markReconnecting() throws  -> ClientStateSnapshot
 
@@ -775,6 +787,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func snapshot() throws  -> ClientStateSnapshot
 
+    func startModeDrain(sessionId: String, drainId: String) throws
+
     func startStateMiniStream(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
     func stopStateMiniStream() throws  -> ClientStateSnapshot
@@ -784,6 +798,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
     func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientStateSnapshot
 
     func takeExpectedOutbox(expectedClientMutationIds: [String]) throws  -> [OutboundSessionFrame]
+
+    func takeNextModeMutation(sessionId: String) throws  -> ClientModeMutationOption
 
     func takeOutbox() throws  -> [OutboundSessionFrame]
 
@@ -895,6 +911,13 @@ open func applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta)throws  -> C
 })
 }
 
+open func clearModeMutations()throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_clear_mode_mutations(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
 open func connect(endpoints: [ClientEndpoint])throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_connect(
@@ -908,6 +931,56 @@ open func disconnect()throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_disconnect(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String)throws  -> ClientModeMutationEnqueueResult  {
+    return try  FfiConverterTypeClientModeMutationEnqueueResult_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_enqueue_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(preset),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func finishBatchedModeMutation(sessionId: String, clientMutationId: String)throws  -> ClientModeMutationBatchFinish  {
+    return try  FfiConverterTypeClientModeMutationBatchFinish_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_finish_batched_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func finishModeDrain(sessionId: String, drainId: String)throws  -> ClientModeMutationDrainFinish  {
+    return try  FfiConverterTypeClientModeMutationDrainFinish_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_finish_mode_drain(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(drainId),$0
+    )
+})
+}
+
+open func isLatestModeMutation(sessionId: String, clientMutationId: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_is_latest_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func latestModeMutation(sessionId: String)throws  -> ClientModeMutationOption  {
+    return try  FfiConverterTypeClientModeMutationOption_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_latest_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),$0
     )
 })
 }
@@ -1011,6 +1084,15 @@ open func snapshot()throws  -> ClientStateSnapshot  {
 })
 }
 
+open func startModeDrain(sessionId: String, drainId: String)throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_start_mode_drain(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterString.lower(drainId),$0
+    )
+}
+}
+
 open func startStateMiniStream(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_start_state_mini_stream(
@@ -1065,6 +1147,15 @@ open func takeExpectedOutbox(expectedClientMutationIds: [String])throws  -> [Out
     uniffi_looper_client_core_fn_method_looperclientcore_take_expected_outbox(
             self.uniffiCloneHandle(),
         FfiConverterSequenceString.lower(expectedClientMutationIds),$0
+    )
+})
+}
+
+open func takeNextModeMutation(sessionId: String)throws  -> ClientModeMutationOption  {
+    return try  FfiConverterTypeClientModeMutationOption_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_take_next_mode_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),$0
     )
 })
 }
@@ -5002,10 +5093,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_mini_delta_with_result() != 32851) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_clear_mode_mutations() != 37856) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_connect() != 52119) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_disconnect() != 50682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_enqueue_mode_mutation() != 1952) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_finish_batched_mode_mutation() != 53270) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_finish_mode_drain() != 19026) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_is_latest_mode_mutation() != 55315) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_latest_mode_mutation() != 30905) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_mark_reconnecting() != 54428) {
@@ -5035,6 +5144,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_snapshot() != 17737) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_start_mode_drain() != 252) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_start_state_mini_stream() != 55992) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5048,6 +5160,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_expected_outbox() != 30309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_take_next_mode_mutation() != 12703) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_outbox() != 6374) {

@@ -10,6 +10,10 @@ use crate::model::{
     ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
     OutboundSessionFrameKind,
 };
+use crate::mutation_queue::{
+    ClientModeMutationBatchFinish, ClientModeMutationDrainFinish, ClientModeMutationEnqueueResult,
+    ClientModeMutationOption, ClientModeMutationQueue,
+};
 use crate::session_transport::{
     StateMiniStreamEvent, fetch_state_mini_snapshot, run_state_mini_stream,
     submit_expected_session_outbox, warm_realtime_connection,
@@ -40,6 +44,7 @@ struct ClientCoreState {
 pub struct LooperClientCore {
     state: Mutex<ClientCoreState>,
     stream: Mutex<Option<ClientCoreStream>>,
+    mode_mutations: Arc<ClientModeMutationQueue>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -59,6 +64,7 @@ impl LooperClientCore {
                 ..ClientCoreState::default()
             }),
             stream: Mutex::new(None),
+            mode_mutations: ClientModeMutationQueue::new(),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
     }
@@ -263,6 +269,68 @@ impl LooperClientCore {
     pub fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
         let state = self.lock_state()?;
         Ok(state.pending_outbox_client_mutation_ids())
+    }
+
+    pub fn enqueue_mode_mutation(
+        &self,
+        session_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientModeMutationEnqueueResult, ClientCoreError> {
+        self.mode_mutations
+            .enqueue_mode_mutation(session_id, preset, client_mutation_id)
+    }
+
+    pub fn start_mode_drain(
+        &self,
+        session_id: String,
+        drain_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.mode_mutations.start_mode_drain(session_id, drain_id)
+    }
+
+    pub fn take_next_mode_mutation(
+        &self,
+        session_id: String,
+    ) -> Result<ClientModeMutationOption, ClientCoreError> {
+        self.mode_mutations.take_next_mode_mutation(session_id)
+    }
+
+    pub fn finish_mode_drain(
+        &self,
+        session_id: String,
+        drain_id: String,
+    ) -> Result<ClientModeMutationDrainFinish, ClientCoreError> {
+        self.mode_mutations.finish_mode_drain(session_id, drain_id)
+    }
+
+    pub fn finish_batched_mode_mutation(
+        &self,
+        session_id: String,
+        client_mutation_id: String,
+    ) -> Result<ClientModeMutationBatchFinish, ClientCoreError> {
+        self.mode_mutations
+            .finish_batched_mode_mutation(session_id, client_mutation_id)
+    }
+
+    pub fn latest_mode_mutation(
+        &self,
+        session_id: String,
+    ) -> Result<ClientModeMutationOption, ClientCoreError> {
+        self.mode_mutations.latest_mode_mutation(session_id)
+    }
+
+    pub fn is_latest_mode_mutation(
+        &self,
+        session_id: String,
+        client_mutation_id: String,
+    ) -> Result<bool, ClientCoreError> {
+        self.mode_mutations
+            .is_latest_mode_mutation(session_id, client_mutation_id)
+    }
+
+    pub fn clear_mode_mutations(&self) -> Result<(), ClientCoreError> {
+        self.mode_mutations.clear()
     }
 
     pub fn take_outbox(&self) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
@@ -778,6 +846,41 @@ mod tests {
             vec!["cmid-mode".to_owned(), "cmid-prompt".to_owned()]
         );
         assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 2);
+    }
+
+    #[test]
+    fn client_core_owns_mode_mutation_queue() {
+        let core = LooperClientCore::new();
+        let first = core
+            .enqueue_mode_mutation(
+                "thread-1".to_owned(),
+                "await-reply".to_owned(),
+                "cmid-mode-1".to_owned(),
+            )
+            .expect("enqueue first");
+        core.start_mode_drain("thread-1".to_owned(), "drain-1".to_owned())
+            .expect("start drain");
+        let second = core
+            .enqueue_mode_mutation(
+                "thread-1".to_owned(),
+                "infinite".to_owned(),
+                "cmid-mode-2".to_owned(),
+            )
+            .expect("enqueue second");
+
+        assert!(first.should_start_drain);
+        assert!(!second.should_start_drain);
+        assert!(
+            core.is_latest_mode_mutation("thread-1".to_owned(), "cmid-mode-2".to_owned())
+                .expect("latest check")
+        );
+
+        let finish = core
+            .finish_mode_drain("thread-1".to_owned(), "drain-1".to_owned())
+            .expect("finish drain");
+        assert!(!finish.is_stale);
+        assert!(finish.has_next_mutation);
+        assert_eq!(finish.next_mutation.client_mutation_id, "cmid-mode-2");
     }
 
     #[test]

@@ -71,6 +71,7 @@ struct CompanionModePromptBatchResult: Sendable {
 
 protocol CompanionService: Sendable {
     var supportsModePromptBatch: Bool { get }
+    var sessionCommandClientCore: LooperClientCore? { get }
     func prepareRealtimeConnection() async
     func makeClientCoreStateMiniStreamTransport() async
         -> (any LooperClientCoreStateMiniStreamTransport)?
@@ -124,6 +125,10 @@ protocol CompanionService: Sendable {
 extension CompanionService {
     var supportsModePromptBatch: Bool {
         false
+    }
+
+    var sessionCommandClientCore: LooperClientCore? {
+        nil
     }
 
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth {

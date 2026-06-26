@@ -91,6 +91,7 @@ final class CompanionAppModel {
         snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
         sessionMutationCoordinator = CompanionSessionMutationCoordinator(
             commandStore: sessionMiniController,
+            clientCore: service.sessionCommandClientCore,
             delegate: self
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()

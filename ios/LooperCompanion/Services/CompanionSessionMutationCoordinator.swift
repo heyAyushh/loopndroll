@@ -118,7 +118,7 @@ protocol CompanionSessionMutationCoordinatorDelegate: AnyObject {
 @MainActor
 final class CompanionSessionMutationCoordinator {
     private let commandStore: (any CompanionSessionCommandLocalStore)?
-    private let modeMutationQueue = ClientModeMutationQueue()
+    private let clientCore: LooperClientCore
     private weak var delegate: CompanionSessionMutationCoordinatorDelegate?
 
     private var modeMutationDrainTasksBySessionID: [String: Task<Bool, Never>] = [:]
@@ -132,9 +132,11 @@ final class CompanionSessionMutationCoordinator {
 
     init(
         commandStore: (any CompanionSessionCommandLocalStore)?,
+        clientCore: LooperClientCore?,
         delegate: CompanionSessionMutationCoordinatorDelegate
     ) {
         self.commandStore = commandStore
+        self.clientCore = clientCore ?? LooperClientCore()
         self.delegate = delegate
     }
 
@@ -159,7 +161,7 @@ final class CompanionSessionMutationCoordinator {
         let barrier = LocalFirstMutationBarrier()
         let enqueueResult: ClientModeMutationEnqueueResult
         do {
-            enqueueResult = try modeMutationQueue.enqueueModeMutation(
+            enqueueResult = try clientCore.enqueueModeMutation(
                 sessionId: sessionID,
                 preset: preset?.rawValue ?? "",
                 clientMutationId: clientMutationID
@@ -203,7 +205,7 @@ final class CompanionSessionMutationCoordinator {
 
         let drainID = delegate.sessionMutationMakeClientMutationID()
         do {
-            try modeMutationQueue.startModeDrain(
+            try clientCore.startModeDrain(
                 sessionId: mutation.sessionId,
                 drainId: drainID
             )
@@ -307,7 +309,7 @@ final class CompanionSessionMutationCoordinator {
         modeMutationDrainIDBySessionID = [:]
         modeRollbackStateBySessionID = [:]
         do {
-            try modeMutationQueue.clear()
+            try clientCore.clearModeMutations()
         } catch {
             CompanionDiagnostics.record(
                 "mode:queue-clear-failed error=\(error.localizedDescription)"
@@ -373,7 +375,7 @@ final class CompanionSessionMutationCoordinator {
     private func nextModeMutationEnvelope(for sessionID: String) async -> ModeMutationEnvelope? {
         let nextMutation: ClientModeMutationOption
         do {
-            nextMutation = try modeMutationQueue.takeNextModeMutation(sessionId: sessionID)
+            nextMutation = try clientCore.takeNextModeMutation(sessionId: sessionID)
         } catch {
             CompanionDiagnostics.record(
                 "mode:next-mutation-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
@@ -403,7 +405,7 @@ final class CompanionSessionMutationCoordinator {
 
         let finish: ClientModeMutationDrainFinish
         do {
-            finish = try modeMutationQueue.finishModeDrain(sessionId: sessionID, drainId: drainID)
+            finish = try clientCore.finishModeDrain(sessionId: sessionID, drainId: drainID)
         } catch {
             CompanionDiagnostics.record(
                 "mode:drain-finish-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
@@ -452,7 +454,7 @@ final class CompanionSessionMutationCoordinator {
 
     private func latestModeMutation(for sessionID: String) -> ClientModeMutation? {
         do {
-            let latest = try modeMutationQueue.latestModeMutation(sessionId: sessionID)
+            let latest = try clientCore.latestModeMutation(sessionId: sessionID)
             return latest.hasMutation ? latest.mutation : nil
         } catch {
             CompanionDiagnostics.record(
@@ -464,7 +466,7 @@ final class CompanionSessionMutationCoordinator {
 
     private func isLatestModeMutation(_ envelope: ModeMutationEnvelope) -> Bool {
         do {
-            return try modeMutationQueue.isLatestModeMutation(
+            return try clientCore.isLatestModeMutation(
                 sessionId: envelope.sessionID,
                 clientMutationId: envelope.clientMutationID
             )
@@ -624,7 +626,7 @@ final class CompanionSessionMutationCoordinator {
 
         let finish: ClientModeMutationBatchFinish
         do {
-            finish = try modeMutationQueue.finishBatchedModeMutation(
+            finish = try clientCore.finishBatchedModeMutation(
                 sessionId: sessionID,
                 clientMutationId: mutation.clientMutationId
             )

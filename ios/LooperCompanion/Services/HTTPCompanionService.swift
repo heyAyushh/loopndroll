@@ -80,6 +80,10 @@ struct HTTPCompanionService: CompanionService {
         true
     }
 
+    var sessionCommandClientCore: LooperClientCore? {
+        commandClientCore
+    }
+
     init(baseURL: URL) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
