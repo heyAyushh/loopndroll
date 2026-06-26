@@ -1698,10 +1698,6 @@ extension CompanionAppModel: CompanionNotificationReplyCoordinatorDelegate {
         selectedAssistantSurface
     }
 
-    func notificationReplyMakeClientMutationID() -> String {
-        makeClientMutationID()
-    }
-
     func notificationReplyAssistantSurface(for sessionID: String) -> CompanionAssistantSurface? {
         snapshotState.assistantSurface(containingSessionID: sessionID)
     }

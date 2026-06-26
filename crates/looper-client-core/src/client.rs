@@ -67,6 +67,7 @@ pub struct LooperClientCore {
     stream: Mutex<Option<ClientCoreStream>>,
     runtime_config: Mutex<Option<ClientCoreRuntimeConfig>>,
     command_flush: tokio::sync::Mutex<()>,
+    notification_reply_drain: tokio::sync::Mutex<()>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -88,6 +89,7 @@ impl LooperClientCore {
             stream: Mutex::new(None),
             runtime_config: Mutex::new(None),
             command_flush: tokio::sync::Mutex::new(()),
+            notification_reply_drain: tokio::sync::Mutex::new(()),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
     }
@@ -487,6 +489,26 @@ impl LooperClientCore {
         client_mutation_id: String,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
         let _flush = self.command_flush.lock().await;
+        self.submit_notification_reply_durable_without_flush_lock(
+            local_store,
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id,
+        )
+        .await
+    }
+
+    async fn submit_notification_reply_durable_without_flush_lock(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
         self.submit_notification_reply(
             notification_id.clone(),
             thread_id.clone(),
@@ -516,6 +538,7 @@ impl LooperClientCore {
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _drain = self.notification_reply_drain.lock().await;
         let mut last_envelope = None;
         loop {
             let plan = local_store.notification_reply_retry_plan()?;
@@ -528,7 +551,7 @@ impl LooperClientCore {
             }
 
             match self
-                .submit_next_notification_reply_durable(local_store.clone())
+                .submit_next_notification_reply_durable_without_drain_lock(local_store.clone())
                 .await
             {
                 Ok(envelope) if envelope.ack.accepted => {
@@ -660,14 +683,15 @@ impl LooperClientCore {
             .ok_or(ClientCoreError::NoEndpoint)
     }
 
-    async fn submit_next_notification_reply_durable(
+    async fn submit_next_notification_reply_durable_without_drain_lock(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
         let command = local_store
             .pending_notification_reply_command()?
             .ok_or(ClientCoreError::NoPendingNotificationReply)?;
-        self.submit_notification_reply_durable(
+        self.submit_notification_reply_durable_without_flush_lock(
             local_store,
             command.notification_id,
             command.thread_id,
@@ -1124,6 +1148,34 @@ mod tests {
         assert!(!should_retry_notification_reply_drain(
             &ClientCoreError::EmptyNotificationId
         ));
+    }
+
+    #[test]
+    fn notification_reply_drain_lifecycle_is_serialized_in_rust_core() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("notification-drain-serialized");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        runtime.block_on(async {
+            let drain_guard = core.notification_reply_drain.lock().await;
+            let drain = core.drain_notification_reply_outbox_durable(store.clone());
+            tokio::pin!(drain);
+
+            tokio::select! {
+                result = &mut drain => {
+                    panic!("drain completed while Rust drain lock was held: {result:?}");
+                }
+                _ = sleep(Duration::from_millis(10)) => {}
+            }
+
+            drop(drain_guard);
+            let result = drain
+                .await
+                .expect_err("empty outbox rejects after lock release");
+            assert_eq!(result, ClientCoreError::NoPendingNotificationReply);
+        });
     }
 
     #[test]

@@ -13,7 +13,6 @@ final class CompanionSessionMiniController {
 
     private var syncTask: Task<Void, Never>?
     private var notificationReplyOutboxDrainTask: Task<Void, Never>?
-    private var notificationReplyOutboxDrainID: String?
 
     var isSyncing: Bool {
         syncTask != nil
@@ -83,7 +82,6 @@ final class CompanionSessionMiniController {
 
     @discardableResult
     func startNotificationReplyOutboxDrainIfNeeded(
-        drainID: String,
         submit: @escaping NotificationReplySubmitter
     ) -> Task<Void, Never>? {
         guard notificationReplyOutboxDrainTask == nil else {
@@ -94,39 +92,19 @@ final class CompanionSessionMiniController {
             guard let self else {
                 return
             }
-            await self.drainNotificationReplyOutbox(
-                drainID: drainID,
-                submit: submit
-            )
+            defer {
+                self.notificationReplyOutboxDrainTask = nil
+            }
+            if !Task.isCancelled {
+                _ = await submit()
+            }
         }
         notificationReplyOutboxDrainTask = drainTask
-        notificationReplyOutboxDrainID = drainID
         return drainTask
     }
 
     func stopNotificationReplyOutboxDrain() {
         notificationReplyOutboxDrainTask?.cancel()
         notificationReplyOutboxDrainTask = nil
-        notificationReplyOutboxDrainID = nil
-    }
-
-    private func drainNotificationReplyOutbox(
-        drainID: String,
-        submit: NotificationReplySubmitter
-    ) async {
-        if !Task.isCancelled {
-            _ = await submit()
-        }
-        finishNotificationReplyOutboxDrain(drainID: drainID)
-    }
-
-    private func finishNotificationReplyOutboxDrain(drainID: String) {
-        guard notificationReplyOutboxDrainID == drainID else {
-            CompanionDiagnostics.record("notification-reply:stale-drain-finish-skip")
-            return
-        }
-
-        notificationReplyOutboxDrainTask = nil
-        notificationReplyOutboxDrainID = nil
     }
 }

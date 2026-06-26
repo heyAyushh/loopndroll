@@ -6,7 +6,6 @@ protocol CompanionNotificationReplyCoordinatorDelegate: AnyObject {
     var notificationReplyService: any CompanionService { get }
     var notificationReplySelectedAssistantSurface: CompanionAssistantSurface { get }
 
-    func notificationReplyMakeClientMutationID() -> String
     func notificationReplyAssistantSurface(for sessionID: String) -> CompanionAssistantSurface?
     func notificationReplyReject(_ message: String)
     func notificationReplyApplyAccepted(
@@ -83,15 +82,15 @@ final class CompanionNotificationReplyCoordinator {
 
     @discardableResult
     func startOutboxDrainIfNeeded() -> Task<Void, Never>? {
-        guard let delegate else {
+        guard delegate != nil else {
             return nil
         }
 
         return sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(
-            drainID: delegate.notificationReplyMakeClientMutationID()
-        ) { [weak self] in
-            await self?.submitPendingNotificationReply() ?? false
-        }
+            submit: { [weak self] in
+                await self?.submitPendingNotificationReply() ?? false
+            }
+        )
     }
 
     func stopOutboxDrain() {
