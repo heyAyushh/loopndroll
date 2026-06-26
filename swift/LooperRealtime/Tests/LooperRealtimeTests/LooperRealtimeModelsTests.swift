@@ -276,49 +276,6 @@ struct LooperRealtimeModelsTests {
     }
 
     @Test
-    func sessionCommandBuildsFromClientCoreOutboxFrame() throws {
-        let frame = OutboundSessionFrame(
-            frameKind: .command,
-            commandKind: .sendSessionPrompt,
-            threadId: "thread-main",
-            preset: "",
-            prompt: "ship it",
-            assistantSurface: "codex",
-            notificationId: "",
-            clientMutationId: "mutation-1",
-            afterSeq: 0
-        )
-
-        let command = try LooperRealtimeSessionCommand(outboundFrame: frame)
-
-        #expect(command == .sendSessionPrompt(
-            threadID: "thread-main",
-            prompt: "ship it",
-            assistantSurface: "codex",
-            clientMutationID: "mutation-1"
-        ))
-    }
-
-    @Test
-    func sessionCommandRejectsResumeOutboxFrame() {
-        let frame = OutboundSessionFrame(
-            frameKind: .resume,
-            commandKind: .resume,
-            threadId: "",
-            preset: "",
-            prompt: "",
-            assistantSurface: "",
-            notificationId: "",
-            clientMutationId: "",
-            afterSeq: 44
-        )
-
-        #expect(throws: LooperRealtimeSessionCommandFrameError.unexpectedFrameKind("Resume")) {
-            try LooperRealtimeSessionCommand(outboundFrame: frame)
-        }
-    }
-
-    @Test
     func clientCoreOutboxSubmitterDrainsAndReconcilesAck() async throws {
         let core = LooperClientCore()
         _ = try core.sendPrompt(
@@ -327,33 +284,32 @@ struct LooperRealtimeModelsTests {
             assistantSurface: "codex",
             clientMutationId: "mutation-1"
         )
-        let submitter = RecordingCommandSubmitter { commands in
-            #expect(commands == [
-                .sendSessionPrompt(
-                    threadID: "thread-main",
-                    prompt: "ship it",
-                    assistantSurface: "codex",
-                    clientMutationID: "mutation-1"
-                ),
-            ])
-            return LooperRealtimeSessionCommandBatchResponse(
+        let submitter = RecordingCommandSubmitter { frames in
+            #expect(frames.map(\.threadId) == ["thread-main"])
+            #expect(frames.map(\.prompt) == ["ship it"])
+            #expect(frames.map(\.assistantSurface) == ["codex"])
+            #expect(frames.map(\.clientMutationId) == ["mutation-1"])
+            return ClientCommandBatchResponse(
                 accepted: true,
                 commandAcks: [
-                    LooperRealtimeCommandAckEnvelope(
-                        commandKind: "SendSessionPrompt",
-                        ack: LooperRealtimeCommandAck(
+                    ClientCommandAckEnvelope(
+                        commandKind: .sendSessionPrompt,
+                        ack: ClientCommandAck(
                             accepted: true,
-                            clientMutationID: "mutation-1",
+                            clientMutationId: "mutation-1",
                             ackSeq: 42,
-                            entityID: "thread-main",
+                            entityId: "thread-main",
                             revision: "revision-42",
                             serverTime: "2026-06-24T00:00:00Z",
-                            idempotentReplay: false
+                            idempotentReplay: false,
+                            errorCode: "",
+                            rejectReason: "",
+                            currentState: ""
                         ),
-                        preset: nil,
+                        preset: "",
                         dispatchKind: "accepted",
-                        promptID: nil,
-                        notificationID: nil
+                        promptId: "",
+                        notificationId: ""
                     ),
                 ]
             )
@@ -382,7 +338,7 @@ struct LooperRealtimeModelsTests {
         )
         let submitter = RecordingCommandSubmitter { _ in
             Issue.record("unexpected submit")
-            return LooperRealtimeSessionCommandBatchResponse(accepted: true, commandAcks: [])
+            return ClientCommandBatchResponse(accepted: true, commandAcks: [])
         }
 
         do {
@@ -530,13 +486,19 @@ struct LooperRealtimeModelsTests {
 }
 
 private struct RecordingCommandSubmitter: LooperRealtimeSessionCommandSubmitting {
-    let handler: @Sendable ([LooperRealtimeSessionCommand]) async throws
-        -> LooperRealtimeSessionCommandBatchResponse
+    let handler: @Sendable ([OutboundSessionFrame]) async throws
+        -> ClientCommandBatchResponse
 
-    func submitSessionCommandBatch(
-        commands: [LooperRealtimeSessionCommand]
+    func submitClientCoreOutbox(
+        clientCore: LooperClientCore,
+        expectedClientMutationIDs: [String]
     ) async throws -> LooperRealtimeSessionCommandBatchResponse {
-        try await handler(commands)
+        let frames = try clientCore.takeExpectedOutbox(
+            expectedClientMutationIds: expectedClientMutationIDs
+        )
+        let response = try await handler(frames)
+        _ = try clientCore.applyCommandBatchResponse(response: response)
+        return LooperRealtimeSessionCommandBatchResponse(response)
     }
 }
 

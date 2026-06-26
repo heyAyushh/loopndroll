@@ -33,11 +33,10 @@ CLIENT_CORE_SOURCE_PATTERNS = (
         ),
     ),
     (
-        "legacy unary command request",
+        "legacy unary command response",
         re.compile(
-            r"\b(SetSessionModeRequest|SendSessionPromptRequest|"
-            r"SubmitNotificationReplyRequest|SetSessionModeResponse|"
-            r"SendSessionPromptResponse|SubmitNotificationReplyResponse)\b"
+            r"\b(SetSessionModeResponse|SendSessionPromptResponse|"
+            r"SubmitNotificationReplyResponse)\b"
         ),
     ),
     (

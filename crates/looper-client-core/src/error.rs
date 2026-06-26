@@ -30,6 +30,10 @@ pub enum ClientCoreError {
     UnexpectedOutboxMutations,
     #[error("expected command acknowledgement was missing")]
     MissingCommandAcknowledgement,
+    #[error("session command transport failed")]
+    SessionCommandTransportFailed,
+    #[error("session command acknowledgement timed out")]
+    SessionCommandAckTimedOut,
     #[error("client core state lock is poisoned")]
     StateLockPoisoned,
 }

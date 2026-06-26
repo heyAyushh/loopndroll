@@ -753,6 +753,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func snapshot() throws  -> ClientStateSnapshot
 
+    func submitExpectedOutbox(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String, expectedClientMutationIds: [String]) async throws  -> ClientCommandBatchResponse
+
     func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientStateSnapshot
 
     func takeExpectedOutbox(expectedClientMutationIds: [String]) throws  -> [OutboundSessionFrame]
@@ -937,6 +939,23 @@ open func snapshot()throws  -> ClientStateSnapshot  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+open func submitExpectedOutbox(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String, expectedClientMutationIds: [String])async throws  -> ClientCommandBatchResponse  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_submit_expected_outbox(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeClientEndpoint.lower(endpoints),FfiConverterString.lower(bearerToken),FfiConverterString.lower(mobileSessionHeader),FfiConverterSequenceString.lower(expectedClientMutationIds)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandBatchResponse_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
 }
 
 open func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)throws  -> ClientStateSnapshot  {
@@ -2997,6 +3016,8 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case InvalidConnectionState
     case UnexpectedOutboxMutations
     case MissingCommandAcknowledgement
+    case SessionCommandTransportFailed
+    case SessionCommandAckTimedOut
     case StateLockPoisoned
 
 
@@ -3042,7 +3063,9 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 13: return .InvalidConnectionState
         case 14: return .UnexpectedOutboxMutations
         case 15: return .MissingCommandAcknowledgement
-        case 16: return .StateLockPoisoned
+        case 16: return .SessionCommandTransportFailed
+        case 17: return .SessionCommandAckTimedOut
+        case 18: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3115,8 +3138,16 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(15))
 
 
-        case .StateLockPoisoned:
+        case .SessionCommandTransportFailed:
             writeInt(&buf, Int32(16))
+
+
+        case .SessionCommandAckTimedOut:
+            writeInt(&buf, Int32(17))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(18))
 
         }
     }
@@ -3534,6 +3565,54 @@ fileprivate struct FfiConverterSequenceTypeOutboundSessionFrame: FfiConverterRus
         return seq
     }
 }
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
+
+fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UInt64,
+    pollFunc: (UInt64, @escaping UniffiRustFutureContinuationCallback, UInt64) -> (),
+    completeFunc: (UInt64, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UInt64) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Swift.Error)?
+) async throws -> T {
+    // Make sure to call the ensure init function since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureLooperClientCoreInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(
+                rustFuture,
+                { handle, pollResult in
+                    uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
+                },
+                uniffiContinuationHandleMap.insert(obj: $0)
+            )
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
+}
+
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {
+    if let continuation = try? uniffiContinuationHandleMap.remove(handle: handle) {
+        continuation.resume(returning: pollResult)
+    } else {
+        print("uniffiFutureContinuationCallback invalid handle")
+    }
+}
 public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [ClientCommandAck])throws  -> ClientCommandBatchResponse  {
     return try  FfiConverterTypeClientCommandBatchResponse_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_build_command_batch_response(
@@ -3741,6 +3820,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_snapshot() != 17737) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_expected_outbox() != 19336) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply() != 23894) {

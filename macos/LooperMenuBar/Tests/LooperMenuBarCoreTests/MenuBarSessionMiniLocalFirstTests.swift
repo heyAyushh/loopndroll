@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperRealtime
 import Testing
 
@@ -488,19 +489,23 @@ private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, 
         lock.withLock { recordedSnapshotCalls }
     }
 
-    func submitSessionCommandBatch(
-        commands: [LooperRealtimeSessionCommand]
+    func submitClientCoreOutbox(
+        clientCore: LooperClientCore,
+        expectedClientMutationIDs: [String]
     ) async throws -> LooperRealtimeSessionCommandBatchResponse {
+        let frames = try clientCore.takeExpectedOutbox(
+            expectedClientMutationIds: expectedClientMutationIDs
+        )
         var envelopes: [LooperRealtimeCommandAckEnvelope] = []
-        for command in commands {
-            switch command {
-            case let .setSessionMode(threadID, preset, clientMutationID):
+        for frame in frames {
+            switch frame.commandKind {
+            case .setSessionMode:
                 lock.withLock {
                     recordedModeRequests.append(
                         RecordedModeRequest(
-                            threadID: threadID,
-                            preset: preset,
-                            clientMutationID: clientMutationID
+                            threadID: frame.threadId,
+                            preset: frame.preset.nilIfBlank,
+                            clientMutationID: frame.clientMutationId
                         )
                     )
                 }
@@ -509,26 +514,26 @@ private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, 
                 }
                 envelopes.append(
                     commandAckEnvelope(
-                        commandKind: command.commandKind,
-                        clientMutationID: clientMutationID,
+                        commandKind: "SetSessionMode",
+                        clientMutationID: frame.clientMutationId,
                         ackSeq: 10,
-                        entityID: threadID,
+                        entityID: frame.threadId,
                         revision: "rev-mode",
-                        preset: preset,
+                        preset: frame.preset.nilIfBlank,
                         dispatchKind: nil,
                         promptID: nil,
                         notificationID: nil
                     )
                 )
 
-            case let .sendSessionPrompt(threadID, prompt, assistantSurface, clientMutationID):
+            case .sendSessionPrompt:
                 lock.withLock {
                     recordedPromptRequests.append(
                         RecordedPromptRequest(
-                            threadID: threadID,
-                            prompt: prompt,
-                            assistantSurface: assistantSurface,
-                            clientMutationID: clientMutationID
+                            threadID: frame.threadId,
+                            prompt: frame.prompt,
+                            assistantSurface: frame.assistantSurface.nilIfBlank,
+                            clientMutationID: frame.clientMutationId
                         )
                     )
                 }
@@ -537,10 +542,10 @@ private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, 
                 }
                 envelopes.append(
                     commandAckEnvelope(
-                        commandKind: command.commandKind,
-                        clientMutationID: clientMutationID,
+                        commandKind: "SendSessionPrompt",
+                        clientMutationID: frame.clientMutationId,
                         ackSeq: 11,
-                        entityID: threadID,
+                        entityID: frame.threadId,
                         revision: "rev-prompt",
                         preset: nil,
                         dispatchKind: "queued",
@@ -549,21 +554,15 @@ private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, 
                     )
                 )
 
-            case let .submitNotificationReply(
-                notificationID,
-                threadID,
-                prompt,
-                assistantSurface,
-                clientMutationID
-            ):
+            case .submitNotificationReply:
                 lock.withLock {
                     recordedNotificationReplyRequests.append(
                         RecordedNotificationReplyRequest(
-                            notificationID: notificationID,
-                            threadID: threadID,
-                            prompt: prompt,
-                            assistantSurface: assistantSurface,
-                            clientMutationID: clientMutationID
+                            notificationID: frame.notificationId,
+                            threadID: frame.threadId,
+                            prompt: frame.prompt,
+                            assistantSurface: frame.assistantSurface.nilIfBlank,
+                            clientMutationID: frame.clientMutationId
                         )
                     )
                 }
@@ -572,17 +571,20 @@ private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, 
                 }
                 envelopes.append(
                     commandAckEnvelope(
-                        commandKind: command.commandKind,
-                        clientMutationID: clientMutationID,
+                        commandKind: "SubmitNotificationReply",
+                        clientMutationID: frame.clientMutationId,
                         ackSeq: 12,
-                        entityID: threadID,
+                        entityID: frame.threadId,
                         revision: "rev-notification-reply",
                         preset: nil,
                         dispatchKind: "queued",
                         promptID: "prompt-main",
-                        notificationID: notificationID
+                        notificationID: frame.notificationId
                     )
                 )
+
+            case .resume:
+                continue
             }
         }
         return LooperRealtimeSessionCommandBatchResponse(
@@ -685,5 +687,12 @@ private actor RecordingStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransp
 private struct RecordingRecoveryRequiredError: LocalizedError, Sendable {
     var errorDescription: String? {
         "state mini recovery required: requested_after_seq=99 latest_seq=6"
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

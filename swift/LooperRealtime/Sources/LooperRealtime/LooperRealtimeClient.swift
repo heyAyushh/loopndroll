@@ -36,51 +36,17 @@ public final class LooperRealtimeClient: Sendable {
         }
     }
 
-    public func submitSessionCommandBatch(
-        commands: [LooperRealtimeSessionCommand]
+    public func submitClientCoreOutbox(
+        clientCore: LooperClientCore,
+        expectedClientMutationIDs: [String]
     ) async throws -> LooperRealtimeSessionCommandBatchResponse {
-        guard !commands.isEmpty else {
-            return LooperRealtimeSessionCommandBatchResponse(accepted: true, commandAcks: [])
-        }
-
-        return try await withFirstAvailableService { service, metadata in
-            try await service.session(
-                metadata: metadata,
-                options: LooperRealtimeLatencyPolicy.promptCallOptions,
-                requestProducer: { writer in
-                    for command in commands {
-                        try await writer.write(command.clientFrame)
-                    }
-                },
-                onResponse: { response in
-                    let commandMetadata = commands.map(\.clientCoreMetadata)
-                    let expectedMutationIDs = Set(commands.map(\.clientMutationID))
-                    var acknowledgedMutationIDs = Set<String>()
-                    var acks: [ClientCommandAck] = []
-                    for try await frame in response.messages {
-                        guard case let .ack(ack)? = frame.frame else {
-                            continue
-                        }
-                        let clientCoreAck = LooperRealtimeCommandAck(ack).clientCoreAck
-                        guard expectedMutationIDs.contains(clientCoreAck.clientMutationId),
-                              acknowledgedMutationIDs.insert(clientCoreAck.clientMutationId).inserted
-                        else {
-                            continue
-                        }
-                        acks.append(clientCoreAck)
-                        if acks.count == commands.count {
-                            break
-                        }
-                    }
-                    return LooperRealtimeSessionCommandBatchResponse(
-                        try buildCommandBatchResponse(
-                            commands: commandMetadata,
-                            acks: acks
-                        )
-                    )
-                }
-            )
-        }
+        let response = try await clientCore.submitExpectedOutbox(
+            endpoints: endpoints.map(\.clientCoreEndpoint),
+            bearerToken: credentials.bearerToken ?? "",
+            mobileSessionHeader: credentials.mobileSessionHeader ?? "",
+            expectedClientMutationIds: expectedClientMutationIDs
+        )
+        return LooperRealtimeSessionCommandBatchResponse(response)
     }
 
     public func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
@@ -184,6 +150,13 @@ public final class LooperRealtimeClient: Sendable {
 }
 
 extension LooperRealtimeClient: LooperRealtimeStateMiniSyncTransport {}
+extension LooperRealtimeClient: LooperRealtimeSessionCommandSubmitting {}
+
+private extension LooperRealtimeEndpoint {
+    var clientCoreEndpoint: ClientEndpoint {
+        ClientEndpoint(url: baseURL.absoluteString, lastGood: false)
+    }
+}
 
 private final class LooperRealtimeConnectionPool: Sendable {
     private typealias TransportServices = HTTP2ClientTransport.TransportServices
@@ -350,44 +323,6 @@ private extension LooperRealtimeCommandAck {
             errorCode: ack.errorCode.nilIfEmpty,
             rejectReason: ack.rejectReason.nilIfEmpty
         )
-    }
-}
-
-private extension LooperRealtimeSessionCommand {
-    var clientFrame: Looper_V1_ClientFrame {
-        var frame = Looper_V1_ClientFrame()
-        var command = Looper_V1_Command()
-        switch self {
-        case let .setSessionMode(threadID, preset, clientMutationID):
-            var request = Looper_V1_SetSessionModeRequest()
-            request.threadID = threadID
-            request.preset = preset ?? ""
-            request.clientMutationID = clientMutationID
-            command.setSessionMode = request
-        case let .sendSessionPrompt(threadID, prompt, assistantSurface, clientMutationID):
-            var request = Looper_V1_SendSessionPromptRequest()
-            request.threadID = threadID
-            request.prompt = prompt
-            request.assistantSurface = assistantSurface ?? ""
-            request.clientMutationID = clientMutationID
-            command.sendSessionPrompt = request
-        case let .submitNotificationReply(
-            notificationID,
-            threadID,
-            prompt,
-            assistantSurface,
-            clientMutationID
-        ):
-            var request = Looper_V1_SubmitNotificationReplyRequest()
-            request.notificationID = notificationID
-            request.threadID = threadID
-            request.prompt = prompt
-            request.assistantSurface = assistantSurface ?? ""
-            request.clientMutationID = clientMutationID
-            command.submitNotificationReply = request
-        }
-        frame.command = command
-        return frame
     }
 }
 

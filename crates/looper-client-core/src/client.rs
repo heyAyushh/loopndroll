@@ -7,6 +7,7 @@ use crate::model::{
     ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
     OutboundSessionFrame, OutboundSessionFrameKind,
 };
+use crate::session_transport::submit_expected_session_outbox;
 use crate::transport::validate_endpoint_url;
 
 const INITIAL_SEQUENCE: i64 = 0;
@@ -264,6 +265,29 @@ impl LooperClientCore {
 
         Ok(std::mem::take(&mut state.outbox))
     }
+
+    pub async fn submit_expected_outbox(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+        expected_client_mutation_ids: Vec<String>,
+    ) -> Result<ClientCommandBatchResponse, ClientCoreError> {
+        let frames = {
+            let state = self.lock_state()?;
+            state.expected_outbox(&expected_client_mutation_ids)?
+        };
+        let response =
+            submit_expected_session_outbox(endpoints, bearer_token, mobile_session_header, frames)
+                .await?;
+
+        let mut state = self.lock_state()?;
+        state.drain_expected_outbox(&expected_client_mutation_ids)?;
+        for envelope in &response.command_acks {
+            state.reconcile_ack(envelope.ack.clone());
+        }
+        Ok(response)
+    }
 }
 
 impl LooperClientCore {
@@ -297,6 +321,35 @@ impl ClientCoreState {
         });
         self.outbox.push(frame);
         self.last_error.clear();
+    }
+
+    fn expected_outbox(
+        &self,
+        expected_client_mutation_ids: &[String],
+    ) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
+        let actual_client_mutation_ids: Vec<&str> = self
+            .outbox
+            .iter()
+            .map(|frame| frame.client_mutation_id.as_str())
+            .collect();
+        let expected_client_mutation_ids: Vec<&str> = expected_client_mutation_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+        if actual_client_mutation_ids != expected_client_mutation_ids {
+            return Err(ClientCoreError::UnexpectedOutboxMutations);
+        }
+
+        Ok(self.outbox.clone())
+    }
+
+    fn drain_expected_outbox(
+        &mut self,
+        expected_client_mutation_ids: &[String],
+    ) -> Result<(), ClientCoreError> {
+        let _ = self.expected_outbox(expected_client_mutation_ids)?;
+        self.outbox.clear();
+        Ok(())
     }
 
     fn reconcile_ack(&mut self, ack: ClientCommandAck) {
@@ -545,6 +598,35 @@ mod tests {
         assert_eq!(outbox[0].client_mutation_id, "cmid-mode");
         assert_eq!(outbox[1].client_mutation_id, "cmid-prompt");
         assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
+    }
+
+    #[test]
+    fn submit_expected_outbox_keeps_commands_queued_when_transport_fails() {
+        let core = LooperClientCore::new();
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let error = runtime
+            .block_on(core.submit_expected_outbox(
+                Vec::new(),
+                String::new(),
+                String::new(),
+                vec!["cmid-prompt".to_owned()],
+            ))
+            .expect_err("missing endpoint rejects");
+
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 1);
+        assert_eq!(
+            core.snapshot().expect("snapshot").pending_mutations.len(),
+            1
+        );
     }
 
     #[test]

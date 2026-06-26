@@ -12,11 +12,15 @@ public actor MenuBarRealtimeSessionCommandClient: MenuBarSessionCommandClient {
         self.controlPlaneClient = controlPlaneClient
     }
 
-    public func submitSessionCommandBatch(
-        commands: [LooperRealtimeSessionCommand]
+    public func submitClientCoreOutbox(
+        clientCore: LooperClientCore,
+        expectedClientMutationIDs: [String]
     ) async throws -> LooperRealtimeSessionCommandBatchResponse {
         let client = try await realtimeSessionClient()
-        return try await client.submitSessionCommandBatch(commands: commands)
+        return try await client.submitClientCoreOutbox(
+            clientCore: clientCore,
+            expectedClientMutationIDs: expectedClientMutationIDs
+        )
     }
 
     public func disconnect() {

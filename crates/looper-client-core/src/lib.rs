@@ -7,6 +7,7 @@ mod error;
 mod mobile_snapshot;
 mod model;
 mod mutation_queue;
+mod session_transport;
 mod snapshot_reducer;
 mod transport;
 
