@@ -41,16 +41,14 @@ public actor MenuBarSessionCommandCenter {
     @discardableResult
     public func setSessionMode(
         threadID: String,
-        preset: String?,
-        clientMutationID: String? = nil
+        preset: String?
     ) async throws -> MenuBarSessionModeCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedPreset = preset?.nilIfBlank ?? ""
         let envelope = try await sessionRuntime.setSessionMode(
             threadID: normalizedThreadID,
-            preset: normalizedPreset,
-            clientMutationID: clientMutationID
+            preset: normalizedPreset
         )
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionModeCommandResult(
@@ -64,8 +62,7 @@ public actor MenuBarSessionCommandCenter {
     public func sendPrompt(
         threadID: String,
         prompt: String,
-        assistantSurface: String?,
-        clientMutationID: String? = nil
+        assistantSurface: String?
     ) async throws -> MenuBarSessionPromptCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
@@ -74,8 +71,7 @@ public actor MenuBarSessionCommandCenter {
         let envelope = try await sessionRuntime.sendPrompt(
             threadID: normalizedThreadID,
             prompt: normalizedPrompt,
-            assistantSurface: normalizedAssistantSurface,
-            clientMutationID: clientMutationID
+            assistantSurface: normalizedAssistantSurface
         )
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionPromptCommandResult(

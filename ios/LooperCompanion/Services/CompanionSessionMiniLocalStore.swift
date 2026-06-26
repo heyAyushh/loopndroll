@@ -351,19 +351,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
-    func setMode(
-        threadID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) async throws -> ClientCommandAckEnvelope {
-        try await sessionManager.setMode(
-            threadID: threadID,
-            preset: preset?.rawValue ?? "",
-            clientMutationID: clientMutationID
-        )
-    }
-
-    @discardableResult
     func sendPrompt(
         threadID: String,
         prompt: String,
@@ -373,21 +360,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? ""
-        )
-    }
-
-    @discardableResult
-    func sendPrompt(
-        threadID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> ClientCommandAckEnvelope {
-        try await sessionManager.sendPrompt(
-            threadID: threadID,
-            prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationID: clientMutationID
         )
     }
 

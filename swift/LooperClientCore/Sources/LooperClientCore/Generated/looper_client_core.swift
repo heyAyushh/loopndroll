@@ -559,11 +559,7 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func configureSessionRuntime(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
-    func drainNotificationReplyOutboxDurable(localStore: LooperClientCoreLocalStore) async throws  -> ClientCommandAckEnvelope
-
     func observe() async throws  -> ClientStateMiniStreamUpdate
-
-    func queueSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
 
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
 
@@ -576,14 +572,6 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
     func stop() throws  -> ClientStateSnapshot
 
     func stopStateMiniStream() throws  -> ClientStateSnapshot
-
-    func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
-
-    func submitNotificationReplyDurableWithoutFlushLock(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
-
-    func submitSendPromptDurable(localStore: LooperClientCoreLocalStore, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
-
-    func submitSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
 }
 open class LooperClientCore: LooperClientCoreProtocol, @unchecked Sendable {
@@ -666,23 +654,6 @@ open func configureSessionRuntime(endpoints: [ClientEndpoint], bearerToken: Stri
 })
 }
 
-open func drainNotificationReplyOutboxDurable(localStore: LooperClientCoreLocalStore)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcore_drain_notification_reply_outbox_durable(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
 open func observe()async throws  -> ClientStateMiniStreamUpdate  {
     return
         try  await uniffiRustCallAsync(
@@ -698,18 +669,6 @@ open func observe()async throws  -> ClientStateMiniStreamUpdate  {
             liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
-}
-
-open func queueSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcore_queue_set_mode_durable(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(preset),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
 }
 
 open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientStateSnapshot  {
@@ -764,74 +723,6 @@ open func stopStateMiniStream()throws  -> ClientStateSnapshot  {
 })
 }
 
-open func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply_durable(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func submitNotificationReplyDurableWithoutFlushLock(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply_durable_without_flush_lock(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func submitSendPromptDurable(localStore: LooperClientCoreLocalStore, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcore_submit_send_prompt_durable(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func submitSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcore_submit_set_mode_durable(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(threadId),FfiConverterString.lower(preset),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
 
 
 }
@@ -883,18 +774,6 @@ public func FfiConverterTypeLooperClientCore_lower(_ value: LooperClientCore) ->
 
 
 public protocol LooperClientCoreLocalStoreProtocol: AnyObject, Sendable {
-
-    func enqueue(command: ClientPendingCommand) throws  -> ClientLocalStateSnapshot
-
-    func enqueueNotificationReplyCommand(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
-
-    func enqueueSendPromptCommand(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
-
-    func enqueueSetModeCommand(threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
-
-    func markAttempted(clientMutationId: String) throws  -> ClientLocalStateSnapshot
-
-    func markDelivered(clientMutationId: String) throws
 
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
@@ -961,68 +840,6 @@ public convenience init(filePath: String)throws  {
 
 
 
-
-open func enqueue(command: ClientPendingCommand)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_enqueue(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeClientPendingCommand_lower(command),$0
-    )
-})
-}
-
-open func enqueueNotificationReplyCommand(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_enqueue_notification_reply_command(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(notificationId),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(prompt),
-        FfiConverterString.lower(assistantSurface),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
-}
-
-open func enqueueSendPromptCommand(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_enqueue_send_prompt_command(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(prompt),
-        FfiConverterString.lower(assistantSurface),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
-}
-
-open func enqueueSetModeCommand(threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_enqueue_set_mode_command(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(preset),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
-}
-
-open func markAttempted(clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_mark_attempted(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
-}
-
-open func markDelivered(clientMutationId: String)throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_mark_delivered(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-}
-}
 
 open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientLocalStateSnapshot  {
     return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
@@ -1113,19 +930,11 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientQueuedCommandSnapshot
 
-    func queueSetMode(threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
-
-    func queueSetModeWithGeneratedMutation(threadId: String, preset: String) throws  -> ClientQueuedCommandSnapshot
-
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
-    func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+    func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
 
-    func sendPromptWithGeneratedMutation(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
-
-    func setMode(threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
-
-    func setModeWithGeneratedMutation(threadId: String, preset: String) async throws  -> ClientCommandAckEnvelope
+    func setMode(threadId: String, preset: String) async throws  -> ClientCommandAckEnvelope
 
     func start(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
@@ -1334,27 +1143,6 @@ open func persistNotificationReplyWithGeneratedMutation(notificationId: String, 
 })
 }
 
-open func queueSetMode(threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_queue_set_mode(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(preset),
-        FfiConverterString.lower(clientMutationId),$0
-    )
-})
-}
-
-open func queueSetModeWithGeneratedMutation(threadId: String, preset: String)throws  -> ClientQueuedCommandSnapshot  {
-    return try  FfiConverterTypeClientQueuedCommandSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_queue_set_mode_with_generated_mutation(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(threadId),
-        FfiConverterString.lower(preset),$0
-    )
-})
-}
-
 open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientLocalStateSnapshot  {
     return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_replace_state_minis(
@@ -1364,28 +1152,11 @@ open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientL
 })
 }
 
-open func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_send_prompt(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func sendPromptWithGeneratedMutation(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_send_prompt_with_generated_mutation(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface)
                 )
@@ -1398,28 +1169,11 @@ open func sendPromptWithGeneratedMutation(threadId: String, prompt: String, assi
         )
 }
 
-open func setMode(threadId: String, preset: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+open func setMode(threadId: String, preset: String)async throws  -> ClientCommandAckEnvelope  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_mode(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(threadId),FfiConverterString.lower(preset),FfiConverterString.lower(clientMutationId)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func setModeWithGeneratedMutation(threadId: String, preset: String)async throws  -> ClientCommandAckEnvelope  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_mode_with_generated_mutation(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(threadId),FfiConverterString.lower(preset)
                 )
@@ -5285,13 +5039,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_configure_session_runtime() != 51381) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_drain_notification_reply_outbox_durable() != 4394) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_observe() != 61493) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_queue_set_mode_durable() != 4717) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_replace_state_minis() != 24521) {
@@ -5310,36 +5058,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_stop_state_mini_stream() != 1254) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_durable() != 24560) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_durable_without_flush_lock() != 58476) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_send_prompt_durable() != 21987) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_set_mode_durable() != 24405) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_enqueue() != 36317) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_enqueue_notification_reply_command() != 43500) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_enqueue_send_prompt_command() != 64154) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_enqueue_set_mode_command() != 63862) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_mark_attempted() != 56156) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_mark_delivered() != 20008) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_replace_state_minis() != 46166) {
@@ -5378,25 +5096,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 219) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_queue_set_mode() != 211) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_queue_set_mode_with_generated_mutation() != 38140) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_replace_state_minis() != 26981) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33463) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 48509) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt_with_generated_mutation() != 42328) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 6329) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode_with_generated_mutation() != 8005) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 61477) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_start() != 53576) {

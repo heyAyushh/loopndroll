@@ -87,7 +87,9 @@ impl LooperClientCoreLocalStore {
         self.persist_locked(&state)?;
         Ok(state.snapshot())
     }
+}
 
+impl LooperClientCoreLocalStore {
     pub fn enqueue(
         &self,
         command: ClientPendingCommand,

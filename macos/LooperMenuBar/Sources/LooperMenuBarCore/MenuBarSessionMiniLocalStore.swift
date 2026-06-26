@@ -350,17 +350,9 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     @discardableResult
     public func setSessionMode(
         threadID: String,
-        preset: String,
-        clientMutationID: String?
+        preset: String
     ) async throws -> ClientCommandAckEnvelope {
-        if let clientMutationID {
-            return try await sessionManager.setMode(
-                threadID: threadID,
-                preset: preset,
-                clientMutationID: clientMutationID
-            )
-        }
-        return try await sessionManager.setMode(
+        try await sessionManager.setMode(
             threadID: threadID,
             preset: preset
         )
@@ -370,18 +362,9 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     public func sendPrompt(
         threadID: String,
         prompt: String,
-        assistantSurface: String,
-        clientMutationID: String?
+        assistantSurface: String
     ) async throws -> ClientCommandAckEnvelope {
-        if let clientMutationID {
-            return try await sessionManager.sendPrompt(
-                threadID: threadID,
-                prompt: prompt,
-                assistantSurface: assistantSurface,
-                clientMutationID: clientMutationID
-            )
-        }
-        return try await sessionManager.sendPrompt(
+        try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface

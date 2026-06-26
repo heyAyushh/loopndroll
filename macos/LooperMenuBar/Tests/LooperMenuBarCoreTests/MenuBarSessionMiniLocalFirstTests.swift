@@ -144,24 +144,22 @@ struct MenuBarSessionMiniLocalFirstTests {
             _ = try await commandCenter.sendPrompt(
                 threadID: "thread-main",
                 prompt: "continue",
-                assistantSurface: "codex",
-                clientMutationID: "mutation-offline"
+                assistantSurface: "codex"
             )
         }
         await expectThrows {
             _ = try await commandCenter.sendPrompt(
                 threadID: "thread-main",
                 prompt: "continue",
-                assistantSurface: "codex",
-                clientMutationID: "mutation-offline"
+                assistantSurface: "codex"
             )
         }
 
         let pendingCommands = outboxRuntime.pendingCommands()
-        #expect(pendingCommands.count == 1)
-        #expect(pendingCommands.first?.clientMutationID == "mutation-offline")
-        #expect(pendingCommands.first?.threadID == "thread-main")
-        #expect(pendingCommands.first?.attemptCount == 2)
+        #expect(pendingCommands.count == 2)
+        #expect(pendingCommands.allSatisfy { $0.clientMutationID.hasPrefix("prompt-") })
+        #expect(pendingCommands.map(\.threadID) == ["thread-main", "thread-main"])
+        #expect(pendingCommands.map(\.attemptCount) == [1, 1])
     }
 
     @Test("menu actions enqueue durable Rust-core commands before transport")
@@ -172,22 +170,21 @@ struct MenuBarSessionMiniLocalFirstTests {
         await expectThrows {
             _ = try await commandCenter.setSessionMode(
                 threadID: "thread-main",
-                preset: "await-reply",
-                clientMutationID: "mutation-mode"
+                preset: "await-reply"
             )
         }
         await expectThrows {
             _ = try await commandCenter.sendPrompt(
                 threadID: "thread-main",
                 prompt: "ship it",
-                assistantSurface: "codex",
-                clientMutationID: "mutation-prompt"
+                assistantSurface: "codex"
             )
         }
 
         let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
-        #expect(pendingCommands.map(\.clientMutationID) == ["mutation-mode", "mutation-prompt"])
+        #expect(pendingCommands[0].clientMutationID.hasPrefix("mode-"))
+        #expect(pendingCommands[1].clientMutationID.hasPrefix("prompt-"))
         #expect(pendingCommands.map(\.threadID) == ["thread-main", "thread-main"])
         #expect(pendingCommands.map(\.attemptCount) == [1, 1])
     }

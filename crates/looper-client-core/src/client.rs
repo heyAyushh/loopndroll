@@ -414,7 +414,6 @@ impl LooperClientCore {
     }
 }
 
-#[uniffi::export]
 impl LooperClientCore {
     pub fn queue_set_mode_durable(
         &self,

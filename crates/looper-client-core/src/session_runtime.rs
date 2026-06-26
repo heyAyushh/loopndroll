@@ -134,56 +134,15 @@ impl LooperClientCoreSessionRuntime {
         &self,
         thread_id: String,
         preset: String,
-        client_mutation_id: String,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
         self.client_core
             .submit_set_mode_durable(
                 self.local_store.clone(),
                 thread_id,
                 preset,
-                client_mutation_id,
+                generated_client_mutation_id(MODE_MUTATION_PREFIX),
             )
             .await
-    }
-
-    pub async fn set_mode_with_generated_mutation(
-        &self,
-        thread_id: String,
-        preset: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.set_mode(
-            thread_id,
-            preset,
-            generated_client_mutation_id(MODE_MUTATION_PREFIX),
-        )
-        .await
-    }
-
-    pub fn queue_set_mode(
-        &self,
-        thread_id: String,
-        preset: String,
-        client_mutation_id: String,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        self.client_core.queue_set_mode_durable(
-            self.local_store.clone(),
-            thread_id,
-            preset,
-            client_mutation_id,
-        )
-    }
-
-    pub fn queue_set_mode_with_generated_mutation(
-        &self,
-        thread_id: String,
-        preset: String,
-    ) -> Result<ClientQueuedCommandSnapshot, ClientCoreError> {
-        let client_mutation_id = generated_client_mutation_id(MODE_MUTATION_PREFIX);
-        let snapshot = self.queue_set_mode(thread_id, preset, client_mutation_id.clone())?;
-        Ok(ClientQueuedCommandSnapshot {
-            client_mutation_id,
-            snapshot,
-        })
     }
 
     pub async fn send_prompt(
@@ -191,7 +150,6 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
-        client_mutation_id: String,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
         self.client_core
             .submit_send_prompt_durable(
@@ -199,24 +157,9 @@ impl LooperClientCoreSessionRuntime {
                 thread_id,
                 prompt,
                 assistant_surface,
-                client_mutation_id,
+                generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
             )
             .await
-    }
-
-    pub async fn send_prompt_with_generated_mutation(
-        &self,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.send_prompt(
-            thread_id,
-            prompt,
-            assistant_surface,
-            generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
-        )
-        .await
     }
 
     pub async fn submit_notification_reply(
@@ -504,7 +447,6 @@ mod tests {
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
-                "mutation-prompt".to_owned(),
             ))
             .expect_err("missing runtime config should fail transport");
         assert_eq!(error, ClientCoreError::NoEndpoint);
@@ -517,9 +459,10 @@ mod tests {
         );
         assert_eq!(snapshot.pending_commands[0].thread_id, "thread-main");
         assert_eq!(snapshot.pending_commands[0].prompt, "continue");
-        assert_eq!(
-            snapshot.pending_commands[0].client_mutation_id,
-            "mutation-prompt"
+        assert!(
+            snapshot.pending_commands[0]
+                .client_mutation_id
+                .starts_with("prompt-")
         );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
         assert_eq!(runtime.outbox_depth().expect("outbox depth"), 1);
@@ -534,10 +477,7 @@ mod tests {
             .expect("runtime");
 
         let error = test_runtime
-            .block_on(runtime.set_mode_with_generated_mutation(
-                "thread-main".to_owned(),
-                "max-turns-2".to_owned(),
-            ))
+            .block_on(runtime.set_mode("thread-main".to_owned(), "max-turns-2".to_owned()))
             .expect_err("missing runtime config should fail transport");
         assert_eq!(error, ClientCoreError::NoEndpoint);
 
@@ -562,7 +502,7 @@ mod tests {
             .expect("runtime");
 
         let error = test_runtime
-            .block_on(runtime.send_prompt_with_generated_mutation(
+            .block_on(runtime.send_prompt(
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
@@ -603,36 +543,18 @@ mod tests {
             })
             .expect("seed minis");
 
-        let optimistic = runtime
-            .queue_set_mode(
-                "thread-main".to_owned(),
-                "max-turns-2".to_owned(),
-                "mutation-mode".to_owned(),
-            )
-            .expect("queue mode");
-
-        assert_eq!(optimistic.pending_commands.len(), 1);
-        assert_eq!(
-            optimistic.pending_commands[0].kind,
-            ClientPendingCommandKind::SetSessionMode
-        );
-        assert!(
-            optimistic.sessions[0]
-                .payload_json
-                .contains(r#""effectiveMode":"max-turns-2""#)
-        );
-
         let error = test_runtime
-            .block_on(runtime.set_mode(
-                "thread-main".to_owned(),
-                "max-turns-2".to_owned(),
-                "mutation-mode".to_owned(),
-            ))
+            .block_on(runtime.set_mode("thread-main".to_owned(), "max-turns-2".to_owned()))
             .expect_err("missing runtime config should fail transport");
         assert_eq!(error, ClientCoreError::NoEndpoint);
 
         let snapshot = runtime.local_snapshot().expect("snapshot");
         assert_eq!(snapshot.pending_commands.len(), 1);
+        assert!(
+            snapshot.pending_commands[0]
+                .client_mutation_id
+                .starts_with("mode-")
+        );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
         assert!(
             snapshot.sessions[0]
@@ -641,44 +563,6 @@ mod tests {
         );
         drop(runtime);
         drop(test_runtime);
-    }
-
-    #[test]
-    fn runtime_generated_mode_queue_returns_mutation_id_and_paints() {
-        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("mode-generated-paint"))
-            .expect("runtime");
-        runtime
-            .replace_state_minis(ClientStateMiniSnapshot {
-                latest_seq: 7,
-                sessions: vec![ClientStateMini {
-                    session_id: "thread-main".to_owned(),
-                    assistant_surface: "codex".to_owned(),
-                    seq: 7,
-                    revision: "rev-7".to_owned(),
-                    payload_json: r#"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#.to_owned(),
-                }],
-                server_time: "2026-06-25T00:00:00Z".to_owned(),
-            })
-            .expect("seed minis");
-
-        let queued = runtime
-            .queue_set_mode_with_generated_mutation(
-                "thread-main".to_owned(),
-                "max-turns-2".to_owned(),
-            )
-            .expect("queue generated mode");
-
-        assert!(queued.client_mutation_id.starts_with("mode-"));
-        assert_eq!(queued.snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            queued.snapshot.pending_commands[0].client_mutation_id,
-            queued.client_mutation_id
-        );
-        assert!(
-            queued.snapshot.sessions[0]
-                .payload_json
-                .contains(r#""effectiveMode":"max-turns-2""#)
-        );
     }
 
     #[test]
