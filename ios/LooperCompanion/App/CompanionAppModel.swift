@@ -45,11 +45,11 @@ final class CompanionAppModel {
     @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
+    @ObservationIgnored private let sessionDetailCoordinator = CompanionSessionDetailCoordinator()
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
-    @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
@@ -750,80 +750,41 @@ final class CompanionAppModel {
     }
 
     func loadSessionDetail(id: String) async {
-        if snapshotState.hasDetail(for: id) {
-            return
-        }
-
-        await refreshSessionDetail(id: id)
+        let outcome = await sessionDetailCoordinator.loadIfNeeded(
+            id: id,
+            service: service,
+            snapshotState: snapshotState,
+            selectedAssistantSurface: selectedAssistantSurface,
+            connectionRevision: connectionRevision,
+            isCurrentConnectionRevision: { [weak self] revision in
+                self?.connectionRevision == revision
+            }
+        )
+        applySessionDetailLoadOutcome(outcome)
     }
 
     func refreshSessionDetail(
         id: String,
         assistantSurface: CompanionAssistantSurface? = nil
     ) async {
-        guard !loadingSessionDetailIDs.contains(id) else {
-            return
-        }
-
-        let detailLoadRevision = connectionRevision
-        loadingSessionDetailIDs.insert(id)
-        defer {
-            loadingSessionDetailIDs.remove(id)
-        }
-
-        var lastError: Error?
-        for surface in detailQuerySurfaces(for: id, preferredSurface: assistantSurface) {
-            do {
-                let detail = try await service.loadSessionDetail(
-                    id: id,
-                    surface: Optional(surface)
-                )
-                guard detailLoadRevision == connectionRevision else {
-                    CompanionDiagnostics.record("session-detail:stale-skip id=\(id)")
-                    return
-                }
-
-                snapshotState.setDetail(detail, for: id)
-                lastError = nil
-                break
-            } catch {
-                guard detailLoadRevision == connectionRevision else {
-                    CompanionDiagnostics.record("session-detail:stale-error-skip id=\(id)")
-                    return
-                }
-
-                lastError = error
-                CompanionDiagnostics.record(
-                    "session-detail:load-failed id=\(id) surface=\(surface.rawValue) error=\(error.localizedDescription)"
-                )
+        let outcome = await sessionDetailCoordinator.refresh(
+            id: id,
+            assistantSurface: assistantSurface,
+            service: service,
+            snapshotState: snapshotState,
+            selectedAssistantSurface: selectedAssistantSurface,
+            connectionRevision: connectionRevision,
+            isCurrentConnectionRevision: { [weak self] revision in
+                self?.connectionRevision == revision
             }
-        }
-
-        if let lastError {
-            errorMessage = lastError.localizedDescription
-        }
+        )
+        applySessionDetailLoadOutcome(outcome)
     }
 
-    private func detailQuerySurfaces(
-        for sessionID: String,
-        preferredSurface: CompanionAssistantSurface?
-    ) -> [CompanionAssistantSurface] {
-        var surfaces: [CompanionAssistantSurface] = []
-        if let preferredSurface {
-            surfaces.append(preferredSurface)
-        } else if let detectedSurface = snapshotState.assistantSurface(containingSessionID: sessionID) {
-            surfaces.append(detectedSurface)
+    private func applySessionDetailLoadOutcome(_ outcome: CompanionSessionDetailLoadOutcome) {
+        if case .failed(let lastError) = outcome {
+            errorMessage = lastError.localizedDescription
         }
-
-        if !surfaces.contains(selectedAssistantSurface) {
-            surfaces.append(selectedAssistantSurface)
-        }
-
-        surfaces.append(contentsOf: CompanionAssistantSurface.allCases.filter { surface in
-            !surfaces.contains(surface)
-        })
-
-        return surfaces
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
