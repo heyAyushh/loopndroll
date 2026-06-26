@@ -224,3 +224,11 @@ pub struct ClientStateMiniStreamUpdate {
     pub latest_seq: i64,
     pub error_description: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientLocalStateStreamUpdate {
+    pub reason: ClientStateMiniStreamUpdateReason,
+    pub snapshot: ClientLocalStateSnapshot,
+    pub did_change: bool,
+    pub error_description: String,
+}

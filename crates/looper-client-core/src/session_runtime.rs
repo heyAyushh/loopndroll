@@ -5,8 +5,9 @@ use crate::{
     error::ClientCoreError,
     local_store::LooperClientCoreLocalStore,
     model::{
-        ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot, ClientStateMiniDelta,
-        ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateSnapshot,
+        ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
+        ClientLocalStateStreamUpdate, ClientStateMiniDelta, ClientStateMiniSnapshot,
+        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
 };
 
@@ -49,6 +50,31 @@ impl LooperClientCoreSessionRuntime {
             self.persist_core_snapshot(&update.snapshot)?;
         }
         Ok(update)
+    }
+
+    pub async fn observe_local_state_change(
+        &self,
+    ) -> Result<ClientLocalStateStreamUpdate, ClientCoreError> {
+        loop {
+            let update = self.observe().await?;
+            match update.reason {
+                ClientStateMiniStreamUpdateReason::Delta if update.did_change => {
+                    return self.local_state_stream_update(update);
+                }
+                ClientStateMiniStreamUpdateReason::RecoveryRequired
+                    if update.did_change || !update.error_description.is_empty() =>
+                {
+                    return self.local_state_stream_update(update);
+                }
+                ClientStateMiniStreamUpdateReason::Stopped => {
+                    return self.local_state_stream_update(update);
+                }
+                ClientStateMiniStreamUpdateReason::Delta
+                | ClientStateMiniStreamUpdateReason::Heartbeat
+                | ClientStateMiniStreamUpdateReason::Reconnecting
+                | ClientStateMiniStreamUpdateReason::RecoveryRequired => {}
+            }
+        }
     }
 
     pub fn state_snapshot(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -202,6 +228,18 @@ impl LooperClientCoreSessionRuntime {
             sessions: snapshot.state_minis.clone(),
             pending_commands: durable_snapshot.pending_commands,
             server_time: snapshot.server_time.clone(),
+        })
+    }
+
+    fn local_state_stream_update(
+        &self,
+        update: ClientStateMiniStreamUpdate,
+    ) -> Result<ClientLocalStateStreamUpdate, ClientCoreError> {
+        Ok(ClientLocalStateStreamUpdate {
+            reason: update.reason,
+            snapshot: self.local_snapshot()?,
+            did_change: update.did_change,
+            error_description: update.error_description,
         })
     }
 }

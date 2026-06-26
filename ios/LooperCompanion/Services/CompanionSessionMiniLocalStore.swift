@@ -140,11 +140,8 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func nextClientCoreStateMiniStreamResult() async throws -> CompanionClientCoreStateMiniStreamResult {
-        let streamUpdate = try await sessionManager.observe()
-        guard
-            (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
-            streamUpdate.didChange
-        else {
+        let streamUpdate = try await sessionManager.observeLocalStateChange()
+        guard streamUpdate.didChange else {
             return CompanionClientCoreStateMiniStreamResult(
                 reason: streamUpdate.reason,
                 update: nil,
@@ -152,17 +149,16 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             )
         }
 
-        let localSnapshot = try sessionManager.localSnapshot()
         _ = try mobileSnapshot(
-            latestSeq: localSnapshot.latestSeq,
-            sessions: localSnapshot.sessions,
-            serverTime: localSnapshot.serverTime
+            latestSeq: streamUpdate.snapshot.latestSeq,
+            sessions: streamUpdate.snapshot.sessions,
+            serverTime: streamUpdate.snapshot.serverTime
         )
         return CompanionClientCoreStateMiniStreamResult(
             reason: streamUpdate.reason,
             update: CompanionSessionMiniSyncUpdate(
                 reason: streamUpdate.reason == .recoveryRequired ? .recovery : .delta,
-                snapshot: localSnapshot
+                snapshot: streamUpdate.snapshot
             ),
             errorDescription: streamUpdate.errorDescription
         )

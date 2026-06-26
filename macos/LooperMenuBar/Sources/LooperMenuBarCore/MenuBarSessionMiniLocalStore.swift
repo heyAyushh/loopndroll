@@ -203,11 +203,8 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     public func nextClientCoreStateMiniStreamResult() async throws
         -> MenuBarClientCoreStateMiniStreamResult
     {
-        let streamUpdate = try await sessionManager.observe()
-        guard
-            (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
-            streamUpdate.didChange
-        else {
+        let streamUpdate = try await sessionManager.observeLocalStateChange()
+        guard streamUpdate.didChange else {
             return MenuBarClientCoreStateMiniStreamResult(
                 reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
                 snapshot: nil,
@@ -216,10 +213,9 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             )
         }
 
-        let localSnapshot = try sessionManager.localSnapshot()
         return MenuBarClientCoreStateMiniStreamResult(
             reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
-            snapshot: try menuSnapshot(from: localSnapshot),
+            snapshot: try menuSnapshot(from: streamUpdate.snapshot),
             didChange: true,
             errorDescription: streamUpdate.errorDescription
         )

@@ -563,6 +563,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
+    func submitNotificationReplyDurableWithoutFlushLock(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
     func submitSendPromptDurable(localStore: LooperClientCoreLocalStore, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
     func submitSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
@@ -751,6 +753,23 @@ open func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore,
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply_durable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func submitNotificationReplyDurableWithoutFlushLock(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply_durable_without_flush_lock(
                     self.uniffiCloneHandle(),
                     FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
                 )
@@ -1066,6 +1085,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func observe() async throws  -> ClientStateMiniStreamUpdate
 
+    func observeLocalStateChange() async throws  -> ClientLocalStateStreamUpdate
+
     func outboxDepth() throws  -> UInt32
 
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
@@ -1195,6 +1216,23 @@ open func observe()async throws  -> ClientStateMiniStreamUpdate  {
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func observeLocalStateChange()async throws  -> ClientLocalStateStreamUpdate  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_observe_local_state_change(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientLocalStateStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -1991,6 +2029,68 @@ public func FfiConverterTypeClientLocalStateSnapshot_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeClientLocalStateSnapshot_lower(_ value: ClientLocalStateSnapshot) -> RustBuffer {
     return FfiConverterTypeClientLocalStateSnapshot.lower(value)
+}
+
+
+public struct ClientLocalStateStreamUpdate: Equatable, Hashable {
+    public var reason: ClientStateMiniStreamUpdateReason
+    public var snapshot: ClientLocalStateSnapshot
+    public var didChange: Bool
+    public var errorDescription: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientLocalStateSnapshot, didChange: Bool, errorDescription: String) {
+        self.reason = reason
+        self.snapshot = snapshot
+        self.didChange = didChange
+        self.errorDescription = errorDescription
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientLocalStateStreamUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientLocalStateStreamUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientLocalStateStreamUpdate {
+        return
+            try ClientLocalStateStreamUpdate(
+                reason: FfiConverterTypeClientStateMiniStreamUpdateReason.read(from: &buf),
+                snapshot: FfiConverterTypeClientLocalStateSnapshot.read(from: &buf),
+                didChange: FfiConverterBool.read(from: &buf),
+                errorDescription: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientLocalStateStreamUpdate, into buf: inout [UInt8]) {
+        FfiConverterTypeClientStateMiniStreamUpdateReason.write(value.reason, into: &buf)
+        FfiConverterTypeClientLocalStateSnapshot.write(value.snapshot, into: &buf)
+        FfiConverterBool.write(value.didChange, into: &buf)
+        FfiConverterString.write(value.errorDescription, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientLocalStateStreamUpdate_lift(_ buf: RustBuffer) throws -> ClientLocalStateStreamUpdate {
+    return try FfiConverterTypeClientLocalStateStreamUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientLocalStateStreamUpdate_lower(_ value: ClientLocalStateStreamUpdate) -> RustBuffer {
+    return FfiConverterTypeClientLocalStateStreamUpdate.lower(value)
 }
 
 
@@ -4682,6 +4782,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_durable() != 24560) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_durable_without_flush_lock() != 58476) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_send_prompt_durable() != 21987) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4722,6 +4825,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe() != 24785) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_local_state_change() != 57800) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_outbox_depth() != 24353) {
