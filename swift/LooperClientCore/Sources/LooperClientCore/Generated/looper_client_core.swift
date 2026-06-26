@@ -1282,6 +1282,64 @@ public func FfiConverterTypeClientCommandMetadata_lower(_ value: ClientCommandMe
 }
 
 
+public struct ClientConnectionFailureProjection: Equatable, Hashable {
+    public var connectionState: String
+    public var shouldClearRouteState: Bool
+    public var shouldSuppressError: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionState: String, shouldClearRouteState: Bool, shouldSuppressError: Bool) {
+        self.connectionState = connectionState
+        self.shouldClearRouteState = shouldClearRouteState
+        self.shouldSuppressError = shouldSuppressError
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientConnectionFailureProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientConnectionFailureProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientConnectionFailureProjection {
+        return
+            try ClientConnectionFailureProjection(
+                connectionState: FfiConverterString.read(from: &buf),
+                shouldClearRouteState: FfiConverterBool.read(from: &buf),
+                shouldSuppressError: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientConnectionFailureProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionState, into: &buf)
+        FfiConverterBool.write(value.shouldClearRouteState, into: &buf)
+        FfiConverterBool.write(value.shouldSuppressError, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientConnectionFailureProjection_lift(_ buf: RustBuffer) throws -> ClientConnectionFailureProjection {
+    return try FfiConverterTypeClientConnectionFailureProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientConnectionFailureProjection_lower(_ value: ClientConnectionFailureProjection) -> RustBuffer {
+    return FfiConverterTypeClientConnectionFailureProjection.lower(value)
+}
+
+
 public struct ClientDetailCacheProjection: Equatable, Hashable {
     public var detailBySessionIdJson: String
     public var visibleSessionIds: [String]
@@ -3069,6 +3127,15 @@ public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [
     )
 })
 }
+public func reduceConnectionFailure(mappedErrorState: String, hasUsableSnapshot: Bool, suppressErrorWhenSnapshotUsable: Bool)throws  -> ClientConnectionFailureProjection  {
+    return try  FfiConverterTypeClientConnectionFailureProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_connection_failure(
+        FfiConverterString.lower(mappedErrorState),
+        FfiConverterBool.lower(hasUsableSnapshot),
+        FfiConverterBool.lower(suppressErrorWhenSnapshotUsable),$0
+    )
+})
+}
 public func reduceSnapshotLoadFailure(mappedErrorState: String, currentConnectionState: String, hasUsableSnapshot: Bool, hasServerHealth: Bool, hasReachedBaseUrl: Bool)throws  -> ClientSnapshotLoadFailureProjection  {
     return try  FfiConverterTypeClientSnapshotLoadFailureProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_snapshot_load_failure(
@@ -3143,6 +3210,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_connection_failure() != 21774) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 14313) {

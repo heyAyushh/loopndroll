@@ -15,6 +15,13 @@ pub struct ClientSnapshotLoadFailureProjection {
     pub should_suppress_error: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientConnectionFailureProjection {
+    pub connection_state: String,
+    pub should_clear_route_state: bool,
+    pub should_suppress_error: bool,
+}
+
 #[uniffi::export]
 pub fn reduce_snapshot_load_failure(
     mapped_error_state: String,
@@ -43,6 +50,22 @@ pub fn reduce_snapshot_load_failure(
         preserved_connected_state: should_preserve_connected,
         should_clear_route_state: !allows_connection_route_presentation(next_state),
         should_suppress_error: should_suppress_snapshot_load_error(next_state, has_usable_snapshot),
+    })
+}
+
+#[uniffi::export]
+pub fn reduce_connection_failure(
+    mapped_error_state: String,
+    has_usable_snapshot: bool,
+    suppress_error_when_snapshot_usable: bool,
+) -> Result<ClientConnectionFailureProjection, ClientCoreError> {
+    let state = normalize_connection_state(&mapped_error_state)?;
+
+    Ok(ClientConnectionFailureProjection {
+        connection_state: state.to_owned(),
+        should_clear_route_state: !allows_connection_route_presentation(state),
+        should_suppress_error: suppress_error_when_snapshot_usable
+            && should_suppress_snapshot_load_error(state, has_usable_snapshot),
     })
 }
 
@@ -157,5 +180,25 @@ mod tests {
         .expect_err("invalid state");
 
         assert_eq!(error, ClientCoreError::InvalidConnectionState);
+    }
+
+    #[test]
+    fn generic_failure_can_suppress_cached_offline_error() {
+        let projection =
+            reduce_connection_failure(OFFLINE.to_owned(), true, true).expect("projection");
+
+        assert_eq!(projection.connection_state, OFFLINE);
+        assert!(projection.should_clear_route_state);
+        assert!(projection.should_suppress_error);
+    }
+
+    #[test]
+    fn generic_failure_can_force_error_surface() {
+        let projection =
+            reduce_connection_failure(OFFLINE.to_owned(), true, false).expect("projection");
+
+        assert_eq!(projection.connection_state, OFFLINE);
+        assert!(projection.should_clear_route_state);
+        assert!(!projection.should_suppress_error);
     }
 }

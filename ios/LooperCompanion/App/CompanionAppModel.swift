@@ -1210,9 +1210,7 @@ final class CompanionAppModel {
                 return false
             }
 
-            connectionState = connectionState(for: error)
-            clearConnectionRouteStateIfNeeded(for: connectionState)
-            errorMessage = error.localizedDescription
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
             Haptics.error()
             return false
         }
@@ -1247,6 +1245,20 @@ final class CompanionAppModel {
         return .offline
     }
 
+    private func applyConnectionFailure(
+        _ error: Error,
+        suppressErrorWhenSnapshotUsable: Bool
+    ) {
+        let projection = CompanionConnectionStateReducer.connectionFailure(
+            mappedErrorState: connectionState(for: error),
+            hasUsableSnapshot: snapshot != nil,
+            suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
+        )
+        connectionState = CompanionConnectionStateReducer.connectionState(from: projection)
+        clearConnectionRouteStateIfNeeded(shouldClear: projection.shouldClearRouteState)
+        errorMessage = projection.shouldSuppressError ? nil : error.localizedDescription
+    }
+
     private func isCancellationError(_ error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -1254,22 +1266,6 @@ final class CompanionAppModel {
 
         let nsError = error as NSError
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
-    }
-
-    private func shouldSuppressSnapshotLoadError(
-        state: ConnectivityState,
-        hasUsableSnapshot: Bool
-    ) -> Bool {
-        guard hasUsableSnapshot else {
-            return false
-        }
-
-        switch state {
-        case .connected, .offline:
-            return true
-        case .connecting, .locked, .unauthorized, .unpaired:
-            return false
-        }
     }
 
     @discardableResult
@@ -1399,15 +1395,9 @@ final class CompanionAppModel {
     }
 
     private func handleAssistantSurfaceSaveFailure(_ error: Error) {
-        let nextConnectionState = connectionState(for: error)
-        connectionState = nextConnectionState
-        clearConnectionRouteStateIfNeeded(for: nextConnectionState)
-        errorMessage = shouldSuppressSnapshotLoadError(
-            state: nextConnectionState,
-            hasUsableSnapshot: snapshot != nil
-        ) ? nil : error.localizedDescription
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
         CompanionDiagnostics.record(
-            "assistant-surface:save-failed surface=\(selectedAssistantSurface.rawValue) state=\(nextConnectionState.rawValue) error=\(error.localizedDescription)"
+            "assistant-surface:save-failed surface=\(selectedAssistantSurface.rawValue) state=\(connectionState.rawValue) error=\(error.localizedDescription)"
         )
     }
 
@@ -1617,9 +1607,7 @@ extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
             previousDetail: rollbackState?.detail,
             sessionID: sessionID
         )
-        connectionState = connectionState(for: error)
-        clearConnectionRouteStateIfNeeded(for: connectionState)
-        errorMessage = error.localizedDescription
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
         Haptics.error()
         return false
     }
@@ -1641,9 +1629,7 @@ extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
     }
 
     func sessionMutationHandlePromptFailure(_ error: Error, sessionID: String) -> Bool {
-        connectionState = connectionState(for: error)
-        clearConnectionRouteStateIfNeeded(for: connectionState)
-        errorMessage = error.localizedDescription
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
         Haptics.error()
         return false
     }
@@ -1745,9 +1731,7 @@ extension CompanionAppModel: CompanionNotificationReplyCoordinatorDelegate {
         sessionID: String,
         notificationID: String
     ) {
-        connectionState = connectionState(for: error)
-        clearConnectionRouteStateIfNeeded(for: connectionState)
-        errorMessage = error.localizedDescription
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
         Haptics.error()
         CompanionDiagnostics.record(
             "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
