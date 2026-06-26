@@ -278,8 +278,7 @@ struct LooperContinuationActivityTests {
 
     @Test
     func usesNewestSessionMiniAsContinuationTarget() throws {
-        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        try runtime.replace(latestSeq: 9, records: [
+        let runtime = try seededRuntime(latestSeq: 9, records: [
             miniRecord(id: "old-mini", title: "Old Mini", archived: false, updatedAtMs: 1),
             miniRecord(id: "archived-mini", title: "Archived Mini", archived: true, updatedAtMs: 9),
             miniRecord(
@@ -505,13 +504,49 @@ struct LooperContinuationActivityTests {
             .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
     }
 
+    private func seededRuntime(
+        latestSeq: Int64,
+        records: [TestContinuationMiniFixture]
+    ) throws -> MenuBarSessionRuntime {
+        let fileURL = temporaryStoreFileURL()
+        try seedMiniCache(at: fileURL, latestSeq: latestSeq, records: records)
+        return try MenuBarSessionRuntime(fileURL: fileURL)
+    }
+
+    private func seedMiniCache(
+        at fileURL: URL,
+        latestSeq: Int64,
+        records: [TestContinuationMiniFixture]
+    ) throws {
+        let payload: [String: Any] = [
+            "latestSeq": latestSeq,
+            "sessions": records.map { record in
+                [
+                    "sessionId": record.sessionID,
+                    "assistantSurface": record.assistantSurface,
+                    "seq": record.seq,
+                    "revision": record.revision,
+                    "payloadJson": record.payloadJSON,
+                ]
+            },
+            "pendingCommands": [],
+            "serverTime": "",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: .atomic)
+    }
+
     private func miniRecord(
         id: String,
         title: String,
         archived: Bool,
         assistantPreview: String = "Ready",
         updatedAtMs: Int64
-    ) throws -> MenuBarSessionMiniRecord {
+    ) throws -> TestContinuationMiniFixture {
         let payload = ContinuationMiniPayload(
             id: id,
             sessionId: id,
@@ -533,7 +568,7 @@ struct LooperContinuationActivityTests {
             updatedAtMs: updatedAtMs
         )
         let data = try JSONEncoder().encode(payload)
-        return MenuBarSessionMiniRecord(
+        return TestContinuationMiniFixture(
             sessionID: id,
             assistantSurface: "codex",
             seq: updatedAtMs,
@@ -541,6 +576,14 @@ struct LooperContinuationActivityTests {
             payloadJSON: String(decoding: data, as: UTF8.self)
         )
     }
+}
+
+private struct TestContinuationMiniFixture: Equatable, Sendable {
+    let sessionID: String
+    let assistantSurface: String
+    let seq: Int64
+    let revision: String
+    let payloadJSON: String
 }
 
 private struct ContinuationMiniPayload: Encodable {

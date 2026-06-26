@@ -1,7 +1,6 @@
-use crate::{
-    error::ClientCoreError,
-    model::{ClientStateMini, ClientStateMiniDelta},
-};
+#[cfg(test)]
+use crate::model::ClientStateMiniDelta;
+use crate::{error::ClientCoreError, model::ClientStateMini};
 
 const INITIAL_SEQUENCE: i64 = 0;
 
@@ -20,6 +19,7 @@ pub(crate) fn validate_state_minis(sessions: &[ClientStateMini]) -> Result<(), C
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn validate_state_mini_delta(
     delta: &ClientStateMiniDelta,
 ) -> Result<(), ClientCoreError> {

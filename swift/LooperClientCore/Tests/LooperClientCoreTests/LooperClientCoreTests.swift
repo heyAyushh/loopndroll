@@ -44,69 +44,34 @@ struct LooperClientCoreTests {
     }
 
     @Test
-    func stateMiniSnapshotReplacesAndNormalizesRecords() throws {
-        let manager = try temporarySessionManager()
-
-        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+    func mobileProjectionBuildsSnapshotFromStateMinis() throws {
+        let projection = try reduceStateMinisMobileSnapshot(
             latestSeq: 10,
             sessions: [
                 stateMini(sessionID: "thread-2", seq: 7, revision: "rev-7", title: "queued"),
-                stateMini(sessionID: threadID, seq: 5, revision: "rev-5", title: "old"),
                 stateMini(sessionID: threadID, seq: 9, revision: "rev-9", title: "current"),
             ],
             serverTime: serverTime
-        ))
-        let snapshot = try manager.stateSnapshot()
+        )
 
-        #expect(snapshot.latestSeq == 10)
-        #expect(snapshot.revision == "rev-9")
-        #expect(snapshot.serverTime == serverTime)
-        #expect(snapshot.stateMinis.map(\.sessionId) == ["thread-2", threadID])
-        #expect(snapshot.stateMinis.last?.payloadJson == #"{"title":"current"}"#)
+        #expect(projection.hasSnapshot)
+        #expect(projection.snapshotJson.contains(#""revision":"rev-9""#))
+        #expect(projection.snapshotJson.contains(#""lastSyncedAt":"\#(serverTime)""#))
+        #expect(projection.snapshotJson.contains(#""id":"thread-1""#))
+        #expect(projection.snapshotJson.contains(#""title":"current""#))
     }
 
     @Test
-    func stateMiniDeltaUpsertsAndIgnoresStaleSequences() throws {
+    func sessionManagerStartsWithoutSwiftStateMutationHooks() throws {
         let manager = try temporarySessionManager()
-        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
-            latestSeq: 2,
-            sessions: [stateMini(sessionID: threadID, seq: 2, revision: "rev-2", title: "old")],
-            serverTime: ""
-        ))
 
-        _ = try manager.applyStateMiniDelta(ClientStateMiniDelta(
-            seq: 3,
-            latestSeq: 3,
-            entityId: threadID,
-            kind: "session_mini",
-            revision: "rev-3",
-            serverTime: serverTime,
-            hasSession: true,
-            session: stateMini(sessionID: threadID, seq: 3, revision: "rev-3", title: "new"),
-            sessions: []
-        ))
-        let snapshot = try manager.stateSnapshot()
+        let stateSnapshot = try manager.stateSnapshot()
+        let localSnapshot = try manager.localSnapshot()
 
-        #expect(snapshot.latestSeq == 3)
-        #expect(snapshot.revision == "rev-3")
-        #expect(snapshot.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
-
-        _ = try manager.applyStateMiniDelta(ClientStateMiniDelta(
-            seq: 2,
-            latestSeq: 2,
-            entityId: threadID,
-            kind: "session_mini",
-            revision: "rev-stale",
-            serverTime: "",
-            hasSession: true,
-            session: stateMini(sessionID: threadID, seq: 2, revision: "rev-stale", title: "stale"),
-            sessions: []
-        ))
-        let stale = try manager.stateSnapshot()
-
-        #expect(stale.latestSeq == 3)
-        #expect(stale.revision == "rev-3")
-        #expect(stale.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
+        #expect(stateSnapshot.latestSeq == 0)
+        #expect(stateSnapshot.stateMinis.isEmpty)
+        #expect(localSnapshot.latestSeq == 0)
+        #expect(localSnapshot.sessions.isEmpty)
     }
 
     private func stateMini(
@@ -121,7 +86,7 @@ struct LooperClientCoreTests {
             assistantSurface: surface,
             seq: seq,
             revision: revision,
-            payloadJson: #"{"title":"\#(title)"}"#
+            payloadJson: #"{"id":"\#(sessionID)","sessionId":"\#(sessionID)","assistantSurface":"\#(surface)","title":"\#(title)","ref":"\#(sessionID)","status":"active","lastActivityAtMs":\#(seq)}"#
         )
     }
 

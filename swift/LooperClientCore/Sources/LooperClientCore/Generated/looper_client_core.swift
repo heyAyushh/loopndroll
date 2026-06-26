@@ -555,8 +555,6 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
-    func applyStateMiniDelta(delta: ClientStateMiniDelta) throws  -> ClientLocalStateSnapshot
-
     func drainNotificationReplyOutbox() async throws  -> ClientNotificationReplyIntentResult
 
     func localSnapshot() throws  -> ClientLocalStateSnapshot
@@ -574,8 +572,6 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
 
     func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientNotificationReplyPersistResult
-
-    func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientSessionPromptIntentResult
 
@@ -652,15 +648,6 @@ public convenience init(filePath: String)throws  {
 
 
 
-
-open func applyStateMiniDelta(delta: ClientStateMiniDelta)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_apply_state_mini_delta(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeClientStateMiniDelta_lower(delta),$0
-    )
-})
-}
 
 open func drainNotificationReplyOutbox()async throws  -> ClientNotificationReplyIntentResult  {
     return
@@ -784,15 +771,6 @@ open func persistNotificationReplyWithGeneratedMutation(notificationId: String, 
         FfiConverterString.lower(threadId),
         FfiConverterString.lower(prompt),
         FfiConverterString.lower(assistantSurface),$0
-    )
-})
-}
-
-open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientLocalStateSnapshot  {
-    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
-    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_replace_state_minis(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeClientStateMiniSnapshot_lower(snapshot),$0
     )
 })
 }
@@ -4419,9 +4397,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_func_reduce_siri_session_entities() != 51113) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_apply_state_mini_delta() != 48374) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_drain_notification_reply_outbox() != 43759) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4447,9 +4422,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 47870) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_replace_state_minis() != 26981) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 63085) {

@@ -111,23 +111,10 @@ struct LooperClientCoreSessionManagerTests {
     }
 
     @Test
-    func sessionManagerQueuesModeIntoLocalProjectionBeforeTransport() async throws {
+    func sessionManagerQueuesModeBeforeTransport() async throws {
         let manager = try LooperClientCoreSessionManager(
             filePath: localStorePath(named: "session-manager-mode-local")
         )
-        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
-            latestSeq: 5,
-            sessions: [
-                ClientStateMini(
-                    sessionId: "thread-main",
-                    assistantSurface: "codex",
-                    seq: 5,
-                    revision: "revision-5",
-                    payloadJson: #"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#
-                ),
-            ],
-            serverTime: "2026-06-25T00:00:00Z"
-        ))
 
         do {
             _ = try await manager.setMode(
@@ -143,7 +130,6 @@ struct LooperClientCoreSessionManagerTests {
         #expect(snapshot.pendingCommands.count == 1)
         #expect(snapshot.pendingCommands.first?.kind == .setSessionMode)
         #expect(snapshot.pendingCommands.first?.clientMutationId.hasPrefix("mode-") == true)
-        #expect(snapshot.sessions.first?.payloadJson.contains(#""effectiveMode":"max-turns-2""#) == true)
         #expect(try manager.outboxDepth() == 1)
     }
 

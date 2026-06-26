@@ -1,28 +1,6 @@
 import Foundation
 import LooperClientCore
 
-public struct MenuBarSessionMiniRecord: Equatable, Sendable {
-    public let sessionID: String
-    public let assistantSurface: String
-    public let seq: Int64
-    public let revision: String
-    public let payloadJSON: String
-
-    public init(
-        sessionID: String,
-        assistantSurface: String,
-        seq: Int64,
-        revision: String,
-        payloadJSON: String
-    ) {
-        self.sessionID = sessionID
-        self.assistantSurface = assistantSurface
-        self.seq = seq
-        self.revision = revision
-        self.payloadJSON = payloadJSON
-    }
-}
-
 public struct MenuBarSessionMiniLocalSnapshot: Equatable, Sendable {
     public let latestSeq: Int64
     public let sessions: [MenuBarSessionMini]
@@ -151,37 +129,6 @@ private final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         return try menuSnapshot(from: snapshot)
     }
 
-    @discardableResult
-    func replace(with snapshot: ClientStateMiniSnapshot) throws
-        -> MenuBarSessionMiniLocalSnapshot?
-    {
-        let localSnapshot = try replaceStateMinis(with: snapshot)
-        return try menuSnapshot(from: localSnapshot)
-    }
-
-    @discardableResult
-    func apply(_ delta: ClientStateMiniDelta) throws
-        -> MenuBarSessionMiniLocalSnapshot?
-    {
-        let localSnapshot = try applyStateMiniDelta(delta)
-        return try menuSnapshot(from: localSnapshot)
-    }
-
-    @discardableResult
-    func replace(
-        latestSeq: Int64,
-        records: [MenuBarSessionMiniRecord],
-        serverTime: String? = nil
-    ) throws -> MenuBarSessionMiniLocalSnapshot? {
-        try replace(
-            with: ClientStateMiniSnapshot(
-                latestSeq: latestSeq,
-                sessions: records.map(ClientStateMini.init),
-                serverTime: serverTime ?? ""
-            )
-        )
-    }
-
     func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
         (try? sessionManager.localSnapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
@@ -234,29 +181,6 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
 
     public func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
         try localStore.cachedSnapshot()
-    }
-
-    @discardableResult
-    public func replace(with snapshot: ClientStateMiniSnapshot) throws
-        -> MenuBarSessionMiniLocalSnapshot?
-    {
-        try localStore.replace(with: snapshot)
-    }
-
-    @discardableResult
-    public func replace(
-        latestSeq: Int64,
-        records: [MenuBarSessionMiniRecord],
-        serverTime: String? = nil
-    ) throws -> MenuBarSessionMiniLocalSnapshot? {
-        try localStore.replace(latestSeq: latestSeq, records: records, serverTime: serverTime)
-    }
-
-    @discardableResult
-    public func apply(_ delta: ClientStateMiniDelta) throws
-        -> MenuBarSessionMiniLocalSnapshot?
-    {
-        try localStore.apply(delta)
     }
 
     public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
@@ -461,18 +385,6 @@ private extension MenuBarSessionMiniPendingCommand {
     }
 }
 
-private extension ClientStateMini {
-    init(_ record: MenuBarSessionMiniRecord) {
-        self.init(
-            sessionId: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            seq: record.seq,
-            revision: record.revision,
-            payloadJson: record.payloadJSON
-        )
-    }
-}
-
 private extension MenuBarSessionMiniLocalStore {
     func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
@@ -487,31 +399,6 @@ private extension MenuBarSessionMiniLocalStore {
         }
     }
 
-    @discardableResult
-    func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
-        -> ClientLocalStateSnapshot
-    {
-        try sessionManager.replaceStateMinis(
-            snapshot: snapshot
-        )
-    }
-
-    @discardableResult
-    func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
-        -> ClientLocalStateSnapshot
-    {
-        try sessionManager.applyStateMiniDelta(delta)
-    }
-}
-
-private extension ClientStateMiniSnapshot {
-    init(_ snapshot: ClientLocalStateSnapshot) {
-        self.init(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions,
-            serverTime: snapshot.serverTime
-        )
-    }
 }
 
 private extension String {

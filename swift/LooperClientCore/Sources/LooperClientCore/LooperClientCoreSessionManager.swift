@@ -58,16 +58,6 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
-    public func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws -> ClientLocalStateSnapshot {
-        try runtime.replaceStateMinis(snapshot: snapshot)
-    }
-
-    @discardableResult
-    public func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws -> ClientLocalStateSnapshot {
-        try runtime.applyStateMiniDelta(delta: delta)
-    }
-
-    @discardableResult
     public func setMode(
         threadID: String,
         preset: String

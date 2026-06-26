@@ -1,14 +1,6 @@
 import Foundation
 import LooperClientCore
 
-struct CompanionSessionMiniRecord: Equatable, Sendable {
-    let sessionID: String
-    let assistantSurface: String
-    let seq: Int64
-    let revision: String
-    let payloadJSON: String
-}
-
 struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let kind: ClientPendingCommandKind
     let clientMutationID: String
@@ -55,41 +47,6 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    @discardableResult
-    func replace(with snapshot: ClientStateMiniSnapshot) throws -> MobileSnapshot? {
-        let localSnapshot = try replaceStateMinis(with: snapshot)
-        return try mobileSnapshot(
-            latestSeq: localSnapshot.latestSeq,
-            sessions: localSnapshot.sessions,
-            serverTime: localSnapshot.serverTime
-        )
-    }
-
-    @discardableResult
-    func apply(_ delta: ClientStateMiniDelta) throws -> MobileSnapshot? {
-        let localSnapshot = try applyStateMiniDelta(delta)
-        return try mobileSnapshot(
-            latestSeq: localSnapshot.latestSeq,
-            sessions: localSnapshot.sessions,
-            serverTime: localSnapshot.serverTime
-        )
-    }
-
-    @discardableResult
-    func replace(
-        latestSeq: Int64,
-        records: [CompanionSessionMiniRecord],
-        serverTime: String? = nil
-    ) throws -> MobileSnapshot? {
-        try replace(
-            with: ClientStateMiniSnapshot(
-                latestSeq: latestSeq,
-                sessions: records.map(ClientStateMini.init),
-                serverTime: serverTime ?? ""
-            )
-        )
-    }
-
     func pendingCommands() -> [CompanionSessionMiniPendingCommand] {
         (try? sessionManager.localSnapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
@@ -102,25 +59,6 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             create: true
         )
         .appendingPathComponent(defaultFileName)
-    }
-
-    @discardableResult
-    private func persistValidated(_ snapshot: ClientStateSnapshot) throws
-        -> ClientLocalStateSnapshot
-    {
-        let sessions = snapshot.stateMinis
-        _ = try mobileSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: sessions,
-            serverTime: snapshot.serverTime.nilIfEmpty
-        )
-        return try sessionManager.replaceStateMinis(
-            snapshot: ClientStateMiniSnapshot(
-                latestSeq: snapshot.latestSeq,
-                sessions: sessions,
-                serverTime: snapshot.serverTime
-            )
-        )
     }
 
     private func mobileSnapshot(
@@ -222,29 +160,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         localStore.currentStateMiniSnapshot()
-    }
-
-    @discardableResult
-    func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws -> MobileSnapshot? {
-        try localStore.replace(with: snapshot)
-    }
-
-    @discardableResult
-    func replace(
-        latestSeq: Int64,
-        records: [CompanionSessionMiniRecord],
-        serverTime: String? = nil
-    ) throws -> MobileSnapshot? {
-        try localStore.replace(
-            latestSeq: latestSeq,
-            records: records,
-            serverTime: serverTime
-        )
-    }
-
-    @discardableResult
-    func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws -> MobileSnapshot? {
-        try localStore.apply(delta)
     }
 
     func enqueueNotificationReplyCommand(
@@ -447,18 +362,6 @@ private extension CompanionSessionMiniPendingCommand {
     }
 }
 
-private extension ClientStateMini {
-    init(_ record: CompanionSessionMiniRecord) {
-        self.init(
-            sessionId: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            seq: record.seq,
-            revision: record.revision,
-            payloadJson: record.payloadJSON
-        )
-    }
-}
-
 extension CompanionSessionMiniLocalStore {
     func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
@@ -474,39 +377,6 @@ extension CompanionSessionMiniLocalStore {
                 serverTime: ""
             )
         }
-    }
-
-    @discardableResult
-    func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
-        -> ClientLocalStateSnapshot
-    {
-        try sessionManager.replaceStateMinis(
-            snapshot: snapshot
-        )
-    }
-
-    @discardableResult
-    func replaceStateMinis(with snapshot: ClientStateSnapshot) throws
-        -> ClientLocalStateSnapshot
-    {
-        try persistValidated(snapshot)
-    }
-
-    @discardableResult
-    func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
-        -> ClientLocalStateSnapshot
-    {
-        try sessionManager.applyStateMiniDelta(delta)
-    }
-}
-
-private extension ClientStateMiniSnapshot {
-    init(_ snapshot: ClientLocalStateSnapshot) {
-        self.init(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions,
-            serverTime: snapshot.serverTime
-        )
     }
 }
 

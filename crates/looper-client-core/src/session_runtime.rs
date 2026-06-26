@@ -13,9 +13,8 @@ use crate::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
         ClientNotificationReplyIntentResult, ClientNotificationReplyPersistResult,
-        ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateMiniDelta,
-        ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
-        ClientStateSnapshot,
+        ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateMiniSnapshot,
+        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
 };
 
@@ -111,25 +110,6 @@ impl LooperClientCoreSessionRuntime {
 
     pub fn local_snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         self.local_store.snapshot()
-    }
-
-    pub fn replace_state_minis(
-        &self,
-        snapshot: ClientStateMiniSnapshot,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        let snapshot = self.client_core.replace_state_minis(snapshot)?;
-        self.persist_core_snapshot(&snapshot)
-    }
-
-    pub fn apply_state_mini_delta(
-        &self,
-        delta: ClientStateMiniDelta,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        let result = self.client_core.apply_state_mini_delta_with_result(delta)?;
-        if result.did_change {
-            return self.persist_core_snapshot(&result.snapshot);
-        }
-        self.local_snapshot_from_core_snapshot(&result.snapshot)
     }
 
     pub async fn set_mode(
@@ -324,19 +304,6 @@ impl LooperClientCoreSessionRuntime {
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         self.local_store
             .replace_state_minis(ClientStateMiniSnapshot::from(snapshot.clone()))
-    }
-
-    fn local_snapshot_from_core_snapshot(
-        &self,
-        snapshot: &ClientStateSnapshot,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        let durable_snapshot = self.local_store.snapshot()?;
-        Ok(ClientLocalStateSnapshot {
-            latest_seq: snapshot.latest_seq,
-            sessions: snapshot.state_minis.clone(),
-            pending_commands: durable_snapshot.pending_commands,
-            server_time: snapshot.server_time.clone(),
-        })
     }
 
     fn local_state_stream_update(
@@ -603,8 +570,9 @@ mod tests {
         let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
         let runtime =
             LooperClientCoreSessionRuntime::new(temp_store_path("mode-paint")).expect("runtime");
-        runtime
-            .replace_state_minis(ClientStateMiniSnapshot {
+        seed_runtime_state_minis(
+            &runtime,
+            ClientStateMiniSnapshot {
                 latest_seq: 7,
                 sessions: vec![ClientStateMini {
                     session_id: "thread-main".to_owned(),
@@ -614,8 +582,8 @@ mod tests {
                     payload_json: r#"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#.to_owned(),
                 }],
                 server_time: "2026-06-25T00:00:00Z".to_owned(),
-            })
-            .expect("seed minis");
+            },
+        );
 
         let error = test_runtime
             .block_on(runtime.set_mode("thread-main".to_owned(), "max-turns-2".to_owned()))
@@ -666,12 +634,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_replaces_state_minis_in_core_and_durable_store() {
+    fn runtime_seeds_state_minis_from_durable_store() {
         let runtime =
             LooperClientCoreSessionRuntime::new(temp_store_path("state-mini")).expect("runtime");
 
-        let snapshot = runtime
-            .replace_state_minis(ClientStateMiniSnapshot {
+        let snapshot = seed_runtime_state_minis(
+            &runtime,
+            ClientStateMiniSnapshot {
                 latest_seq: 7,
                 sessions: vec![ClientStateMini {
                     session_id: "thread-main".to_owned(),
@@ -681,8 +650,8 @@ mod tests {
                     payload_json: r#"{"title":"Ready"}"#.to_owned(),
                 }],
                 server_time: "2026-06-26T00:00:00Z".to_owned(),
-            })
-            .expect("replace");
+            },
+        );
 
         assert_eq!(snapshot.latest_seq, 7);
         assert_eq!(snapshot.sessions.len(), 1);
@@ -828,6 +797,20 @@ mod tests {
             update.debug_message,
             "session-mini:client-core-stream-recovery-waiting error=seq_gap"
         );
+    }
+
+    fn seed_runtime_state_minis(
+        runtime: &LooperClientCoreSessionRuntime,
+        snapshot: ClientStateMiniSnapshot,
+    ) -> ClientLocalStateSnapshot {
+        let local_snapshot = runtime
+            .local_store
+            .replace_state_minis(snapshot)
+            .expect("seed local state minis");
+        runtime
+            .seed_core_from_local_store()
+            .expect("seed core from local state minis");
+        local_snapshot
     }
 
     fn temp_store_path(name: &str) -> String {

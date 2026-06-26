@@ -8,8 +8,7 @@ import Testing
 struct MenuBarSessionMiniLocalFirstTests {
     @Test("restores cached SessionMini rows before network")
     func testRestoresCachedSessionMinisBeforeNetwork() throws {
-        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        try runtime.replace(latestSeq: 200, records: [
+        let runtime = try seededRuntime(latestSeq: 200, records: [
             miniRecord(
                 id: "thread-active",
                 title: "Ship local-first menu",
@@ -52,8 +51,7 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("SessionMini status drives menu bar human status")
     func testSessionMiniStatusDrivesHumanStatus() throws {
-        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        try runtime.replace(latestSeq: 201, records: [
+        let runtime = try seededRuntime(latestSeq: 201, records: [
             miniRecord(
                 id: "thread-blocked",
                 title: "Blocked task",
@@ -80,8 +78,7 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("SessionMini status reports realtime when unblocked")
     func testSessionMiniStatusReportsRealtimeWhenUnblocked() throws {
-        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        try runtime.replace(latestSeq: 202, records: [
+        let runtime = try seededRuntime(latestSeq: 202, records: [
             miniRecord(
                 id: "thread-ready",
                 title: "Ready task",
@@ -257,6 +254,42 @@ struct MenuBarSessionMiniLocalFirstTests {
             .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
     }
 
+    private func seededRuntime(
+        latestSeq: Int64,
+        records: [TestMenuMiniFixture]
+    ) throws -> MenuBarSessionRuntime {
+        let fileURL = temporaryStoreFileURL()
+        try seedMiniCache(at: fileURL, latestSeq: latestSeq, records: records)
+        return try MenuBarSessionRuntime(fileURL: fileURL)
+    }
+
+    private func seedMiniCache(
+        at fileURL: URL,
+        latestSeq: Int64,
+        records: [TestMenuMiniFixture]
+    ) throws {
+        let payload: [String: Any] = [
+            "latestSeq": latestSeq,
+            "sessions": records.map { record in
+                [
+                    "sessionId": record.sessionID,
+                    "assistantSurface": record.assistantSurface,
+                    "seq": record.seq,
+                    "revision": record.revision,
+                    "payloadJson": record.payloadJSON,
+                ]
+            },
+            "pendingCommands": [],
+            "serverTime": "",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: .atomic)
+    }
+
     private func miniRecord(
         id: String,
         title: String,
@@ -267,7 +300,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         archived: Bool = false,
         notificationTargetIds: [String],
         lastActivityAtMs: Int64
-    ) throws -> MenuBarSessionMiniRecord {
+    ) throws -> TestMenuMiniFixture {
         let payload = TestMiniPayload(
             id: id,
             sessionId: id,
@@ -304,7 +337,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         )
         let data = try JSONEncoder().encode(payload)
         let payloadJSON = String(decoding: data, as: UTF8.self)
-        return MenuBarSessionMiniRecord(
+        return TestMenuMiniFixture(
             sessionID: id,
             assistantSurface: "codex",
             seq: lastActivityAtMs,
@@ -374,6 +407,14 @@ struct MenuBarSessionMiniLocalFirstTests {
         )
         try data.write(to: fileURL, options: .atomic)
     }
+}
+
+private struct TestMenuMiniFixture: Equatable, Sendable {
+    let sessionID: String
+    let assistantSurface: String
+    let seq: Int64
+    let revision: String
+    let payloadJSON: String
 }
 
 private struct TestMiniPayload: Encodable {

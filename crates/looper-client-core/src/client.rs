@@ -12,19 +12,23 @@ use crate::error::ClientCoreError;
 use crate::local_store::LooperClientCoreLocalStore;
 #[cfg(test)]
 use crate::model::ClientStateDelta;
+#[cfg(test)]
+use crate::model::ClientStateMiniDeltaApplyResult;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
     ClientEndpoint, ClientLocalStateSnapshot, ClientPendingMutation, ClientStateMini,
-    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
-    ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
+    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind,
 };
 #[cfg(test)]
 use crate::session_transport::fetch_state_mini_snapshot;
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
+#[cfg(test)]
+use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
     latest_state_mini_revision, normalize_state_minis, require_valid_sequence, same_state_mini_key,
-    sort_state_minis, validate_state_mini_delta, validate_state_minis,
+    sort_state_minis, validate_state_minis,
 };
 use crate::transport::validate_endpoint_url;
 
@@ -281,6 +285,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_state_mini_delta_with_result(
         &self,
         delta: ClientStateMiniDelta,

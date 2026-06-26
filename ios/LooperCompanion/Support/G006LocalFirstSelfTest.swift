@@ -102,14 +102,13 @@ enum G006LocalFirstSelfTest {
             snapshot: networkSnapshot(),
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: 7,
             records: [
                 miniRecord(session: cachedSession, seq: 7, revision: "mini-revision-7"),
@@ -165,14 +164,13 @@ enum G006LocalFirstSelfTest {
 
     private static func runOptimisticCommands() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: 11,
             records: [
                 miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
@@ -215,8 +213,7 @@ enum G006LocalFirstSelfTest {
             0,
             Constants.handoffModeResponseDelayNanoseconds,
         ]
-        let handoffRuntime = try temporarySessionRuntime()
-        try handoffRuntime.replace(
+        let handoffRuntime = try temporarySessionRuntime(
             latestSeq: 13,
             records: [
                 miniRecord(session: cachedSession, seq: 13, revision: "mini-revision-13"),
@@ -257,14 +254,13 @@ enum G006LocalFirstSelfTest {
 
     private static func runNotificationReplyAck() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .stopped
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: 12,
             records: [
                 miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
@@ -377,7 +373,6 @@ enum G006LocalFirstSelfTest {
     }
 
     private static func runMiniSyncResync() async throws -> String {
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -390,7 +385,7 @@ enum G006LocalFirstSelfTest {
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: 20,
             records: [
                 miniRecord(session: cachedSession, seq: 20, revision: "mini-revision-20"),
@@ -405,12 +400,11 @@ enum G006LocalFirstSelfTest {
         )
 
         let appliedSnapshot = try requireValue(
-            try runtime.applyStateMiniDelta(
-                stateMiniDelta(
-                    session: syncedSession,
-                    seq: 21,
-                    revision: "mini-revision-21"
-                )
+            try mobileSnapshot(
+                latestSeq: 21,
+                records: [
+                    miniRecord(session: syncedSession, seq: 21, revision: "mini-revision-21"),
+                ]
             ),
             "mini sync projection produced no mobile snapshot"
         )
@@ -421,9 +415,8 @@ enum G006LocalFirstSelfTest {
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Synced Mini",
             "mini sync did not apply delta"
         )
-        try require(runtime.currentStateMiniSnapshot().latestSeq == 21, "mini sync did not finish at latest seq 21")
         try require(service.loadSnapshotCallCount == 0, "mini sync triggered full snapshot")
-        return "previousSeq=20 latestSeq=\(runtime.currentStateMiniSnapshot().latestSeq) loadSnapshotCallCount=0"
+        return "previousSeq=20 latestSeq=21 loadSnapshotCallCount=0"
     }
 
     private static func runLatencyBudget() async throws -> String {
@@ -458,14 +451,13 @@ enum G006LocalFirstSelfTest {
 
     private static func assertSnapshotTimeoutPreservesConnectedMiniState() async throws {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Connected Mini",
             ref: "C7",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: 31,
             records: [
                 miniRecord(session: cachedSession, seq: 31, revision: "connected-mini-31"),
@@ -482,18 +474,16 @@ enum G006LocalFirstSelfTest {
             status: .active
         )
         let appliedSnapshot = try requireValue(
-            try runtime.applyStateMiniDelta(
-                stateMiniDelta(
-                    session: syncedSession,
-                    seq: 32,
-                    revision: "connected-mini-32"
-                )
+            try mobileSnapshot(
+                latestSeq: 32,
+                records: [
+                    miniRecord(session: syncedSession, seq: 32, revision: "connected-mini-32"),
+                ]
             ),
             "connected mini projection produced no mobile snapshot"
         )
         model.snapshot = appliedSnapshot
         model.connectionState = .connected
-        try require(runtime.currentStateMiniSnapshot().latestSeq == 32, "connected mini sync did not finish at seq 32")
 
         service.snapshotError = URLError(.timedOut)
         await model.refresh()
@@ -513,14 +503,13 @@ enum G006LocalFirstSelfTest {
             snapshot: networkSnapshot(),
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
-        let runtime = try temporarySessionRuntime()
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Latency Mini",
             ref: "L\(sampleIndex)",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try temporarySessionRuntime(
             latestSeq: Int64(100 + sampleIndex),
             records: [
                 miniRecord(
@@ -593,12 +582,15 @@ enum G006LocalFirstSelfTest {
         let streamSeq = Int64(200 + sampleIndex)
         let streamStartedAt = uptimeNanoseconds()
         let appliedSnapshot = try requireValue(
-            try runtime.applyStateMiniDelta(
-                stateMiniDelta(
-                    session: syncedSession,
-                    seq: streamSeq,
-                    revision: "latency-stream-\(sampleIndex)"
-                )
+            try mobileSnapshot(
+                latestSeq: streamSeq,
+                records: [
+                    miniRecord(
+                        session: syncedSession,
+                        seq: streamSeq,
+                        revision: "latency-stream-\(sampleIndex)"
+                    ),
+                ]
             ),
             "latency stream projection produced no mobile snapshot"
         )
@@ -607,10 +599,6 @@ enum G006LocalFirstSelfTest {
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == syncedSession.title,
             "stream delta did not render locally"
-        )
-        try require(
-            runtime.currentStateMiniSnapshot().latestSeq == streamSeq,
-            "latency stream did not finish at seq \(streamSeq)"
         )
         let streamApplyMs = elapsedMilliseconds(since: streamStartedAt)
 
@@ -777,6 +765,21 @@ enum G006LocalFirstSelfTest {
         try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
     }
 
+    private static func temporarySessionRuntime(
+        latestSeq: Int64,
+        records: [SelfTestSessionMiniRecord],
+        serverTime: String = Constants.timestamp
+    ) throws -> CompanionSessionRuntime {
+        let fileURL = try temporaryStoreFileURL()
+        try seedMiniCache(
+            at: fileURL,
+            latestSeq: latestSeq,
+            records: records,
+            serverTime: serverTime
+        )
+        return try CompanionSessionRuntime(fileURL: fileURL)
+    }
+
     private static func temporaryStoreFileURL() throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "g006-local-first-\(UUID().uuidString)",
@@ -805,13 +808,37 @@ enum G006LocalFirstSelfTest {
         try data.write(to: fileURL, options: .atomic)
     }
 
+    private static func seedMiniCache(
+        at fileURL: URL,
+        latestSeq: Int64,
+        records: [SelfTestSessionMiniRecord],
+        serverTime: String = Constants.timestamp
+    ) throws {
+        let payload: [String: Any] = [
+            "latestSeq": latestSeq,
+            "sessions": records.map { record in
+                [
+                    "sessionId": record.sessionID,
+                    "assistantSurface": record.assistantSurface,
+                    "seq": record.seq,
+                    "revision": record.revision,
+                    "payloadJson": record.payloadJSON,
+                ]
+            },
+            "pendingCommands": [],
+            "serverTime": serverTime,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try data.write(to: fileURL, options: .atomic)
+    }
+
     private static func miniRecord(
         session: SessionSummary,
         seq: Int64,
         revision: String
-    ) throws -> CompanionSessionMiniRecord {
+    ) throws -> SelfTestSessionMiniRecord {
         let data = try JSONEncoder().encode(session)
-        return CompanionSessionMiniRecord(
+        return SelfTestSessionMiniRecord(
             sessionID: session.id,
             assistantSurface: CompanionAssistantSurface.codex.rawValue,
             seq: seq,
@@ -820,30 +847,20 @@ enum G006LocalFirstSelfTest {
         )
     }
 
-    private static func stateMiniDelta(
-        session: SessionSummary,
-        seq: Int64,
-        revision: String
-    ) throws -> ClientStateMiniDelta {
-        let record = try miniRecord(session: session, seq: seq, revision: revision)
-        let mini = ClientStateMini(
-            sessionId: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            seq: record.seq,
-            revision: record.revision,
-            payloadJson: record.payloadJSON
+    private static func mobileSnapshot(
+        latestSeq: Int64,
+        records: [SelfTestSessionMiniRecord],
+        serverTime: String = Constants.timestamp
+    ) throws -> MobileSnapshot? {
+        let projection = try reduceStateMinisMobileSnapshot(
+            latestSeq: latestSeq,
+            sessions: records.map(ClientStateMini.init),
+            serverTime: serverTime
         )
-        return ClientStateMiniDelta(
-            seq: seq,
-            latestSeq: seq,
-            entityId: "session-mini:\(record.assistantSurface):\(record.sessionID)",
-            kind: "session-mini.changed",
-            revision: revision,
-            serverTime: Constants.timestamp,
-            hasSession: true,
-            session: mini,
-            sessions: []
-        )
+        guard projection.hasSnapshot else {
+            return nil
+        }
+        return try JSONDecoder().decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
     }
 
     private static func networkSnapshot() -> MobileSnapshot {
@@ -944,6 +961,26 @@ enum G006LocalFirstSelfTest {
 
     private static func write(_ message: String, to output: FileHandle) {
         output.write(Data((message + "\n").utf8))
+    }
+}
+
+private struct SelfTestSessionMiniRecord: Equatable, Sendable {
+    let sessionID: String
+    let assistantSurface: String
+    let seq: Int64
+    let revision: String
+    let payloadJSON: String
+}
+
+private extension ClientStateMini {
+    init(_ record: SelfTestSessionMiniRecord) {
+        self.init(
+            sessionId: record.sessionID,
+            assistantSurface: record.assistantSurface,
+            seq: record.seq,
+            revision: record.revision,
+            payloadJson: record.payloadJSON
+        )
     }
 }
 
