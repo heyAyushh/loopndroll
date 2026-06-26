@@ -80,8 +80,8 @@ struct LooperApp: App {
                 .onAppear {
                     drainPendingOpenRequests()
                 }
-                .task(id: realtimeLifecycleTaskID) {
-                    applyRealtimeLifecycle()
+                .task(id: sessionRuntimeLifecycleTaskID) {
+                    applySessionRuntimeLifecycle()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else {
@@ -97,7 +97,7 @@ struct LooperApp: App {
         CompanionAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
     }
 
-    private var realtimeLifecycleTaskID: String {
+    private var sessionRuntimeLifecycleTaskID: String {
         "\(scenePhase)-\(authenticator.isUnlocked)"
     }
 
@@ -179,12 +179,12 @@ struct LooperApp: App {
         }
     }
 
-    private func applyRealtimeLifecycle() {
+    private func applySessionRuntimeLifecycle() {
         guard scenePhase == .active, authenticator.isUnlocked else {
-            model.stopRealtimeSessionSync()
+            model.stopSessionRuntimeSync()
             return
         }
 
-        model.startRealtimeSessionSyncIfNeeded()
+        model.startSessionRuntimeSyncIfNeeded()
     }
 }

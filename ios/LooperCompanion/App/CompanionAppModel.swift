@@ -52,8 +52,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
-    @ObservationIgnored private var lastAppliedRealtimeRevision: String?
-    @ObservationIgnored private var hasValidatedCurrentSnapshotWithHTTP = false
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
@@ -206,9 +204,9 @@ final class CompanionAppModel {
         configureStopQuickActions()
         await refreshLocalNotificationStatus()
         if !didResetConnectionForActiveState {
-            prepareRealtimeConnectionInBackground()
+            prepareSessionRuntimeInBackground()
         }
-        startRealtimeSessionSyncIfNeeded()
+        startSessionRuntimeSyncIfNeeded()
         startNotificationReplyOutboxDrainIfNeeded()
 
         CompanionDiagnostics.record("snapshot:load-skip-state-mini-prepare")
@@ -219,11 +217,11 @@ final class CompanionAppModel {
         CompanionConfiguration.resolvedConnectionFingerprint() != activeServiceConnectionFingerprint
     }
 
-    func stopRealtimeSessionSync() {
+    func stopSessionRuntimeSync() {
         sessionMiniController.stopSync()
     }
 
-    func startRealtimeSessionSyncIfNeeded() {
+    func startSessionRuntimeSyncIfNeeded() {
         sessionMiniController.startSyncIfNeeded(
             service: service,
             connectionRevision: connectionRevision
@@ -252,10 +250,10 @@ final class CompanionAppModel {
         )
     }
 
-    private func prepareRealtimeConnectionInBackground() {
+    private func prepareSessionRuntimeInBackground() {
         let service = service
         Task.detached(priority: .userInitiated) {
-            await service.prepareRealtimeConnection()
+            await service.prepareSessionRuntime()
         }
     }
 
@@ -288,12 +286,12 @@ final class CompanionAppModel {
     }
 
     private func reloadConnection() async {
-        let shouldRestartEventStream = await resetConnectionStateForStoredConnection(
+        let shouldRestartSessionRuntimeSync = await resetConnectionStateForStoredConnection(
             clearsSnapshotCache: true,
             cachedSnapshotRestoreReason: nil
         )
-        if shouldRestartEventStream {
-            startRealtimeSessionSyncIfNeeded()
+        if shouldRestartSessionRuntimeSync {
+            startSessionRuntimeSyncIfNeeded()
         }
         await loadSnapshot(allowsConcurrentConnectionReload: true)
     }
@@ -303,15 +301,13 @@ final class CompanionAppModel {
         clearsSnapshotCache: Bool,
         cachedSnapshotRestoreReason: String?
     ) async -> Bool {
-        let shouldRestartEventStream = sessionMiniController.isSyncing
+        let shouldRestartSessionRuntimeSync = sessionMiniController.isSyncing
         connectionRevision += 1
         snapshotLoads.cancelCachedSnapshotRestore()
         snapshotLoads.cancelSnapshotLoad()
-        stopRealtimeSessionSync()
+        stopSessionRuntimeSync()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         stopNotificationReplyOutboxDrain()
-        lastAppliedRealtimeRevision = nil
-        hasValidatedCurrentSnapshotWithHTTP = false
         serverHealth = nil
         reachedBaseURL = nil
         snapshotState.clearDetails()
@@ -330,8 +326,8 @@ final class CompanionAppModel {
         } else {
             resetSnapshotState(cachedSnapshotRestoreReason: nil)
         }
-        prepareRealtimeConnectionInBackground()
-        return shouldRestartEventStream
+        prepareSessionRuntimeInBackground()
+        return shouldRestartSessionRuntimeSync
     }
 
     private func resetSnapshotState(cachedSnapshotRestoreReason: String?) {
@@ -511,8 +507,8 @@ final class CompanionAppModel {
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = liveEnvironmentFromSessionCore().service
-        prepareRealtimeConnectionInBackground()
-        restartRealtimeSessionSyncIfActive()
+        prepareSessionRuntimeInBackground()
+        restartSessionRuntimeSyncIfActive()
         CompanionDiagnostics.record(
             "health:base-urls-adopted count=\(nextBaseURLs.count) primary=\(configuredBaseURL)"
         )
@@ -735,12 +731,12 @@ final class CompanionAppModel {
             ),
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
-        let shouldRestartEventStream = await resetConnectionStateForStoredConnection(
+        let shouldRestartSessionRuntimeSync = await resetConnectionStateForStoredConnection(
             clearsSnapshotCache: false,
             cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.handoffConnectionChange
         )
-        if shouldRestartEventStream {
-            startRealtimeSessionSyncIfNeeded()
+        if shouldRestartSessionRuntimeSync {
+            startSessionRuntimeSyncIfNeeded()
         }
         CompanionDiagnostics.lifecycle.info(
             "Handoff adopted baseURL=\(handoffBaseURL.absoluteString, privacy: .public)"
@@ -748,13 +744,13 @@ final class CompanionAppModel {
         CompanionDiagnostics.record("handoff:base-url-adopted baseURL=\(handoffBaseURL.absoluteString)")
     }
 
-    private func restartRealtimeSessionSyncIfActive() {
+    private func restartSessionRuntimeSyncIfActive() {
         guard sessionMiniController.isSyncing else {
             return
         }
 
-        stopRealtimeSessionSync()
-        startRealtimeSessionSyncIfNeeded()
+        stopSessionRuntimeSync()
+        startSessionRuntimeSyncIfNeeded()
     }
 
     func loadSessionDetail(id: String) async {
@@ -1501,8 +1497,6 @@ final class CompanionAppModel {
         )
         lastUpdatedAt = Date()
         clearSpotlightIndexForCachedSnapshot()
-        lastAppliedRealtimeRevision = Self.normalizedRevision(visibleSnapshot.revision)
-        hasValidatedCurrentSnapshotWithHTTP = false
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1514,9 +1508,6 @@ final class CompanionAppModel {
         connectionState = .connected
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
-        lastAppliedRealtimeRevision = Self.normalizedRevision(visibleSnapshot.revision)
-        hasValidatedCurrentSnapshotWithHTTP = true
-
         syncSpotlightIndex(with: snapshotState.allSessions)
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
@@ -1685,13 +1676,6 @@ final class CompanionAppModel {
         }
     }
 
-    private static func normalizedRevision(_ revision: String?) -> String? {
-        let trimmedRevision = revision?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let trimmedRevision, !trimmedRevision.isEmpty else {
-            return nil
-        }
-        return trimmedRevision
-    }
 }
 
 extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {

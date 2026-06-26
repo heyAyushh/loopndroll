@@ -258,7 +258,7 @@ actor MockCompanionStore {
 struct MockCompanionService: CompanionService {
     private let store = MockCompanionStore()
 
-    func prepareRealtimeConnection() async {}
+    func prepareSessionRuntime() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(

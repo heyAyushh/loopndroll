@@ -102,12 +102,12 @@ struct HTTPCompanionService: CompanionService {
         self.sessionManager = sessionManager ?? sessionMiniLocalStore?.sessionManager
     }
 
-    func prepareRealtimeConnection() async {
+    func prepareSessionRuntime() async {
         do {
             try await startSessionRuntime()
-            CompanionDiagnostics.record("realtime:warm-success")
+            CompanionDiagnostics.record("session-runtime:warm-success")
         } catch {
-            CompanionDiagnostics.record("realtime:warm-failed error=\(error.localizedDescription)")
+            CompanionDiagnostics.record("session-runtime:warm-failed error=\(error.localizedDescription)")
         }
     }
 
@@ -267,7 +267,7 @@ struct HTTPCompanionService: CompanionService {
             try await startSessionRuntime()
         } catch {
             CompanionDiagnostics.record(
-                "realtime:configure-failed error=\(error.localizedDescription)"
+                "session-runtime:configure-failed error=\(error.localizedDescription)"
             )
         }
     }

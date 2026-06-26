@@ -973,7 +973,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         self.responseDelayNanoseconds = responseDelayNanoseconds
     }
 
-    func prepareRealtimeConnection() async {}
+    func prepareSessionRuntime() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(

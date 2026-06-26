@@ -428,7 +428,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         self.snapshot = snapshot
     }
 
-    func prepareRealtimeConnection() async {}
+    func prepareSessionRuntime() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(

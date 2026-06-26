@@ -451,7 +451,7 @@ private enum SnapshotOnlyCompanionServiceError: Error {
 private struct SnapshotOnlyCompanionService: CompanionService {
     let snapshot: MobileSnapshot
 
-    func prepareRealtimeConnection() async {}
+    func prepareSessionRuntime() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(

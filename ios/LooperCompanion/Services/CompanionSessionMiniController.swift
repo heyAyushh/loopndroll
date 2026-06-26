@@ -32,7 +32,7 @@ final class CompanionSessionMiniController {
         }
 
         syncTask = Task { @MainActor in
-            await service.prepareRealtimeConnection()
+            await service.prepareSessionRuntime()
             await localStore.runClientCoreStateMiniSync(
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)

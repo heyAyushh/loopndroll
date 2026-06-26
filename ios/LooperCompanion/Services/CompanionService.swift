@@ -58,7 +58,7 @@ struct CompanionSessionModeResult: Sendable {
 }
 
 protocol CompanionService: Sendable {
-    func prepareRealtimeConnection() async
+    func prepareSessionRuntime() async
     func loadServerHealth() async throws -> CompanionServerHealth
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth
     func loadSnapshot() async throws -> MobileSnapshot

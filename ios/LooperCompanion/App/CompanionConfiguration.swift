@@ -623,7 +623,7 @@ struct UnconfiguredCompanionService: CompanionService {
         self.error = error
     }
 
-    func prepareRealtimeConnection() async {}
+    func prepareSessionRuntime() async {}
 
     func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
