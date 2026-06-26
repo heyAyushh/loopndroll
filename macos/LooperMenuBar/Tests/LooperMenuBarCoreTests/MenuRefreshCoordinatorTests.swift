@@ -116,8 +116,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.error == nil)
     }
 
-    @Test("snapshot failure returns unavailable result")
-    func snapshotFailureReturnsUnavailableResult() async {
+    @Test("snapshot failure keeps enrichment fetches independent")
+    func snapshotFailureKeepsEnrichmentFetchesIndependent() async {
         let client = MenuRefreshRecordingClient(
             snapshotResult: .failure(ControlPlaneClientError.timeout)
         )
@@ -127,13 +127,17 @@ struct MenuRefreshCoordinatorTests {
 
         #expect(!result.succeeded)
         #expect(result.snapshot == nil)
-        #expect(result.mobileHealth == nil)
+        #expect(result.mobileHealth != nil)
+        #expect(result.mobileState != nil)
+        #expect(result.pushDevices != nil)
+        #expect(result.connections != nil)
+        #expect(result.acpClientHosts != nil)
         #expect(result.error?.message.contains("timeout") == true)
-        #expect(client.connectionCalls == 0)
-        #expect(client.acpHostCalls == 0)
-        #expect(client.mobileStateCalls == 0)
-        #expect(client.pushDeviceCalls == 0)
-        #expect(client.healthCalls == 0)
+        #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
+        #expect(client.healthCalls == 1)
     }
 
     @Test("failed refresh replaces prior success cache during reuse window")

@@ -185,7 +185,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: nil
       )
     } else {
-      updateMobileState(nil, pushDevices: nil, health: nil)
+      updateMobileState(
+        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
       replaceMenu(
@@ -225,7 +226,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         snapshot: snapshot
       )
     } else {
-      updateMobileState(nil, pushDevices: nil, health: nil)
+      updateMobileState(
+        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       if latestSessionMiniSnapshot == nil {
         continuationPublisher.publishFallbackIfIdle(
           LooperContinuationActivityBuilder.genericDescriptor())
@@ -1575,7 +1577,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: nil
       )
     } else {
-      updateMobileState(nil, pushDevices: nil, health: nil)
+      updateMobileState(
+        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       replaceMenu(snapshot: nil, connections: nil, acpClientHosts: nil, error: result.error)
     }
     diagnosticsWindowController.show(

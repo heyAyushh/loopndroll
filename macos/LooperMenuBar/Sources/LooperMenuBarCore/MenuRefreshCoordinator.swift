@@ -101,13 +101,15 @@ public actor MenuRefreshCoordinator {
     }
 
     private static func fetch(client: any ControlPlaneClient) async -> MenuRefreshResult {
-        switch await fetchSnapshot(client: client) {
+        async let snapshotResult = fetchSnapshot(client: client)
+        async let connections = fetchDesktopConnections(client: client)
+        async let acpClientHosts = fetchAcpClientHosts(client: client)
+        async let mobileState = fetchDesktopMobileState(client: client)
+        async let pushDevices = fetchDesktopPushDevices(client: client)
+        async let health = fetchMobileHealth(client: client)
+
+        switch await snapshotResult {
         case let .success(snapshot):
-            async let connections = fetchDesktopConnections(client: client)
-            async let acpClientHosts = fetchAcpClientHosts(client: client)
-            async let mobileState = fetchDesktopMobileState(client: client)
-            async let pushDevices = fetchDesktopPushDevices(client: client)
-            async let health = fetchMobileHealth(client: client)
             return MenuRefreshResult(
                 snapshot: snapshot,
                 connections: await connections,
@@ -120,11 +122,11 @@ public actor MenuRefreshCoordinator {
         case let .failure(error):
             return MenuRefreshResult(
                 snapshot: nil,
-                connections: nil,
-                acpClientHosts: nil,
-                mobileState: nil,
-                pushDevices: nil,
-                mobileHealth: nil,
+                connections: await connections,
+                acpClientHosts: await acpClientHosts,
+                mobileState: await mobileState,
+                pushDevices: await pushDevices,
+                mobileHealth: await health,
                 error: error
             )
         }
