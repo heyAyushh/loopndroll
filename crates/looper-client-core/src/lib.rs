@@ -21,16 +21,17 @@ pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mob
 pub use model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
     ClientCommandMetadata, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
-    ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
+    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind,
 };
 pub use mutation_queue::{
     ClientModeMutation, ClientModeMutationBatchFinish, ClientModeMutationDrainFinish,
     ClientModeMutationEnqueueResult, ClientModeMutationOption, ClientModeMutationQueue,
 };
 pub use snapshot_reducer::{
-    ClientDetailCacheProjection, ClientDetailModeProjection, ClientOptimisticModeProjection,
-    ClientSnapshotProjection, reduce_mobile_snapshot_detail_cache,
-    reduce_mobile_snapshot_optimistic_mode, reduce_mobile_snapshot_projection,
-    reduce_session_detail_optimistic_mode,
+    ClientAssistantSurfaceSelection, ClientDetailCacheProjection, ClientDetailModeProjection,
+    ClientOptimisticModeProjection, ClientSnapshotProjection, reduce_assistant_surface_selection,
+    reduce_mobile_snapshot_detail_cache, reduce_mobile_snapshot_optimistic_mode,
+    reduce_mobile_snapshot_projection, reduce_session_detail_optimistic_mode,
 };

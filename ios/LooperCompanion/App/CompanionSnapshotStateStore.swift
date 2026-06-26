@@ -84,13 +84,23 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Bool {
-        guard selectedAssistantSurface != surface else {
+        let selection = SnapshotReducerCodec.projectAssistantSurfaceSelection(
+            currentSelectedSurface: selectedAssistantSurface,
+            requestedSurface: surface,
+            hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface
+        )
+        guard selection.didChange else {
             return false
         }
 
-        hasUserSelectedAssistantSurface = true
-        pendingAssistantSurfaceSave = surface
-        applyVisibleAssistantSurface(surface)
+        let selectedSurface = SnapshotReducerCodec.assistantSurface(
+            from: selection.selectedAssistantSurface
+        )
+        hasUserSelectedAssistantSurface = selection.hasUserSelectedAssistantSurface
+        pendingAssistantSurfaceSave = selection.hasPendingAssistantSurfaceSave
+            ? SnapshotReducerCodec.assistantSurface(from: selection.pendingAssistantSurface)
+            : nil
+        applyVisibleAssistantSurface(selectedSurface)
         return true
     }
 
@@ -320,6 +330,18 @@ private enum SnapshotReducerCodec {
         } catch {
             invariantFailure("Detail optimistic mode reducer failed", error: error)
         }
+    }
+
+    static func projectAssistantSurfaceSelection(
+        currentSelectedSurface: CompanionAssistantSurface,
+        requestedSurface: CompanionAssistantSurface,
+        hasUserSelectedAssistantSurface: Bool
+    ) -> ClientAssistantSurfaceSelection {
+        reduceAssistantSurfaceSelection(
+            currentSelectedAssistantSurface: currentSelectedSurface.rawValue,
+            requestedAssistantSurface: requestedSurface.rawValue,
+            hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface
+        )
     }
 
     static func assistantSurface(from rawValue: String) -> CompanionAssistantSurface {

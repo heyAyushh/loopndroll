@@ -1017,6 +1017,72 @@ public func FfiConverterTypeLooperClientCore_lower(_ value: LooperClientCore) ->
 
 
 
+public struct ClientAssistantSurfaceSelection: Equatable, Hashable {
+    public var didChange: Bool
+    public var hasUserSelectedAssistantSurface: Bool
+    public var selectedAssistantSurface: String
+    public var hasPendingAssistantSurfaceSave: Bool
+    public var pendingAssistantSurface: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(didChange: Bool, hasUserSelectedAssistantSurface: Bool, selectedAssistantSurface: String, hasPendingAssistantSurfaceSave: Bool, pendingAssistantSurface: String) {
+        self.didChange = didChange
+        self.hasUserSelectedAssistantSurface = hasUserSelectedAssistantSurface
+        self.selectedAssistantSurface = selectedAssistantSurface
+        self.hasPendingAssistantSurfaceSave = hasPendingAssistantSurfaceSave
+        self.pendingAssistantSurface = pendingAssistantSurface
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientAssistantSurfaceSelection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientAssistantSurfaceSelection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientAssistantSurfaceSelection {
+        return
+            try ClientAssistantSurfaceSelection(
+                didChange: FfiConverterBool.read(from: &buf),
+                hasUserSelectedAssistantSurface: FfiConverterBool.read(from: &buf),
+                selectedAssistantSurface: FfiConverterString.read(from: &buf),
+                hasPendingAssistantSurfaceSave: FfiConverterBool.read(from: &buf),
+                pendingAssistantSurface: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientAssistantSurfaceSelection, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.didChange, into: &buf)
+        FfiConverterBool.write(value.hasUserSelectedAssistantSurface, into: &buf)
+        FfiConverterString.write(value.selectedAssistantSurface, into: &buf)
+        FfiConverterBool.write(value.hasPendingAssistantSurfaceSave, into: &buf)
+        FfiConverterString.write(value.pendingAssistantSurface, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientAssistantSurfaceSelection_lift(_ buf: RustBuffer) throws -> ClientAssistantSurfaceSelection {
+    return try FfiConverterTypeClientAssistantSurfaceSelection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientAssistantSurfaceSelection_lower(_ value: ClientAssistantSurfaceSelection) -> RustBuffer {
+    return FfiConverterTypeClientAssistantSurfaceSelection.lower(value)
+}
+
+
 public struct ClientCommandAck: Equatable, Hashable {
     public var accepted: Bool
     public var clientMutationId: String
@@ -3236,6 +3302,15 @@ public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientSt
     )
 })
 }
+public func reduceAssistantSurfaceSelection(currentSelectedAssistantSurface: String, requestedAssistantSurface: String, hasUserSelectedAssistantSurface: Bool) -> ClientAssistantSurfaceSelection  {
+    return try!  FfiConverterTypeClientAssistantSurfaceSelection_lift(try! rustCall() {
+    uniffi_looper_client_core_fn_func_reduce_assistant_surface_selection(
+        FfiConverterString.lower(currentSelectedAssistantSurface),
+        FfiConverterString.lower(requestedAssistantSurface),
+        FfiConverterBool.lower(hasUserSelectedAssistantSurface),$0
+    )
+})
+}
 public func reduceMobileSnapshotDetailCache(visibleSnapshotJson: String, detailBySessionIdJson: String)throws  -> ClientDetailCacheProjection  {
     return try  FfiConverterTypeClientDetailCacheProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_detail_cache(
@@ -3302,6 +3377,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_assistant_surface_selection() != 17067) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_detail_cache() != 30029) {

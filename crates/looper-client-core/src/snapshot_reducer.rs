@@ -36,6 +36,15 @@ pub struct ClientDetailModeProjection {
     pub has_detail: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientAssistantSurfaceSelection {
+    pub did_change: bool,
+    pub has_user_selected_assistant_surface: bool,
+    pub selected_assistant_surface: String,
+    pub has_pending_assistant_surface_save: bool,
+    pub pending_assistant_surface: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SnapshotDocument {
     #[serde(rename = "globalSettings")]
@@ -177,6 +186,31 @@ pub fn reduce_session_detail_optimistic_mode(
         detail_json,
         has_detail,
     })
+}
+
+#[uniffi::export]
+pub fn reduce_assistant_surface_selection(
+    current_selected_assistant_surface: String,
+    requested_assistant_surface: String,
+    has_user_selected_assistant_surface: bool,
+) -> ClientAssistantSurfaceSelection {
+    if current_selected_assistant_surface == requested_assistant_surface {
+        return ClientAssistantSurfaceSelection {
+            did_change: false,
+            has_user_selected_assistant_surface,
+            selected_assistant_surface: current_selected_assistant_surface,
+            has_pending_assistant_surface_save: false,
+            pending_assistant_surface: String::new(),
+        };
+    }
+
+    ClientAssistantSurfaceSelection {
+        did_change: true,
+        has_user_selected_assistant_surface: true,
+        selected_assistant_surface: requested_assistant_surface.clone(),
+        has_pending_assistant_surface_save: true,
+        pending_assistant_surface: requested_assistant_surface,
+    }
 }
 
 fn selected_assistant_surface(
@@ -357,6 +391,37 @@ mod tests {
         assert_eq!(visible_value["host"]["name"], "Looper");
         assert_eq!(visible_value["sessions"][0]["ref"], "D1");
         assert_eq!(visible_value["globalSettings"]["defaultPrompt"], "Continue");
+    }
+
+    #[test]
+    fn assistant_surface_selection_noops_without_pending_save() {
+        let selection =
+            reduce_assistant_surface_selection(CODEX.to_owned(), CODEX.to_owned(), false);
+
+        assert!(!selection.did_change);
+        assert!(!selection.has_user_selected_assistant_surface);
+        assert_eq!(selection.selected_assistant_surface, CODEX);
+        assert!(!selection.has_pending_assistant_surface_save);
+        assert!(selection.pending_assistant_surface.is_empty());
+
+        let user_selected_selection =
+            reduce_assistant_surface_selection(CODEX.to_owned(), CODEX.to_owned(), true);
+
+        assert!(!user_selected_selection.did_change);
+        assert!(user_selected_selection.has_user_selected_assistant_surface);
+        assert!(!user_selected_selection.has_pending_assistant_surface_save);
+    }
+
+    #[test]
+    fn assistant_surface_selection_marks_pending_save_on_change() {
+        let selection =
+            reduce_assistant_surface_selection(CODEX.to_owned(), DEVIN.to_owned(), false);
+
+        assert!(selection.did_change);
+        assert!(selection.has_user_selected_assistant_surface);
+        assert_eq!(selection.selected_assistant_surface, DEVIN);
+        assert!(selection.has_pending_assistant_surface_save);
+        assert_eq!(selection.pending_assistant_surface, DEVIN);
     }
 
     #[test]
