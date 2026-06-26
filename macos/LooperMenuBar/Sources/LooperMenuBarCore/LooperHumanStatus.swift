@@ -59,6 +59,36 @@ public struct LooperHumanStatus: Equatable, Sendable {
         )
     }
 
+    public static func from(
+        sessionMiniSnapshot snapshot: MenuBarSessionMiniLocalSnapshot,
+        mobileHealth: MobileHealthResponse?,
+        detachOnQuit: Bool
+    ) -> Self {
+        let activeSessions = snapshot.sessions.filter { !$0.isArchived }
+        let blockedCount = activeSessions.filter { $0.blockedGoal != nil }.count
+        let replyableCount = activeSessions.filter(\.replyable).count
+        let pendingCount = snapshot.pendingCommands.count
+        let mobileReady = mobileHealth?.ok == true && mobileHealth?.requiresAuthentication == true
+        let detail = [
+            "source=sessionMini",
+            "seq=\(snapshot.latestSeq)",
+            "active=\(activeSessions.count)",
+            "replyable=\(replyableCount)",
+            "blocked=\(blockedCount)",
+            "pending=\(pendingCount)",
+            "iPhone=\(mobileReady ? "ready" : "unknown")",
+        ].joined(separator: " ")
+
+        let needsAttention = blockedCount > 0
+
+        return Self(
+            kind: needsAttention ? .needsAttention : .ready,
+            title: needsAttention ? "Needs attention" : "Realtime",
+            detail: detail,
+            lifecycle: lifecycleText(detachOnQuit: detachOnQuit)
+        )
+    }
+
     private static func lifecycleText(detachOnQuit: Bool) -> String {
         detachOnQuit ? "Detached on quit" : "Quit stops server"
     }

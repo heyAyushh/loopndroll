@@ -428,7 +428,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     error: Error?
   ) {
     let effectiveSessionMiniSnapshot = sessionMiniSnapshot ?? cachedSessionMiniSnapshot
-    updateStatusItem(snapshot: snapshot, error: error)
+    updateStatusItem(
+      snapshot: snapshot,
+      sessionMiniSnapshot: effectiveSessionMiniSnapshot,
+      error: error
+    )
     let menu = makeMenu(
       snapshot: snapshot,
       sessionMiniSnapshot: effectiveSessionMiniSnapshot,
@@ -1792,9 +1796,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     pasteboard.setString(value, forType: .string)
   }
 
-  private func updateStatusItem(snapshot: DesktopSnapshotResponse?, error: Error?) {
+  private func updateStatusItem(
+    snapshot: DesktopSnapshotResponse?,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
+    error: Error?
+  ) {
     let status: LooperHumanStatus
-    if let snapshot {
+    if let sessionMiniSnapshot {
+      status = .from(
+        sessionMiniSnapshot: sessionMiniSnapshot,
+        mobileHealth: mobileHealth,
+        detachOnQuit: detachServerOnQuit
+      )
+    } else if let snapshot {
       status = .from(
         snapshot: snapshot,
         mobileHealth: mobileHealth,

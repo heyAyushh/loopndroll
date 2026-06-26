@@ -50,6 +50,65 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(row.subtitle.contains("Queue 2"))
     }
 
+    @Test("SessionMini status drives menu bar human status")
+    func testSessionMiniStatusDrivesHumanStatus() throws {
+        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        try store.replace(latestSeq: 201, records: [
+            miniRecord(
+                id: "thread-blocked",
+                title: "Blocked task",
+                mode: "await-reply",
+                blockedGoalTitle: "Need user input",
+                notificationTargetIds: ["macos"],
+                lastActivityAtMs: 201
+            ),
+        ])
+
+        let snapshot = try #require(try store.cachedSnapshot())
+        let status = LooperHumanStatus.from(
+            sessionMiniSnapshot: snapshot,
+            mobileHealth: nil,
+            detachOnQuit: true
+        )
+
+        #expect(status.kind == .needsAttention)
+        #expect(status.title == "Needs attention")
+        #expect(status.lifecycle == "Detached on quit")
+        #expect(status.detail.contains("source=sessionMini"))
+        #expect(status.detail.contains("blocked=1"))
+    }
+
+    @Test("SessionMini status reports realtime when unblocked")
+    func testSessionMiniStatusReportsRealtimeWhenUnblocked() throws {
+        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        try store.replace(latestSeq: 202, records: [
+            miniRecord(
+                id: "thread-ready",
+                title: "Ready task",
+                mode: "max-turns-2",
+                notificationTargetIds: ["macos"],
+                lastActivityAtMs: 202
+            ),
+        ])
+
+        let snapshot = try #require(try store.cachedSnapshot())
+        let status = LooperHumanStatus.from(
+            sessionMiniSnapshot: snapshot,
+            mobileHealth: MobileHealthResponse(
+                ok: true,
+                baseURL: "http://100.119.200.69:8765",
+                baseURLs: ["http://100.119.200.69:8765"],
+                requiresAuthentication: true
+            ),
+            detachOnQuit: false
+        )
+
+        #expect(status.kind == .ready)
+        #expect(status.title == "Realtime")
+        #expect(status.detail.contains("replyable=1"))
+        #expect(status.detail.contains("iPhone=ready"))
+    }
+
     @Test("malformed cache falls back and failed ACK stays in outbox")
     func testMalformedMiniCacheFallsBackAndOutboxKeepsFailedCommand() async throws {
         let malformedFileURL = temporaryStoreFileURL()
