@@ -75,58 +75,59 @@ public struct MenuBarSessionMini: Equatable, Sendable {
     public let lastActivityAtMs: Int64?
     public let updatedAtMs: Int64?
 
-    fileprivate init(record: ClientStateMini, payload: MenuBarSessionMiniPayload) {
-        self.sessionID = record.sessionId
-        self.assistantSurface = record.assistantSurface
-        self.seq = record.seq
-        self.revision = record.revision
-        self.ref = payload.ref
-        self.title = payload.displayTitle(fallbackID: record.sessionId)
-        self.status = payload.status
-        self.effectiveMode = payload.effectiveMode?.nilIfBlank
-        self.replyable = payload.replyable
-        self.promptUnavailableReason = payload.promptUnavailableReason?.nilIfBlank
-        self.blockedGoal = payload.blockedGoal
-        self.queueCount = payload.queueCount
-        self.lifecycle = payload.lifecycle?.nilIfBlank
-        self.notificationStatus = payload.notificationStatus
-        self.isArchived = payload.isArchived
-        self.assistantPreview = payload.assistantPreview?.nilIfBlank
-        self.projectName = payload.metadata?.projectName?.nilIfBlank
-        self.projectPath = payload.metadata?.projectPath?.nilIfBlank
-        self.lastActivityAtMs = payload.lastActivityAtMs
-        self.updatedAtMs = payload.updatedAtMs
-    }
-
-    fileprivate static func sortForMenu(lhs: MenuBarSessionMini, rhs: MenuBarSessionMini) -> Bool {
-        let lhsActivity = lhs.lastActivityAtMs ?? lhs.updatedAtMs ?? lhs.seq
-        let rhsActivity = rhs.lastActivityAtMs ?? rhs.updatedAtMs ?? rhs.seq
-        if lhsActivity != rhsActivity {
-            return lhsActivity > rhsActivity
-        }
-        if lhs.seq != rhs.seq {
-            return lhs.seq > rhs.seq
-        }
-        return lhs.sessionID < rhs.sessionID
+    fileprivate init(_ mini: ClientMenuBarSessionMini) {
+        self.sessionID = mini.sessionId
+        self.assistantSurface = mini.assistantSurface
+        self.seq = mini.seq
+        self.revision = mini.revision
+        self.ref = mini.refId
+        self.title = mini.title
+        self.status = mini.status
+        self.effectiveMode = mini.hasEffectiveMode ? mini.effectiveMode : nil
+        self.replyable = mini.replyable
+        self.promptUnavailableReason =
+            mini.hasPromptUnavailableReason ? mini.promptUnavailableReason : nil
+        self.blockedGoal = mini.hasBlockedGoal ? MenuBarSessionMiniBlockedGoal(mini.blockedGoal) : nil
+        self.queueCount = Int(mini.queueCount)
+        self.lifecycle = mini.hasLifecycle ? mini.lifecycle : nil
+        self.notificationStatus = mini.hasNotificationStatus
+            ? MenuBarSessionMiniNotificationStatus(mini.notificationStatus)
+            : nil
+        self.isArchived = mini.isArchived
+        self.assistantPreview = mini.hasAssistantPreview ? mini.assistantPreview : nil
+        self.projectName = mini.hasProjectName ? mini.projectName : nil
+        self.projectPath = mini.hasProjectPath ? mini.projectPath : nil
+        self.lastActivityAtMs = mini.hasLastActivityAtMs ? mini.lastActivityAtMs : nil
+        self.updatedAtMs = mini.hasUpdatedAtMs ? mini.updatedAtMs : nil
     }
 }
 
-public struct MenuBarSessionMiniBlockedGoal: Codable, Equatable, Sendable {
+public struct MenuBarSessionMiniBlockedGoal: Equatable, Sendable {
     public let id: String?
     public let title: String?
     public let status: String?
     public let lifecycle: String?
     public let reason: String?
+
+    fileprivate init(_ goal: ClientMenuBarSessionMiniBlockedGoal) {
+        self.id = goal.id.nilIfBlank
+        self.title = goal.title.nilIfBlank
+        self.status = goal.status.nilIfBlank
+        self.lifecycle = goal.lifecycle.nilIfBlank
+        self.reason = goal.reason.nilIfBlank
+    }
 }
 
-public struct MenuBarSessionMiniNotificationStatus: Codable, Equatable, Sendable {
+public struct MenuBarSessionMiniNotificationStatus: Equatable, Sendable {
     public let enabled: Bool
     public let targetIds: [String]
     public let usesDefault: Bool
-}
 
-public enum MenuBarSessionMiniLocalStoreError: Error, Equatable, Sendable {
-    case sessionIDMismatch(expected: String, actual: String)
+    fileprivate init(_ status: ClientMenuBarSessionMiniNotificationStatus) {
+        self.enabled = status.enabled
+        self.targetIds = status.targetIds
+        self.usesDefault = status.usesDefault
+    }
 }
 
 public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
@@ -138,7 +139,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
 
     private let store: LooperClientCoreLocalStore
     private let clientCore: LooperClientCore
-    private let decoder = JSONDecoder()
 
     public init(fileURL: URL) throws {
         store = try LooperClientCoreLocalStore(filePath: fileURL.path)
@@ -386,7 +386,14 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         -> ClientLocalStateSnapshot
     {
         let sessions = snapshot.stateMinis
-        _ = try menuSnapshot(from: snapshot.latestSeq, sessions: sessions)
+        _ = try menuSnapshot(
+            from: ClientLocalStateSnapshot(
+                latestSeq: snapshot.latestSeq,
+                sessions: sessions,
+                pendingCommands: [],
+                serverTime: snapshot.serverTime
+            )
+        )
         return try store.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(
                 latestSeq: snapshot.latestSeq,
@@ -399,133 +406,30 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
-        guard !snapshot.sessions.isEmpty else {
+        let projection = try reduceStateMinisMenuSnapshot(snapshot: snapshot)
+        guard !projection.sessions.isEmpty else {
             return nil
         }
-        return try MenuBarSessionMiniLocalSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: menuSessions(from: snapshot.sessions),
-            pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
+        return MenuBarSessionMiniLocalSnapshot(
+            latestSeq: projection.latestSeq,
+            sessions: projection.sessions.map(MenuBarSessionMini.init),
+            pendingCommands: projection.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
         )
     }
-    private func menuSnapshot(
-        from latestSeq: Int64,
-        sessions: [ClientStateMini]
-    ) throws -> MenuBarSessionMiniLocalSnapshot? {
-        guard !sessions.isEmpty else {
-            return nil
-        }
-        return try MenuBarSessionMiniLocalSnapshot(
-            latestSeq: latestSeq,
-            sessions: menuSessions(from: sessions),
-            pendingCommands: []
-        )
-    }
-
-    private func menuSessions(from sessions: [ClientStateMini]) throws
-        -> [MenuBarSessionMini]
-    {
-        try sessions
-            .map(decodeSessionMini)
-            .sorted(by: MenuBarSessionMini.sortForMenu)
-    }
-
-    private func decodeSessionMini(from record: ClientStateMini) throws -> MenuBarSessionMini {
-        let data = Data(record.payloadJson.utf8)
-        let payload = try decoder.decode(MenuBarSessionMiniPayload.self, from: data)
-        guard payload.sessionID == record.sessionId else {
-            throw MenuBarSessionMiniLocalStoreError.sessionIDMismatch(
-                expected: record.sessionId,
-                actual: payload.sessionID
-            )
-        }
-        return MenuBarSessionMini(record: record, payload: payload)
-    }
-}
-
-private struct MenuBarSessionMiniPayload: Decodable {
-    let sessionID: String
-    let ref: String
-    let title: String
-    let status: String
-    let effectiveMode: String?
-    let replyable: Bool
-    let promptUnavailableReason: String?
-    let blockedGoal: MenuBarSessionMiniBlockedGoal?
-    let queueCount: Int
-    let lifecycle: String?
-    let notificationStatus: MenuBarSessionMiniNotificationStatus?
-    let isArchived: Bool
-    let assistantPreview: String?
-    let metadata: MenuBarSessionMiniMetadata?
-    let lastActivityAtMs: Int64?
-    let updatedAtMs: Int64?
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case sessionID = "sessionId"
-        case ref
-        case title
-        case status
-        case effectiveMode
-        case canSendPrompt
-        case replyable
-        case promptDeliveryUnavailableReason
-        case blockedGoal
-        case queueCount
-        case lifecycle
-        case notificationStatus
-        case isArchived
-        case assistantPreview
-        case metadata
-        case lastActivityAtMs
-        case updatedAtMs
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
-            ?? container.decode(String.self, forKey: .id)
-        ref = try container.decodeIfPresent(String.self, forKey: .ref) ?? sessionID
-        title = try container.decodeIfPresent(String.self, forKey: .title) ?? sessionID
-        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
-        effectiveMode = try container.decodeIfPresent(String.self, forKey: .effectiveMode)
-        replyable = try container.decodeIfPresent(Bool.self, forKey: .replyable)
-            ?? container.decodeIfPresent(Bool.self, forKey: .canSendPrompt)
-            ?? false
-        promptUnavailableReason = try container.decodeIfPresent(
-            String.self,
-            forKey: .promptDeliveryUnavailableReason
-        )
-        blockedGoal = try container.decodeIfPresent(MenuBarSessionMiniBlockedGoal.self, forKey: .blockedGoal)
-        queueCount = try container.decodeIfPresent(Int.self, forKey: .queueCount) ?? 0
-        lifecycle = try container.decodeIfPresent(String.self, forKey: .lifecycle)
-        notificationStatus = try container.decodeIfPresent(
-            MenuBarSessionMiniNotificationStatus.self,
-            forKey: .notificationStatus
-        )
-        let decodedArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived)
-        isArchived = decodedArchived ?? (status == "archived")
-        assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
-        metadata = try container.decodeIfPresent(MenuBarSessionMiniMetadata.self, forKey: .metadata)
-        lastActivityAtMs = try container.decodeIfPresent(Int64.self, forKey: .lastActivityAtMs)
-        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
-    }
-
-    func displayTitle(fallbackID: String) -> String {
-        let candidates = [title, ref, fallbackID]
-        return candidates
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty } ?? fallbackID
-    }
-}
-
-private struct MenuBarSessionMiniMetadata: Decodable {
-    let projectName: String?
-    let projectPath: String?
 }
 
 private extension MenuBarSessionMiniPendingCommand {
+    init(_ command: ClientMenuBarSessionMiniPendingCommand) {
+        self.init(
+            kind: command.kind,
+            clientMutationID: command.clientMutationId,
+            threadID: command.threadId,
+            notificationID: command.notificationId.nilIfBlank,
+            prompt: command.prompt.nilIfBlank,
+            attemptCount: Int(command.attemptCount)
+        )
+    }
+
     init(_ command: ClientPendingCommand) {
         self.init(
             kind: command.kind,

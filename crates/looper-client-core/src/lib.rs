@@ -5,6 +5,7 @@ mod command_batch;
 mod connection_reducer;
 mod error;
 mod local_store;
+mod menu_snapshot;
 mod mobile_snapshot;
 mod model;
 mod mutation_queue;
@@ -21,6 +22,11 @@ pub use connection_reducer::{
 };
 pub use error::ClientCoreError;
 pub use local_store::{DEFAULT_LOCAL_STORE_FILE_NAME, LooperClientCoreLocalStore};
+pub use menu_snapshot::{
+    ClientMenuBarSessionMini, ClientMenuBarSessionMiniBlockedGoal,
+    ClientMenuBarSessionMiniLocalSnapshot, ClientMenuBarSessionMiniNotificationStatus,
+    ClientMenuBarSessionMiniPendingCommand, reduce_state_minis_menu_snapshot,
+};
 pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,

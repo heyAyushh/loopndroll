@@ -435,6 +435,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -1908,6 +1924,424 @@ public func FfiConverterTypeClientLocalStateSnapshot_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeClientLocalStateSnapshot_lower(_ value: ClientLocalStateSnapshot) -> RustBuffer {
     return FfiConverterTypeClientLocalStateSnapshot.lower(value)
+}
+
+
+public struct ClientMenuBarSessionMini: Equatable, Hashable {
+    public var sessionId: String
+    public var assistantSurface: String
+    public var seq: Int64
+    public var revision: String
+    public var refId: String
+    public var title: String
+    public var status: String
+    public var effectiveMode: String
+    public var hasEffectiveMode: Bool
+    public var replyable: Bool
+    public var promptUnavailableReason: String
+    public var hasPromptUnavailableReason: Bool
+    public var blockedGoal: ClientMenuBarSessionMiniBlockedGoal
+    public var hasBlockedGoal: Bool
+    public var queueCount: Int32
+    public var lifecycle: String
+    public var hasLifecycle: Bool
+    public var notificationStatus: ClientMenuBarSessionMiniNotificationStatus
+    public var hasNotificationStatus: Bool
+    public var isArchived: Bool
+    public var assistantPreview: String
+    public var hasAssistantPreview: Bool
+    public var projectName: String
+    public var hasProjectName: Bool
+    public var projectPath: String
+    public var hasProjectPath: Bool
+    public var lastActivityAtMs: Int64
+    public var hasLastActivityAtMs: Bool
+    public var updatedAtMs: Int64
+    public var hasUpdatedAtMs: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, assistantSurface: String, seq: Int64, revision: String, refId: String, title: String, status: String, effectiveMode: String, hasEffectiveMode: Bool, replyable: Bool, promptUnavailableReason: String, hasPromptUnavailableReason: Bool, blockedGoal: ClientMenuBarSessionMiniBlockedGoal, hasBlockedGoal: Bool, queueCount: Int32, lifecycle: String, hasLifecycle: Bool, notificationStatus: ClientMenuBarSessionMiniNotificationStatus, hasNotificationStatus: Bool, isArchived: Bool, assistantPreview: String, hasAssistantPreview: Bool, projectName: String, hasProjectName: Bool, projectPath: String, hasProjectPath: Bool, lastActivityAtMs: Int64, hasLastActivityAtMs: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool) {
+        self.sessionId = sessionId
+        self.assistantSurface = assistantSurface
+        self.seq = seq
+        self.revision = revision
+        self.refId = refId
+        self.title = title
+        self.status = status
+        self.effectiveMode = effectiveMode
+        self.hasEffectiveMode = hasEffectiveMode
+        self.replyable = replyable
+        self.promptUnavailableReason = promptUnavailableReason
+        self.hasPromptUnavailableReason = hasPromptUnavailableReason
+        self.blockedGoal = blockedGoal
+        self.hasBlockedGoal = hasBlockedGoal
+        self.queueCount = queueCount
+        self.lifecycle = lifecycle
+        self.hasLifecycle = hasLifecycle
+        self.notificationStatus = notificationStatus
+        self.hasNotificationStatus = hasNotificationStatus
+        self.isArchived = isArchived
+        self.assistantPreview = assistantPreview
+        self.hasAssistantPreview = hasAssistantPreview
+        self.projectName = projectName
+        self.hasProjectName = hasProjectName
+        self.projectPath = projectPath
+        self.hasProjectPath = hasProjectPath
+        self.lastActivityAtMs = lastActivityAtMs
+        self.hasLastActivityAtMs = hasLastActivityAtMs
+        self.updatedAtMs = updatedAtMs
+        self.hasUpdatedAtMs = hasUpdatedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarSessionMini: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarSessionMini {
+        return
+            try ClientMenuBarSessionMini(
+                sessionId: FfiConverterString.read(from: &buf),
+                assistantSurface: FfiConverterString.read(from: &buf),
+                seq: FfiConverterInt64.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                refId: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                effectiveMode: FfiConverterString.read(from: &buf),
+                hasEffectiveMode: FfiConverterBool.read(from: &buf),
+                replyable: FfiConverterBool.read(from: &buf),
+                promptUnavailableReason: FfiConverterString.read(from: &buf),
+                hasPromptUnavailableReason: FfiConverterBool.read(from: &buf),
+                blockedGoal: FfiConverterTypeClientMenuBarSessionMiniBlockedGoal.read(from: &buf),
+                hasBlockedGoal: FfiConverterBool.read(from: &buf),
+                queueCount: FfiConverterInt32.read(from: &buf),
+                lifecycle: FfiConverterString.read(from: &buf),
+                hasLifecycle: FfiConverterBool.read(from: &buf),
+                notificationStatus: FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.read(from: &buf),
+                hasNotificationStatus: FfiConverterBool.read(from: &buf),
+                isArchived: FfiConverterBool.read(from: &buf),
+                assistantPreview: FfiConverterString.read(from: &buf),
+                hasAssistantPreview: FfiConverterBool.read(from: &buf),
+                projectName: FfiConverterString.read(from: &buf),
+                hasProjectName: FfiConverterBool.read(from: &buf),
+                projectPath: FfiConverterString.read(from: &buf),
+                hasProjectPath: FfiConverterBool.read(from: &buf),
+                lastActivityAtMs: FfiConverterInt64.read(from: &buf),
+                hasLastActivityAtMs: FfiConverterBool.read(from: &buf),
+                updatedAtMs: FfiConverterInt64.read(from: &buf),
+                hasUpdatedAtMs: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarSessionMini, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.assistantSurface, into: &buf)
+        FfiConverterInt64.write(value.seq, into: &buf)
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterString.write(value.refId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.effectiveMode, into: &buf)
+        FfiConverterBool.write(value.hasEffectiveMode, into: &buf)
+        FfiConverterBool.write(value.replyable, into: &buf)
+        FfiConverterString.write(value.promptUnavailableReason, into: &buf)
+        FfiConverterBool.write(value.hasPromptUnavailableReason, into: &buf)
+        FfiConverterTypeClientMenuBarSessionMiniBlockedGoal.write(value.blockedGoal, into: &buf)
+        FfiConverterBool.write(value.hasBlockedGoal, into: &buf)
+        FfiConverterInt32.write(value.queueCount, into: &buf)
+        FfiConverterString.write(value.lifecycle, into: &buf)
+        FfiConverterBool.write(value.hasLifecycle, into: &buf)
+        FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.write(value.notificationStatus, into: &buf)
+        FfiConverterBool.write(value.hasNotificationStatus, into: &buf)
+        FfiConverterBool.write(value.isArchived, into: &buf)
+        FfiConverterString.write(value.assistantPreview, into: &buf)
+        FfiConverterBool.write(value.hasAssistantPreview, into: &buf)
+        FfiConverterString.write(value.projectName, into: &buf)
+        FfiConverterBool.write(value.hasProjectName, into: &buf)
+        FfiConverterString.write(value.projectPath, into: &buf)
+        FfiConverterBool.write(value.hasProjectPath, into: &buf)
+        FfiConverterInt64.write(value.lastActivityAtMs, into: &buf)
+        FfiConverterBool.write(value.hasLastActivityAtMs, into: &buf)
+        FfiConverterInt64.write(value.updatedAtMs, into: &buf)
+        FfiConverterBool.write(value.hasUpdatedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMini_lift(_ buf: RustBuffer) throws -> ClientMenuBarSessionMini {
+    return try FfiConverterTypeClientMenuBarSessionMini.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMini_lower(_ value: ClientMenuBarSessionMini) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarSessionMini.lower(value)
+}
+
+
+public struct ClientMenuBarSessionMiniBlockedGoal: Equatable, Hashable {
+    public var id: String
+    public var title: String
+    public var status: String
+    public var lifecycle: String
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, status: String, lifecycle: String, reason: String) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.lifecycle = lifecycle
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarSessionMiniBlockedGoal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarSessionMiniBlockedGoal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarSessionMiniBlockedGoal {
+        return
+            try ClientMenuBarSessionMiniBlockedGoal(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                lifecycle: FfiConverterString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarSessionMiniBlockedGoal, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.lifecycle, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniBlockedGoal_lift(_ buf: RustBuffer) throws -> ClientMenuBarSessionMiniBlockedGoal {
+    return try FfiConverterTypeClientMenuBarSessionMiniBlockedGoal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniBlockedGoal_lower(_ value: ClientMenuBarSessionMiniBlockedGoal) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarSessionMiniBlockedGoal.lower(value)
+}
+
+
+public struct ClientMenuBarSessionMiniLocalSnapshot: Equatable, Hashable {
+    public var latestSeq: Int64
+    public var sessions: [ClientMenuBarSessionMini]
+    public var pendingCommands: [ClientMenuBarSessionMiniPendingCommand]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(latestSeq: Int64, sessions: [ClientMenuBarSessionMini], pendingCommands: [ClientMenuBarSessionMiniPendingCommand]) {
+        self.latestSeq = latestSeq
+        self.sessions = sessions
+        self.pendingCommands = pendingCommands
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarSessionMiniLocalSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarSessionMiniLocalSnapshot {
+        return
+            try ClientMenuBarSessionMiniLocalSnapshot(
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientMenuBarSessionMini.read(from: &buf),
+                pendingCommands: FfiConverterSequenceTypeClientMenuBarSessionMiniPendingCommand.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarSessionMiniLocalSnapshot, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterSequenceTypeClientMenuBarSessionMini.write(value.sessions, into: &buf)
+        FfiConverterSequenceTypeClientMenuBarSessionMiniPendingCommand.write(value.pendingCommands, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot_lift(_ buf: RustBuffer) throws -> ClientMenuBarSessionMiniLocalSnapshot {
+    return try FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot_lower(_ value: ClientMenuBarSessionMiniLocalSnapshot) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot.lower(value)
+}
+
+
+public struct ClientMenuBarSessionMiniNotificationStatus: Equatable, Hashable {
+    public var enabled: Bool
+    public var targetIds: [String]
+    public var usesDefault: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(enabled: Bool, targetIds: [String], usesDefault: Bool) {
+        self.enabled = enabled
+        self.targetIds = targetIds
+        self.usesDefault = usesDefault
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarSessionMiniNotificationStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarSessionMiniNotificationStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarSessionMiniNotificationStatus {
+        return
+            try ClientMenuBarSessionMiniNotificationStatus(
+                enabled: FfiConverterBool.read(from: &buf),
+                targetIds: FfiConverterSequenceString.read(from: &buf),
+                usesDefault: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarSessionMiniNotificationStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterSequenceString.write(value.targetIds, into: &buf)
+        FfiConverterBool.write(value.usesDefault, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniNotificationStatus_lift(_ buf: RustBuffer) throws -> ClientMenuBarSessionMiniNotificationStatus {
+    return try FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniNotificationStatus_lower(_ value: ClientMenuBarSessionMiniNotificationStatus) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.lower(value)
+}
+
+
+public struct ClientMenuBarSessionMiniPendingCommand: Equatable, Hashable {
+    public var kind: ClientPendingCommandKind
+    public var clientMutationId: String
+    public var threadId: String
+    public var notificationId: String
+    public var prompt: String
+    public var attemptCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, notificationId: String, prompt: String, attemptCount: UInt32) {
+        self.kind = kind
+        self.clientMutationId = clientMutationId
+        self.threadId = threadId
+        self.notificationId = notificationId
+        self.prompt = prompt
+        self.attemptCount = attemptCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarSessionMiniPendingCommand: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarSessionMiniPendingCommand: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarSessionMiniPendingCommand {
+        return
+            try ClientMenuBarSessionMiniPendingCommand(
+                kind: FfiConverterTypeClientPendingCommandKind.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                threadId: FfiConverterString.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf),
+                prompt: FfiConverterString.read(from: &buf),
+                attemptCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarSessionMiniPendingCommand, into buf: inout [UInt8]) {
+        FfiConverterTypeClientPendingCommandKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterString.write(value.threadId, into: &buf)
+        FfiConverterString.write(value.notificationId, into: &buf)
+        FfiConverterString.write(value.prompt, into: &buf)
+        FfiConverterUInt32.write(value.attemptCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniPendingCommand_lift(_ buf: RustBuffer) throws -> ClientMenuBarSessionMiniPendingCommand {
+    return try FfiConverterTypeClientMenuBarSessionMiniPendingCommand.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarSessionMiniPendingCommand_lower(_ value: ClientMenuBarSessionMiniPendingCommand) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarSessionMiniPendingCommand.lower(value)
 }
 
 
@@ -4144,6 +4578,56 @@ fileprivate struct FfiConverterSequenceTypeClientEndpoint: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMenuBarSessionMini]
+
+    public static func write(_ value: [ClientMenuBarSessionMini], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMenuBarSessionMini.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMenuBarSessionMini] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMenuBarSessionMini]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMenuBarSessionMini.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMenuBarSessionMiniPendingCommand: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMenuBarSessionMiniPendingCommand]
+
+    public static func write(_ value: [ClientMenuBarSessionMiniPendingCommand], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMenuBarSessionMiniPendingCommand.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMenuBarSessionMiniPendingCommand] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMenuBarSessionMiniPendingCommand]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMenuBarSessionMiniPendingCommand.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientPendingCommand: FfiConverterRustBuffer {
     typealias SwiftType = [ClientPendingCommand]
 
@@ -4350,6 +4834,13 @@ public func reduceSnapshotLoadFailure(mappedErrorState: String, currentConnectio
     )
 })
 }
+public func reduceStateMinisMenuSnapshot(snapshot: ClientLocalStateSnapshot)throws  -> ClientMenuBarSessionMiniLocalSnapshot  {
+    return try  FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_state_minis_menu_snapshot(
+        FfiConverterTypeClientLocalStateSnapshot_lower(snapshot),$0
+    )
+})
+}
 public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientStateMini], serverTime: String)throws  -> ClientMobileSnapshotProjection  {
     return try  FfiConverterTypeClientMobileSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_state_minis_mobile_snapshot(
@@ -4454,6 +4945,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 14313) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_state_minis_menu_snapshot() != 20513) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {
