@@ -28,6 +28,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 IOS_DIR = ROOT_DIR / "ios"
 PROJECT_PATH = IOS_DIR / "LooperCompanion.xcodeproj"
 PROJECT_SPEC = IOS_DIR / "project.yml"
+LEGACY_REALTIME_CONTROLLER_PATH = (
+    IOS_DIR / "LooperCompanion" / "Services" / "CompanionRealtimeController.swift"
+)
+COMPANION_APP_MODEL_PATH = IOS_DIR / "LooperCompanion" / "App" / "CompanionAppModel.swift"
 CARGO_MANIFEST = ROOT_DIR / "crates" / "agent-control-plane" / "Cargo.toml"
 SERVER_BINARY = ROOT_DIR / "crates" / "agent-control-plane" / "target" / "debug" / "looper-server"
 ARTIFACT_ROOT = ROOT_DIR / ".build" / "mobile-realtime-latency"
@@ -520,8 +524,9 @@ def build_current_red_evidence(
         )
     current_red_reasons = [
         "strict p95 metrics are not yet emitted by the current UI-test payload",
-        "current realtime controller still refreshes snapshots after realtime events",
     ]
+    if snapshot_evidence["snapshotOnTapCount"] > 0:
+        current_red_reasons.append("current realtime path still routes through snapshot refresh")
     if args.force_http_fallback:
         current_red_reasons.append("HTTP fallback forced by harness flag")
     current_red = bool(strict_violations or fallback_evidence["forcedHttpFallback"])
@@ -561,9 +566,9 @@ def build_current_red_evidence(
 
 
 def detect_current_snapshot_evidence() -> dict:
-    realtime_path = ROOT_DIR / "ios" / "LooperCompanion" / "Services" / "CompanionRealtimeController.swift"
-    app_model_path = ROOT_DIR / "ios" / "LooperCompanion" / "App" / "CompanionAppModel.swift"
-    realtime_source = realtime_path.read_text(encoding="utf-8")
+    realtime_path = LEGACY_REALTIME_CONTROLLER_PATH
+    app_model_path = COMPANION_APP_MODEL_PATH
+    realtime_source = realtime_path.read_text(encoding="utf-8") if realtime_path.exists() else ""
     app_model_source = app_model_path.read_text(encoding="utf-8")
     schedule_refresh_count = realtime_source.count("scheduleRealtimeRefresh(")
     delegate_refresh_count = realtime_source.count("refreshRealtimeSnapshotAndLoadedDetails")
@@ -581,11 +586,13 @@ def detect_current_snapshot_evidence() -> dict:
                 "path": project_relative(realtime_path),
                 "observable": "scheduleRealtimeRefresh(",
                 "count": schedule_refresh_count,
+                "retired": not realtime_path.exists(),
             },
             {
                 "path": project_relative(realtime_path),
                 "observable": "refreshRealtimeSnapshotAndLoadedDetails",
                 "count": delegate_refresh_count,
+                "retired": not realtime_path.exists(),
             },
             {
                 "path": project_relative(app_model_path),

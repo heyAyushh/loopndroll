@@ -655,8 +655,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return
     }
 
-    let clientCore = sessionClientCore
-    sessionMiniSyncTask = Task { [weak self, sessionMiniLocalStore, clientCore] in
+    sessionMiniSyncTask = Task { [weak self, sessionMiniLocalStore] in
       guard let self else {
         return
       }
@@ -667,7 +666,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         return
       }
       await sessionMiniLocalStore.runClientCoreStateMiniSync(
-        using: clientCore,
         onSnapshot: { [weak self] snapshot in
           self?.applySessionMiniSnapshot(snapshot)
         },

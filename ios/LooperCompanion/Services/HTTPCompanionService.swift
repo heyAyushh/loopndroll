@@ -113,13 +113,6 @@ struct HTTPCompanionService: CompanionService {
         }
     }
 
-    func makeClientCoreStateMiniStreamTransport() async
-        -> (any LooperClientCoreStateMiniStreamTransport)?
-    {
-        await prepareCommandRuntimeIfNeeded()
-        return commandClientCore
-    }
-
     func loadServerHealth() async throws -> CompanionServerHealth {
         try await resolveServerHealth().health
     }

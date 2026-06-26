@@ -212,19 +212,15 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         (try? store.snapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
-    public func startClientCoreStateMiniStream(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) async throws {
+    public func startClientCoreStateMiniStream() async throws {
         _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
-        try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
+        _ = try clientCore.startConfiguredStateMiniStream()
     }
 
-    public func nextClientCoreStateMiniStreamResult(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) async throws -> MenuBarClientCoreStateMiniStreamResult {
-        let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
-            clientCore: clientCore
-        )
+    public func nextClientCoreStateMiniStreamResult() async throws
+        -> MenuBarClientCoreStateMiniStreamResult
+    {
+        let streamUpdate = try await clientCore.observe()
         guard
             (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
             streamUpdate.didChange
@@ -246,25 +242,21 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    public func stopClientCoreStateMiniStream(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) {
-        try? transport.stopClientCoreStateMiniStream(clientCore: clientCore)
+    public func stopClientCoreStateMiniStream() {
+        _ = try? clientCore.stopStateMiniStream()
     }
 
     public func runClientCoreStateMiniSync(
-        using transport: any LooperClientCoreStateMiniStreamTransport,
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async {
         defer {
-            stopClientCoreStateMiniStream(using: transport)
+            stopClientCoreStateMiniStream()
         }
 
         do {
-            try await startClientCoreStateMiniStream(using: transport)
+            try await startClientCoreStateMiniStream()
             try await drainClientCoreStateMiniSync(
-                using: transport,
                 onSnapshot: onSnapshot,
                 onDebugMessage: onDebugMessage
             )
@@ -285,12 +277,11 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func drainClientCoreStateMiniSync(
-        using transport: any LooperClientCoreStateMiniStreamTransport,
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async throws {
         while !Task.isCancelled {
-            let result = try await nextClientCoreStateMiniStreamResult(using: transport)
+            let result = try await nextClientCoreStateMiniStreamResult()
             switch result.reason {
             case .delta:
                 if let snapshot = result.snapshot {

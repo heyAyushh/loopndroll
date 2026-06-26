@@ -49,12 +49,8 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
         }
 
         syncTask = Task { @MainActor in
-            guard let transport = await service.makeClientCoreStateMiniStreamTransport() else {
-                CompanionDiagnostics.record("session-mini:client-core-stream-unavailable")
-                return
-            }
+            await service.prepareRealtimeConnection()
             await localStore.runClientCoreStateMiniSync(
-                using: transport,
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)
                 },

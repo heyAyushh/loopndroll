@@ -146,21 +146,15 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         (try? clientCoreLocalStore.snapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
-    func startClientCoreStateMiniStream(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) async throws {
+    func startClientCoreStateMiniStream() async throws {
         _ = try clientCore.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
         )
-        try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
+        _ = try clientCore.startConfiguredStateMiniStream()
     }
 
-    func nextClientCoreStateMiniStreamResult(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) async throws -> CompanionClientCoreStateMiniStreamResult {
-        let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
-            clientCore: clientCore
-        )
+    func nextClientCoreStateMiniStreamResult() async throws -> CompanionClientCoreStateMiniStreamResult {
+        let streamUpdate = try await clientCore.observe()
         guard
             (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
             streamUpdate.didChange
@@ -183,11 +177,9 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    func stopClientCoreStateMiniStream(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) {
+    func stopClientCoreStateMiniStream() {
         do {
-            try transport.stopClientCoreStateMiniStream(clientCore: clientCore)
+            _ = try clientCore.stopStateMiniStream()
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:client-core-stream-stop-failed error=\(error.localizedDescription)"
@@ -196,18 +188,16 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func runClientCoreStateMiniSync(
-        using transport: any LooperClientCoreStateMiniStreamTransport,
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async {
         defer {
-            stopClientCoreStateMiniStream(using: transport)
+            stopClientCoreStateMiniStream()
         }
 
         do {
-            try await startClientCoreStateMiniStream(using: transport)
+            try await startClientCoreStateMiniStream()
             try await drainClientCoreStateMiniSync(
-                using: transport,
                 onUpdate: onUpdate,
                 onDebugMessage: onDebugMessage
             )
@@ -275,12 +265,11 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func drainClientCoreStateMiniSync(
-        using transport: any LooperClientCoreStateMiniStreamTransport,
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async throws {
         while !Task.isCancelled {
-            let result = try await nextClientCoreStateMiniStreamResult(using: transport)
+            let result = try await nextClientCoreStateMiniStreamResult()
             switch result.reason {
             case .delta:
                 if let update = result.update {
