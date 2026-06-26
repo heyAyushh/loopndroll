@@ -25,15 +25,13 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use reqwest::Client;
-use tokio::sync::mpsc;
 
 use self::commands::execute_command;
 use self::render::render;
 use self::state::{COMMAND_PREFIX, ServerData, TuiState};
-use self::transport::{get_json, tail_events};
+use self::transport::get_json;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
-const LOG_CHANNEL_CAPACITY: usize = 100;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LaunchOptions {
@@ -46,8 +44,6 @@ pub async fn run() -> Result<()> {
 
 pub async fn run_with_options(options: LaunchOptions) -> Result<()> {
     let client = Client::new();
-    let (log_sender, mut log_receiver) = mpsc::channel(LOG_CHANNEL_CAPACITY);
-    tokio::spawn(tail_events(client.clone(), log_sender));
     let mut app = load_state(&client).await.unwrap_or_default();
     if let Some(thread_id) = options.thread_id.as_deref() {
         app.focus_thread(thread_id);
@@ -60,7 +56,7 @@ pub async fn run_with_options(options: LaunchOptions) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_tui(&mut terminal, &client, &mut app, &mut log_receiver).await;
+    let result = run_tui(&mut terminal, &client, &mut app).await;
 
     cleanup.restore(&mut terminal)?;
     result
@@ -103,10 +99,8 @@ async fn run_tui(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     client: &Client,
     app: &mut TuiState,
-    log_receiver: &mut mpsc::Receiver<String>,
 ) -> Result<()> {
     loop {
-        drain_logs(app, log_receiver);
         terminal.draw(|frame| render(frame, app))?;
         if !event::poll(POLL_INTERVAL)? {
             continue;
@@ -198,10 +192,4 @@ async fn load_server_data(client: &Client, include_pairing: bool) -> Result<Serv
             None
         },
     })
-}
-
-fn drain_logs(app: &mut TuiState, log_receiver: &mut mpsc::Receiver<String>) {
-    while let Ok(event) = log_receiver.try_recv() {
-        app.push_log_event(event);
-    }
 }

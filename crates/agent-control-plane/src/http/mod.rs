@@ -33,7 +33,6 @@ use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
 };
 
-mod events;
 mod handoff;
 mod mobile_access;
 mod mobile_state;
@@ -41,7 +40,6 @@ mod requests;
 mod responses;
 mod session_actions;
 
-use self::events::events_tail;
 use self::handoff::handoff_session_page;
 use self::mobile_access::{
     authorize_mobile_api_request, authorize_mobile_request, current_mobile_time,
@@ -363,7 +361,6 @@ fn thread_routes() -> Router<ControlPlane> {
         .route("/threads", get(threads))
         .route("/threads/:thread_id", get(thread_detail))
         .route("/threads/:thread_id/capabilities", get(thread_capabilities))
-        .route("/events/tail", get(events_tail))
 }
 
 async fn health(State(control_plane): State<ControlPlane>) -> impl IntoResponse {

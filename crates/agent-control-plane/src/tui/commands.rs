@@ -235,8 +235,7 @@ pub(crate) async fn execute_command(
             )
             .await?;
         }
-        (TuiTab::Dashboard | TuiTab::Logs, _)
-        | (TuiTab::Sessions | TuiTab::Connections | TuiTab::Settings, _) => {
+        (TuiTab::Dashboard, _) | (TuiTab::Sessions | TuiTab::Connections | TuiTab::Settings, _) => {
             bail!("unknown command for current tab: {name}")
         }
     }

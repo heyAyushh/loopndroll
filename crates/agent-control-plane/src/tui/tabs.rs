@@ -4,16 +4,14 @@ pub(crate) enum TuiTab {
     Sessions,
     Connections,
     Settings,
-    Logs,
 }
 
 impl TuiTab {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::Dashboard,
         Self::Sessions,
         Self::Connections,
         Self::Settings,
-        Self::Logs,
     ];
 
     pub(crate) fn title(self) -> &'static str {
@@ -22,7 +20,6 @@ impl TuiTab {
             Self::Sessions => "Sessions",
             Self::Connections => "Connections",
             Self::Settings => "Settings",
-            Self::Logs => "Logs",
         }
     }
 
@@ -32,7 +29,6 @@ impl TuiTab {
             Self::Sessions => 1,
             Self::Connections => 2,
             Self::Settings => 3,
-            Self::Logs => 4,
         }
     }
 

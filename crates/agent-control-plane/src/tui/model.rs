@@ -110,7 +110,6 @@ pub(super) fn panel_model(app: &TuiState) -> PanelModel {
         TuiTab::Sessions => session_rows(app),
         TuiTab::Connections => connection_rows(app),
         TuiTab::Settings => settings_rows(app),
-        TuiTab::Logs => log_rows(app),
     };
     PanelModel {
         title: app.tab.title(),
@@ -561,18 +560,6 @@ fn selected_session_rows(app: &TuiState) -> Vec<RenderRow> {
             "  action: mute selected session",
         ),
     ]
-}
-
-fn log_rows(app: &TuiState) -> Vec<RenderRow> {
-    if app.events.is_empty() {
-        return vec![RenderRow::muted("waiting for /events/tail")];
-    }
-    app.events
-        .iter()
-        .rev()
-        .skip(app.log_scroll)
-        .map(|event| RenderRow::plain(event.clone()))
-        .collect()
 }
 
 fn connections_by_kind(app: &TuiState, kind: &str) -> usize {

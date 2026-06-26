@@ -9,8 +9,6 @@ use super::tabs::TuiTab;
 
 pub(crate) const COMMAND_PREFIX: char = ':';
 
-const MAX_LOG_LINES: usize = 200;
-
 #[derive(Debug)]
 pub(crate) struct ServerData {
     pub(crate) status: Value,
@@ -32,7 +30,6 @@ pub(crate) struct TuiState {
     pub(super) connections: Value,
     pub(super) push_devices: Value,
     pub(super) pairing: Value,
-    pub(super) events: Vec<String>,
     command_mode: bool,
     command_buffer: String,
     status_line: String,
@@ -41,7 +38,6 @@ pub(crate) struct TuiState {
     pub(super) hovered_session: Option<usize>,
     pub(super) hovered_connection: Option<usize>,
     pub(super) hovered_command: Option<&'static str>,
-    pub(super) log_scroll: usize,
     ui_geometry: UiGeometry,
 }
 
@@ -57,7 +53,6 @@ impl Default for TuiState {
             connections: Value::Null,
             push_devices: Value::Null,
             pairing: Value::Null,
-            events: Vec::new(),
             command_mode: false,
             command_buffer: String::new(),
             status_line:
@@ -68,7 +63,6 @@ impl Default for TuiState {
             hovered_session: None,
             hovered_connection: None,
             hovered_command: None,
-            log_scroll: 0,
             ui_geometry: UiGeometry::default(),
         }
     }
@@ -134,7 +128,6 @@ impl TuiState {
                 self.selected_connection =
                     next_index(self.selected_connection, self.connection_count());
             }
-            TuiTab::Logs => self.scroll_logs_older(),
             TuiTab::Dashboard | TuiTab::Settings => {}
         }
     }
@@ -148,7 +141,6 @@ impl TuiState {
                 self.selected_connection =
                     previous_index(self.selected_connection, self.connection_count());
             }
-            TuiTab::Logs => self.scroll_logs_newer(),
             TuiTab::Dashboard | TuiTab::Settings => {}
         }
     }
@@ -310,17 +302,13 @@ impl TuiState {
                     self.selected_connection = index;
                 }
             }
-            TuiTab::Dashboard | TuiTab::Settings | TuiTab::Logs => {}
+            TuiTab::Dashboard | TuiTab::Settings => {}
         }
     }
 
     pub(crate) fn scroll_pointer_target_up(&mut self) {
         if self.hovered_tab.is_some() {
             self.previous_tab();
-            return;
-        }
-        if self.tab == TuiTab::Logs {
-            self.scroll_logs_newer();
             return;
         }
         self.previous_row();
@@ -331,20 +319,7 @@ impl TuiState {
             self.next_tab();
             return;
         }
-        if self.tab == TuiTab::Logs {
-            self.scroll_logs_older();
-            return;
-        }
         self.next_row();
-    }
-
-    pub(crate) fn push_log_event(&mut self, event: String) {
-        self.events.push(event);
-        let overflow_count = self.events.len().saturating_sub(MAX_LOG_LINES);
-        if overflow_count > 0 {
-            self.events.drain(..overflow_count);
-        }
-        self.log_scroll = self.log_scroll.min(self.max_log_scroll());
     }
 
     fn session_count(&self) -> usize {
@@ -358,7 +333,6 @@ impl TuiState {
     fn clamp_selection(&mut self) {
         self.selected_session = clamp_index(self.selected_session, self.session_count());
         self.selected_connection = clamp_index(self.selected_connection, self.connection_count());
-        self.log_scroll = self.log_scroll.min(self.max_log_scroll());
         self.refresh_hover();
     }
 
@@ -369,20 +343,10 @@ impl TuiState {
             }
             TuiTab::Connections => "new-pairing | rename <label> | revoke | test-push <installation-id>".to_owned(),
             TuiTab::Settings => "default-prompt <text> | scope <scope> | global-preset <preset|off> | notify-slack <label> <webhook> | test-push <installation-id>".to_owned(),
-            TuiTab::Dashboard | TuiTab::Logs => {
+            TuiTab::Dashboard => {
                 "refresh commands available on Sessions, Connections, Settings".to_owned()
             }
         }
-    }
-
-    fn scroll_logs_older(&mut self) {
-        self.log_scroll = (self.log_scroll + 1).min(self.max_log_scroll());
-        self.status_line = format!("logs: older ({})", self.log_scroll);
-    }
-
-    fn scroll_logs_newer(&mut self) {
-        self.log_scroll = self.log_scroll.saturating_sub(1);
-        self.status_line = format!("logs: newer ({})", self.log_scroll);
     }
 
     fn refresh_hover(&mut self) {
@@ -419,10 +383,6 @@ impl TuiState {
         }
         let row_index = usize::from(pointer.row.saturating_sub(content_area.y));
         self.panel_model().rows.get(row_index)?.target
-    }
-
-    fn max_log_scroll(&self) -> usize {
-        self.events.len().saturating_sub(1)
     }
 
     fn selected_session_status(&self) -> String {
@@ -496,7 +456,7 @@ mod tests {
             Rect::new(0, TAB_BAR_HEIGHT, 50, 10),
             Rect::new(0, 13, 50, FOOTER_HEIGHT),
         );
-        app.update_pointer(11, 1);
+        app.update_pointer(13, 1);
         app.activate_pointer_target();
 
         assert_eq!(app.tab(), TuiTab::Sessions);
@@ -648,22 +608,5 @@ mod tests {
         assert!(app.focus_thread("thread-2"));
         assert_eq!(app.tab(), TuiTab::Sessions);
         assert_eq!(app.selected_thread_id().as_deref(), Some("thread-2"));
-    }
-
-    #[test]
-    fn log_scroll_stays_within_events() {
-        let mut app = TuiState {
-            tab: TuiTab::Logs,
-            events: vec!["one".to_owned(), "two".to_owned()],
-            ..TuiState::default()
-        };
-        app.scroll_pointer_target_down();
-        app.scroll_pointer_target_down();
-        app.scroll_pointer_target_down();
-        assert_eq!(app.log_scroll, 1);
-
-        app.scroll_pointer_target_up();
-        app.scroll_pointer_target_up();
-        assert_eq!(app.log_scroll, 0);
     }
 }
