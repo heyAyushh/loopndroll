@@ -1103,6 +1103,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func observeLocalStateChange() async throws  -> ClientLocalStateStreamUpdate
 
+    func observeMobileSnapshotChange() async throws  -> ClientMobileSnapshotStreamUpdate
+
     func outboxDepth() throws  -> UInt32
 
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
@@ -1249,6 +1251,23 @@ open func observeLocalStateChange()async throws  -> ClientLocalStateStreamUpdate
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientLocalStateStreamUpdate_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func observeMobileSnapshotChange()async throws  -> ClientMobileSnapshotStreamUpdate  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_observe_mobile_snapshot_change(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientMobileSnapshotStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -2633,6 +2652,84 @@ public func FfiConverterTypeClientMobileSnapshotProjection_lift(_ buf: RustBuffe
 #endif
 public func FfiConverterTypeClientMobileSnapshotProjection_lower(_ value: ClientMobileSnapshotProjection) -> RustBuffer {
     return FfiConverterTypeClientMobileSnapshotProjection.lower(value)
+}
+
+
+public struct ClientMobileSnapshotStreamUpdate: Equatable, Hashable {
+    public var hasSnapshot: Bool
+    public var snapshotJson: String
+    public var syncReason: String
+    public var shouldStop: Bool
+    public var latestSeq: Int64
+    public var serverTime: String
+    public var errorDescription: String
+    public var debugMessage: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hasSnapshot: Bool, snapshotJson: String, syncReason: String, shouldStop: Bool, latestSeq: Int64, serverTime: String, errorDescription: String, debugMessage: String) {
+        self.hasSnapshot = hasSnapshot
+        self.snapshotJson = snapshotJson
+        self.syncReason = syncReason
+        self.shouldStop = shouldStop
+        self.latestSeq = latestSeq
+        self.serverTime = serverTime
+        self.errorDescription = errorDescription
+        self.debugMessage = debugMessage
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSnapshotStreamUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSnapshotStreamUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSnapshotStreamUpdate {
+        return
+            try ClientMobileSnapshotStreamUpdate(
+                hasSnapshot: FfiConverterBool.read(from: &buf),
+                snapshotJson: FfiConverterString.read(from: &buf),
+                syncReason: FfiConverterString.read(from: &buf),
+                shouldStop: FfiConverterBool.read(from: &buf),
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                errorDescription: FfiConverterString.read(from: &buf),
+                debugMessage: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSnapshotStreamUpdate, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hasSnapshot, into: &buf)
+        FfiConverterString.write(value.snapshotJson, into: &buf)
+        FfiConverterString.write(value.syncReason, into: &buf)
+        FfiConverterBool.write(value.shouldStop, into: &buf)
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+        FfiConverterString.write(value.errorDescription, into: &buf)
+        FfiConverterString.write(value.debugMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshotStreamUpdate_lift(_ buf: RustBuffer) throws -> ClientMobileSnapshotStreamUpdate {
+    return try FfiConverterTypeClientMobileSnapshotStreamUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshotStreamUpdate_lower(_ value: ClientMobileSnapshotStreamUpdate) -> RustBuffer {
+    return FfiConverterTypeClientMobileSnapshotStreamUpdate.lower(value)
 }
 
 
@@ -4943,6 +5040,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_local_state_change() != 57800) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_mobile_snapshot_change() != 11661) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_outbox_depth() != 24353) {

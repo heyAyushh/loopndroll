@@ -256,22 +256,12 @@ final class CompanionAppModel {
             return
         }
 
-        do {
-            guard let cachedSnapshot = try sessionMiniController.cachedSnapshot() else {
-                return
-            }
-
-            applyCachedSnapshot(cachedSnapshot, reason: "session-mini-sync-\(update.reason.rawValue)")
-            connectionState = .connected
-            lastUpdatedAt = Date()
-            CompanionDiagnostics.record(
-                "session-mini:sync-applied reason=\(update.reason.rawValue) seq=\(update.snapshot.latestSeq)"
-            )
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:sync-apply-failed reason=\(update.reason.rawValue) error=\(error.localizedDescription)"
-            )
-        }
+        applyCachedSnapshot(update.snapshot, reason: "session-mini-sync-\(update.reason)")
+        connectionState = .connected
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "session-mini:sync-applied reason=\(update.reason) seq=\(update.latestSeq)"
+        )
     }
 
     private func prepareRealtimeConnectionInBackground() {

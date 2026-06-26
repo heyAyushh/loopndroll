@@ -18,20 +18,16 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let attemptCount: Int
 }
 
-struct CompanionClientCoreStateMiniStreamResult: Sendable {
-    let reason: ClientStateMiniStreamUpdateReason
+struct CompanionClientCoreMobileSnapshotStreamResult: Sendable {
     let update: CompanionSessionMiniSyncUpdate?
-    let errorDescription: String
+    let shouldStop: Bool
+    let debugMessage: String
 }
 
-enum CompanionSessionMiniSyncUpdateReason: String, Equatable, Sendable {
-    case delta
-    case recovery
-}
-
-struct CompanionSessionMiniSyncUpdate: Equatable, Sendable {
-    let reason: CompanionSessionMiniSyncUpdateReason
-    let snapshot: ClientLocalStateSnapshot
+struct CompanionSessionMiniSyncUpdate: Sendable {
+    let reason: String
+    let latestSeq: Int64
+    let snapshot: MobileSnapshot
 }
 
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
@@ -139,28 +135,30 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         (try? sessionManager.localSnapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
-    func nextClientCoreStateMiniStreamResult() async throws -> CompanionClientCoreStateMiniStreamResult {
-        let streamUpdate = try await sessionManager.observeLocalStateChange()
-        guard streamUpdate.didChange else {
-            return CompanionClientCoreStateMiniStreamResult(
-                reason: streamUpdate.reason,
+    func nextClientCoreMobileSnapshotStreamResult()
+        async throws -> CompanionClientCoreMobileSnapshotStreamResult
+    {
+        let streamUpdate = try await sessionManager.observeMobileSnapshotChange()
+        guard streamUpdate.hasSnapshot else {
+            return CompanionClientCoreMobileSnapshotStreamResult(
                 update: nil,
-                errorDescription: streamUpdate.errorDescription
+                shouldStop: streamUpdate.shouldStop,
+                debugMessage: streamUpdate.debugMessage
             )
         }
 
-        _ = try mobileSnapshot(
-            latestSeq: streamUpdate.snapshot.latestSeq,
-            sessions: streamUpdate.snapshot.sessions,
-            serverTime: streamUpdate.snapshot.serverTime
+        let snapshot = try decoder.decode(
+            MobileSnapshot.self,
+            from: Data(streamUpdate.snapshotJson.utf8)
         )
-        return CompanionClientCoreStateMiniStreamResult(
-            reason: streamUpdate.reason,
+        return CompanionClientCoreMobileSnapshotStreamResult(
             update: CompanionSessionMiniSyncUpdate(
-                reason: streamUpdate.reason == .recoveryRequired ? .recovery : .delta,
-                snapshot: streamUpdate.snapshot
+                reason: streamUpdate.syncReason,
+                latestSeq: streamUpdate.latestSeq,
+                snapshot: snapshot
             ),
-            errorDescription: streamUpdate.errorDescription
+            shouldStop: streamUpdate.shouldStop,
+            debugMessage: streamUpdate.debugMessage
         )
     }
 
@@ -253,23 +251,14 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async throws {
         while !Task.isCancelled {
-            let result = try await nextClientCoreStateMiniStreamResult()
-            switch result.reason {
-            case .delta:
-                if let update = result.update {
-                    await onUpdate(update)
-                }
-            case .heartbeat, .reconnecting:
-                continue
-            case .recoveryRequired:
-                if let update = result.update {
-                    await onUpdate(update)
-                } else if !result.errorDescription.isEmpty {
-                    await onDebugMessage(
-                        "session-mini:client-core-stream-recovery-waiting error=\(result.errorDescription)"
-                    )
-                }
-            case .stopped:
+            let result = try await nextClientCoreMobileSnapshotStreamResult()
+            if let update = result.update {
+                await onUpdate(update)
+            }
+            if !result.debugMessage.isEmpty {
+                await onDebugMessage(result.debugMessage)
+            }
+            if result.shouldStop {
                 return
             }
         }

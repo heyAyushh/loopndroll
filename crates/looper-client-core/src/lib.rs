@@ -31,10 +31,10 @@ pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mob
 pub use model::{
     ClientBaseUrlRaceCandidate, ClientCommandAck, ClientCommandAckEnvelope,
     ClientCommandBatchResponse, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
-    ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
-    ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
-    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
-    OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientLocalStateSnapshot, ClientMobileSnapshotStreamUpdate, ClientPendingCommand,
+    ClientPendingCommandKind, ClientPendingMutation, ClientStateDelta, ClientStateMini,
+    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
+    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 pub use race_plan::{
     default_base_url_race_fallback_delay_nanoseconds, plan_base_url_race_candidates,

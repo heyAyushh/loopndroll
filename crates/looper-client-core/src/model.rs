@@ -238,3 +238,15 @@ pub struct ClientLocalStateStreamUpdate {
     pub did_change: bool,
     pub error_description: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSnapshotStreamUpdate {
+    pub has_snapshot: bool,
+    pub snapshot_json: String,
+    pub sync_reason: String,
+    pub should_stop: bool,
+    pub latest_seq: i64,
+    pub server_time: String,
+    pub error_description: String,
+    pub debug_message: String,
+}

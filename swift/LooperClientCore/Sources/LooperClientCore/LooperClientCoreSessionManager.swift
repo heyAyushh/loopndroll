@@ -37,6 +37,10 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         try await runtime.observeLocalStateChange()
     }
 
+    public func observeMobileSnapshotChange() async throws -> ClientMobileSnapshotStreamUpdate {
+        try await runtime.observeMobileSnapshotChange()
+    }
+
     public func isRuntimeConfigured() throws -> Bool {
         try !runtime.stateSnapshot().endpointUrl.isEmpty
     }
