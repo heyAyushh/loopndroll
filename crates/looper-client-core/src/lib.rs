@@ -8,6 +8,7 @@ mod local_store;
 mod menu_snapshot;
 mod mobile_snapshot;
 mod model;
+mod race_plan;
 mod session_runtime;
 mod session_transport;
 mod snapshot_reducer;
@@ -28,11 +29,15 @@ pub use menu_snapshot::{
 };
 pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{
-    ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientCommandMetadata, ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand,
-    ClientPendingCommandKind, ClientPendingMutation, ClientStateDelta, ClientStateMini,
-    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
-    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientBaseUrlRaceCandidate, ClientCommandAck, ClientCommandAckEnvelope,
+    ClientCommandBatchResponse, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
+    ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
+    ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
+    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
+    OutboundSessionFrame, OutboundSessionFrameKind,
+};
+pub use race_plan::{
+    default_base_url_race_fallback_delay_nanoseconds, plan_base_url_race_candidates,
 };
 pub use session_runtime::LooperClientCoreSessionRuntime;
 pub use snapshot_reducer::{

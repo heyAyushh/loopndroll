@@ -451,6 +451,22 @@ fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -1467,6 +1483,60 @@ public func FfiConverterTypeClientAssistantSurfaceSelection_lift(_ buf: RustBuff
 #endif
 public func FfiConverterTypeClientAssistantSurfaceSelection_lower(_ value: ClientAssistantSurfaceSelection) -> RustBuffer {
     return FfiConverterTypeClientAssistantSurfaceSelection.lower(value)
+}
+
+
+public struct ClientBaseUrlRaceCandidate: Equatable, Hashable {
+    public var baseUrl: String
+    public var delayNanoseconds: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(baseUrl: String, delayNanoseconds: UInt64) {
+        self.baseUrl = baseUrl
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientBaseUrlRaceCandidate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientBaseUrlRaceCandidate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientBaseUrlRaceCandidate {
+        return
+            try ClientBaseUrlRaceCandidate(
+                baseUrl: FfiConverterString.read(from: &buf),
+                delayNanoseconds: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientBaseUrlRaceCandidate, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.baseUrl, into: &buf)
+        FfiConverterUInt64.write(value.delayNanoseconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientBaseUrlRaceCandidate_lift(_ buf: RustBuffer) throws -> ClientBaseUrlRaceCandidate {
+    return try FfiConverterTypeClientBaseUrlRaceCandidate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientBaseUrlRaceCandidate_lower(_ value: ClientBaseUrlRaceCandidate) -> RustBuffer {
+    return FfiConverterTypeClientBaseUrlRaceCandidate.lower(value)
 }
 
 
@@ -4345,6 +4415,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientBaseUrlRaceCandidate: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientBaseUrlRaceCandidate]
+
+    public static func write(_ value: [ClientBaseUrlRaceCandidate], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientBaseUrlRaceCandidate.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientBaseUrlRaceCandidate] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientBaseUrlRaceCandidate]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientBaseUrlRaceCandidate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientCommandAckEnvelope: FfiConverterRustBuffer {
     typealias SwiftType = [ClientCommandAckEnvelope]
 
@@ -4625,6 +4720,20 @@ public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientSt
     )
 })
 }
+public func defaultBaseUrlRaceFallbackDelayNanoseconds() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+    uniffi_looper_client_core_fn_func_default_base_url_race_fallback_delay_nanoseconds($0
+    )
+})
+}
+public func planBaseUrlRaceCandidates(baseUrls: [String], fallbackDelayNanoseconds: UInt64) -> [ClientBaseUrlRaceCandidate]  {
+    return try!  FfiConverterSequenceTypeClientBaseUrlRaceCandidate.lift(try! rustCall() {
+    uniffi_looper_client_core_fn_func_plan_base_url_race_candidates(
+        FfiConverterSequenceString.lower(baseUrls),
+        FfiConverterUInt64.lower(fallbackDelayNanoseconds),$0
+    )
+})
+}
 public func reduceAssistantSurfaceSelection(currentSelectedAssistantSurface: String, requestedAssistantSurface: String, hasUserSelectedAssistantSurface: Bool) -> ClientAssistantSurfaceSelection  {
     return try!  FfiConverterTypeClientAssistantSurfaceSelection_lift(try! rustCall() {
     uniffi_looper_client_core_fn_func_reduce_assistant_surface_selection(
@@ -4720,6 +4829,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_default_base_url_race_fallback_delay_nanoseconds() != 23556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_plan_base_url_race_candidates() != 24232) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_assistant_surface_selection() != 17067) {

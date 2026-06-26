@@ -14,13 +14,18 @@ private enum HTTPCompanionBaseURLRaceEvent {
     case fallbackTimer(generation: Int)
 }
 
+private struct HTTPCompanionBaseURLRaceCandidate: Equatable, Sendable {
+    let baseURL: URL
+    let delay: Duration
+}
+
 private struct HTTPCompanionBaseURLRaceState {
-    private let candidates: [CompanionBaseURLRaceCandidate]
+    private let candidates: [HTTPCompanionBaseURLRaceCandidate]
     private(set) var nextCandidateIndex = 0
     private(set) var inFlightRequestCount = 0
     private(set) var timerGeneration = 0
 
-    init(candidates: [CompanionBaseURLRaceCandidate]) {
+    init(candidates: [HTTPCompanionBaseURLRaceCandidate]) {
         self.candidates = candidates
     }
 
@@ -32,7 +37,7 @@ private struct HTTPCompanionBaseURLRaceState {
         inFlightRequestCount > 0 || hasRemainingCandidates
     }
 
-    mutating func nextRequestCandidate() -> CompanionBaseURLRaceCandidate {
+    mutating func nextRequestCandidate() -> HTTPCompanionBaseURLRaceCandidate {
         let candidate = candidates[nextCandidateIndex]
         nextCandidateIndex += 1
         inFlightRequestCount += 1
@@ -506,7 +511,7 @@ struct HTTPCompanionService: CompanionService {
 
         if shouldRaceResolvedURLs(path: path, method: method) {
             let response = try await firstSuccessfulData(
-                candidates: CompanionBaseURLRacePlan.candidates(for: prioritizedBaseURLs),
+                candidates: Self.baseURLRaceCandidates(for: prioritizedBaseURLs),
                 path: path,
                 method: method,
                 bodyData: bodyData,
@@ -704,8 +709,26 @@ struct HTTPCompanionService: CompanionService {
         return trimmedSuffix
     }
 
+    private static func baseURLRaceCandidates(
+        for baseURLs: [URL]
+    ) -> [HTTPCompanionBaseURLRaceCandidate] {
+        planBaseUrlRaceCandidates(
+            baseUrls: baseURLs.map(\.absoluteString),
+            fallbackDelayNanoseconds: defaultBaseUrlRaceFallbackDelayNanoseconds()
+        ).compactMap { candidate in
+            guard let baseURL = URL(string: candidate.baseUrl) else {
+                return nil
+            }
+
+            return HTTPCompanionBaseURLRaceCandidate(
+                baseURL: baseURL,
+                delay: .nanoseconds(Int64(clamping: candidate.delayNanoseconds))
+            )
+        }
+    }
+
     private func firstSuccessfulData(
-        candidates: [CompanionBaseURLRaceCandidate],
+        candidates: [HTTPCompanionBaseURLRaceCandidate],
         path: String,
         method: HTTPMethod,
         bodyData: Data?,

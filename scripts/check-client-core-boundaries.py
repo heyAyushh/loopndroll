@@ -103,6 +103,10 @@ CLIENT_APP_OWNERSHIP_PATTERNS = (
             r"LooperRealtimeStateMiniSynchronizer"
         ),
     ),
+    (
+        "retired Swift base URL race owner",
+        re.compile(r"\bCompanionBaseURLRacePlan\b"),
+    ),
 )
 
 SCAN_SUFFIXES = {

@@ -35,6 +35,12 @@ pub struct ClientEndpoint {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientBaseUrlRaceCandidate {
+    pub base_url: String,
+    pub delay_nanoseconds: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientPendingMutation {
     pub client_mutation_id: String,
     pub command_kind: ClientCommandKind,
