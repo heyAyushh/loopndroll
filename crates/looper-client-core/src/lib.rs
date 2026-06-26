@@ -25,7 +25,8 @@ pub use local_store::{DEFAULT_LOCAL_STORE_FILE_NAME, LooperClientCoreLocalStore}
 pub use menu_snapshot::{
     ClientMenuBarSessionMini, ClientMenuBarSessionMiniBlockedGoal,
     ClientMenuBarSessionMiniLocalSnapshot, ClientMenuBarSessionMiniNotificationStatus,
-    ClientMenuBarSessionMiniPendingCommand, reduce_state_minis_menu_snapshot,
+    ClientMenuBarSessionMiniPendingCommand, ClientMenuSnapshotStreamUpdate,
+    reduce_state_minis_menu_snapshot,
 };
 pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{

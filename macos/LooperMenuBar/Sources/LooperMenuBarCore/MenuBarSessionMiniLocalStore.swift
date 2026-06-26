@@ -38,19 +38,10 @@ public struct MenuBarSessionMiniPendingCommand: Equatable, Sendable {
     public let attemptCount: Int
 }
 
-public enum MenuBarClientCoreStateMiniStreamUpdateReason: Equatable, Sendable {
-    case delta
-    case heartbeat
-    case reconnecting
-    case recoveryRequired
-    case stopped
-}
-
-public struct MenuBarClientCoreStateMiniStreamResult: Sendable {
-    public let reason: MenuBarClientCoreStateMiniStreamUpdateReason
+public struct MenuBarClientCoreMenuSnapshotStreamResult: Sendable {
     public let snapshot: MenuBarSessionMiniLocalSnapshot?
-    public let didChange: Bool
-    public let errorDescription: String
+    public let shouldStop: Bool
+    public let debugMessage: String
 }
 
 public struct MenuBarSessionMini: Equatable, Sendable {
@@ -200,24 +191,22 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         (try? sessionManager.localSnapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
-    public func nextClientCoreStateMiniStreamResult() async throws
-        -> MenuBarClientCoreStateMiniStreamResult
+    public func nextClientCoreMenuSnapshotStreamResult() async throws
+        -> MenuBarClientCoreMenuSnapshotStreamResult
     {
-        let streamUpdate = try await sessionManager.observeLocalStateChange()
-        guard streamUpdate.didChange else {
-            return MenuBarClientCoreStateMiniStreamResult(
-                reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
+        let streamUpdate = try await sessionManager.observeMenuSnapshotChange()
+        guard streamUpdate.hasSnapshot else {
+            return MenuBarClientCoreMenuSnapshotStreamResult(
                 snapshot: nil,
-                didChange: false,
-                errorDescription: streamUpdate.errorDescription
+                shouldStop: streamUpdate.shouldStop,
+                debugMessage: streamUpdate.debugMessage
             )
         }
 
-        return MenuBarClientCoreStateMiniStreamResult(
-            reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
-            snapshot: try menuSnapshot(from: streamUpdate.snapshot),
-            didChange: true,
-            errorDescription: streamUpdate.errorDescription
+        return MenuBarClientCoreMenuSnapshotStreamResult(
+            snapshot: MenuBarSessionMiniLocalSnapshot(streamUpdate.snapshot),
+            shouldStop: streamUpdate.shouldStop,
+            debugMessage: streamUpdate.debugMessage
         )
     }
 
@@ -259,23 +248,14 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async throws {
         while !Task.isCancelled {
-            let result = try await nextClientCoreStateMiniStreamResult()
-            switch result.reason {
-            case .delta:
-                if let snapshot = result.snapshot {
-                    await onSnapshot(snapshot)
-                }
-            case .heartbeat, .reconnecting:
-                continue
-            case .recoveryRequired:
-                if let snapshot = result.snapshot {
-                    await onSnapshot(snapshot)
-                } else if !result.errorDescription.isEmpty {
-                    await onDebugMessage(
-                        "session mini stream recovery waiting: \(result.errorDescription)"
-                    )
-                }
-            case .stopped:
+            let result = try await nextClientCoreMenuSnapshotStreamResult()
+            if let snapshot = result.snapshot {
+                await onSnapshot(snapshot)
+            }
+            if !result.debugMessage.isEmpty {
+                await onDebugMessage(result.debugMessage)
+            }
+            if result.shouldStop {
                 return
             }
         }
@@ -288,10 +268,16 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         guard !projection.sessions.isEmpty else {
             return nil
         }
-        return MenuBarSessionMiniLocalSnapshot(
-            latestSeq: projection.latestSeq,
-            sessions: projection.sessions.map(MenuBarSessionMini.init),
-            pendingCommands: projection.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
+        return MenuBarSessionMiniLocalSnapshot(projection)
+    }
+}
+
+private extension MenuBarSessionMiniLocalSnapshot {
+    init(_ snapshot: ClientMenuBarSessionMiniLocalSnapshot) {
+        self.init(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(MenuBarSessionMini.init),
+            pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
         )
     }
 }
@@ -370,23 +356,6 @@ private extension ClientStateMiniSnapshot {
             sessions: snapshot.sessions,
             serverTime: snapshot.serverTime
         )
-    }
-}
-
-private extension MenuBarClientCoreStateMiniStreamUpdateReason {
-    init(_ reason: ClientStateMiniStreamUpdateReason) {
-        switch reason {
-        case .delta:
-            self = .delta
-        case .heartbeat:
-            self = .heartbeat
-        case .reconnecting:
-            self = .reconnecting
-        case .recoveryRequired:
-            self = .recoveryRequired
-        case .stopped:
-            self = .stopped
-        }
     }
 }
 

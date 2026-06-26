@@ -1103,6 +1103,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func observeLocalStateChange() async throws  -> ClientLocalStateStreamUpdate
 
+    func observeMenuSnapshotChange() async throws  -> ClientMenuSnapshotStreamUpdate
+
     func observeMobileSnapshotChange() async throws  -> ClientMobileSnapshotStreamUpdate
 
     func outboxDepth() throws  -> UInt32
@@ -1251,6 +1253,23 @@ open func observeLocalStateChange()async throws  -> ClientLocalStateStreamUpdate
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientLocalStateStreamUpdate_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func observeMenuSnapshotChange()async throws  -> ClientMenuSnapshotStreamUpdate  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_observe_menu_snapshot_change(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientMenuSnapshotStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -2598,6 +2617,76 @@ public func FfiConverterTypeClientMenuBarSessionMiniPendingCommand_lift(_ buf: R
 #endif
 public func FfiConverterTypeClientMenuBarSessionMiniPendingCommand_lower(_ value: ClientMenuBarSessionMiniPendingCommand) -> RustBuffer {
     return FfiConverterTypeClientMenuBarSessionMiniPendingCommand.lower(value)
+}
+
+
+public struct ClientMenuSnapshotStreamUpdate: Equatable, Hashable {
+    public var hasSnapshot: Bool
+    public var snapshot: ClientMenuBarSessionMiniLocalSnapshot
+    public var syncReason: String
+    public var shouldStop: Bool
+    public var errorDescription: String
+    public var debugMessage: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hasSnapshot: Bool, snapshot: ClientMenuBarSessionMiniLocalSnapshot, syncReason: String, shouldStop: Bool, errorDescription: String, debugMessage: String) {
+        self.hasSnapshot = hasSnapshot
+        self.snapshot = snapshot
+        self.syncReason = syncReason
+        self.shouldStop = shouldStop
+        self.errorDescription = errorDescription
+        self.debugMessage = debugMessage
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuSnapshotStreamUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuSnapshotStreamUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuSnapshotStreamUpdate {
+        return
+            try ClientMenuSnapshotStreamUpdate(
+                hasSnapshot: FfiConverterBool.read(from: &buf),
+                snapshot: FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot.read(from: &buf),
+                syncReason: FfiConverterString.read(from: &buf),
+                shouldStop: FfiConverterBool.read(from: &buf),
+                errorDescription: FfiConverterString.read(from: &buf),
+                debugMessage: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuSnapshotStreamUpdate, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hasSnapshot, into: &buf)
+        FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot.write(value.snapshot, into: &buf)
+        FfiConverterString.write(value.syncReason, into: &buf)
+        FfiConverterBool.write(value.shouldStop, into: &buf)
+        FfiConverterString.write(value.errorDescription, into: &buf)
+        FfiConverterString.write(value.debugMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuSnapshotStreamUpdate_lift(_ buf: RustBuffer) throws -> ClientMenuSnapshotStreamUpdate {
+    return try FfiConverterTypeClientMenuSnapshotStreamUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuSnapshotStreamUpdate_lower(_ value: ClientMenuSnapshotStreamUpdate) -> RustBuffer {
+    return FfiConverterTypeClientMenuSnapshotStreamUpdate.lower(value)
 }
 
 
@@ -5040,6 +5129,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_local_state_change() != 57800) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_menu_snapshot_change() != 43373) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe_mobile_snapshot_change() != 11661) {

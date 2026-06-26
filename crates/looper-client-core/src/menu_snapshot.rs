@@ -42,6 +42,16 @@ pub struct ClientMenuBarSessionMiniLocalSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMenuSnapshotStreamUpdate {
+    pub has_snapshot: bool,
+    pub snapshot: ClientMenuBarSessionMiniLocalSnapshot,
+    pub sync_reason: String,
+    pub should_stop: bool,
+    pub error_description: String,
+    pub debug_message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientMenuBarSessionMiniPendingCommand {
     pub kind: ClientPendingCommandKind,
     pub client_mutation_id: String,

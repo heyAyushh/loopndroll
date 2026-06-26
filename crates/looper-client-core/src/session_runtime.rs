@@ -4,6 +4,10 @@ use crate::{
     client::LooperClientCore,
     error::ClientCoreError,
     local_store::LooperClientCoreLocalStore,
+    menu_snapshot::{
+        ClientMenuBarSessionMiniLocalSnapshot, ClientMenuSnapshotStreamUpdate,
+        reduce_state_minis_menu_snapshot,
+    },
     mobile_snapshot::reduce_state_minis_mobile_snapshot,
     model::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
@@ -87,6 +91,13 @@ impl LooperClientCoreSessionRuntime {
     ) -> Result<ClientMobileSnapshotStreamUpdate, ClientCoreError> {
         let update = self.observe_local_state_change().await?;
         self.mobile_snapshot_stream_update(update)
+    }
+
+    pub async fn observe_menu_snapshot_change(
+        &self,
+    ) -> Result<ClientMenuSnapshotStreamUpdate, ClientCoreError> {
+        let update = self.observe_local_state_change().await?;
+        self.menu_snapshot_stream_update(update)
     }
 
     pub fn state_snapshot(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -259,28 +270,11 @@ impl LooperClientCoreSessionRuntime {
         &self,
         update: ClientLocalStateStreamUpdate,
     ) -> Result<ClientMobileSnapshotStreamUpdate, ClientCoreError> {
-        let sync_reason = match update.reason {
-            ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
-            ClientStateMiniStreamUpdateReason::Delta
-            | ClientStateMiniStreamUpdateReason::Heartbeat
-            | ClientStateMiniStreamUpdateReason::Reconnecting
-            | ClientStateMiniStreamUpdateReason::Stopped => MOBILE_SYNC_REASON_DELTA,
-        }
-        .to_owned();
+        let sync_reason = sync_reason(update.reason);
         let latest_seq = update.snapshot.latest_seq;
         let server_time = update.snapshot.server_time.clone();
         let should_stop = update.reason == ClientStateMiniStreamUpdateReason::Stopped;
-        let debug_message = if update.reason == ClientStateMiniStreamUpdateReason::RecoveryRequired
-            && !update.did_change
-            && !update.error_description.is_empty()
-        {
-            format!(
-                "session-mini:client-core-stream-recovery-waiting error={}",
-                update.error_description
-            )
-        } else {
-            String::new()
-        };
+        let debug_message = recovery_wait_debug_message(&update);
 
         if !update.did_change {
             return Ok(ClientMobileSnapshotStreamUpdate {
@@ -311,6 +305,69 @@ impl LooperClientCoreSessionRuntime {
             error_description: update.error_description,
             debug_message,
         })
+    }
+
+    fn menu_snapshot_stream_update(
+        &self,
+        update: ClientLocalStateStreamUpdate,
+    ) -> Result<ClientMenuSnapshotStreamUpdate, ClientCoreError> {
+        let sync_reason = sync_reason(update.reason);
+        let should_stop = update.reason == ClientStateMiniStreamUpdateReason::Stopped;
+        let debug_message = recovery_wait_debug_message(&update);
+
+        if !update.did_change {
+            return Ok(ClientMenuSnapshotStreamUpdate {
+                has_snapshot: false,
+                snapshot: empty_menu_snapshot(),
+                sync_reason,
+                should_stop,
+                error_description: update.error_description,
+                debug_message,
+            });
+        }
+
+        let snapshot = reduce_state_minis_menu_snapshot(update.snapshot)?;
+        Ok(ClientMenuSnapshotStreamUpdate {
+            has_snapshot: !snapshot.sessions.is_empty(),
+            snapshot,
+            sync_reason,
+            should_stop,
+            error_description: update.error_description,
+            debug_message,
+        })
+    }
+}
+
+fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
+    match reason {
+        ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
+        ClientStateMiniStreamUpdateReason::Delta
+        | ClientStateMiniStreamUpdateReason::Heartbeat
+        | ClientStateMiniStreamUpdateReason::Reconnecting
+        | ClientStateMiniStreamUpdateReason::Stopped => MOBILE_SYNC_REASON_DELTA,
+    }
+    .to_owned()
+}
+
+fn recovery_wait_debug_message(update: &ClientLocalStateStreamUpdate) -> String {
+    if update.reason == ClientStateMiniStreamUpdateReason::RecoveryRequired
+        && !update.did_change
+        && !update.error_description.is_empty()
+    {
+        format!(
+            "session-mini:client-core-stream-recovery-waiting error={}",
+            update.error_description
+        )
+    } else {
+        String::new()
+    }
+}
+
+fn empty_menu_snapshot() -> ClientMenuBarSessionMiniLocalSnapshot {
+    ClientMenuBarSessionMiniLocalSnapshot {
+        latest_seq: 0,
+        sessions: Vec::new(),
+        pending_commands: Vec::new(),
     }
 }
 
@@ -537,6 +594,64 @@ mod tests {
 
         assert!(!update.has_snapshot);
         assert!(update.should_stop);
+    }
+
+    #[test]
+    fn runtime_projects_menu_snapshot_stream_update_in_rust() {
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("menu-stream")).expect("runtime");
+        let update = runtime
+            .menu_snapshot_stream_update(ClientLocalStateStreamUpdate {
+                reason: ClientStateMiniStreamUpdateReason::Delta,
+                snapshot: ClientLocalStateSnapshot {
+                    latest_seq: 11,
+                    sessions: vec![state_mini(
+                        "thread-menu",
+                        "codex",
+                        11,
+                        "rev-11",
+                        "Menu Ready",
+                    )],
+                    pending_commands: Vec::new(),
+                    server_time: "2026-06-26T00:00:00Z".to_owned(),
+                },
+                did_change: true,
+                error_description: String::new(),
+            })
+            .expect("menu projection");
+
+        assert!(update.has_snapshot);
+        assert_eq!(update.sync_reason, "delta");
+        assert!(!update.should_stop);
+        assert_eq!(update.snapshot.latest_seq, 11);
+        assert_eq!(update.snapshot.sessions[0].session_id, "thread-menu");
+        assert_eq!(update.snapshot.sessions[0].title, "Menu Ready");
+    }
+
+    #[test]
+    fn runtime_reports_menu_recovery_wait_without_swift_reason_logic() {
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("menu-recovery")).expect("runtime");
+        let update = runtime
+            .menu_snapshot_stream_update(ClientLocalStateStreamUpdate {
+                reason: ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                snapshot: ClientLocalStateSnapshot {
+                    latest_seq: 13,
+                    sessions: Vec::new(),
+                    pending_commands: Vec::new(),
+                    server_time: String::new(),
+                },
+                did_change: false,
+                error_description: "seq_gap".to_owned(),
+            })
+            .expect("menu recovery update");
+
+        assert!(!update.has_snapshot);
+        assert_eq!(update.sync_reason, "recovery");
+        assert_eq!(
+            update.debug_message,
+            "session-mini:client-core-stream-recovery-waiting error=seq_gap"
+        );
     }
 
     fn temp_store_path(name: &str) -> String {
