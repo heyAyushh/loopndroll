@@ -1920,6 +1920,68 @@ public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMu
 }
 
 
+public struct ClientSnapshotLoadFailureProjection: Equatable, Hashable {
+    public var connectionState: String
+    public var preservedConnectedState: Bool
+    public var shouldClearRouteState: Bool
+    public var shouldSuppressError: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionState: String, preservedConnectedState: Bool, shouldClearRouteState: Bool, shouldSuppressError: Bool) {
+        self.connectionState = connectionState
+        self.preservedConnectedState = preservedConnectedState
+        self.shouldClearRouteState = shouldClearRouteState
+        self.shouldSuppressError = shouldSuppressError
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSnapshotLoadFailureProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSnapshotLoadFailureProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSnapshotLoadFailureProjection {
+        return
+            try ClientSnapshotLoadFailureProjection(
+                connectionState: FfiConverterString.read(from: &buf),
+                preservedConnectedState: FfiConverterBool.read(from: &buf),
+                shouldClearRouteState: FfiConverterBool.read(from: &buf),
+                shouldSuppressError: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSnapshotLoadFailureProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionState, into: &buf)
+        FfiConverterBool.write(value.preservedConnectedState, into: &buf)
+        FfiConverterBool.write(value.shouldClearRouteState, into: &buf)
+        FfiConverterBool.write(value.shouldSuppressError, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSnapshotLoadFailureProjection_lift(_ buf: RustBuffer) throws -> ClientSnapshotLoadFailureProjection {
+    return try FfiConverterTypeClientSnapshotLoadFailureProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSnapshotLoadFailureProjection_lower(_ value: ClientSnapshotLoadFailureProjection) -> RustBuffer {
+    return FfiConverterTypeClientSnapshotLoadFailureProjection.lower(value)
+}
+
+
 public struct ClientSnapshotProjection: Equatable, Hashable {
     public var selectedAssistantSurface: String
     public var visibleSnapshotJson: String
@@ -2515,6 +2577,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case InvalidDetailJson
     case InvalidStateMiniPayloadJson
     case StateMiniSessionIdMismatch
+    case InvalidConnectionState
     case UnexpectedOutboxMutations
     case StateLockPoisoned
 
@@ -2558,8 +2621,9 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 10: return .InvalidDetailJson
         case 11: return .InvalidStateMiniPayloadJson
         case 12: return .StateMiniSessionIdMismatch
-        case 13: return .UnexpectedOutboxMutations
-        case 14: return .StateLockPoisoned
+        case 13: return .InvalidConnectionState
+        case 14: return .UnexpectedOutboxMutations
+        case 15: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2620,12 +2684,16 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(12))
 
 
-        case .UnexpectedOutboxMutations:
+        case .InvalidConnectionState:
             writeInt(&buf, Int32(13))
 
 
-        case .StateLockPoisoned:
+        case .UnexpectedOutboxMutations:
             writeInt(&buf, Int32(14))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(15))
 
         }
     }
@@ -3001,6 +3069,17 @@ public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [
     )
 })
 }
+public func reduceSnapshotLoadFailure(mappedErrorState: String, currentConnectionState: String, hasUsableSnapshot: Bool, hasServerHealth: Bool, hasReachedBaseUrl: Bool)throws  -> ClientSnapshotLoadFailureProjection  {
+    return try  FfiConverterTypeClientSnapshotLoadFailureProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_snapshot_load_failure(
+        FfiConverterString.lower(mappedErrorState),
+        FfiConverterString.lower(currentConnectionState),
+        FfiConverterBool.lower(hasUsableSnapshot),
+        FfiConverterBool.lower(hasServerHealth),
+        FfiConverterBool.lower(hasReachedBaseUrl),$0
+    )
+})
+}
 public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientStateMini], serverTime: String)throws  -> ClientMobileSnapshotProjection  {
     return try  FfiConverterTypeClientMobileSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_state_minis_mobile_snapshot(
@@ -3064,6 +3143,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 14313) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {

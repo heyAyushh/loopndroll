@@ -493,16 +493,26 @@ final class CompanionAppModel {
                 didRestoreCachedSnapshot = false
             }
             let hasUsableSnapshot = snapshot != nil
-            let nextConnectionState = connectionStateAfterSnapshotLoadFailure(
-                error,
-                hasUsableSnapshot: hasUsableSnapshot
+            let failureProjection = CompanionConnectionStateReducer.snapshotLoadFailure(
+                mappedErrorState: connectionState(for: error),
+                currentState: connectionState,
+                hasUsableSnapshot: hasUsableSnapshot,
+                hasServerHealth: serverHealth != nil,
+                hasReachedBaseURL: reachedBaseURL != nil
             )
+            let nextConnectionState = CompanionConnectionStateReducer.connectionState(
+                from: failureProjection
+            )
+            if failureProjection.preservedConnectedState {
+                CompanionDiagnostics.record(
+                    "snapshot:load-failed-preserve-connected error=\(error.localizedDescription)"
+                )
+            }
             connectionState = nextConnectionState
-            clearConnectionRouteStateIfNeeded(for: nextConnectionState)
-            errorMessage = shouldSuppressSnapshotLoadError(
-                state: nextConnectionState,
-                hasUsableSnapshot: hasUsableSnapshot
-            ) ? nil : error.localizedDescription
+            clearConnectionRouteStateIfNeeded(
+                shouldClear: failureProjection.shouldClearRouteState
+            )
+            errorMessage = failureProjection.shouldSuppressError ? nil : error.localizedDescription
             CompanionDiagnostics.lifecycle.error(
                 "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreCachedSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
@@ -510,25 +520,6 @@ final class CompanionAppModel {
                 "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreCachedSnapshot) error=\(error.localizedDescription)"
             )
         }
-    }
-
-    private func connectionStateAfterSnapshotLoadFailure(
-        _ error: Error,
-        hasUsableSnapshot: Bool
-    ) -> ConnectivityState {
-        let nextState = connectionState(for: error)
-        guard hasUsableSnapshot, nextState == .offline else {
-            return nextState
-        }
-
-        guard connectionState == .connected || serverHealth != nil || reachedBaseURL != nil else {
-            return nextState
-        }
-
-        CompanionDiagnostics.record(
-            "snapshot:load-failed-preserve-connected error=\(error.localizedDescription)"
-        )
-        return .connected
     }
 
     func refresh() async {
@@ -603,7 +594,11 @@ final class CompanionAppModel {
     }
 
     private func clearConnectionRouteStateIfNeeded(for state: ConnectivityState) {
-        guard !state.allowsConnectionRoutePresentation else {
+        clearConnectionRouteStateIfNeeded(shouldClear: !state.allowsConnectionRoutePresentation)
+    }
+
+    private func clearConnectionRouteStateIfNeeded(shouldClear: Bool) {
+        guard shouldClear else {
             return
         }
 

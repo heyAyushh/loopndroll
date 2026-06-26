@@ -24,6 +24,8 @@ pub enum ClientCoreError {
     InvalidStateMiniPayloadJson,
     #[error("state mini payload session ID does not match envelope")]
     StateMiniSessionIdMismatch,
+    #[error("connection state is invalid")]
+    InvalidConnectionState,
     #[error("outbox client mutation IDs did not match the expected order")]
     UnexpectedOutboxMutations,
     #[error("client core state lock is poisoned")]

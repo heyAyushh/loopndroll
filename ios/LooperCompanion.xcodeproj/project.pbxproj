@@ -69,6 +69,7 @@
 		98B40F9B225EEFDE1AFFE537 /* RemotePushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3944B1E9ABDAD59BD37452 /* RemotePushRegistrar.swift */; };
 		9976ADE2586A2EB32821F7F3 /* G006LocalFirstSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8C880C3A1B330FEE7D46C5 /* G006LocalFirstSelfTest.swift */; };
 		99C302A2036DAEDDD87A0CBD /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */; };
+		9DFF40CA7AAACF851B93F78C /* CompanionConnectionStateReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9498141DA107C36EB83DAE /* CompanionConnectionStateReducer.swift */; };
 		A075E99DA429033BC81CF2D6 /* SpotlightSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACE4AA7E26A90DEF6007679B /* SpotlightSearchService.swift */; };
 		A5EF972A8241CA28D7373C86 /* LocalNetworkAccessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */; };
 		A648E7D55E958E45B4145511 /* LooperCurrentSessionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */; };
@@ -144,6 +145,7 @@
 		57284556E78E9BB265560A6A /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
 		5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotCache.swift; sourceTree = "<group>"; };
 		5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationPresentationTests.swift; sourceTree = "<group>"; };
+		5F9498141DA107C36EB83DAE /* CompanionConnectionStateReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionConnectionStateReducer.swift; sourceTree = "<group>"; };
 		61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionMobileSessionStore.swift; sourceTree = "<group>"; };
 		62FF4BF9B2F8F7856941F6C2 /* codex-logo.mp4 */ = {isa = PBXFileReference; path = "codex-logo.mp4"; sourceTree = "<group>"; };
 		64992FB2DA134F019F69163E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
@@ -375,6 +377,7 @@
 				64E37B86C08140B9FF56A5C4 /* CompanionAppModel.swift */,
 				DDBAD33EF68710E006996824 /* CompanionAppViewState.swift */,
 				150B19C23F529638DF99E573 /* CompanionConfiguration.swift */,
+				5F9498141DA107C36EB83DAE /* CompanionConnectionStateReducer.swift */,
 				CF358D2391C7291C45B052B8 /* CompanionDevicePasskeyStore.swift */,
 				EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */,
 				61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */,
@@ -643,6 +646,7 @@
 				079855BEAB9C8AA1BB86EBB5 /* CompanionAppViewState.swift in Sources */,
 				AEE02BA4C8872FDFB121F4F2 /* CompanionConfiguration.swift in Sources */,
 				5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */,
+				9DFF40CA7AAACF851B93F78C /* CompanionConnectionStateReducer.swift in Sources */,
 				B17C9F2AEA6D0C42142A0661 /* CompanionDevicePasskeyStore.swift in Sources */,
 				8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */,
 				DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */,
