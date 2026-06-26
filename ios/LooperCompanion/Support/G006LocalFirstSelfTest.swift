@@ -134,7 +134,6 @@ enum G006LocalFirstSelfTest {
 
     private static func runMalformedFallbackOutbox() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        service.promptError = G006LocalFirstServiceSpy.ServiceError.promptFailed
         let storeFileURL = try temporaryStoreFileURL()
         try seedMalformedMiniCache(at: storeFileURL)
         let runtime = try CompanionSessionRuntime(fileURL: storeFileURL)
@@ -154,12 +153,15 @@ enum G006LocalFirstSelfTest {
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
         try require(!didSend, "failed prompt unexpectedly returned success")
 
+        let pendingPrompt = try pendingCommand(in: runtime, kind: .sendSessionPrompt)
         try require(
-            runtime.pendingCommands().isEmpty,
-            "mode/prompt commands should not enter the Swift mini-store outbox"
+            pendingPrompt.threadID == Constants.fallbackThreadID,
+            "failed prompt did not persist against fallback thread"
         )
+        try require(pendingPrompt.prompt == "continue", "failed prompt persisted wrong text")
+        try require(pendingPrompt.attemptCount == 1, "failed prompt did not record one send attempt")
 
-        return "swiftOutbox=empty"
+        return "runtimeOutbox=sendSessionPrompt"
     }
 
     private static func runOptimisticCommands() async throws -> String {
@@ -183,36 +185,29 @@ enum G006LocalFirstSelfTest {
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
-        _ = await modeTask.value
+        let didApplyMode = await modeTask.value
         let didSend = await promptTask.value
 
-        try require(didSend, "accepted prompt command returned false")
+        try require(!didApplyMode, "offline mode command unexpectedly returned success")
+        try require(!didSend, "offline prompt command unexpectedly returned success")
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2,
             "optimistic mode did not render from local state"
         )
-        try require(service.modeClientMutationIDs.count == 1, "mode command did not use exactly one mutation id")
-        try require(service.promptClientMutationIDs.count == 1, "prompt command did not use exactly one mutation id")
-
-        let modeMutationID = try requireValue(
-            service.modeClientMutationIDs.first,
-            "missing mode clientMutationID"
-        )
-        let promptMutationID = try requireValue(
-            service.promptClientMutationIDs.first,
-            "missing prompt clientMutationID"
-        )
+        let modeCommand = try pendingCommand(in: runtime, kind: .setSessionMode)
+        let promptCommand = try pendingCommand(in: runtime, kind: .sendSessionPrompt)
+        let modeMutationID = modeCommand.clientMutationID
+        let promptMutationID = promptCommand.clientMutationID
         try require(!modeMutationID.isEmpty, "mode clientMutationID is empty")
         try require(!promptMutationID.isEmpty, "prompt clientMutationID is empty")
+        try require(modeMutationID.hasPrefix("mode-"), "mode clientMutationID is not Rust-generated")
+        try require(promptMutationID.hasPrefix("prompt-"), "prompt clientMutationID is not Rust-generated")
         try require(modeMutationID != promptMutationID, "mode and prompt reused the same clientMutationID")
-        try require(service.loadSnapshotCallCount == 0, "ACK-only commands triggered snapshot load")
-        try require(runtime.pendingCommands().isEmpty, "ACK-only commands did not clear outbox")
+        try require(service.loadSnapshotCallCount == 0, "runtime commands triggered snapshot load")
+        try require(modeCommand.attemptCount == 1, "mode command did not record one send attempt")
+        try require(promptCommand.attemptCount == 1, "prompt command did not record one send attempt")
 
         let handoffService = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        handoffService.modeResponseDelayNanosecondsByCall = [
-            0,
-            Constants.handoffModeResponseDelayNanoseconds,
-        ]
         let handoffRuntime = try temporarySessionRuntime(
             latestSeq: 13,
             records: [
@@ -228,28 +223,22 @@ enum G006LocalFirstSelfTest {
         let queuedModeTask = handoffModel.beginApplyMode(.maxTurns3, to: Constants.cachedThreadID)
         let queuedPromptTask = handoffModel.beginSendSessionPrompt("handoff prompt", to: Constants.cachedThreadID)
         let didAcceptFirstHandoffMode = await firstHandoffModeTask.value
-        try require(didAcceptFirstHandoffMode, "first handoff mode command failed")
         let didAcceptQueuedMode = await queuedModeTask.value
         let didSendQueuedPrompt = await queuedPromptTask.value
 
-        try require(didAcceptQueuedMode, "queued handoff mode command failed")
-        try require(didSendQueuedPrompt, "queued prompt command failed")
-        try require(
-            handoffService.modeClientMutationIDs.count == 2,
-            "handoff mode commands did not both reach service"
-        )
-        try require(
-            handoffService.promptClientMutationIDs.count == 1,
-            "handoff prompt did not reach service once"
-        )
-        let handoffFirstModeID = handoffService.modeClientMutationIDs[0]
-        let handoffSecondModeID = handoffService.modeClientMutationIDs[1]
+        try require(!didAcceptFirstHandoffMode, "first offline handoff mode unexpectedly succeeded")
+        try require(!didAcceptQueuedMode, "queued offline handoff mode unexpectedly succeeded")
+        try require(!didSendQueuedPrompt, "queued offline handoff prompt unexpectedly succeeded")
+        let handoffModeIDs = pendingCommands(in: handoffRuntime, kind: .setSessionMode)
+            .map(\.clientMutationID)
         let handoffPromptID = try requireValue(
-            handoffService.promptClientMutationIDs.first,
+            pendingCommand(in: handoffRuntime, kind: .sendSessionPrompt).clientMutationID,
             "missing handoff prompt mutation id"
         )
+        try require(handoffModeIDs.count == 2, "handoff mode commands were not both persisted")
+        try require(Set(handoffModeIDs).count == 2, "handoff mode commands reused a mutation id")
 
-        return "modeMutationID=\(modeMutationID) promptMutationID=\(promptMutationID) handoffModeIDs=\(handoffFirstModeID),\(handoffSecondModeID) handoffPromptID=\(handoffPromptID)"
+        return "modeMutationID=\(modeMutationID) promptMutationID=\(promptMutationID) handoffModeIDs=\(handoffModeIDs.joined(separator: ",")) handoffPromptID=\(handoffPromptID)"
     }
 
     private static func runNotificationReplyAck() async throws -> String {
@@ -282,14 +271,15 @@ enum G006LocalFirstSelfTest {
             notificationID: notificationID
         )
 
-        try require(
-            service.notificationReplyClientMutationIDs == [clientMutationID],
-            "notification reply did not use the durable ACK command mutation id"
-        )
-        try require(service.notificationReplyIDs == [notificationID], "notification id was not forwarded")
-        try require(service.promptClientMutationIDs.isEmpty, "notification reply used generic prompt command")
         try require(service.loadSnapshotCallCount == 0, "notification reply triggered snapshot load")
-        try require(runtime.pendingCommands().isEmpty, "ACK did not clear notification reply outbox")
+        let pendingReply = try pendingCommand(in: runtime, kind: .submitNotificationReply)
+        try require(
+            pendingReply.clientMutationID == clientMutationID,
+            "notification reply did not use the durable command mutation id"
+        )
+        try require(pendingReply.notificationID == notificationID, "notification id was not persisted")
+        try require(pendingReply.threadID == Constants.cachedThreadID, "notification reply persisted wrong thread")
+        try require(pendingReply.attemptCount == 1, "notification reply did not record one send attempt")
 
         return "notificationID=\(notificationID) clientMutationID=\(clientMutationID)"
     }
@@ -324,7 +314,6 @@ enum G006LocalFirstSelfTest {
         try require(pendingCommand.attemptCount == 0, "pre-handler persistence should not mark attempted")
 
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        service.promptError = G006LocalFirstServiceSpy.ServiceError.promptFailed
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
@@ -341,12 +330,8 @@ enum G006LocalFirstSelfTest {
         try require(pendingCommands.count == 1, "retry created duplicate pending command")
         try require(pendingCommand.kind == .submitNotificationReply, "retry command has wrong kind")
         try require(
-            pendingCommand.attemptCount == 0,
-            "Swift retry bridge should not mark durable command attempts"
-        )
-        try require(
-            service.notificationReplyClientMutationIDs.isEmpty,
-            "failed notification reply should not record delivered mutation id"
+            pendingCommand.attemptCount == 1,
+            "runtime retry should record one durable command attempt"
         )
 
         try runtime.enqueueNotificationReplyCommand(
@@ -358,18 +343,16 @@ enum G006LocalFirstSelfTest {
         )
         try require(runtime.pendingCommands().count == 1, "duplicate enqueue created second notification command")
 
-        service.promptError = nil
         await model.prepareForActiveState()
-        try await waitUntilFast("notification reply production retry did not drain durable command") {
-            service.notificationReplyClientMutationIDs == [clientMutationID]
-        }
+        pendingCommands = runtime.pendingCommands()
+        pendingCommand = try requireValue(pendingCommands.first, "missing offline pending command after retry")
         try require(
-            service.notificationReplyClientMutationIDs == [clientMutationID],
-            "notification reply drain did not retry durable command once"
+            pendingCommand.clientMutationID == clientMutationID,
+            "notification reply retry changed mutation id"
         )
-        try require(runtime.pendingCommands().isEmpty, "notification reply drain did not clear outbox")
+        try require(pendingCommand.attemptCount >= 1, "notification reply retry did not record an attempt")
 
-        return "notificationID=\(notificationID) clientMutationID=\(clientMutationID) deliveredAfterRetry=true"
+        return "notificationID=\(notificationID) clientMutationID=\(clientMutationID) retainedForRetry=true"
     }
 
     private static func runMiniSyncResync() async throws -> String {
@@ -550,7 +533,7 @@ enum G006LocalFirstSelfTest {
         }
         let uiPromptMs = elapsedMilliseconds(since: promptStartedAt)
         let didSendPrompt = await promptTask.value
-        try require(didSendPrompt, "latency prompt did not ACK")
+        try require(!didSendPrompt, "offline latency prompt unexpectedly returned success")
         let promptAckMs = elapsedMilliseconds(since: promptStartedAt)
 
         let notificationStartedAt = uptimeNanoseconds()
@@ -759,6 +742,20 @@ enum G006LocalFirstSelfTest {
     private static func elapsedMilliseconds(since startNanoseconds: UInt64) -> Int {
         let elapsed = uptimeNanoseconds() - startNanoseconds
         return Int((Double(elapsed) / 1_000_000.0).rounded(.up))
+    }
+
+    private static func pendingCommand(
+        in runtime: CompanionSessionRuntime,
+        kind: ClientPendingCommandKind
+    ) throws -> CompanionSessionMiniPendingCommand {
+        try requireValue(pendingCommands(in: runtime, kind: kind).first, "missing \(kind) command")
+    }
+
+    private static func pendingCommands(
+        in runtime: CompanionSessionRuntime,
+        kind: ClientPendingCommandKind
+    ) -> [CompanionSessionMiniPendingCommand] {
+        runtime.pendingCommands().filter { $0.kind == kind }
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
@@ -984,13 +981,11 @@ private extension ClientStateMini {
     }
 }
 
-private final class G006LocalFirstServiceSpy: CompanionService, CompanionSessionCommanding, @unchecked Sendable {
+private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Sendable {
     enum ServiceError: Error {
         case promptFailed
     }
 
-    static let mutationOrderPrefixMode = "mode"
-    static let mutationOrderPrefixPrompt = "prompt"
     static let mutationOrderPrefixNotificationReply = "notification-reply"
 
     static func notificationReplyMutationID(notificationID: String) -> String {
@@ -1001,15 +996,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, CompanionSession
     private let snapshot: MobileSnapshot
     private let responseDelayNanoseconds: UInt64
     private(set) var loadSnapshotCallCount = 0
-    private(set) var modeClientMutationIDs: [String] = []
-    private(set) var promptClientMutationIDs: [String] = []
-    private(set) var notificationReplyClientMutationIDs: [String] = []
-    private(set) var notificationReplyIDs: [String] = []
-    private(set) var mutationOrder: [String] = []
-    var modeError: Error?
-    var promptError: Error?
     var snapshotError: Error?
-    var modeResponseDelayNanosecondsByCall: [UInt64] = []
     init(
         snapshot: MobileSnapshot,
         responseDelayNanoseconds: UInt64 = 0
@@ -1039,109 +1026,12 @@ private final class G006LocalFirstServiceSpy: CompanionService, CompanionSession
         throw ServiceError.promptFailed
     }
 
-    func setSessionMode(
-        id _: String,
-        preset: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        try await delayResponseIfNeeded()
-        try await delayModeResponseIfNeeded()
-        let clientMutationID = nextGeneratedMutationID(prefix: Self.mutationOrderPrefixMode)
-        appendModeClientMutationID(clientMutationID)
-        if let modeError {
-            throw modeError
-        }
-        return .accepted(mode: preset)
-    }
-
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
         snapshot
     }
 
     func deleteSession(id _: String) async throws -> MobileSnapshot {
         snapshot
-    }
-
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        let clientMutationID = nextGeneratedMutationID(prefix: Self.mutationOrderPrefixPrompt)
-        appendPromptClientMutationID(clientMutationID)
-        if let promptError {
-            throw promptError
-        }
-
-        try await delayResponseIfNeeded()
-        return .accepted(
-            promptID: "prompt-1",
-            dispatchKind: "resume"
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        try await submitNotificationReply(
-            notificationID: notificationID,
-            sessionID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: Self.notificationReplyMutationID(notificationID: notificationID)
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        if let promptError {
-            throw promptError
-        }
-
-        try await delayResponseIfNeeded()
-        appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return ClientNotificationReplyIntentResult(
-            accepted: true,
-            dispatchKind: "resume",
-            promptId: "prompt-1",
-            serverTime: "",
-            clientMutationId: clientMutationID,
-            ackSeq: 0,
-            entityId: sessionID,
-            revision: "",
-            idempotentReplay: false,
-            notificationId: notificationID
-        )
-    }
-
-    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
-        if let promptError {
-            throw promptError
-        }
-
-        try await delayResponseIfNeeded()
-        let notificationID = "pending-notification"
-        let clientMutationID = "pending-mutation"
-        appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return ClientNotificationReplyIntentResult(
-            accepted: true,
-            dispatchKind: "resume",
-            promptId: "prompt-1",
-            serverTime: "",
-            clientMutationId: clientMutationID,
-            ackSeq: 0,
-            entityId: "thread-main",
-            revision: "",
-            idempotentReplay: false,
-            notificationId: notificationID
-        )
     }
 
     func muteSession(id _: String) async throws -> MobileSnapshot {
@@ -1189,34 +1079,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, CompanionSession
         loadSnapshotCallCount += 1
     }
 
-    private func appendModeClientMutationID(_ clientMutationID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        modeClientMutationIDs.append(clientMutationID)
-        mutationOrder.append("\(Self.mutationOrderPrefixMode):\(clientMutationID)")
-    }
-
-    private func appendPromptClientMutationID(_ clientMutationID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        promptClientMutationIDs.append(clientMutationID)
-        mutationOrder.append("\(Self.mutationOrderPrefixPrompt):\(clientMutationID)")
-    }
-
-    private func appendNotificationReply(notificationID: String, clientMutationID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        notificationReplyIDs.append(notificationID)
-        notificationReplyClientMutationIDs.append(clientMutationID)
-        mutationOrder.append("\(Self.mutationOrderPrefixNotificationReply):\(clientMutationID)")
-    }
-
-    private func nextGeneratedMutationID(prefix: String) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        return "\(prefix)-generated-\(mutationOrder.count + 1)"
-    }
-
     private func delayResponseIfNeeded() async throws {
         guard responseDelayNanoseconds > 0 else {
             return
@@ -1225,24 +1087,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, CompanionSession
         try await Task.sleep(nanoseconds: responseDelayNanoseconds)
     }
 
-    private func delayModeResponseIfNeeded() async throws {
-        let delayNanoseconds = popModeResponseDelayNanoseconds()
-        guard delayNanoseconds > 0 else {
-            return
-        }
-
-        try await Task.sleep(nanoseconds: delayNanoseconds)
-    }
-
-    private func popModeResponseDelayNanoseconds() -> UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !modeResponseDelayNanosecondsByCall.isEmpty else {
-            return 0
-        }
-
-        return modeResponseDelayNanosecondsByCall.removeFirst()
-    }
 }
 
 #endif

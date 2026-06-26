@@ -42,7 +42,6 @@ final class CompanionAppModel {
     var pendingSettingsTarget: SettingsSearchTarget?
 
     @ObservationIgnored private var service: any CompanionService
-    @ObservationIgnored private var sessionCommands: any CompanionSessionCommanding
     @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
@@ -65,8 +64,8 @@ final class CompanionAppModel {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
-        let explicitSessionRuntime = environment.sessionRuntime ?? providedSessionRuntime
-        let sessionRuntime = explicitSessionRuntime
+        let sessionRuntime = environment.sessionRuntime
+            ?? providedSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
 
@@ -78,9 +77,6 @@ final class CompanionAppModel {
             )
             : environment
         service = activeEnvironment.service
-        sessionCommands = activeEnvironment.sessionRuntime
-            ?? explicitSessionRuntime
-            ?? activeEnvironment.sessionCommands
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
@@ -540,7 +536,6 @@ final class CompanionAppModel {
     private func applyLiveEnvironmentFromSessionCore() {
         let environment = liveEnvironmentFromSessionCore()
         service = environment.service
-        sessionCommands = environment.sessionRuntime ?? environment.sessionCommands
     }
 
     private func clearConnectionRouteStateIfNeeded(for state: ConnectivityState) {
@@ -844,11 +839,15 @@ final class CompanionAppModel {
     }
 
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
-        let targetCommands = sessionCommands
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: false)
+            Haptics.error()
+            return false
+        }
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetCommands.setSessionMode(
+            let result = try await targetRuntime.setSessionMode(
                 id: sessionID,
                 preset: preset
             )
@@ -892,11 +891,15 @@ final class CompanionAppModel {
             return false
         }
 
-        let targetCommands = sessionCommands
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: false)
+            Haptics.error()
+            return false
+        }
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetCommands.sendSessionPrompt(
+            let result = try await targetRuntime.sendSessionPrompt(
                 id: sessionID,
                 prompt: trimmedPrompt,
                 assistantSurface: targetSurface
@@ -977,8 +980,18 @@ final class CompanionAppModel {
         prompt: String,
         targetSurface: CompanionAssistantSurface
     ) async -> Bool {
+        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+            applyNotificationReplyFailure(
+                HTTPCompanionServiceError.localStoreUnavailable,
+                sessionID: sessionID,
+                notificationID: notificationID
+            )
+            startNotificationReplyOutboxDrainIfNeeded()
+            return false
+        }
+
         do {
-            let response = try await sessionCommands.submitNotificationReply(
+            let response = try await sessionRuntime.submitNotificationReply(
                 notificationID: notificationID,
                 sessionID: sessionID,
                 prompt: prompt,
@@ -1004,8 +1017,13 @@ final class CompanionAppModel {
 
     @discardableResult
     private func submitPendingNotificationReply() async -> Bool {
+        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+            CompanionDiagnostics.record("notification-reply:pending-drain-missing-session-runtime")
+            return false
+        }
+
         do {
-            let response = try await sessionCommands.submitPendingNotificationReply()
+            let response = try await sessionRuntime.submitPendingNotificationReply()
             guard let acceptedSessionID = Self.nonEmptyText(response.entityId),
                   let acceptedNotificationID = Self.nonEmptyText(response.notificationId)
             else {

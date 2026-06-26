@@ -255,14 +255,7 @@ actor MockCompanionStore {
     }
 }
 
-struct MockCompanionService: CompanionService, CompanionSessionCommanding {
-    private enum MockCommandIDs {
-        static let mode = "mock-mode"
-        static let prompt = "mock-prompt"
-        static let notificationReply = "mock"
-        static let pendingNotificationReply = ""
-    }
-
+struct MockCompanionService: CompanionService {
     private let store = MockCompanionStore()
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -287,92 +280,12 @@ struct MockCompanionService: CompanionService, CompanionSessionCommanding {
         await store.sessionDetail(id: id, surface: surface)
     }
 
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        _ = await store.setMode(id: id, preset: preset)
-        return .accepted(
-            mode: preset
-        )
-    }
-
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
         await store.setArchived(id: id, archived: archived)
     }
 
     func deleteSession(id: String) async throws -> MobileSnapshot {
         await store.delete(id: id)
-    }
-
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        _ = await store.sendPrompt(id: id, prompt: prompt)
-        return .accepted(
-            promptID: nil,
-            dispatchKind: "mock"
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        _ = await store.sendPrompt(id: sessionID, prompt: prompt)
-        return ClientNotificationReplyIntentResult(
-            accepted: true,
-            dispatchKind: "mock",
-            promptId: "",
-            serverTime: Date().ISO8601Format(),
-            clientMutationId: MockCommandIDs.notificationReply,
-            ackSeq: 0,
-            entityId: sessionID,
-            revision: "",
-            idempotentReplay: false,
-            notificationId: notificationID
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        _ = await store.sendPrompt(id: sessionID, prompt: prompt)
-        return ClientNotificationReplyIntentResult(
-            accepted: true,
-            dispatchKind: "mock",
-            promptId: "",
-            serverTime: Date().ISO8601Format(),
-            clientMutationId: clientMutationID,
-            ackSeq: 0,
-            entityId: sessionID,
-            revision: "",
-            idempotentReplay: false,
-            notificationId: notificationID
-        )
-    }
-
-    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
-        ClientNotificationReplyIntentResult(
-            accepted: true,
-            dispatchKind: "mock",
-            promptId: "",
-            serverTime: Date().ISO8601Format(),
-            clientMutationId: MockCommandIDs.pendingNotificationReply,
-            ackSeq: 0,
-            entityId: "",
-            revision: "",
-            idempotentReplay: false,
-            notificationId: ""
-        )
     }
 
     func muteSession(id: String) async throws -> MobileSnapshot {

@@ -95,7 +95,7 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 
 }
 
-final class CompanionSessionRuntime: CompanionSessionCommanding, @unchecked Sendable {
+final class CompanionSessionRuntime: @unchecked Sendable {
     static let defaultFileName = CompanionSessionMiniLocalStore.defaultFileName
 
     private let localStore: CompanionSessionMiniLocalStore

@@ -336,27 +336,25 @@ struct LooperSessionValueQuery: IntentValueQuery {
 
 struct LooperSiriSessionClient: Sendable {
     private let service: any CompanionService
-    private let sessionCommands: any CompanionSessionCommanding
+    private let sessionRuntime: CompanionSessionRuntime?
 
     init(environment: CompanionEnvironment = CompanionEnvironment.live()) {
         self.service = environment.service
-        self.sessionCommands = environment.sessionCommands
+        self.sessionRuntime = environment.sessionRuntime
     }
 
     init(
         service: any CompanionService,
-        sessionCommands: any CompanionSessionCommanding
+        sessionRuntime: CompanionSessionRuntime?
     ) {
         self.service = service
-        self.sessionCommands = sessionCommands
+        self.sessionRuntime = sessionRuntime
     }
 
     init(service: any CompanionService) {
         self.init(
             service: service,
-            sessionCommands: UnconfiguredCompanionSessionCommands(
-                error: CompanionConfigurationError.apiBaseURLNotConfigured
-            )
+            sessionRuntime: nil
         )
     }
 
@@ -464,7 +462,11 @@ struct LooperSiriSessionClient: Sendable {
             throw LooperSiriError.noPromptDelivery(entity)
         }
 
-        _ = try await sessionCommands.sendSessionPrompt(
+        guard let sessionRuntime else {
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
+
+        _ = try await sessionRuntime.sendSessionPrompt(
             id: entity.sessionID,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
             assistantSurface: entity.assistantSurface ?? .codex
