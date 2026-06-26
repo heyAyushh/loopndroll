@@ -148,7 +148,7 @@ public enum LooperMenuContent {
         LooperMenuRow(
             threadId: mini.sessionID,
             title: mini.title,
-            subtitle: subtitleText(for: mini),
+            subtitle: mini.subtitle,
             archived: mini.isArchived,
             openTarget: LooperThreadOpenTarget(
                 threadId: mini.sessionID,
@@ -160,7 +160,7 @@ public enum LooperMenuContent {
             blockedGoalTitle: mini.blockedGoal?.title,
             queueCount: mini.queueCount,
             lifecycle: mini.lifecycle,
-            notificationTitle: notificationText(for: mini.notificationStatus)
+            notificationTitle: mini.notificationTitle
         )
     }
 
@@ -215,90 +215,6 @@ public enum LooperMenuContent {
         )
         .joined(separator: " - ")
         return thread.archived ? "Archived - \(subtitle)" : subtitle
-    }
-
-    private static func subtitleText(for mini: MenuBarSessionMini) -> String {
-        let subtitle = [
-            modeText(for: mini.effectiveMode),
-            mini.replyable ? "Reply ready" : mini.promptUnavailableReason,
-            blockedGoalText(for: mini.blockedGoal),
-            queueText(for: mini.queueCount),
-            lifecycleText(for: mini.lifecycle),
-            notificationText(for: mini.notificationStatus),
-            mini.projectName,
-        ]
-        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-        .joined(separator: " - ")
-        let fallback = subtitle.isEmpty ? mini.assistantSurface : subtitle
-        return mini.isArchived ? "Archived - \(fallback)" : fallback
-    }
-
-    private static func modeText(for mode: String?) -> String? {
-        guard let mode else {
-            return nil
-        }
-
-        switch mode {
-        case "infinite":
-            return "Infinite"
-        case "await-reply":
-            return "Await Reply"
-        case "completion-checks":
-            return "Completion Checks"
-        case "max-turns-1":
-            return "Max Turns 1"
-        case "max-turns-2":
-            return "Max Turns 2"
-        case "max-turns-3":
-            return "Max Turns 3"
-        default:
-            return mode
-        }
-    }
-
-    private static func blockedGoalText(for goal: MenuBarSessionMiniBlockedGoal?) -> String? {
-        guard let goal else {
-            return nil
-        }
-        let title = goal.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let title, !title.isEmpty {
-            return "Blocked: \(title)"
-        }
-        let reason = goal.reason ?? goal.status
-        return reason.map { "Blocked: \($0)" }
-    }
-
-    private static func queueText(for queueCount: Int) -> String? {
-        guard queueCount > 0 else {
-            return nil
-        }
-        return "Queue \(queueCount)"
-    }
-
-    private static func lifecycleText(for lifecycle: String?) -> String? {
-        guard let lifecycle = lifecycle?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !lifecycle.isEmpty
-        else {
-            return nil
-        }
-        return "State \(lifecycle)"
-    }
-
-    private static func notificationText(
-        for status: MenuBarSessionMiniNotificationStatus?
-    ) -> String? {
-        guard let status else {
-            return nil
-        }
-        guard status.enabled else {
-            return "Notify off"
-        }
-        guard !status.targetIds.isEmpty else {
-            return "Notify ready"
-        }
-        let targets = status.targetIds.joined(separator: "/")
-        return "Notify \(targets)"
     }
 
     private static func sourceLabels(for thread: DesktopThreadSummary) -> [String] {

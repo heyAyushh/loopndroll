@@ -27,6 +27,7 @@ public struct MenuBarSessionMiniLocalSnapshot: Equatable, Sendable {
     public let latestSeq: Int64
     public let sessions: [MenuBarSessionMini]
     public let pendingCommands: [MenuBarSessionMiniPendingCommand]
+    let clientCoreSnapshot: ClientMenuBarSessionMiniLocalSnapshot
 }
 
 public struct MenuBarSessionMiniPendingCommand: Equatable, Sendable {
@@ -51,6 +52,7 @@ public struct MenuBarSessionMini: Equatable, Sendable {
     public let revision: String
     public let ref: String
     public let title: String
+    public let subtitle: String
     public let status: String
     public let effectiveMode: String?
     public let replyable: Bool
@@ -59,6 +61,7 @@ public struct MenuBarSessionMini: Equatable, Sendable {
     public let queueCount: Int
     public let lifecycle: String?
     public let notificationStatus: MenuBarSessionMiniNotificationStatus?
+    public let notificationTitle: String?
     public let isArchived: Bool
     public let assistantPreview: String?
     public let projectName: String?
@@ -73,6 +76,7 @@ public struct MenuBarSessionMini: Equatable, Sendable {
         self.revision = mini.revision
         self.ref = mini.refId
         self.title = mini.title
+        self.subtitle = mini.subtitle
         self.status = mini.status
         self.effectiveMode = mini.hasEffectiveMode ? mini.effectiveMode : nil
         self.replyable = mini.replyable
@@ -84,6 +88,7 @@ public struct MenuBarSessionMini: Equatable, Sendable {
         self.notificationStatus = mini.hasNotificationStatus
             ? MenuBarSessionMiniNotificationStatus(mini.notificationStatus)
             : nil
+        self.notificationTitle = mini.hasNotificationTitle ? mini.notificationTitle : nil
         self.isArchived = mini.isArchived
         self.assistantPreview = mini.hasAssistantPreview ? mini.assistantPreview : nil
         self.projectName = mini.hasProjectName ? mini.projectName : nil
@@ -277,7 +282,8 @@ private extension MenuBarSessionMiniLocalSnapshot {
         self.init(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.sessions.map(MenuBarSessionMini.init),
-            pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
+            pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init),
+            clientCoreSnapshot: snapshot
         )
     }
 }

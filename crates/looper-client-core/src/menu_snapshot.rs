@@ -42,6 +42,14 @@ pub struct ClientMenuBarSessionMiniLocalSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMenuBarHumanStatusProjection {
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub lifecycle: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientMenuSnapshotStreamUpdate {
     pub has_snapshot: bool,
     pub snapshot: ClientMenuBarSessionMiniLocalSnapshot,
@@ -69,6 +77,7 @@ pub struct ClientMenuBarSessionMini {
     pub revision: String,
     pub ref_id: String,
     pub title: String,
+    pub subtitle: String,
     pub status: String,
     pub effective_mode: String,
     pub has_effective_mode: bool,
@@ -82,6 +91,8 @@ pub struct ClientMenuBarSessionMini {
     pub has_lifecycle: bool,
     pub notification_status: ClientMenuBarSessionMiniNotificationStatus,
     pub has_notification_status: bool,
+    pub notification_title: String,
+    pub has_notification_title: bool,
     pub is_archived: bool,
     pub assistant_preview: String,
     pub has_assistant_preview: bool,
@@ -133,6 +144,56 @@ pub fn reduce_state_minis_menu_snapshot(
     })
 }
 
+#[uniffi::export]
+pub fn reduce_menu_snapshot_human_status(
+    snapshot: ClientMenuBarSessionMiniLocalSnapshot,
+    mobile_ready: bool,
+    detach_on_quit: bool,
+) -> ClientMenuBarHumanStatusProjection {
+    let active_sessions = snapshot
+        .sessions
+        .iter()
+        .filter(|session| !session.is_archived)
+        .collect::<Vec<_>>();
+    let blocked_count = active_sessions
+        .iter()
+        .filter(|session| session.has_blocked_goal)
+        .count();
+    let replyable_count = active_sessions
+        .iter()
+        .filter(|session| session.replyable)
+        .count();
+    let pending_count = snapshot.pending_commands.len();
+    let detail = [
+        "source=sessionMini".to_owned(),
+        format!("seq={}", snapshot.latest_seq),
+        format!("active={}", active_sessions.len()),
+        format!("replyable={replyable_count}"),
+        format!("blocked={blocked_count}"),
+        format!("pending={pending_count}"),
+        format!("iPhone={}", if mobile_ready { "ready" } else { "unknown" }),
+    ]
+    .join(" ");
+    let needs_attention = blocked_count > 0;
+
+    ClientMenuBarHumanStatusProjection {
+        kind: if needs_attention {
+            "needs_attention"
+        } else {
+            "ready"
+        }
+        .to_owned(),
+        title: if needs_attention {
+            "Needs attention"
+        } else {
+            "Realtime"
+        }
+        .to_owned(),
+        detail,
+        lifecycle: lifecycle_text(detach_on_quit),
+    }
+}
+
 fn decode_session_mini(
     record: &ClientStateMini,
 ) -> Result<ClientMenuBarSessionMini, ClientCoreError> {
@@ -154,11 +215,32 @@ fn decode_session_mini(
     let blocked_goal = blocked_goal(&payload);
     let lifecycle = optional_string(&payload, LIFECYCLE_FIELD);
     let notification_status = notification_status(&payload);
+    let replyable = optional_bool(&payload, REPLYABLE_FIELD)
+        .or_else(|| optional_bool(&payload, CAN_SEND_PROMPT_FIELD))
+        .unwrap_or(false);
+    let queue_count = optional_i64(&payload, QUEUE_COUNT_FIELD)
+        .and_then(|count| i32::try_from(count).ok())
+        .unwrap_or_default();
+    let is_archived =
+        optional_bool(&payload, IS_ARCHIVED_FIELD).unwrap_or_else(|| status == ARCHIVED_STATUS);
     let assistant_preview = optional_string(&payload, ASSISTANT_PREVIEW_FIELD);
     let project_name = metadata_string(&payload, PROJECT_NAME_FIELD);
     let project_path = metadata_string(&payload, PROJECT_PATH_FIELD);
     let last_activity_at_ms = optional_i64(&payload, LAST_ACTIVITY_MS_FIELD);
     let updated_at_ms = optional_i64(&payload, UPDATED_AT_MS_FIELD);
+    let notification_title = notification_status_text(notification_status.as_ref());
+    let subtitle = session_subtitle(SessionSubtitleInput {
+        assistant_surface: &record.assistant_surface,
+        effective_mode: effective_mode.as_deref(),
+        replyable,
+        prompt_unavailable_reason: prompt_unavailable_reason.as_deref(),
+        blocked_goal: blocked_goal.as_ref(),
+        queue_count,
+        lifecycle: lifecycle.as_deref(),
+        notification_title: notification_title.as_deref(),
+        project_name: project_name.as_deref(),
+        is_archived,
+    });
 
     Ok(ClientMenuBarSessionMini {
         session_id: record.session_id.clone(),
@@ -167,29 +249,27 @@ fn decode_session_mini(
         revision: record.revision.clone(),
         ref_id,
         title,
+        subtitle,
         status: status.clone(),
         effective_mode: effective_mode.clone().unwrap_or_default(),
         has_effective_mode: effective_mode.is_some(),
-        replyable: optional_bool(&payload, REPLYABLE_FIELD)
-            .or_else(|| optional_bool(&payload, CAN_SEND_PROMPT_FIELD))
-            .unwrap_or(false),
+        replyable,
         prompt_unavailable_reason: prompt_unavailable_reason.clone().unwrap_or_default(),
         has_prompt_unavailable_reason: prompt_unavailable_reason.is_some(),
         blocked_goal: blocked_goal
             .clone()
             .unwrap_or_else(ClientMenuBarSessionMiniBlockedGoal::empty),
         has_blocked_goal: blocked_goal.is_some(),
-        queue_count: optional_i64(&payload, QUEUE_COUNT_FIELD)
-            .and_then(|count| i32::try_from(count).ok())
-            .unwrap_or_default(),
+        queue_count,
         lifecycle: lifecycle.clone().unwrap_or_default(),
         has_lifecycle: lifecycle.is_some(),
         notification_status: notification_status
             .clone()
             .unwrap_or_else(ClientMenuBarSessionMiniNotificationStatus::empty),
         has_notification_status: notification_status.is_some(),
-        is_archived: optional_bool(&payload, IS_ARCHIVED_FIELD)
-            .unwrap_or_else(|| status == ARCHIVED_STATUS),
+        notification_title: notification_title.clone().unwrap_or_default(),
+        has_notification_title: notification_title.is_some(),
+        is_archived,
         assistant_preview: assistant_preview.clone().unwrap_or_default(),
         has_assistant_preview: assistant_preview.is_some(),
         project_name: project_name.clone().unwrap_or_default(),
@@ -209,6 +289,106 @@ fn display_title(payload: &Value, ref_id: &str, fallback_id: &str) -> String {
         .find_map(|field| optional_string(payload, field))
         .or_else(|| nonblank_string(ref_id))
         .unwrap_or_else(|| fallback_id.to_owned())
+}
+
+struct SessionSubtitleInput<'a> {
+    assistant_surface: &'a str,
+    effective_mode: Option<&'a str>,
+    replyable: bool,
+    prompt_unavailable_reason: Option<&'a str>,
+    blocked_goal: Option<&'a ClientMenuBarSessionMiniBlockedGoal>,
+    queue_count: i32,
+    lifecycle: Option<&'a str>,
+    notification_title: Option<&'a str>,
+    project_name: Option<&'a str>,
+    is_archived: bool,
+}
+
+fn session_subtitle(input: SessionSubtitleInput<'_>) -> String {
+    let subtitle = [
+        input.effective_mode.and_then(mode_text),
+        if input.replyable {
+            Some("Reply ready".to_owned())
+        } else {
+            input.prompt_unavailable_reason.and_then(nonblank_string)
+        },
+        input.blocked_goal.and_then(blocked_goal_text),
+        queue_text(input.queue_count),
+        input.lifecycle.and_then(lifecycle_state_text),
+        input.notification_title.and_then(nonblank_string),
+        input.project_name.and_then(nonblank_string),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" - ");
+    let fallback = if subtitle.is_empty() {
+        input.assistant_surface.to_owned()
+    } else {
+        subtitle
+    };
+    if input.is_archived {
+        format!("Archived - {fallback}")
+    } else {
+        fallback
+    }
+}
+
+fn mode_text(mode: &str) -> Option<String> {
+    let mode = nonblank_string(mode)?;
+    Some(
+        match mode.as_str() {
+            "infinite" => "Infinite",
+            "await-reply" => "Await Reply",
+            "completion-checks" => "Completion Checks",
+            "max-turns-1" => "Max Turns 1",
+            "max-turns-2" => "Max Turns 2",
+            "max-turns-3" => "Max Turns 3",
+            _ => mode.as_str(),
+        }
+        .to_owned(),
+    )
+}
+
+fn blocked_goal_text(goal: &ClientMenuBarSessionMiniBlockedGoal) -> Option<String> {
+    nonblank_string(&goal.title)
+        .or_else(|| nonblank_string(&goal.reason))
+        .or_else(|| nonblank_string(&goal.status))
+        .map(|text| format!("Blocked: {text}"))
+}
+
+fn queue_text(queue_count: i32) -> Option<String> {
+    if queue_count > 0 {
+        Some(format!("Queue {queue_count}"))
+    } else {
+        None
+    }
+}
+
+fn lifecycle_state_text(lifecycle: &str) -> Option<String> {
+    nonblank_string(lifecycle).map(|text| format!("State {text}"))
+}
+
+fn lifecycle_text(detach_on_quit: bool) -> String {
+    if detach_on_quit {
+        "Detached on quit"
+    } else {
+        "Quit stops server"
+    }
+    .to_owned()
+}
+
+fn notification_status_text(
+    status: Option<&ClientMenuBarSessionMiniNotificationStatus>,
+) -> Option<String> {
+    let status = status?;
+    if !status.enabled {
+        return Some("Notify off".to_owned());
+    }
+    if status.target_ids.is_empty() {
+        return Some("Notify ready".to_owned());
+    }
+    Some(format!("Notify {}", status.target_ids.join("/")))
 }
 
 fn blocked_goal(payload: &Value) -> Option<ClientMenuBarSessionMiniBlockedGoal> {
@@ -388,6 +568,10 @@ mod tests {
         assert_eq!(session.assistant_surface, "codex");
         assert_eq!(session.ref_id, "S1");
         assert_eq!(session.title, "Project Alpha");
+        assert_eq!(
+            session.subtitle,
+            "await_reply - Reply ready - Blocked: Ship realtime - Queue 2 - State active - Notify desktop - Looper"
+        );
         assert_eq!(session.status, "running");
         assert_eq!(session.effective_mode, "await_reply");
         assert!(session.has_effective_mode);
@@ -400,6 +584,8 @@ mod tests {
         assert!(session.notification_status.enabled);
         assert_eq!(session.notification_status.target_ids, vec!["desktop"]);
         assert!(session.has_notification_status);
+        assert_eq!(session.notification_title, "Notify desktop");
+        assert!(session.has_notification_title);
         assert_eq!(session.project_name, "Looper");
         assert_eq!(session.project_path, "/Users/ay/Documents/looper");
         assert_eq!(session.last_activity_at_ms, 900);
@@ -436,6 +622,112 @@ mod tests {
             session_ids,
             vec!["newer", "tie-a", "tie-b", "older", "seq-fallback"]
         );
+    }
+
+    #[test]
+    fn projects_menu_subtitle_display_text_in_rust() {
+        let mut payload = serde_json::from_str::<Value>(&minimal_payload("archived", 100, None))
+            .expect("payload");
+        let object = payload.as_object_mut().expect("object");
+        object.insert(
+            EFFECTIVE_MODE_FIELD.to_owned(),
+            Value::String("await-reply".to_owned()),
+        );
+        object.insert(
+            PROMPT_UNAVAILABLE_REASON_FIELD.to_owned(),
+            Value::String("Waiting for local hook".to_owned()),
+        );
+        object.insert(IS_ARCHIVED_FIELD.to_owned(), Value::Bool(true));
+        object.insert(
+            NOTIFICATION_STATUS_FIELD.to_owned(),
+            json!({
+                "enabled": false,
+                "targetIds": [],
+                "usesDefault": false,
+            }),
+        );
+        object.insert(METADATA_FIELD.to_owned(), json!({}));
+        let metadata = object
+            .get_mut(METADATA_FIELD)
+            .and_then(Value::as_object_mut)
+            .expect("metadata");
+        metadata.insert(
+            PROJECT_NAME_FIELD.to_owned(),
+            Value::String("Looper".to_owned()),
+        );
+
+        let snapshot = reduce_state_minis_menu_snapshot(ClientLocalStateSnapshot {
+            latest_seq: 15,
+            sessions: vec![mini("archived", "codex", 15, payload.to_string())],
+            pending_commands: vec![],
+            server_time: String::new(),
+        })
+        .expect("menu snapshot");
+        let session = snapshot.sessions.first().expect("session");
+
+        assert_eq!(
+            session.subtitle,
+            "Archived - Await Reply - Waiting for local hook - Notify off - Looper"
+        );
+        assert_eq!(session.notification_title, "Notify off");
+    }
+
+    #[test]
+    fn projects_menu_human_status_in_rust() {
+        let snapshot = reduce_state_minis_menu_snapshot(ClientLocalStateSnapshot {
+            latest_seq: 201,
+            sessions: vec![
+                mini(
+                    "thread-blocked",
+                    "codex",
+                    201,
+                    payload_json("thread-blocked", "S1", 201),
+                ),
+                mini(
+                    "thread-archived",
+                    "codex",
+                    200,
+                    archived_payload("thread-archived"),
+                ),
+            ],
+            pending_commands: vec![pending_prompt()],
+            server_time: String::new(),
+        })
+        .expect("menu snapshot");
+        let status = reduce_menu_snapshot_human_status(snapshot, true, true);
+
+        assert_eq!(status.kind, "needs_attention");
+        assert_eq!(status.title, "Needs attention");
+        assert_eq!(status.lifecycle, "Detached on quit");
+        assert!(status.detail.contains("source=sessionMini"));
+        assert!(status.detail.contains("seq=201"));
+        assert!(status.detail.contains("active=1"));
+        assert!(status.detail.contains("replyable=1"));
+        assert!(status.detail.contains("blocked=1"));
+        assert!(status.detail.contains("pending=1"));
+        assert!(status.detail.contains("iPhone=ready"));
+    }
+
+    #[test]
+    fn projects_ready_menu_human_status_in_rust() {
+        let snapshot = reduce_state_minis_menu_snapshot(ClientLocalStateSnapshot {
+            latest_seq: 202,
+            sessions: vec![mini(
+                "thread-ready",
+                "codex",
+                202,
+                minimal_payload("thread-ready", 202, None),
+            )],
+            pending_commands: vec![],
+            server_time: String::new(),
+        })
+        .expect("menu snapshot");
+        let status = reduce_menu_snapshot_human_status(snapshot, false, false);
+
+        assert_eq!(status.kind, "ready");
+        assert_eq!(status.title, "Realtime");
+        assert_eq!(status.lifecycle, "Quit stops server");
+        assert!(status.detail.contains("iPhone=unknown"));
     }
 
     #[test]
@@ -534,5 +826,15 @@ mod tests {
             payload["updatedAtMs"] = json!(updated_at_ms);
         }
         payload.to_string()
+    }
+
+    fn archived_payload(session_id: &str) -> String {
+        json!({
+            "id": session_id,
+            "title": "Archived",
+            "isArchived": true,
+            "lastActivityAtMs": 200,
+        })
+        .to_string()
     }
 }

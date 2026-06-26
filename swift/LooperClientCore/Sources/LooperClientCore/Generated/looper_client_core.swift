@@ -2202,6 +2202,68 @@ public func FfiConverterTypeClientLocalStateStreamUpdate_lower(_ value: ClientLo
 }
 
 
+public struct ClientMenuBarHumanStatusProjection: Equatable, Hashable {
+    public var kind: String
+    public var title: String
+    public var detail: String
+    public var lifecycle: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, title: String, detail: String, lifecycle: String) {
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.lifecycle = lifecycle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMenuBarHumanStatusProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMenuBarHumanStatusProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMenuBarHumanStatusProjection {
+        return
+            try ClientMenuBarHumanStatusProjection(
+                kind: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                lifecycle: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMenuBarHumanStatusProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.lifecycle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarHumanStatusProjection_lift(_ buf: RustBuffer) throws -> ClientMenuBarHumanStatusProjection {
+    return try FfiConverterTypeClientMenuBarHumanStatusProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMenuBarHumanStatusProjection_lower(_ value: ClientMenuBarHumanStatusProjection) -> RustBuffer {
+    return FfiConverterTypeClientMenuBarHumanStatusProjection.lower(value)
+}
+
+
 public struct ClientMenuBarSessionMini: Equatable, Hashable {
     public var sessionId: String
     public var assistantSurface: String
@@ -2209,6 +2271,7 @@ public struct ClientMenuBarSessionMini: Equatable, Hashable {
     public var revision: String
     public var refId: String
     public var title: String
+    public var subtitle: String
     public var status: String
     public var effectiveMode: String
     public var hasEffectiveMode: Bool
@@ -2222,6 +2285,8 @@ public struct ClientMenuBarSessionMini: Equatable, Hashable {
     public var hasLifecycle: Bool
     public var notificationStatus: ClientMenuBarSessionMiniNotificationStatus
     public var hasNotificationStatus: Bool
+    public var notificationTitle: String
+    public var hasNotificationTitle: Bool
     public var isArchived: Bool
     public var assistantPreview: String
     public var hasAssistantPreview: Bool
@@ -2236,13 +2301,14 @@ public struct ClientMenuBarSessionMini: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sessionId: String, assistantSurface: String, seq: Int64, revision: String, refId: String, title: String, status: String, effectiveMode: String, hasEffectiveMode: Bool, replyable: Bool, promptUnavailableReason: String, hasPromptUnavailableReason: Bool, blockedGoal: ClientMenuBarSessionMiniBlockedGoal, hasBlockedGoal: Bool, queueCount: Int32, lifecycle: String, hasLifecycle: Bool, notificationStatus: ClientMenuBarSessionMiniNotificationStatus, hasNotificationStatus: Bool, isArchived: Bool, assistantPreview: String, hasAssistantPreview: Bool, projectName: String, hasProjectName: Bool, projectPath: String, hasProjectPath: Bool, lastActivityAtMs: Int64, hasLastActivityAtMs: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool) {
+    public init(sessionId: String, assistantSurface: String, seq: Int64, revision: String, refId: String, title: String, subtitle: String, status: String, effectiveMode: String, hasEffectiveMode: Bool, replyable: Bool, promptUnavailableReason: String, hasPromptUnavailableReason: Bool, blockedGoal: ClientMenuBarSessionMiniBlockedGoal, hasBlockedGoal: Bool, queueCount: Int32, lifecycle: String, hasLifecycle: Bool, notificationStatus: ClientMenuBarSessionMiniNotificationStatus, hasNotificationStatus: Bool, notificationTitle: String, hasNotificationTitle: Bool, isArchived: Bool, assistantPreview: String, hasAssistantPreview: Bool, projectName: String, hasProjectName: Bool, projectPath: String, hasProjectPath: Bool, lastActivityAtMs: Int64, hasLastActivityAtMs: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool) {
         self.sessionId = sessionId
         self.assistantSurface = assistantSurface
         self.seq = seq
         self.revision = revision
         self.refId = refId
         self.title = title
+        self.subtitle = subtitle
         self.status = status
         self.effectiveMode = effectiveMode
         self.hasEffectiveMode = hasEffectiveMode
@@ -2256,6 +2322,8 @@ public struct ClientMenuBarSessionMini: Equatable, Hashable {
         self.hasLifecycle = hasLifecycle
         self.notificationStatus = notificationStatus
         self.hasNotificationStatus = hasNotificationStatus
+        self.notificationTitle = notificationTitle
+        self.hasNotificationTitle = hasNotificationTitle
         self.isArchived = isArchived
         self.assistantPreview = assistantPreview
         self.hasAssistantPreview = hasAssistantPreview
@@ -2291,6 +2359,7 @@ public struct FfiConverterTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
                 revision: FfiConverterString.read(from: &buf),
                 refId: FfiConverterString.read(from: &buf),
                 title: FfiConverterString.read(from: &buf),
+                subtitle: FfiConverterString.read(from: &buf),
                 status: FfiConverterString.read(from: &buf),
                 effectiveMode: FfiConverterString.read(from: &buf),
                 hasEffectiveMode: FfiConverterBool.read(from: &buf),
@@ -2304,6 +2373,8 @@ public struct FfiConverterTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
                 hasLifecycle: FfiConverterBool.read(from: &buf),
                 notificationStatus: FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.read(from: &buf),
                 hasNotificationStatus: FfiConverterBool.read(from: &buf),
+                notificationTitle: FfiConverterString.read(from: &buf),
+                hasNotificationTitle: FfiConverterBool.read(from: &buf),
                 isArchived: FfiConverterBool.read(from: &buf),
                 assistantPreview: FfiConverterString.read(from: &buf),
                 hasAssistantPreview: FfiConverterBool.read(from: &buf),
@@ -2325,6 +2396,7 @@ public struct FfiConverterTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
         FfiConverterString.write(value.revision, into: &buf)
         FfiConverterString.write(value.refId, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
         FfiConverterString.write(value.status, into: &buf)
         FfiConverterString.write(value.effectiveMode, into: &buf)
         FfiConverterBool.write(value.hasEffectiveMode, into: &buf)
@@ -2338,6 +2410,8 @@ public struct FfiConverterTypeClientMenuBarSessionMini: FfiConverterRustBuffer {
         FfiConverterBool.write(value.hasLifecycle, into: &buf)
         FfiConverterTypeClientMenuBarSessionMiniNotificationStatus.write(value.notificationStatus, into: &buf)
         FfiConverterBool.write(value.hasNotificationStatus, into: &buf)
+        FfiConverterString.write(value.notificationTitle, into: &buf)
+        FfiConverterBool.write(value.hasNotificationTitle, into: &buf)
         FfiConverterBool.write(value.isArchived, into: &buf)
         FfiConverterString.write(value.assistantPreview, into: &buf)
         FfiConverterBool.write(value.hasAssistantPreview, into: &buf)
@@ -4890,6 +4964,15 @@ public func reduceSnapshotLoadFailure(mappedErrorState: String, currentConnectio
     )
 })
 }
+public func reduceMenuSnapshotHumanStatus(snapshot: ClientMenuBarSessionMiniLocalSnapshot, mobileReady: Bool, detachOnQuit: Bool) -> ClientMenuBarHumanStatusProjection  {
+    return try!  FfiConverterTypeClientMenuBarHumanStatusProjection_lift(try! rustCall() {
+    uniffi_looper_client_core_fn_func_reduce_menu_snapshot_human_status(
+        FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot_lower(snapshot),
+        FfiConverterBool.lower(mobileReady),
+        FfiConverterBool.lower(detachOnQuit),$0
+    )
+})
+}
 public func reduceStateMinisMenuSnapshot(snapshot: ClientLocalStateSnapshot)throws  -> ClientMenuBarSessionMiniLocalSnapshot  {
     return try  FfiConverterTypeClientMenuBarSessionMiniLocalSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_state_minis_menu_snapshot(
@@ -5009,6 +5092,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 14313) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_menu_snapshot_human_status() != 13305) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_menu_snapshot() != 20513) {
