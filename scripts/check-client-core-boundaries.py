@@ -113,8 +113,8 @@ CLIENT_APP_OWNERSHIP_PATTERNS = (
     (
         "retired Swift session command owner",
         re.compile(
-            r"CompanionSessionMutationCoordinator|RealtimeCompanionClientFactory|"
-            r"LooperRealtimeStateMiniSynchronizer"
+            r"CompanionSessionCommanding|CompanionSessionMutationCoordinator|"
+            r"RealtimeCompanionClientFactory|LooperRealtimeStateMiniSynchronizer"
         ),
     ),
     (
