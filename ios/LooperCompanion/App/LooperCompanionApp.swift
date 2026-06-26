@@ -46,7 +46,7 @@ struct LooperApp: App {
                 environment: Self.environment(
                     sessionRuntime: sessionRuntime
                 ),
-                sessionMiniLocalStore: sessionRuntime?.localStore
+                sessionRuntime: sessionRuntime
             )
         )
 

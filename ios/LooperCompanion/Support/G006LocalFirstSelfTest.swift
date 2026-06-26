@@ -102,7 +102,8 @@ enum G006LocalFirstSelfTest {
             snapshot: networkSnapshot(),
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -118,7 +119,7 @@ enum G006LocalFirstSelfTest {
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         try require(
@@ -138,11 +139,12 @@ enum G006LocalFirstSelfTest {
         service.promptError = G006LocalFirstServiceSpy.ServiceError.promptFailed
         let storeFileURL = try temporaryStoreFileURL()
         try seedMalformedMiniCache(at: storeFileURL)
-        let store = try CompanionSessionMiniLocalStore(fileURL: storeFileURL)
+        let runtime = try CompanionSessionRuntime(fileURL: storeFileURL)
+        let store = runtime.localStore
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         try require(model.snapshot == nil, "malformed SessionMini cache should be ignored")
 
@@ -165,7 +167,8 @@ enum G006LocalFirstSelfTest {
 
     private static func runOptimisticCommands() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -180,7 +183,7 @@ enum G006LocalFirstSelfTest {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
@@ -215,7 +218,8 @@ enum G006LocalFirstSelfTest {
             0,
             Constants.handoffModeResponseDelayNanoseconds,
         ]
-        let handoffStore = try temporaryMiniStore()
+        let handoffRuntime = try temporarySessionRuntime()
+        let handoffStore = handoffRuntime.localStore
         try handoffStore.replace(
             latestSeq: 13,
             records: [
@@ -224,7 +228,7 @@ enum G006LocalFirstSelfTest {
         )
         let handoffModel = CompanionAppModel(
             environment: CompanionEnvironment(service: handoffService),
-            sessionMiniLocalStore: handoffStore
+            sessionRuntime: handoffRuntime
         )
 
         let firstHandoffModeTask = handoffModel.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
@@ -257,7 +261,8 @@ enum G006LocalFirstSelfTest {
 
     private static func runNotificationReplyAck() async throws -> String {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -272,7 +277,7 @@ enum G006LocalFirstSelfTest {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         let notificationID = "notif-cached-1"
         let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
@@ -299,13 +304,14 @@ enum G006LocalFirstSelfTest {
     }
 
     private static func runNotificationReplyOfflineDedupe() async throws -> String {
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let notificationID = "notif-offline-1"
         let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
         let center = SessionQuickActionCenter(
-            sessionRuntime: CompanionSessionRuntime(localStore: store)
+            sessionRuntime: runtime
         )
 
         await center.submit(
@@ -331,7 +337,7 @@ enum G006LocalFirstSelfTest {
         service.promptError = G006LocalFirstServiceSpy.ServiceError.promptFailed
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         await model.performQuickAction(
             .reply,
@@ -353,7 +359,7 @@ enum G006LocalFirstSelfTest {
             "failed notification reply should not record delivered mutation id"
         )
 
-        try CompanionSessionRuntime(localStore: store).enqueueNotificationReplyCommand(
+        try runtime.enqueueNotificationReplyCommand(
             notificationID: notificationID,
             threadID: Constants.cachedThreadID,
             prompt: "offline reply",
@@ -377,7 +383,8 @@ enum G006LocalFirstSelfTest {
     }
 
     private static func runMiniSyncResync() async throws -> String {
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -401,7 +408,7 @@ enum G006LocalFirstSelfTest {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         let appliedSnapshot = try requireValue(
@@ -458,7 +465,8 @@ enum G006LocalFirstSelfTest {
 
     private static func assertSnapshotTimeoutPreservesConnectedMiniState() async throws {
         let service = G006LocalFirstServiceSpy(snapshot: networkSnapshot())
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Connected Mini",
@@ -473,7 +481,7 @@ enum G006LocalFirstSelfTest {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         let syncedSession = sessionSummary(
             id: Constants.cachedThreadID,
@@ -513,7 +521,8 @@ enum G006LocalFirstSelfTest {
             snapshot: networkSnapshot(),
             responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
         )
-        let store = try temporaryMiniStore()
+        let runtime = try temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = sessionSummary(
             id: Constants.cachedThreadID,
             title: "Latency Mini",
@@ -532,7 +541,7 @@ enum G006LocalFirstSelfTest {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID) != nil,
@@ -567,7 +576,7 @@ enum G006LocalFirstSelfTest {
         let notificationStartedAt = uptimeNanoseconds()
         let notificationID = "latency-notification-\(sampleIndex)"
         await SessionQuickActionCenter(
-            sessionRuntime: CompanionSessionRuntime(localStore: store)
+            sessionRuntime: runtime
         ).submit(
             SessionQuickActionRequest(
                 action: .reply,
@@ -773,8 +782,8 @@ enum G006LocalFirstSelfTest {
         return Int((Double(elapsed) / 1_000_000.0).rounded(.up))
     }
 
-    private static func temporaryMiniStore() throws -> CompanionSessionMiniLocalStore {
-        try CompanionSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+    private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
+        try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
     }
 
     private static func temporaryStoreFileURL() throws -> URL {

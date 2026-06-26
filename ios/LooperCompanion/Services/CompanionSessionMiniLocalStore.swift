@@ -44,26 +44,11 @@ typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
-    fileprivate let sessionManager: LooperClientCoreSessionManager
+    fileprivate unowned let sessionManager: LooperClientCoreSessionManager
     private let decoder = JSONDecoder()
-
-    init(fileURL: URL) throws {
-        self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
-    }
 
     fileprivate init(sessionManager: LooperClientCoreSessionManager) {
         self.sessionManager = sessionManager
-    }
-
-    static func liveDefault() -> CompanionSessionMiniLocalStore? {
-        do {
-            return try CompanionSessionMiniLocalStore(
-                fileURL: defaultFileURL()
-            )
-        } catch {
-            CompanionDiagnostics.record("session-mini:store-unavailable error=\(error.localizedDescription)")
-            return nil
-        }
     }
 
     func cachedSnapshot() throws -> MobileSnapshot? {
@@ -96,38 +81,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    fileprivate func queueSetMode(
-        threadID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) throws -> MobileSnapshot? {
-        let localSnapshot = try sessionManager.queueSetMode(
-            threadID: threadID,
-            preset: preset?.rawValue ?? "",
-            clientMutationID: clientMutationID
-        )
-        return try mobileSnapshot(from: localSnapshot)
-    }
-
-    @discardableResult
-    fileprivate func queueSetModeWithGeneratedMutation(
-        threadID: String,
-        preset: SessionMode?
-    ) throws -> CompanionQueuedModeSnapshot? {
-        let queued = try sessionManager.queueSetMode(
-            threadID: threadID,
-            preset: preset?.rawValue ?? ""
-        )
-        guard let snapshot = try mobileSnapshot(from: queued.snapshot) else {
-            return nil
-        }
-        return CompanionQueuedModeSnapshot(
-            clientMutationID: queued.clientMutationId,
-            snapshot: snapshot
-        )
-    }
-
-    @discardableResult
     func replace(
         latestSeq: Int64,
         records: [CompanionSessionMiniRecord],
@@ -139,37 +92,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
                 sessions: records.map(ClientStateMini.init),
                 serverTime: serverTime ?? ""
             )
-        )
-    }
-
-    fileprivate func enqueueNotificationReplyCommand(
-        notificationID: String,
-        threadID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) throws -> String {
-        let queued = try sessionManager.persistNotificationReply(
-            notificationID: notificationID,
-            threadID: threadID,
-            prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? ""
-        )
-        return queued.clientMutationId
-    }
-
-    fileprivate func enqueueNotificationReplyCommand(
-        notificationID: String,
-        threadID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) throws {
-        _ = try sessionManager.persistNotificationReply(
-            notificationID: notificationID,
-            threadID: threadID,
-            prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationID: clientMutationID
         )
     }
 
@@ -223,7 +145,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
     }
 
-    private func mobileSnapshot(from snapshot: ClientLocalStateSnapshot) throws -> MobileSnapshot? {
+    fileprivate func mobileSnapshot(from snapshot: ClientLocalStateSnapshot) throws -> MobileSnapshot? {
         try mobileSnapshot(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.sessions,
@@ -251,11 +173,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("session-runtime:unavailable error=\(error.localizedDescription)")
             return nil
         }
-    }
-
-    init(localStore: CompanionSessionMiniLocalStore) {
-        self.sessionManager = localStore.sessionManager
-        self.localStore = localStore
     }
 
     @discardableResult
@@ -326,11 +243,12 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         preset: SessionMode?,
         clientMutationID: String
     ) throws -> MobileSnapshot? {
-        try localStore.queueSetMode(
+        let localSnapshot = try sessionManager.queueSetMode(
             threadID: threadID,
-            preset: preset,
+            preset: preset?.rawValue ?? "",
             clientMutationID: clientMutationID
         )
+        return try localStore.mobileSnapshot(from: localSnapshot)
     }
 
     @discardableResult
@@ -338,9 +256,16 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         threadID: String,
         preset: SessionMode?
     ) throws -> CompanionQueuedModeSnapshot? {
-        try localStore.queueSetModeWithGeneratedMutation(
+        let queued = try sessionManager.queueSetMode(
             threadID: threadID,
-            preset: preset
+            preset: preset?.rawValue ?? ""
+        )
+        guard let snapshot = try localStore.mobileSnapshot(from: queued.snapshot) else {
+            return nil
+        }
+        return CompanionQueuedModeSnapshot(
+            clientMutationID: queued.clientMutationId,
+            snapshot: snapshot
         )
     }
 
@@ -350,12 +275,13 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) throws -> String {
-        try localStore.enqueueNotificationReplyCommand(
+        let queued = try sessionManager.persistNotificationReply(
             notificationID: notificationID,
             threadID: threadID,
             prompt: prompt,
-            assistantSurface: assistantSurface
+            assistantSurface: assistantSurface?.rawValue ?? ""
         )
+        return queued.clientMutationId
     }
 
     func enqueueNotificationReplyCommand(
@@ -365,11 +291,11 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) throws {
-        try localStore.enqueueNotificationReplyCommand(
+        _ = try sessionManager.persistNotificationReply(
             notificationID: notificationID,
             threadID: threadID,
             prompt: prompt,
-            assistantSurface: assistantSurface,
+            assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationID: clientMutationID
         )
     }

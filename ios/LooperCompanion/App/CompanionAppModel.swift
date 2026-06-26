@@ -59,13 +59,13 @@ final class CompanionAppModel {
         notificationManager: LocalNotificationManager = LocalNotificationManager(),
         remotePushRegistrar: RemotePushRegistrar = .shared,
         spotlightIndexer: SessionSpotlightIndexer = .shared,
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+        sessionRuntime providedSessionRuntime: CompanionSessionRuntime? = nil
     ) {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
         let sessionRuntime = environment.sessionRuntime
-            ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
+            ?? providedSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
 

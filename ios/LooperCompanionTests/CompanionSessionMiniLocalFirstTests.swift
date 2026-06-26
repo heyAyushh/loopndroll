@@ -19,7 +19,8 @@ struct CompanionSessionMiniLocalFirstTests {
     @Test
     func testAppModelRestoresCachedSessionMinisBeforeNetwork() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -35,7 +36,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
@@ -50,11 +51,12 @@ struct CompanionSessionMiniLocalFirstTests {
         service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
         let storeFileURL = try Self.temporaryStoreFileURL()
         try Self.seedMalformedMiniCache(at: storeFileURL)
-        let store = try CompanionSessionMiniLocalStore(fileURL: storeFileURL)
+        let runtime = try CompanionSessionRuntime(fileURL: storeFileURL)
+        let store = runtime.localStore
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         #expect(model.snapshot == nil)
 
@@ -71,7 +73,8 @@ struct CompanionSessionMiniLocalFirstTests {
     @Test
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -86,7 +89,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         await model.applyMode(.maxTurns2, to: Constants.cachedThreadID)
@@ -109,7 +112,8 @@ struct CompanionSessionMiniLocalFirstTests {
     func testPromptBehindPendingModeUsesRustCoreCommandsWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         service.modeResponseDelayNanoseconds = 200_000_000
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -124,7 +128,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
@@ -154,7 +158,8 @@ struct CompanionSessionMiniLocalFirstTests {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
         service.modeResponseDelayNanoseconds = 200_000_000
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -169,7 +174,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
@@ -189,7 +194,8 @@ struct CompanionSessionMiniLocalFirstTests {
     @Test
     func testNotificationReplyUsesDurableAckCommandWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -204,7 +210,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         let notificationID = "notif-cached-1"
         let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
@@ -228,13 +234,14 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testNotificationReplyPersistsBeforeHandlerAndDedupesOfflineRetry() async throws {
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let notificationID = "notif-offline-1"
         let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
         let center = SessionQuickActionCenter(
-            sessionRuntime: CompanionSessionRuntime(localStore: store)
+            sessionRuntime: runtime
         )
 
         await center.submit(
@@ -259,7 +266,7 @@ struct CompanionSessionMiniLocalFirstTests {
         service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
         await model.performQuickAction(
             .reply,
@@ -273,7 +280,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.attemptCount == 0)
         #expect(service.notificationReplyClientMutationIDs.isEmpty)
-        try CompanionSessionRuntime(localStore: store).enqueueNotificationReplyCommand(
+        try runtime.enqueueNotificationReplyCommand(
             notificationID: notificationID,
             threadID: Constants.cachedThreadID,
             prompt: "offline reply",
@@ -286,10 +293,11 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testNotificationReplyQuickActionSubmitDoesNotWaitForNetworkHandler() async throws {
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let notificationID = "notif-fast-completion-1"
         let center = SessionQuickActionCenter(
-            sessionRuntime: CompanionSessionRuntime(localStore: store)
+            sessionRuntime: runtime
         )
         center.registerHandler { _ in
             try? await Task.sleep(nanoseconds: Constants.slowQuickActionHandlerNanoseconds)
@@ -311,8 +319,8 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(store.pendingCommands().first?.notificationID == notificationID)
     }
 
-    private static func temporaryMiniStore() throws -> CompanionSessionMiniLocalStore {
-        try CompanionSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+    private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
+        try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
     }
 
     private static func temporaryStoreFileURL() throws -> URL {
