@@ -207,7 +207,7 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionMiniLocalStore: store
         )
         let notificationID = "notif-cached-1"
-        let clientMutationID = SessionQuickActionRequest.notificationReplyClientMutationID(
+        let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
 
@@ -215,8 +215,7 @@ struct CompanionSessionMiniLocalFirstTests {
             .reply,
             sessionID: Constants.cachedThreadID,
             prompt: "continue from notification",
-            notificationID: notificationID,
-            clientMutationID: clientMutationID
+            notificationID: notificationID
         )
 
         #expect(service.notificationReplyClientMutationIDs == [clientMutationID])
@@ -231,7 +230,7 @@ struct CompanionSessionMiniLocalFirstTests {
     func testNotificationReplyPersistsBeforeHandlerAndDedupesOfflineRetry() async throws {
         let store = try Self.temporaryMiniStore()
         let notificationID = "notif-offline-1"
-        let clientMutationID = SessionQuickActionRequest.notificationReplyClientMutationID(
+        let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
         let center = SessionQuickActionCenter(localStore: store)
@@ -264,8 +263,7 @@ struct CompanionSessionMiniLocalFirstTests {
             .reply,
             sessionID: Constants.cachedThreadID,
             prompt: "offline reply",
-            notificationID: notificationID,
-            clientMutationID: clientMutationID
+            notificationID: notificationID
         )
 
         pendingCommands = store.pendingCommands()
@@ -414,6 +412,10 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         case promptFailed
     }
 
+    static func notificationReplyMutationID(notificationID: String) -> String {
+        "notification-reply:\(notificationID.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
     private let lock = NSLock()
     private let snapshot: MobileSnapshot
     private(set) var loadSnapshotCallCount = 0
@@ -450,6 +452,17 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     func setSessionMode(
         id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        try await setSessionMode(
+            id: id,
+            preset: preset,
+            clientMutationID: nextGeneratedMutationID(prefix: "mode")
+        )
+    }
+
+    func setSessionMode(
+        id: String,
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
@@ -470,6 +483,19 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     }
 
     func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        try await sendSessionPrompt(
+            id: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: nextGeneratedMutationID(prefix: "prompt")
+        )
+    }
+
+    func sendSessionPrompt(
         id _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
@@ -484,6 +510,21 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
             promptID: "prompt-1",
             dispatchKind: "resume",
             clientMutationID: clientMutationID
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        try await submitNotificationReply(
+            notificationID: notificationID,
+            sessionID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: "notification-reply:\(notificationID)"
         )
     }
 
@@ -558,6 +599,12 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         defer { lock.unlock() }
         notificationReplyIDs.append(notificationID)
         notificationReplyClientMutationIDs.append(clientMutationID)
+    }
+
+    private func nextGeneratedMutationID(prefix: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return "\(prefix)-generated-\(modeClientMutationIDs.count + promptClientMutationIDs.count + 1)"
     }
 
     func muteSession(id _: String) async throws -> MobileSnapshot {

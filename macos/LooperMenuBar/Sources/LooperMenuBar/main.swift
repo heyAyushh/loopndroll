@@ -362,8 +362,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         notificationID: notificationID,
         threadID: threadID,
         prompt: prompt,
-        assistantSurface: nil,
-        clientMutationID: "notification-reply:\(notificationID)"
+        assistantSurface: nil
       )
       replaceMenu(
         snapshot: nil,

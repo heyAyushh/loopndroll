@@ -248,6 +248,25 @@ struct HTTPCompanionService: CompanionService {
         notificationID: String,
         sessionID: String,
         prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        let envelope = try await requiredSessionManager().submitNotificationReplyWithGeneratedMutation(
+            notificationID: notificationID,
+            threadID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        return try Self.notificationReplyResponse(
+            from: envelope,
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
@@ -258,18 +277,10 @@ struct HTTPCompanionService: CompanionService {
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationID: clientMutationID
         )
-        guard envelope.ack.accepted else {
-            CompanionDiagnostics.record(
-                "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
-            )
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record(
-            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
-        )
-        return Self.notificationReplyResponse(
+        return try Self.notificationReplyResponse(
             from: envelope,
-            fallbackNotificationID: notificationID
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
         )
     }
 
@@ -285,9 +296,10 @@ struct HTTPCompanionService: CompanionService {
         CompanionDiagnostics.record(
             "notification-reply:grpc-pending-accepted id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
         )
-        return Self.notificationReplyResponse(
+        return try Self.notificationReplyResponse(
             from: envelope,
-            fallbackNotificationID: envelope.notificationId
+            fallbackNotificationID: envelope.notificationId,
+            sessionID: envelope.ack.entityId
         )
     }
 
@@ -348,9 +360,19 @@ struct HTTPCompanionService: CompanionService {
 
     private static func notificationReplyResponse(
         from envelope: ClientCommandAckEnvelope,
-        fallbackNotificationID: String
-    ) -> LooperRealtimeNotificationReplyResponse {
-        LooperRealtimeNotificationReplyResponse(
+        fallbackNotificationID: String,
+        sessionID: String
+    ) throws -> LooperRealtimeNotificationReplyResponse {
+        guard envelope.ack.accepted else {
+            CompanionDiagnostics.record(
+                "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(fallbackNotificationID)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: envelope.dispatchKind))"
+        )
+        return LooperRealtimeNotificationReplyResponse(
             accepted: envelope.ack.accepted,
             dispatchKind: dispatchKind(from: envelope.dispatchKind),
             promptID: nonEmpty(envelope.promptId),

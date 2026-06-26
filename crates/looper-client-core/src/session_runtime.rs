@@ -11,9 +11,9 @@ use crate::{
     mobile_snapshot::reduce_state_minis_mobile_snapshot,
     model::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
-        ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate, ClientStateMiniDelta,
-        ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
-        ClientStateSnapshot,
+        ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
+        ClientQueuedCommandSnapshot, ClientStateMiniDelta, ClientStateMiniSnapshot,
+        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
 };
 
@@ -173,6 +173,19 @@ impl LooperClientCoreSessionRuntime {
         )
     }
 
+    pub fn queue_set_mode_with_generated_mutation(
+        &self,
+        thread_id: String,
+        preset: String,
+    ) -> Result<ClientQueuedCommandSnapshot, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(MODE_MUTATION_PREFIX);
+        let snapshot = self.queue_set_mode(thread_id, preset, client_mutation_id.clone())?;
+        Ok(ClientQueuedCommandSnapshot {
+            client_mutation_id,
+            snapshot,
+        })
+    }
+
     pub async fn send_prompt(
         &self,
         thread_id: String,
@@ -233,12 +246,14 @@ impl LooperClientCoreSessionRuntime {
         prompt: String,
         assistant_surface: String,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let notification_id = notification_id.trim().to_owned();
+        let client_mutation_id = notification_reply_client_mutation_id(&notification_id);
         self.submit_notification_reply(
             notification_id,
             thread_id,
             prompt,
             assistant_surface,
-            generated_client_mutation_id(NOTIFICATION_REPLY_MUTATION_PREFIX),
+            client_mutation_id,
         )
         .await
     }
@@ -266,6 +281,28 @@ impl LooperClientCoreSessionRuntime {
             assistant_surface,
             client_mutation_id,
         )
+    }
+
+    pub fn persist_notification_reply_with_generated_mutation(
+        &self,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+    ) -> Result<ClientQueuedCommandSnapshot, ClientCoreError> {
+        let notification_id = notification_id.trim().to_owned();
+        let client_mutation_id = notification_reply_client_mutation_id(&notification_id);
+        let snapshot = self.persist_notification_reply(
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientQueuedCommandSnapshot {
+            client_mutation_id,
+            snapshot,
+        })
     }
 
     pub fn outbox_depth(&self) -> Result<u32, ClientCoreError> {
@@ -388,6 +425,14 @@ impl LooperClientCoreSessionRuntime {
 
 fn generated_client_mutation_id(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
+fn notification_reply_client_mutation_id(notification_id: &str) -> String {
+    format!(
+        "{}:{}",
+        NOTIFICATION_REPLY_MUTATION_PREFIX,
+        notification_id.trim()
+    )
 }
 
 fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
@@ -596,6 +641,70 @@ mod tests {
         );
         drop(runtime);
         drop(test_runtime);
+    }
+
+    #[test]
+    fn runtime_generated_mode_queue_returns_mutation_id_and_paints() {
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("mode-generated-paint"))
+            .expect("runtime");
+        runtime
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 7,
+                sessions: vec![ClientStateMini {
+                    session_id: "thread-main".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 7,
+                    revision: "rev-7".to_owned(),
+                    payload_json: r#"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#.to_owned(),
+                }],
+                server_time: "2026-06-25T00:00:00Z".to_owned(),
+            })
+            .expect("seed minis");
+
+        let queued = runtime
+            .queue_set_mode_with_generated_mutation(
+                "thread-main".to_owned(),
+                "max-turns-2".to_owned(),
+            )
+            .expect("queue generated mode");
+
+        assert!(queued.client_mutation_id.starts_with("mode-"));
+        assert_eq!(queued.snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            queued.snapshot.pending_commands[0].client_mutation_id,
+            queued.client_mutation_id
+        );
+        assert!(
+            queued.snapshot.sessions[0]
+                .payload_json
+                .contains(r#""effectiveMode":"max-turns-2""#)
+        );
+    }
+
+    #[test]
+    fn runtime_generated_notification_reply_persist_is_deterministic() {
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("reply-generated-persist"))
+                .expect("runtime");
+
+        let queued = runtime
+            .persist_notification_reply_with_generated_mutation(
+                " notification-main ".to_owned(),
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+            )
+            .expect("queue generated reply");
+
+        assert_eq!(
+            queued.client_mutation_id,
+            "notification-reply:notification-main"
+        );
+        assert_eq!(queued.snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            queued.snapshot.pending_commands[0].client_mutation_id,
+            queued.client_mutation_id
+        );
     }
 
     #[test]

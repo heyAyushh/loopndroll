@@ -1111,7 +1111,11 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
 
+    func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientQueuedCommandSnapshot
+
     func queueSetMode(threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
+
+    func queueSetModeWithGeneratedMutation(threadId: String, preset: String) throws  -> ClientQueuedCommandSnapshot
 
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
@@ -1318,6 +1322,18 @@ open func persistNotificationReply(notificationId: String, threadId: String, pro
 })
 }
 
+open func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)throws  -> ClientQueuedCommandSnapshot  {
+    return try  FfiConverterTypeClientQueuedCommandSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(notificationId),
+        FfiConverterString.lower(threadId),
+        FfiConverterString.lower(prompt),
+        FfiConverterString.lower(assistantSurface),$0
+    )
+})
+}
+
 open func queueSetMode(threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
     return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_queue_set_mode(
@@ -1325,6 +1341,16 @@ open func queueSetMode(threadId: String, preset: String, clientMutationId: Strin
         FfiConverterString.lower(threadId),
         FfiConverterString.lower(preset),
         FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func queueSetModeWithGeneratedMutation(threadId: String, preset: String)throws  -> ClientQueuedCommandSnapshot  {
+    return try  FfiConverterTypeClientQueuedCommandSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_queue_set_mode_with_generated_mutation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(threadId),
+        FfiConverterString.lower(preset),$0
     )
 })
 }
@@ -3152,6 +3178,60 @@ public func FfiConverterTypeClientPendingMutation_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMutation) -> RustBuffer {
     return FfiConverterTypeClientPendingMutation.lower(value)
+}
+
+
+public struct ClientQueuedCommandSnapshot: Equatable, Hashable {
+    public var clientMutationId: String
+    public var snapshot: ClientLocalStateSnapshot
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(clientMutationId: String, snapshot: ClientLocalStateSnapshot) {
+        self.clientMutationId = clientMutationId
+        self.snapshot = snapshot
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientQueuedCommandSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientQueuedCommandSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientQueuedCommandSnapshot {
+        return
+            try ClientQueuedCommandSnapshot(
+                clientMutationId: FfiConverterString.read(from: &buf),
+                snapshot: FfiConverterTypeClientLocalStateSnapshot.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientQueuedCommandSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterTypeClientLocalStateSnapshot.write(value.snapshot, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientQueuedCommandSnapshot_lift(_ buf: RustBuffer) throws -> ClientQueuedCommandSnapshot {
+    return try FfiConverterTypeClientQueuedCommandSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientQueuedCommandSnapshot_lower(_ value: ClientQueuedCommandSnapshot) -> RustBuffer {
+    return FfiConverterTypeClientQueuedCommandSnapshot.lower(value)
 }
 
 
@@ -5295,7 +5375,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply() != 12302) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 219) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_queue_set_mode() != 211) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_queue_set_mode_with_generated_mutation() != 38140) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_replace_state_minis() != 26981) {

@@ -140,6 +140,12 @@ pub struct ClientCommandBatchResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientQueuedCommandSnapshot {
+    pub client_mutation_id: String,
+    pub snapshot: ClientLocalStateSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientStateDelta {
     pub seq: i64,
     pub entity_id: String,

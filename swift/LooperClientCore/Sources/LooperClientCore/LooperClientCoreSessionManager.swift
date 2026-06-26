@@ -105,6 +105,17 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func queueSetMode(
+        threadID: String,
+        preset: String
+    ) throws -> ClientQueuedCommandSnapshot {
+        try runtime.queueSetModeWithGeneratedMutation(
+            threadId: threadID,
+            preset: preset
+        )
+    }
+
+    @discardableResult
     public func sendPrompt(
         threadID: String,
         prompt: String,
@@ -183,6 +194,21 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
             prompt: prompt,
             assistantSurface: assistantSurface,
             clientMutationId: clientMutationID
+        )
+    }
+
+    @discardableResult
+    public func persistNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String
+    ) throws -> ClientQueuedCommandSnapshot {
+        try runtime.persistNotificationReplyWithGeneratedMutation(
+            notificationId: notificationID,
+            threadId: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
         )
     }
 

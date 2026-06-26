@@ -21,9 +21,6 @@ struct SessionQuickActionRequest: Equatable, Sendable {
         self.clientMutationID = clientMutationID
     }
 
-    static func notificationReplyClientMutationID(notificationID: String) -> String {
-        "notification-reply:\(notificationID)"
-    }
 }
 
 @MainActor
@@ -106,18 +103,29 @@ final class SessionQuickActionCenter {
             return request
         }
 
-        let clientMutationID = request.clientMutationID?.nilIfBlank
-            ?? SessionQuickActionRequest.notificationReplyClientMutationID(
-                notificationID: notificationID
-            )
+        var clientMutationID = request.clientMutationID?.nilIfBlank
         do {
-            try localStore?.enqueueNotificationReplyCommand(
-                notificationID: notificationID,
-                threadID: request.sessionID,
-                prompt: prompt,
-                assistantSurface: nil,
-                clientMutationID: clientMutationID
-            )
+            if clientMutationID == nil {
+                clientMutationID = try localStore?.enqueueNotificationReplyCommand(
+                    notificationID: notificationID,
+                    threadID: request.sessionID,
+                    prompt: prompt,
+                    assistantSurface: nil
+                )
+            } else if let clientMutationID {
+                try localStore?.enqueueNotificationReplyCommand(
+                    notificationID: notificationID,
+                    threadID: request.sessionID,
+                    prompt: prompt,
+                    assistantSurface: nil,
+                    clientMutationID: clientMutationID
+                )
+            }
+            if clientMutationID == nil {
+                CompanionDiagnostics.record(
+                    "notification-reply:quick-action-outbox-missing-local-store sessionID=\(request.sessionID) notificationID=\(notificationID)"
+                )
+            }
         } catch {
             CompanionDiagnostics.record(
                 "notification-reply:quick-action-outbox-failed sessionID=\(request.sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"

@@ -256,6 +256,11 @@ actor MockCompanionStore {
 }
 
 struct MockCompanionService: CompanionService {
+    private enum MockCommandIDs {
+        static let notificationReply = "mock"
+        static let pendingNotificationReply = ""
+    }
+
     private let store = MockCompanionStore()
 
     func prepareSessionRuntime() async {}
@@ -284,6 +289,20 @@ struct MockCompanionService: CompanionService {
 
     func setSessionMode(
         id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        _ = await store.setMode(id: id, preset: preset)
+        return .accepted(
+            mode: preset,
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: nil,
+            ackSeq: 0,
+            revision: "mock"
+        )
+    }
+
+    func setSessionMode(
+        id: String,
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
@@ -308,6 +327,22 @@ struct MockCompanionService: CompanionService {
     func sendSessionPrompt(
         id: String,
         prompt: String,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        _ = await store.sendPrompt(id: id, prompt: prompt)
+        return .accepted(
+            promptID: nil,
+            dispatchKind: "mock",
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: nil,
+            ackSeq: 0,
+            revision: "mock"
+        )
+    }
+
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
@@ -319,6 +354,27 @@ struct MockCompanionService: CompanionService {
             clientMutationID: clientMutationID,
             ackSeq: 0,
             revision: "mock"
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        _ = await store.sendPrompt(id: sessionID, prompt: prompt)
+        return LooperRealtimeNotificationReplyResponse(
+            accepted: true,
+            dispatchKind: "mock",
+            promptID: nil,
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: MockCommandIDs.notificationReply,
+            ackSeq: 0,
+            entityID: sessionID,
+            revision: "",
+            idempotentReplay: false,
+            notificationID: notificationID
         )
     }
 
@@ -350,7 +406,7 @@ struct MockCompanionService: CompanionService {
             dispatchKind: "mock",
             promptID: nil,
             serverTime: Date().ISO8601Format(),
-            clientMutationID: "",
+            clientMutationID: MockCommandIDs.pendingNotificationReply,
             ackSeq: 0,
             entityID: "",
             revision: "",

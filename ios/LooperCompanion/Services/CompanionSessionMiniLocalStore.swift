@@ -18,6 +18,11 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let attemptCount: Int
 }
 
+struct CompanionQueuedModeSnapshot: Sendable {
+    let clientMutationID: String
+    let snapshot: MobileSnapshot
+}
+
 struct CompanionClientCoreMobileSnapshotStreamResult: Sendable {
     let update: CompanionSessionMiniSyncUpdate?
     let shouldStop: Bool
@@ -101,6 +106,24 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
+    func queueSetModeWithGeneratedMutation(
+        threadID: String,
+        preset: SessionMode?
+    ) throws -> CompanionQueuedModeSnapshot? {
+        let queued = try sessionManager.queueSetMode(
+            threadID: threadID,
+            preset: preset?.rawValue ?? ""
+        )
+        guard let snapshot = try mobileSnapshot(from: queued.snapshot) else {
+            return nil
+        }
+        return CompanionQueuedModeSnapshot(
+            clientMutationID: queued.clientMutationId,
+            snapshot: snapshot
+        )
+    }
+
+    @discardableResult
     func replace(
         latestSeq: Int64,
         records: [CompanionSessionMiniRecord],
@@ -113,6 +136,21 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
                 serverTime: serverTime ?? ""
             )
         )
+    }
+
+    func enqueueNotificationReplyCommand(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) throws -> String {
+        let queued = try sessionManager.persistNotificationReply(
+            notificationID: notificationID,
+            threadID: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        return queued.clientMutationId
     }
 
     func enqueueNotificationReplyCommand(

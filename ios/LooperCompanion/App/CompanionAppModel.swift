@@ -831,22 +831,27 @@ final class CompanionAppModel {
     }
 
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
-        let clientMutationID = makeClientMutationID()
         let targetService = service
         let targetRevision = connectionRevision
-
-        applyQueuedModeSnapshot(
+        let queuedClientMutationID = applyQueuedModeSnapshot(
             preset,
-            to: sessionID,
-            clientMutationID: clientMutationID
+            to: sessionID
         )
 
         do {
-            let result = try await targetService.setSessionMode(
-                id: sessionID,
-                preset: preset,
-                clientMutationID: clientMutationID
-            )
+            let result: CompanionSessionModeResult
+            if let queuedClientMutationID {
+                result = try await targetService.setSessionMode(
+                    id: sessionID,
+                    preset: preset,
+                    clientMutationID: queuedClientMutationID
+                )
+            } else {
+                result = try await targetService.setSessionMode(
+                    id: sessionID,
+                    preset: preset
+                )
+            }
             guard targetRevision == connectionRevision else {
                 CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(sessionID)")
                 return false
@@ -923,8 +928,7 @@ final class CompanionAppModel {
     func submitNotificationReply(
         notificationID: String,
         prompt: String,
-        to sessionID: String,
-        clientMutationID providedClientMutationID: String? = nil
+        to sessionID: String
     ) async -> Bool {
         let trimmedNotificationID = notificationID.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -937,13 +941,6 @@ final class CompanionAppModel {
             return false
         }
 
-        let providedMutationID = providedClientMutationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let clientMutationID = providedMutationID.isEmpty
-            ? SessionQuickActionRequest.notificationReplyClientMutationID(
-                notificationID: trimmedNotificationID
-            )
-            : providedMutationID
         let targetSurface = snapshotState.assistantSurface(containingSessionID: sessionID)
             ?? selectedAssistantSurface
 
@@ -951,8 +948,7 @@ final class CompanionAppModel {
             notificationID: trimmedNotificationID,
             sessionID: sessionID,
             prompt: trimmedPrompt,
-            targetSurface: targetSurface,
-            clientMutationID: clientMutationID
+            targetSurface: targetSurface
         )
     }
 
@@ -979,16 +975,14 @@ final class CompanionAppModel {
         notificationID: String,
         sessionID: String,
         prompt: String,
-        targetSurface: CompanionAssistantSurface,
-        clientMutationID: String
+        targetSurface: CompanionAssistantSurface
     ) async -> Bool {
         do {
             let response = try await service.submitNotificationReply(
                 notificationID: notificationID,
                 sessionID: sessionID,
                 prompt: prompt,
-                assistantSurface: nil,
-                clientMutationID: clientMutationID
+                assistantSurface: nil
             )
             await applyNotificationReplyAccepted(
                 response,
@@ -1157,8 +1151,7 @@ final class CompanionAppModel {
         _ action: QuickActionOption,
         sessionID: String,
         prompt: String? = nil,
-        notificationID: String? = nil,
-        clientMutationID: String? = nil
+        notificationID: String? = nil
     ) async {
         switch action {
         case .openSession:
@@ -1180,8 +1173,7 @@ final class CompanionAppModel {
                 await submitNotificationReply(
                     notificationID: notificationID,
                     prompt: prompt ?? "",
-                    to: sessionID,
-                    clientMutationID: clientMutationID
+                    to: sessionID
                 )
             } else {
                 await sendSessionPrompt(prompt ?? "", to: sessionID)
@@ -1199,8 +1191,7 @@ final class CompanionAppModel {
                 request.action,
                 sessionID: request.sessionID,
                 prompt: request.prompt,
-                notificationID: request.notificationID,
-                clientMutationID: request.clientMutationID
+                notificationID: request.notificationID
             )
         }
     }
@@ -1247,29 +1238,29 @@ final class CompanionAppModel {
 
     private func applyQueuedModeSnapshot(
         _ preset: SessionMode?,
-        to sessionID: String,
-        clientMutationID: String
-    ) {
+        to sessionID: String
+    ) -> String? {
         guard let localStore = sessionMiniController.localStore else {
-            return
+            return nil
         }
         do {
-            guard let localSnapshot = try localStore.queueSetMode(
+            guard let queuedSnapshot = try localStore.queueSetModeWithGeneratedMutation(
                 threadID: sessionID,
-                preset: preset,
-                clientMutationID: clientMutationID
+                preset: preset
             ) else {
-                return
+                return nil
             }
             snapshotState.applySnapshot(
-                localSnapshot,
+                queuedSnapshot.snapshot,
                 preferredSurface: snapshotState.selectedAssistantSurface
             )
             lastUpdatedAt = Date()
+            return queuedSnapshot.clientMutationID
         } catch {
             CompanionDiagnostics.record(
                 "mode:local-queue-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
             )
+            return nil
         }
     }
 
@@ -1405,10 +1396,6 @@ final class CompanionAppModel {
         sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason in
             self?.applyCachedSnapshot(cachedSnapshot, reason: reason)
         }
-    }
-
-    private func makeClientMutationID() -> String {
-        UUID().uuidString
     }
 
     @discardableResult

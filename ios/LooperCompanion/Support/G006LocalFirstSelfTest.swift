@@ -275,7 +275,7 @@ enum G006LocalFirstSelfTest {
             sessionMiniLocalStore: store
         )
         let notificationID = "notif-cached-1"
-        let clientMutationID = SessionQuickActionRequest.notificationReplyClientMutationID(
+        let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
 
@@ -283,8 +283,7 @@ enum G006LocalFirstSelfTest {
             .reply,
             sessionID: Constants.cachedThreadID,
             prompt: "continue from notification",
-            notificationID: notificationID,
-            clientMutationID: clientMutationID
+            notificationID: notificationID
         )
 
         try require(
@@ -302,7 +301,7 @@ enum G006LocalFirstSelfTest {
     private static func runNotificationReplyOfflineDedupe() async throws -> String {
         let store = try temporaryMiniStore()
         let notificationID = "notif-offline-1"
-        let clientMutationID = SessionQuickActionRequest.notificationReplyClientMutationID(
+        let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
         let center = SessionQuickActionCenter(localStore: store)
@@ -336,8 +335,7 @@ enum G006LocalFirstSelfTest {
             .reply,
             sessionID: Constants.cachedThreadID,
             prompt: "offline reply",
-            notificationID: notificationID,
-            clientMutationID: clientMutationID
+            notificationID: notificationID
         )
 
         pendingCommands = store.pendingCommands()
@@ -952,6 +950,10 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     static let mutationOrderPrefixPrompt = "prompt"
     static let mutationOrderPrefixNotificationReply = "notification-reply"
 
+    static func notificationReplyMutationID(notificationID: String) -> String {
+        "\(mutationOrderPrefixNotificationReply):\(notificationID.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
     private let lock = NSLock()
     private let snapshot: MobileSnapshot
     private let responseDelayNanoseconds: UInt64
@@ -997,6 +999,17 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 
     func setSessionMode(
+        id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        try await setSessionMode(
+            id: id,
+            preset: preset,
+            clientMutationID: nextGeneratedMutationID(prefix: Self.mutationOrderPrefixMode)
+        )
+    }
+
+    func setSessionMode(
         id _: String,
         preset: SessionMode?,
         clientMutationID: String
@@ -1019,6 +1032,19 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 
     func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        try await sendSessionPrompt(
+            id: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: nextGeneratedMutationID(prefix: Self.mutationOrderPrefixPrompt)
+        )
+    }
+
+    func sendSessionPrompt(
         id _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
@@ -1034,6 +1060,21 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
             promptID: "prompt-1",
             dispatchKind: "resume",
             clientMutationID: clientMutationID
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        try await submitNotificationReply(
+            notificationID: notificationID,
+            sessionID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: Self.notificationReplyMutationID(notificationID: notificationID)
         )
     }
 
@@ -1152,6 +1193,12 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         notificationReplyIDs.append(notificationID)
         notificationReplyClientMutationIDs.append(clientMutationID)
         mutationOrder.append("\(Self.mutationOrderPrefixNotificationReply):\(clientMutationID)")
+    }
+
+    private func nextGeneratedMutationID(prefix: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return "\(prefix)-generated-\(mutationOrder.count + 1)"
     }
 
     private func delayResponseIfNeeded() async throws {
