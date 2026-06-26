@@ -2,6 +2,7 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 import LooperCompanionCore
+import LooperClientCore
 
 enum LooperContinuationActivity {
     static let activityType = "dev.looper.app.continue-session"
@@ -2408,55 +2409,58 @@ struct SessionSections: Sendable {
     let archived: [SessionSummary]
 
     init(sessions: [SessionSummary]) {
-        var active: [SessionSummary] = []
-        var running: [SessionSummary] = []
-        var waiting: [SessionSummary] = []
-        var stopped: [SessionSummary] = []
-        var needsAttention: [SessionSummary] = []
-        var archived: [SessionSummary] = []
-
-        for session in sessions.sortedBySessionFreshness() {
-            if session.isArchived {
-                archived.append(session)
-                continue
-            }
-
-            active.append(session)
-
-            if session.hasBlockedGoal {
-                needsAttention.append(session)
-                continue
-            }
-
-            switch session.status {
-            case .active:
-                running.append(session)
-            case .waiting:
-                waiting.append(session)
-                needsAttention.append(session)
-            case .stopped:
-                if session.hasRunningGoal {
-                    running.append(session)
-                } else {
-                    stopped.append(session)
-                }
-            case .archived:
-                archived.append(session)
-            }
-        }
-
-        self.active = active
-        self.running = running
-        self.waiting = waiting
-        self.stopped = stopped
-        self.needsAttention = needsAttention
-        self.archived = archived
+        let projection = SessionSectionsReducerCodec.projectSessionSections(sessions)
+        active = Self.sessions(at: projection.activeIndexes, in: sessions)
+        running = Self.sessions(at: projection.runningIndexes, in: sessions)
+        waiting = Self.sessions(at: projection.waitingIndexes, in: sessions)
+        stopped = Self.sessions(at: projection.stoppedIndexes, in: sessions)
+        needsAttention = Self.sessions(at: projection.needsAttentionIndexes, in: sessions)
+        archived = Self.sessions(at: projection.archivedIndexes, in: sessions)
     }
 
     var needsAttentionCount: Int {
         needsAttention.count
     }
 
+    private static func sessions(
+        at indexes: [UInt32],
+        in sessions: [SessionSummary]
+    ) -> [SessionSummary] {
+        indexes.compactMap { index in
+            let index = Int(index)
+            guard sessions.indices.contains(index) else {
+                return nil
+            }
+            return sessions[index]
+        }
+    }
+}
+
+private enum SessionSectionsReducerCodec {
+    static func projectSessionSections(_ sessions: [SessionSummary])
+        -> ClientSessionSectionsProjection
+    {
+        do {
+            return try reduceSessionSections(
+                sessionsJson: encode(sessions)
+            )
+        } catch {
+            fatalError("Session sections reducer failed: \(error)")
+        }
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) -> String {
+        do {
+            let data = try JSONEncoder().encode(value)
+            guard let json = String(data: data, encoding: .utf8) else {
+                fatalError("Session sections payload was not valid UTF-8")
+            }
+
+            return json
+        } catch {
+            fatalError("Session sections payload encoding failed: \(error)")
+        }
+    }
 }
 
 enum SessionTimestampParser {

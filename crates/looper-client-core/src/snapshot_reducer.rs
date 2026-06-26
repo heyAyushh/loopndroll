@@ -45,6 +45,16 @@ pub struct ClientAssistantSurfaceSelection {
     pub pending_assistant_surface: String,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionSectionsProjection {
+    pub active_indexes: Vec<u32>,
+    pub running_indexes: Vec<u32>,
+    pub waiting_indexes: Vec<u32>,
+    pub stopped_indexes: Vec<u32>,
+    pub needs_attention_indexes: Vec<u32>,
+    pub archived_indexes: Vec<u32>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SnapshotDocument {
     #[serde(rename = "globalSettings")]
@@ -68,11 +78,36 @@ struct GlobalSettingsDocument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SessionDocument {
     id: String,
+    #[serde(rename = "ref", default)]
+    session_ref: String,
+    #[serde(default = "default_session_status")]
+    status: String,
     #[serde(rename = "effectiveMode")]
     #[serde(skip_serializing_if = "Option::is_none")]
     effective_mode: Option<String>,
+    #[serde(rename = "lastActivityAtMs", default)]
+    last_activity_at_ms: Option<i64>,
+    #[serde(rename = "lastActivityAt", default)]
+    last_activity_at: String,
+    #[serde(rename = "isArchived", default)]
+    is_archived: bool,
+    #[serde(default)]
+    goal: Option<GoalDocument>,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct GoalDocument {
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    running: bool,
+}
+
+struct SortableSession {
+    original_index: u32,
+    session: SessionDocument,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -213,6 +248,229 @@ pub fn reduce_assistant_surface_selection(
     }
 }
 
+#[uniffi::export]
+pub fn reduce_session_sections(
+    sessions_json: String,
+) -> Result<ClientSessionSectionsProjection, ClientCoreError> {
+    let sessions: Vec<SessionDocument> =
+        serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    let mut sortable_sessions = sessions
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| SortableSession {
+            original_index: index as u32,
+            session,
+        })
+        .collect::<Vec<_>>();
+    sort_sessions_by_freshness(&mut sortable_sessions);
+
+    let mut projection = ClientSessionSectionsProjection::default();
+    for sortable_session in sortable_sessions {
+        let index = sortable_session.original_index;
+        let session = sortable_session.session;
+
+        if session.is_archived {
+            projection.archived_indexes.push(index);
+            continue;
+        }
+
+        projection.active_indexes.push(index);
+
+        if session.has_blocked_goal() {
+            projection.needs_attention_indexes.push(index);
+            continue;
+        }
+
+        match normalized_status(&session.status).as_str() {
+            "active" => projection.running_indexes.push(index),
+            "waiting" => {
+                projection.waiting_indexes.push(index);
+                projection.needs_attention_indexes.push(index);
+            }
+            "stopped" => {
+                if session.has_running_goal() {
+                    projection.running_indexes.push(index);
+                } else {
+                    projection.stopped_indexes.push(index);
+                }
+            }
+            "archived" => projection.archived_indexes.push(index),
+            _ => projection.stopped_indexes.push(index),
+        }
+    }
+
+    Ok(projection)
+}
+
+impl SessionDocument {
+    fn has_blocked_goal(&self) -> bool {
+        self.goal
+            .as_ref()
+            .is_some_and(|goal| normalized_status(&goal.status) == "blocked")
+    }
+
+    fn has_running_goal(&self) -> bool {
+        self.goal.as_ref().is_some_and(|goal| goal.running)
+    }
+}
+
+fn sort_sessions_by_freshness(sessions: &mut [SortableSession]) {
+    sessions.sort_by(|left, right| {
+        if is_newer_or_lower_ref(&left.session, &right.session) {
+            std::cmp::Ordering::Less
+        } else if is_newer_or_lower_ref(&right.session, &left.session) {
+            std::cmp::Ordering::Greater
+        } else {
+            left.original_index.cmp(&right.original_index)
+        }
+    });
+}
+
+fn is_newer_or_lower_ref(left: &SessionDocument, right: &SessionDocument) -> bool {
+    if let (Some(left_activity_ms), Some(right_activity_ms)) =
+        (left.last_activity_at_ms, right.last_activity_at_ms)
+        && left_activity_ms != right_activity_ms
+    {
+        return left_activity_ms > right_activity_ms;
+    }
+
+    if let (Some(left_activity), Some(right_activity)) = (
+        parse_iso8601_timestamp_nanos(&left.last_activity_at),
+        parse_iso8601_timestamp_nanos(&right.last_activity_at),
+    ) && left_activity != right_activity
+    {
+        return left_activity > right_activity;
+    }
+
+    if left.last_activity_at != right.last_activity_at {
+        return left.last_activity_at > right.last_activity_at;
+    }
+
+    left.session_ref < right.session_ref
+}
+
+fn normalized_status(status: &str) -> String {
+    status.trim().to_lowercase().replace('_', "-")
+}
+
+fn parse_iso8601_timestamp_nanos(value: &str) -> Option<i128> {
+    let (date, time_and_zone) = value.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<u32>().ok()?;
+    let day = date_parts.next()?.parse::<u32>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let (time, offset_seconds) = split_iso8601_time_and_offset(time_and_zone)?;
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u32>().ok()?;
+    let minute = time_parts.next()?.parse::<u32>().ok()?;
+    let second_and_fraction = time_parts.next()?;
+    if time_parts.next().is_some() {
+        return None;
+    }
+
+    let (second, fraction_nanos) = parse_second_and_fraction(second_and_fraction)?;
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    let days = days_from_civil(year, month, day)?;
+    let local_seconds =
+        days * 86_400 + i128::from(hour) * 3_600 + i128::from(minute) * 60 + i128::from(second);
+    let utc_seconds = local_seconds - i128::from(offset_seconds);
+    Some(utc_seconds * 1_000_000_000 + i128::from(fraction_nanos))
+}
+
+fn split_iso8601_time_and_offset(value: &str) -> Option<(&str, i32)> {
+    if let Some(time) = value.strip_suffix('Z') {
+        return Some((time, 0));
+    }
+
+    let offset_index = value[1..]
+        .rfind(['+', '-'])
+        .map(|relative_index| relative_index + 1)?;
+    let (time, offset) = value.split_at(offset_index);
+    Some((time, parse_timezone_offset_seconds(offset)?))
+}
+
+fn parse_timezone_offset_seconds(offset: &str) -> Option<i32> {
+    let sign = match offset.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let offset = &offset[1..];
+    let mut parts = offset.split(':');
+    let hours = parts.next()?.parse::<i32>().ok()?;
+    let minutes = parts.next()?.parse::<i32>().ok()?;
+    if parts.next().is_some() || hours > 23 || minutes > 59 {
+        return None;
+    }
+    Some(sign * (hours * 3_600 + minutes * 60))
+}
+
+fn parse_second_and_fraction(value: &str) -> Option<(u32, u32)> {
+    let (second, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let second = second.parse::<u32>().ok()?;
+    let mut fraction_nanos = 0_u32;
+    let mut scale = 100_000_000_u32;
+    for digit in fraction.bytes().take(9) {
+        if !digit.is_ascii_digit() {
+            return None;
+        }
+        fraction_nanos += u32::from(digit - b'0') * scale;
+        scale /= 10;
+    }
+    Some((second, fraction_nanos))
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i128> {
+    if month == 0 || month > 12 || day == 0 || day > days_in_month(year, month) {
+        return None;
+    }
+
+    let year = year - i32::from(month <= 2);
+    let era = div_floor(year, 400);
+    let year_of_era = year - era * 400;
+    let month = month as i32;
+    let day = day as i32;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(i128::from(era * 146_097 + day_of_era - 719_468))
+}
+
+fn div_floor(value: i32, divisor: i32) -> i32 {
+    let quotient = value / divisor;
+    let remainder = value % divisor;
+    if remainder != 0 && ((remainder > 0) != (divisor > 0)) {
+        quotient - 1
+    } else {
+        quotient
+    }
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
 fn selected_assistant_surface(
     snapshot: &SnapshotDocument,
     preferred_assistant_surface: &str,
@@ -298,14 +556,26 @@ fn sync_detail_from_session(detail: &mut Value, session: &SessionDocument) {
         return;
     };
 
-    sync_detail_field(detail_object, session, "status");
+    sync_detail_string_field(detail_object, "status", &session.status);
     sync_detail_mode(detail_object, session);
     sync_detail_field(detail_object, session, "lastUpdatedAt");
-    sync_detail_field(detail_object, session, "lastActivityAt");
+    sync_detail_string_field(detail_object, "lastActivityAt", &session.last_activity_at);
     sync_detail_field(detail_object, session, "lastMessageAt");
     sync_detail_field(detail_object, session, "assistantPreview");
-    sync_detail_field(detail_object, session, "isArchived");
+    detail_object.insert("isArchived".to_owned(), Value::Bool(session.is_archived));
     sync_detail_field(detail_object, session, "metadata");
+}
+
+fn sync_detail_string_field(
+    detail_object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: &str,
+) {
+    if value.is_empty() {
+        detail_object.remove(key);
+    } else {
+        detail_object.insert(key.to_owned(), Value::String(value.to_owned()));
+    }
 }
 
 fn sync_detail_field(
@@ -347,6 +617,10 @@ fn optional_preset(preset: &str) -> Option<String> {
 
 fn default_assistant_surface() -> String {
     DEFAULT_ASSISTANT_SURFACE.to_owned()
+}
+
+fn default_session_status() -> String {
+    "active".to_owned()
 }
 
 #[cfg(test)]
@@ -422,6 +696,46 @@ mod tests {
         assert_eq!(selection.selected_assistant_surface, DEVIN);
         assert!(selection.has_pending_assistant_surface_save);
         assert_eq!(selection.pending_assistant_surface, DEVIN);
+    }
+
+    #[test]
+    fn session_sections_classify_and_sort_in_rust() {
+        let projection =
+            reduce_session_sections(session_sections_json()).expect("project sections");
+
+        assert_eq!(projection.active_indexes, vec![1, 2, 3, 4]);
+        assert_eq!(projection.running_indexes, vec![4]);
+        assert_eq!(projection.waiting_indexes, vec![1]);
+        assert_eq!(projection.stopped_indexes, vec![3]);
+        assert_eq!(projection.needs_attention_indexes, vec![1, 2]);
+        assert_eq!(projection.archived_indexes, vec![0]);
+    }
+
+    #[test]
+    fn session_sections_sort_fractional_seconds_before_string_fallback() {
+        let projection = reduce_session_sections(
+            r#"[
+                {
+                    "id":"whole",
+                    "ref":"S2",
+                    "status":"active",
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false
+                },
+                {
+                    "id":"fractional",
+                    "ref":"S1",
+                    "status":"active",
+                    "lastActivityAt":"2026-06-16T08:00:00.500Z",
+                    "isArchived":false
+                }
+            ]"#
+            .to_owned(),
+        )
+        .expect("project sections");
+
+        assert_eq!(projection.active_indexes, vec![1, 0]);
+        assert_eq!(projection.running_indexes, vec![1, 0]);
     }
 
     #[test]
@@ -574,5 +888,53 @@ mod tests {
             Some(mode) => format!(r#"{{"id":"{THREAD_ID}","effectiveMode":"{mode}"}}"#),
             None => format!(r#"{{"id":"{THREAD_ID}","effectiveMode":null}}"#),
         }
+    }
+
+    fn session_sections_json() -> String {
+        r#"[
+            {
+                "id":"archived",
+                "ref":"A1",
+                "status":"active",
+                "lastActivityAtMs":1781596920000,
+                "lastActivityAt":"2026-06-16T08:02:00Z",
+                "isArchived":true
+            },
+            {
+                "id":"waiting",
+                "ref":"S2",
+                "status":"waiting",
+                "lastActivityAtMs":1781596920321,
+                "lastActivityAt":"2026-06-16T08:02:00.321Z",
+                "isArchived":false
+            },
+            {
+                "id":"blocked",
+                "ref":"S1",
+                "status":"stopped",
+                "lastActivityAtMs":1781596920320,
+                "lastActivityAt":"2026-06-16T08:02:00.320Z",
+                "isArchived":false,
+                "goal":{"status":"blocked","running":false}
+            },
+            {
+                "id":"stopped",
+                "ref":"S3",
+                "status":"stopped",
+                "lastActivityAtMs":1781596920319,
+                "lastActivityAt":"2026-06-16T08:02:00.319Z",
+                "isArchived":false
+            },
+            {
+                "id":"running-goal",
+                "ref":"S4",
+                "status":"stopped",
+                "lastActivityAtMs":1781596920318,
+                "lastActivityAt":"2026-06-16T08:02:00.318Z",
+                "isArchived":false,
+                "goal":{"status":"pursuing","running":true}
+            }
+        ]"#
+        .to_owned()
     }
 }

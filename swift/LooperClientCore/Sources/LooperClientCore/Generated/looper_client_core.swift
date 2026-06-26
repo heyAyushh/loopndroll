@@ -2055,6 +2055,76 @@ public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMu
 }
 
 
+public struct ClientSessionSectionsProjection: Equatable, Hashable {
+    public var activeIndexes: [UInt32]
+    public var runningIndexes: [UInt32]
+    public var waitingIndexes: [UInt32]
+    public var stoppedIndexes: [UInt32]
+    public var needsAttentionIndexes: [UInt32]
+    public var archivedIndexes: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(activeIndexes: [UInt32], runningIndexes: [UInt32], waitingIndexes: [UInt32], stoppedIndexes: [UInt32], needsAttentionIndexes: [UInt32], archivedIndexes: [UInt32]) {
+        self.activeIndexes = activeIndexes
+        self.runningIndexes = runningIndexes
+        self.waitingIndexes = waitingIndexes
+        self.stoppedIndexes = stoppedIndexes
+        self.needsAttentionIndexes = needsAttentionIndexes
+        self.archivedIndexes = archivedIndexes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionSectionsProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionSectionsProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionSectionsProjection {
+        return
+            try ClientSessionSectionsProjection(
+                activeIndexes: FfiConverterSequenceUInt32.read(from: &buf),
+                runningIndexes: FfiConverterSequenceUInt32.read(from: &buf),
+                waitingIndexes: FfiConverterSequenceUInt32.read(from: &buf),
+                stoppedIndexes: FfiConverterSequenceUInt32.read(from: &buf),
+                needsAttentionIndexes: FfiConverterSequenceUInt32.read(from: &buf),
+                archivedIndexes: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionSectionsProjection, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt32.write(value.activeIndexes, into: &buf)
+        FfiConverterSequenceUInt32.write(value.runningIndexes, into: &buf)
+        FfiConverterSequenceUInt32.write(value.waitingIndexes, into: &buf)
+        FfiConverterSequenceUInt32.write(value.stoppedIndexes, into: &buf)
+        FfiConverterSequenceUInt32.write(value.needsAttentionIndexes, into: &buf)
+        FfiConverterSequenceUInt32.write(value.archivedIndexes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionSectionsProjection_lift(_ buf: RustBuffer) throws -> ClientSessionSectionsProjection {
+    return try FfiConverterTypeClientSessionSectionsProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionSectionsProjection_lower(_ value: ClientSessionSectionsProjection) -> RustBuffer {
+    return FfiConverterTypeClientSessionSectionsProjection.lower(value)
+}
+
+
 public struct ClientSnapshotLoadFailureProjection: Equatable, Hashable {
     public var connectionState: String
     public var preservedConnectedState: Bool
@@ -3060,6 +3130,31 @@ public func FfiConverterTypeOutboundSessionFrameKind_lower(_ value: OutboundSess
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt32]
+
+    public static func write(_ value: [UInt32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt32]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -3348,6 +3443,13 @@ public func reduceSessionDetailOptimisticMode(detailJson: String, preset: String
     )
 })
 }
+public func reduceSessionSections(sessionsJson: String)throws  -> ClientSessionSectionsProjection  {
+    return try  FfiConverterTypeClientSessionSectionsProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_session_sections(
+        FfiConverterString.lower(sessionsJson),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3392,6 +3494,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_session_sections() != 8605) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_ack() != 37442) {
