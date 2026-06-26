@@ -39,6 +39,21 @@ public struct MenuBarSessionMiniPendingCommand: Equatable, Sendable {
     public let attemptCount: Int
 }
 
+public enum MenuBarClientCoreStateMiniStreamUpdateReason: Equatable, Sendable {
+    case delta
+    case heartbeat
+    case reconnecting
+    case recoveryRequired
+    case stopped
+}
+
+public struct MenuBarClientCoreStateMiniStreamResult: Sendable {
+    public let reason: MenuBarClientCoreStateMiniStreamUpdateReason
+    public let snapshot: MenuBarSessionMiniLocalSnapshot?
+    public let didChange: Bool
+    public let errorDescription: String
+}
+
 public struct MenuBarSessionMini: Equatable, Sendable {
     public let sessionID: String
     public let assistantSurface: String
@@ -246,6 +261,50 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
 
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
         store.snapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
+    }
+
+    public func startClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws {
+        _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
+        try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
+    }
+
+    public func nextClientCoreStateMiniStreamResult(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws -> MenuBarClientCoreStateMiniStreamResult {
+        let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
+            clientCore: clientCore
+        )
+        guard streamUpdate.reason == .delta, streamUpdate.didChange else {
+            return MenuBarClientCoreStateMiniStreamResult(
+                reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
+                snapshot: nil,
+                didChange: false,
+                errorDescription: streamUpdate.errorDescription
+            )
+        }
+
+        let localSnapshot = try persistValidated(streamUpdate.snapshot)
+        return MenuBarClientCoreStateMiniStreamResult(
+            reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
+            snapshot: try menuSnapshot(from: localSnapshot),
+            didChange: true,
+            errorDescription: streamUpdate.errorDescription
+        )
+    }
+
+    public func recoverClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws -> MenuBarSessionMiniLocalSnapshot? {
+        let snapshot = try await transport.getStateMiniSnapshot()
+        return try replace(with: snapshot)
+    }
+
+    public func stopClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) {
+        try? transport.stopClientCoreStateMiniStream(clientCore: clientCore)
     }
 
     private static func defaultFileURL() throws -> URL {
@@ -534,6 +593,23 @@ private extension ClientStateMiniDelta {
             session: session ?? .empty,
             sessions: session == nil ? delta.sessions.map(ClientStateMini.init) : []
         )
+    }
+}
+
+private extension MenuBarClientCoreStateMiniStreamUpdateReason {
+    init(_ reason: ClientStateMiniStreamUpdateReason) {
+        switch reason {
+        case .delta:
+            self = .delta
+        case .heartbeat:
+            self = .heartbeat
+        case .reconnecting:
+            self = .reconnecting
+        case .recoveryRequired:
+            self = .recoveryRequired
+        case .stopped:
+            self = .stopped
+        }
     }
 }
 

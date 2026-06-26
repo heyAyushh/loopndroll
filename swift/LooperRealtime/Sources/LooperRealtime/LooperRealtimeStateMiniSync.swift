@@ -9,7 +9,8 @@ public protocol LooperRealtimeStateMiniSyncTransport: Sendable {
     ) async throws
 }
 
-public protocol LooperRealtimeClientCoreStateMiniStreamTransport: LooperRealtimeStateMiniSyncTransport {
+public protocol LooperRealtimeClientCoreStateMiniStreamTransport: Sendable {
+    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws
     func nextClientCoreStateMiniStreamUpdate(
         clientCore: LooperClientCore

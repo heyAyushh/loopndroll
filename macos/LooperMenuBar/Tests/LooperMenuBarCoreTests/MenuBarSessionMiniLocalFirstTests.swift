@@ -272,6 +272,50 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(store.pendingCommands().map(\.clientMutationID) == ["mutation-pending"])
     }
 
+    @Test("client-core stream updates persist and preserve outbox")
+    func testClientCoreStreamUpdatesPersistAndPreserveOutbox() async throws {
+        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        try store.replace(latestSeq: 5, records: [
+            miniRecord(
+                id: "thread-streamed",
+                title: "Old streamed row",
+                mode: "await-reply",
+                notificationTargetIds: ["macos"],
+                lastActivityAtMs: 5
+            ),
+        ])
+        try store.enqueuePromptCommand(
+            threadID: "thread-streamed",
+            prompt: "continue",
+            assistantSurface: "codex",
+            clientMutationID: "mutation-pending"
+        )
+        let streamedRecord = try miniRecord(
+            id: "thread-streamed",
+            title: "Rust streamed row",
+            mode: "max-turns-1",
+            notificationTargetIds: ["macos"],
+            lastActivityAtMs: 6
+        )
+        let transport = RecordingClientCoreStateMiniStreamTransport(
+            deltas: [stateMiniDelta(from: streamedRecord)]
+        )
+
+        try await store.startClientCoreStateMiniStream(using: transport)
+        let result = try await store.nextClientCoreStateMiniStreamResult(using: transport)
+        store.stopClientCoreStateMiniStream(using: transport)
+        let snapshot = try #require(try store.cachedSnapshot())
+
+        #expect(result.reason == .delta)
+        #expect(result.didChange)
+        #expect(result.snapshot?.sessions.first?.title == "Rust streamed row")
+        #expect(snapshot.latestSeq == 6)
+        #expect(snapshot.sessions.first?.effectiveMode == "max-turns-1")
+        #expect(store.pendingCommands().map(\.clientMutationID) == ["mutation-pending"])
+        #expect(transport.startCount == 1)
+        #expect(transport.stopCount == 1)
+    }
+
     private func temporaryStoreFileURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("LooperMenuBarTests-\(UUID().uuidString)", isDirectory: true)
@@ -682,6 +726,99 @@ private actor RecordingStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransp
     func snapshotRequestCount() -> Int {
         snapshotRequests
     }
+}
+
+private final class RecordingClientCoreStateMiniStreamTransport:
+    LooperRealtimeClientCoreStateMiniStreamTransport,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var deltas: [LooperRealtimeStateMiniDelta]
+    private var recordedStartCount = 0
+    private var recordedStopCount = 0
+
+    init(deltas: [LooperRealtimeStateMiniDelta]) {
+        self.deltas = deltas
+    }
+
+    var startCount: Int {
+        lock.withLock { recordedStartCount }
+    }
+
+    var stopCount: Int {
+        lock.withLock { recordedStopCount }
+    }
+
+    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+        LooperRealtimeStateMiniSnapshot(latestSeq: 0, sessions: [], serverTime: nil)
+    }
+
+    func startClientCoreStateMiniStream(clientCore _: LooperClientCore) async throws {
+        lock.withLock {
+            recordedStartCount += 1
+        }
+    }
+
+    func nextClientCoreStateMiniStreamUpdate(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateMiniStreamUpdate {
+        guard let delta = lock.withLock({ deltas.isEmpty ? nil : deltas.removeFirst() }) else {
+            let snapshot = try clientCore.snapshot()
+            return ClientStateMiniStreamUpdate(
+                reason: .stopped,
+                snapshot: snapshot,
+                didChange: false,
+                latestSeq: snapshot.latestSeq,
+                errorDescription: ""
+            )
+        }
+
+        let session = delta.session.map(Self.clientStateMini)
+        let result = try clientCore.applyStateMiniDeltaWithResult(
+            delta: ClientStateMiniDelta(
+                seq: delta.seq,
+                latestSeq: delta.latestSeq,
+                entityId: delta.entityID,
+                kind: delta.kind,
+                revision: delta.revision,
+                serverTime: delta.serverTime ?? "",
+                hasSession: session != nil,
+                session: session ?? Self.emptyClientStateMini,
+                sessions: session == nil ? delta.sessions.map(Self.clientStateMini) : []
+            )
+        )
+        return ClientStateMiniStreamUpdate(
+            reason: .delta,
+            snapshot: result.snapshot,
+            didChange: result.didChange,
+            latestSeq: result.snapshot.latestSeq,
+            errorDescription: ""
+        )
+    }
+
+    func stopClientCoreStateMiniStream(clientCore _: LooperClientCore) throws {
+        lock.withLock {
+            recordedStopCount += 1
+        }
+    }
+
+    private static func clientStateMini(from mini: LooperRealtimeStateMini) -> ClientStateMini {
+        ClientStateMini(
+            sessionId: mini.sessionID,
+            assistantSurface: mini.assistantSurface,
+            seq: mini.seq,
+            revision: mini.revision,
+            payloadJson: mini.payloadJSON
+        )
+    }
+
+    private static let emptyClientStateMini = ClientStateMini(
+        sessionId: "",
+        assistantSurface: "",
+        seq: 0,
+        revision: "",
+        payloadJson: ""
+    )
 }
 
 private struct RecordingRecoveryRequiredError: LocalizedError, Sendable {
