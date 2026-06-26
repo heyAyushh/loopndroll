@@ -48,7 +48,6 @@ final class CompanionAppModel {
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
-    @ObservationIgnored private var notificationReplyCoordinator: CompanionNotificationReplyCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
@@ -84,10 +83,6 @@ final class CompanionAppModel {
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
             remotePushRegistrar: remotePushRegistrar,
-            delegate: self
-        )
-        notificationReplyCoordinator = CompanionNotificationReplyCoordinator(
-            sessionMiniController: sessionMiniController,
             delegate: self
         )
         snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
@@ -174,13 +169,6 @@ final class CompanionAppModel {
             preconditionFailure("Notification coordinator used before initialization")
         }
         return notificationCoordinator
-    }
-
-    private var notificationReplies: CompanionNotificationReplyCoordinator {
-        guard let notificationReplyCoordinator else {
-            preconditionFailure("Notification reply coordinator used before initialization")
-        }
-        return notificationReplyCoordinator
     }
 
     private var snapshotLoads: CompanionSnapshotLoadCoordinator {
@@ -987,25 +975,150 @@ final class CompanionAppModel {
         to sessionID: String,
         clientMutationID providedClientMutationID: String? = nil
     ) async -> Bool {
-        await notificationReplies.submitNotificationReply(
-            notificationID: notificationID,
-            prompt: prompt,
-            to: sessionID,
-            clientMutationID: providedClientMutationID
+        let trimmedNotificationID = notificationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNotificationID.isEmpty else {
+            rejectNotificationReply("Notification reply is missing its delivery ID.")
+            return false
+        }
+        guard !trimmedPrompt.isEmpty else {
+            rejectNotificationReply("Prompt is required.")
+            return false
+        }
+
+        let providedMutationID = providedClientMutationID?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clientMutationID = providedMutationID.isEmpty
+            ? SessionQuickActionRequest.notificationReplyClientMutationID(
+                notificationID: trimmedNotificationID
+            )
+            : providedMutationID
+        let targetSurface = snapshotState.assistantSurface(containingSessionID: sessionID)
+            ?? selectedAssistantSurface
+
+        return await submitNotificationReplyCommand(
+            notificationID: trimmedNotificationID,
+            sessionID: sessionID,
+            prompt: trimmedPrompt,
+            targetSurface: targetSurface,
+            clientMutationID: clientMutationID
         )
     }
 
     func drainPendingNotificationReplies() async {
-        await notificationReplies.drainPendingNotificationReplies()
+        let drainTask = startNotificationReplyOutboxDrainIfNeeded()
+        await drainTask?.value
     }
 
     @discardableResult
     private func startNotificationReplyOutboxDrainIfNeeded() -> Task<Void, Never>? {
-        notificationReplies.startOutboxDrainIfNeeded()
+        sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(
+            submit: { [weak self] in
+                await self?.submitPendingNotificationReply() ?? false
+            }
+        )
     }
 
     private func stopNotificationReplyOutboxDrain() {
-        notificationReplies.stopOutboxDrain()
+        sessionMiniController.stopNotificationReplyOutboxDrain()
+    }
+
+    @discardableResult
+    private func submitNotificationReplyCommand(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        targetSurface: CompanionAssistantSurface,
+        clientMutationID: String
+    ) async -> Bool {
+        do {
+            let response = try await service.submitNotificationReply(
+                notificationID: notificationID,
+                sessionID: sessionID,
+                prompt: prompt,
+                assistantSurface: nil,
+                clientMutationID: clientMutationID
+            )
+            await applyNotificationReplyAccepted(
+                response,
+                sessionID: sessionID,
+                notificationID: notificationID,
+                targetSurface: targetSurface
+            )
+            return true
+        } catch {
+            applyNotificationReplyFailure(
+                error,
+                sessionID: sessionID,
+                notificationID: notificationID
+            )
+            startNotificationReplyOutboxDrainIfNeeded()
+            return false
+        }
+    }
+
+    @discardableResult
+    private func submitPendingNotificationReply() async -> Bool {
+        do {
+            let response = try await service.submitPendingNotificationReply()
+            guard let acceptedSessionID = Self.nonEmptyText(response.entityID),
+                  let acceptedNotificationID = Self.nonEmptyText(response.notificationID)
+            else {
+                CompanionDiagnostics.record(
+                    "notification-reply:pending-drain-missing-ack-target"
+                )
+                return false
+            }
+
+            let acceptedSurface = snapshotState.assistantSurface(containingSessionID: acceptedSessionID)
+                ?? selectedAssistantSurface
+            await applyNotificationReplyAccepted(
+                response,
+                sessionID: acceptedSessionID,
+                notificationID: acceptedNotificationID,
+                targetSurface: acceptedSurface
+            )
+            return true
+        } catch {
+            CompanionDiagnostics.record(
+                "notification-reply:pending-drain-failed error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func rejectNotificationReply(_ message: String) {
+        errorMessage = message
+        Haptics.warning()
+    }
+
+    private func applyNotificationReplyAccepted(
+        _ response: LooperRealtimeNotificationReplyResponse,
+        sessionID: String,
+        notificationID: String,
+        targetSurface: CompanionAssistantSurface
+    ) async {
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
+        )
+        if snapshotState.hasDetail(for: sessionID) {
+            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
+        }
+    }
+
+    private func applyNotificationReplyFailure(
+        _ error: Error,
+        sessionID: String,
+        notificationID: String
+    ) {
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
+        Haptics.error()
+        CompanionDiagnostics.record(
+            "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
+        )
     }
 
     func muteSession(_ sessionID: String) async {
@@ -1660,53 +1773,5 @@ extension CompanionAppModel: CompanionNotificationCoordinatorDelegate {
 
     func notificationSetRemotePushFailureMessage(_ message: String?) {
         remotePushFailureMessage = message
-    }
-}
-
-extension CompanionAppModel: CompanionNotificationReplyCoordinatorDelegate {
-    var notificationReplyService: any CompanionService {
-        service
-    }
-
-    var notificationReplySelectedAssistantSurface: CompanionAssistantSurface {
-        selectedAssistantSurface
-    }
-
-    func notificationReplyAssistantSurface(for sessionID: String) -> CompanionAssistantSurface? {
-        snapshotState.assistantSurface(containingSessionID: sessionID)
-    }
-
-    func notificationReplyReject(_ message: String) {
-        errorMessage = message
-        Haptics.warning()
-    }
-
-    func notificationReplyApplyAccepted(
-        _ response: LooperRealtimeNotificationReplyResponse,
-        sessionID: String,
-        notificationID: String,
-        targetSurface: CompanionAssistantSurface
-    ) async {
-        connectionState = .connected
-        errorMessage = nil
-        lastUpdatedAt = Date()
-        CompanionDiagnostics.record(
-            "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
-        )
-        if snapshotState.hasDetail(for: sessionID) {
-            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
-        }
-    }
-
-    func notificationReplyApplyFailure(
-        _ error: Error,
-        sessionID: String,
-        notificationID: String
-    ) {
-        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
-        Haptics.error()
-        CompanionDiagnostics.record(
-            "notification-reply:send-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
-        )
     }
 }
