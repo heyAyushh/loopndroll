@@ -24,7 +24,6 @@ public actor MenuBarRealtimeSessionCommandClient: MenuBarSessionCommandClient {
     }
 
     public func disconnect() {
-        realtimeClient?.disconnect()
         realtimeClient = nil
     }
 

@@ -7,18 +7,6 @@ public struct LooperRealtimeEndpoint: Codable, Equatable, Hashable, Sendable {
     public init(baseURL: URL) {
         self.baseURL = baseURL
     }
-
-    public var host: String? {
-        baseURL.host()
-    }
-
-    public var port: Int? {
-        baseURL.port
-    }
-
-    public var usesTLS: Bool {
-        baseURL.scheme == "https"
-    }
 }
 
 public struct LooperRealtimeCredentials: Codable, Equatable, Sendable {
@@ -261,7 +249,6 @@ public struct LooperRealtimeNotificationReplyResponse: Codable, Equatable, Senda
 }
 
 public enum LooperRealtimeError: Error, Equatable {
-    case invalidEndpoint
     case unavailable
 }
 

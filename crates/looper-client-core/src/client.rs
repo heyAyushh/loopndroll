@@ -12,6 +12,7 @@ use crate::model::{
 };
 use crate::session_transport::{
     StateMiniStreamEvent, run_state_mini_stream, submit_expected_session_outbox,
+    warm_realtime_connection,
 };
 use crate::transport::validate_endpoint_url;
 
@@ -302,6 +303,23 @@ impl LooperClientCore {
             state.reconcile_ack(envelope.ack.clone());
         }
         Ok(response)
+    }
+
+    pub async fn warm_connection(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        let endpoint = select_endpoint(&endpoints)?;
+        validate_endpoint_url(&endpoint.url)?;
+        warm_realtime_connection(endpoints, bearer_token, mobile_session_header).await?;
+
+        let mut state = self.lock_state()?;
+        state.phase = ConnectionPhase::Ready;
+        state.endpoint_url = endpoint.url;
+        state.last_error.clear();
+        Ok(state.snapshot())
     }
 
     pub fn start_state_mini_stream(
@@ -792,6 +810,22 @@ mod tests {
         assert_eq!(
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
+        );
+    }
+
+    #[test]
+    fn warm_connection_rejects_missing_endpoint_without_state_change() {
+        let core = LooperClientCore::new();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let error = runtime
+            .block_on(core.warm_connection(Vec::new(), String::new(), String::new()))
+            .expect_err("missing endpoint rejects");
+
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+        assert_eq!(
+            core.snapshot().expect("snapshot").phase,
+            ConnectionPhase::Disconnected
         );
     }
 

@@ -1,5 +1,4 @@
 import Foundation
-import GRPCCore
 import LooperClientCore
 import Testing
 
@@ -7,13 +6,11 @@ import Testing
 
 struct LooperRealtimeModelsTests {
     @Test
-    func endpointExposesHostPortAndTLS() throws {
+    func endpointStoresBaseURL() throws {
         let endpoint = try #require(URL(string: "https://192.168.1.4:8766"))
         let realtimeEndpoint = LooperRealtimeEndpoint(baseURL: endpoint)
 
-        #expect(realtimeEndpoint.host == "192.168.1.4")
-        #expect(realtimeEndpoint.port == 8766)
-        #expect(realtimeEndpoint.usesTLS)
+        #expect(realtimeEndpoint.baseURL == endpoint)
     }
 
     @Test
@@ -24,32 +21,6 @@ struct LooperRealtimeModelsTests {
         let secondEndpoint = LooperRealtimeEndpoint(baseURL: secondURL)
 
         #expect(Set([firstEndpoint, secondEndpoint]).count == 1)
-    }
-
-    @Test
-    func latencyPolicyKeepsRealtimeTransportWarm() {
-        let config = LooperRealtimeLatencyPolicy.transportConfig
-
-        #expect(config.connection.maxIdleTime == nil)
-        #expect(config.connection.keepalive?.time == LooperRealtimeLatencyPolicy.keepaliveTime)
-        #expect(config.connection.keepalive?.timeout == LooperRealtimeLatencyPolicy.keepaliveTimeout)
-        #expect(config.connection.keepalive?.allowWithoutCalls == true)
-        #expect(config.backoff.initial == LooperRealtimeLatencyPolicy.reconnectInitialBackoff)
-        #expect(config.backoff.max == LooperRealtimeLatencyPolicy.reconnectMaxBackoff)
-    }
-
-    @Test
-    func latencyPolicyFailsUserActionsFast() {
-        let warmupOptions = LooperRealtimeLatencyPolicy.warmupCallOptions
-        let promptOptions = LooperRealtimeLatencyPolicy.promptCallOptions
-        let streamOptions = LooperRealtimeLatencyPolicy.streamCallOptions
-
-        #expect(warmupOptions.timeout == LooperRealtimeLatencyPolicy.warmupTimeout)
-        #expect(warmupOptions.waitForReady == false)
-        #expect(promptOptions.timeout == LooperRealtimeLatencyPolicy.promptTimeout)
-        #expect(promptOptions.waitForReady == false)
-        #expect(streamOptions.timeout == nil)
-        #expect(streamOptions.waitForReady == false)
     }
 
     @Test

@@ -158,11 +158,7 @@ private actor RealtimeCompanionConnectionManager {
     }
 
     func disconnectClients() {
-        let clients = Array(clientCache.values)
         clientCache.removeAll(keepingCapacity: true)
-        for client in clients {
-            client.disconnect()
-        }
     }
 
     func invalidate() {

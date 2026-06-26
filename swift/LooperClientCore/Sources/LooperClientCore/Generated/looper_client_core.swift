@@ -767,6 +767,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func takeOutbox() throws  -> [OutboundSessionFrame]
 
+    func warmConnection(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) async throws  -> ClientStateSnapshot
+
 }
 open class LooperClientCore: LooperClientCoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1028,6 +1030,23 @@ open func takeOutbox()throws  -> [OutboundSessionFrame]  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+open func warmConnection(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)async throws  -> ClientStateSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_warm_connection(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeClientEndpoint.lower(endpoints),FfiConverterString.lower(bearerToken),FfiConverterString.lower(mobileSessionHeader)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientStateSnapshot_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
 }
 
 
@@ -3126,6 +3145,8 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case MissingCommandAcknowledgement
     case SessionCommandTransportFailed
     case SessionCommandAckTimedOut
+    case RealtimeConnectionWarmupFailed
+    case RealtimeConnectionWarmupTimedOut
     case StateMiniStreamNotRunning
     case StateMiniStreamTransportFailed
     case StateMiniStreamRecoveryRequired
@@ -3176,10 +3197,12 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 15: return .MissingCommandAcknowledgement
         case 16: return .SessionCommandTransportFailed
         case 17: return .SessionCommandAckTimedOut
-        case 18: return .StateMiniStreamNotRunning
-        case 19: return .StateMiniStreamTransportFailed
-        case 20: return .StateMiniStreamRecoveryRequired
-        case 21: return .StateLockPoisoned
+        case 18: return .RealtimeConnectionWarmupFailed
+        case 19: return .RealtimeConnectionWarmupTimedOut
+        case 20: return .StateMiniStreamNotRunning
+        case 21: return .StateMiniStreamTransportFailed
+        case 22: return .StateMiniStreamRecoveryRequired
+        case 23: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3260,20 +3283,28 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(17))
 
 
-        case .StateMiniStreamNotRunning:
+        case .RealtimeConnectionWarmupFailed:
             writeInt(&buf, Int32(18))
 
 
-        case .StateMiniStreamTransportFailed:
+        case .RealtimeConnectionWarmupTimedOut:
             writeInt(&buf, Int32(19))
 
 
-        case .StateMiniStreamRecoveryRequired:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(20))
 
 
-        case .StateLockPoisoned:
+        case .StateMiniStreamTransportFailed:
             writeInt(&buf, Int32(21))
+
+
+        case .StateMiniStreamRecoveryRequired:
+            writeInt(&buf, Int32(22))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(23))
 
         }
     }
@@ -4055,6 +4086,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_outbox() != 6374) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_warm_connection() != 27831) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_clear() != 49095) {

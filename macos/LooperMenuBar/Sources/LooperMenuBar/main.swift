@@ -1899,9 +1899,6 @@ private struct MenuBarStateMiniStreamTransport: LooperRealtimeClientCoreStateMin
 
   func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
     let realtimeClient = try await makeRealtimeClient()
-    defer {
-      realtimeClient.disconnect()
-    }
     return try await realtimeClient.getStateMiniSnapshot()
   }
 

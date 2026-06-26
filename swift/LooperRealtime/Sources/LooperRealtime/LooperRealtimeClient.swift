@@ -1,39 +1,24 @@
 import Foundation
-import GRPCCore
-import GRPCNIOTransportHTTP2
 import LooperClientCore
-import Synchronization
 
 public final class LooperRealtimeClient: Sendable {
     private static let stateMiniSnapshotPath = "/api/mobile/session-minis/snapshot"
 
     private let endpoints: [LooperRealtimeEndpoint]
     private let credentials: LooperRealtimeCredentials
-    private let connections = LooperRealtimeConnectionPool()
 
     public init(endpoints: [LooperRealtimeEndpoint], credentials: LooperRealtimeCredentials) {
         self.endpoints = endpoints
         self.credentials = credentials
     }
 
-    deinit {
-        disconnect()
-    }
-
-    public func disconnect() {
-        connections.disconnectAll()
-    }
-
     public func warmConnections() async throws {
-        try await withFirstAvailableService { service, _ in
-            let response = try await service.health(
-                Looper_V1_HealthRequest(),
-                options: LooperRealtimeLatencyPolicy.warmupCallOptions
-            )
-            guard response.ok else {
-                throw LooperRealtimeError.unavailable
-            }
-        }
+        let clientCore = LooperClientCore()
+        _ = try await clientCore.warmConnection(
+            endpoints: endpoints.map(\.clientCoreEndpoint),
+            bearerToken: credentials.bearerToken ?? "",
+            mobileSessionHeader: credentials.mobileSessionHeader ?? ""
+        )
     }
 
     public func submitClientCoreOutbox(
@@ -79,42 +64,6 @@ public final class LooperRealtimeClient: Sendable {
         _ = try clientCore.stopStateMiniStream()
     }
 
-    private func withFirstAvailableService<Result: Sendable>(
-        _ operation: @Sendable @escaping (
-            Looper_V1_LooperRealtime.Client<HTTP2ClientTransport.TransportServices>,
-            Metadata
-        ) async throws -> Result
-    ) async throws -> Result {
-        var lastError: Error?
-
-        for endpoint in endpoints {
-            do {
-                return try await withService(endpoint: endpoint, operation)
-            } catch {
-                connections.disconnect(endpoint: endpoint)
-                lastError = error
-            }
-        }
-
-        throw lastError ?? LooperRealtimeError.unavailable
-    }
-
-    private func withService<Result: Sendable>(
-        endpoint: LooperRealtimeEndpoint,
-        _ operation: @Sendable @escaping (
-            Looper_V1_LooperRealtime.Client<HTTP2ClientTransport.TransportServices>,
-            Metadata
-        ) async throws -> Result
-    ) async throws -> Result {
-        guard let host = endpoint.host, let port = endpoint.port else {
-            throw LooperRealtimeError.invalidEndpoint
-        }
-
-        let client = try connections.client(for: endpoint, host: host, port: port)
-        let service = Looper_V1_LooperRealtime.Client(wrapping: client)
-        return try await operation(service, credentials.metadata)
-    }
-
     private func stateMiniSnapshot(endpoint: LooperRealtimeEndpoint) async throws
         -> LooperRealtimeStateMiniSnapshot
     {
@@ -149,124 +98,6 @@ private extension LooperRealtimeEndpoint {
     }
 }
 
-private final class LooperRealtimeConnectionPool: Sendable {
-    private typealias TransportServices = HTTP2ClientTransport.TransportServices
-    private typealias ManagedClient = GRPCClient<TransportServices>
-
-    private let state = Mutex<[LooperRealtimeEndpoint: LooperRealtimeConnection]>([:])
-
-    func client(
-        for endpoint: LooperRealtimeEndpoint,
-        host: String,
-        port: Int
-    ) throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
-        try state.withLock { state in
-            if let connection = state[endpoint] {
-                return connection.client
-            }
-
-            let transport = try TransportServices(
-                target: .dns(host: host, port: port),
-                transportSecurity: endpoint.usesTLS ? .tls : .plaintext,
-                config: LooperRealtimeLatencyPolicy.transportConfig
-            )
-            let client = ManagedClient(transport: transport)
-            let connectionTask = Task {
-                try await client.runConnections()
-            }
-            state[endpoint] = LooperRealtimeConnection(
-                client: client,
-                connectionTask: connectionTask
-            )
-            return client
-        }
-    }
-
-    func disconnect(endpoint: LooperRealtimeEndpoint) {
-        guard let connection = state.withLock({ state in
-            state.removeValue(forKey: endpoint)
-        }) else {
-            return
-        }
-
-        connection.shutdown()
-    }
-
-    func disconnectAll() {
-        let connections = state.withLock { state in
-            let connections = Array(state.values)
-            state.removeAll(keepingCapacity: true)
-            return connections
-        }
-
-        for connection in connections {
-            connection.shutdown()
-        }
-    }
-}
-
-private struct LooperRealtimeConnection: Sendable {
-    let client: GRPCClient<HTTP2ClientTransport.TransportServices>
-    let connectionTask: Task<Void, any Error>
-
-    func shutdown() {
-        client.beginGracefulShutdown()
-        connectionTask.cancel()
-    }
-}
-
-enum LooperRealtimeLatencyPolicy {
-    static let keepaliveTime: Duration = .seconds(20)
-    static let keepaliveTimeout: Duration = .seconds(5)
-    static let reconnectInitialBackoff: Duration = .milliseconds(200)
-    static let reconnectMaxBackoff: Duration = .seconds(2)
-    static let warmupTimeout: Duration = .milliseconds(1_500)
-    static let modeTimeout: Duration = .milliseconds(300)
-    static let promptTimeout: Duration = .milliseconds(900)
-    static let reconnectMultiplier = 1.2
-    static let reconnectJitter = 0.1
-
-    static var transportConfig: HTTP2ClientTransport.TransportServices.Config {
-        .defaults { config in
-            config.connection.maxIdleTime = nil
-            config.connection.keepalive = HTTP2ClientTransport.Config.Keepalive(
-                time: keepaliveTime,
-                timeout: keepaliveTimeout,
-                allowWithoutCalls: true
-            )
-            config.backoff = HTTP2ClientTransport.Config.Backoff(
-                initial: reconnectInitialBackoff,
-                max: reconnectMaxBackoff,
-                multiplier: reconnectMultiplier,
-                jitter: reconnectJitter
-            )
-        }
-    }
-
-    static var warmupCallOptions: CallOptions {
-        failFastCallOptions(timeout: warmupTimeout)
-    }
-
-    static var modeCallOptions: CallOptions {
-        failFastCallOptions(timeout: modeTimeout)
-    }
-
-    static var promptCallOptions: CallOptions {
-        failFastCallOptions(timeout: promptTimeout)
-    }
-
-    static var streamCallOptions: CallOptions {
-        failFastCallOptions(timeout: nil)
-    }
-
-    private static func failFastCallOptions(timeout: Duration?) -> CallOptions {
-        var options = CallOptions.defaults
-        options.timeout = timeout
-        options.waitForReady = false
-        return options
-    }
-}
-
 private extension LooperRealtimeCredentials {
     var httpHeaders: [(String, String)] {
         var headers: [(String, String)] = []
@@ -279,42 +110,6 @@ private extension LooperRealtimeCredentials {
         return headers
     }
 
-    var metadata: Metadata {
-        var metadata = Metadata()
-        for (key, value) in httpHeaders {
-            metadata.addString(value, forKey: key)
-        }
-        return metadata
-    }
-}
-
-private extension LooperRealtimeEvent {
-    init(_ event: Looper_V1_MobileEvent) {
-        self.init(
-            eventName: event.eventName,
-            threadID: event.threadID.nilIfEmpty,
-            promptID: event.promptID.nilIfEmpty,
-            detail: event.detail.nilIfEmpty,
-            serverTime: event.serverTime.nilIfEmpty,
-            revision: event.revision.nilIfEmpty
-        )
-    }
-}
-
-private extension LooperRealtimeCommandAck {
-    init(_ ack: Looper_V1_CommandAck) {
-        self.init(
-            accepted: ack.accepted,
-            clientMutationID: ack.clientMutationID,
-            ackSeq: ack.ackSeq,
-            entityID: ack.entityID,
-            revision: ack.revision,
-            serverTime: ack.serverTime.nilIfEmpty,
-            idempotentReplay: ack.idempotentReplay,
-            errorCode: ack.errorCode.nilIfEmpty,
-            rejectReason: ack.rejectReason.nilIfEmpty
-        )
-    }
 }
 
 private extension LooperRealtimeStateMiniSnapshot {
@@ -323,28 +118,6 @@ private extension LooperRealtimeStateMiniSnapshot {
             latestSeq: response.latestSeq,
             sessions: response.sessions.compactMap(LooperRealtimeStateMini.init),
             serverTime: response.serverTime
-        )
-    }
-}
-
-private extension LooperRealtimeStateMiniDelta {
-    init(_ delta: Looper_V1_StateMiniDelta) {
-        let session = LooperRealtimeStateMini(
-            seq: delta.seq,
-            revision: delta.revision,
-            payloadJSON: delta.payloadJson
-        )
-        self.init(
-            seq: delta.seq,
-            latestSeq: delta.seq,
-            entityID: delta.entityID,
-            kind: delta.kind,
-            revision: delta.revision,
-            serverTime: delta.serverTime.nilIfEmpty,
-            session: session,
-            sessionID: session?.sessionID,
-            assistantSurface: session?.assistantSurface,
-            sessions: session.map { [$0] } ?? []
         )
     }
 }

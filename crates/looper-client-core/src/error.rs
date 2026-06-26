@@ -34,6 +34,10 @@ pub enum ClientCoreError {
     SessionCommandTransportFailed,
     #[error("session command acknowledgement timed out")]
     SessionCommandAckTimedOut,
+    #[error("realtime connection warmup failed")]
+    RealtimeConnectionWarmupFailed,
+    #[error("realtime connection warmup timed out")]
+    RealtimeConnectionWarmupTimedOut,
     #[error("state mini stream is not running")]
     StateMiniStreamNotRunning,
     #[error("state mini stream transport failed")]
