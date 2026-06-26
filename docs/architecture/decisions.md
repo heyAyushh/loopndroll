@@ -100,8 +100,8 @@ wins, cancel the rest. No serial per-URL timeouts.
 
 **Where.** Proto: `crates/agent-control-plane/proto/looper/v1/control_plane.proto`.
 Server: `crates/agent-control-plane/src/grpc/service.rs`, `src/grpc/events.rs`.
-Client: rewrite client surfaces to the Rust client core (ADR-004); `swift/LooperRealtime` exists
-only as a short-lived build bridge until the Rust core lands.
+Client: rewrite client surfaces to the Rust client core (ADR-004); the former
+`swift/LooperRealtime` bridge is retired once clients compile against `swift/LooperClientCore`.
 
 ---
 
@@ -202,7 +202,7 @@ reconnect + mutation tracking — three reducers, three drift sources. One Rust 
 **Don't**
 - Put route logic, SQL, reconcile/merge logic, reconnect/outbox loops, or session-control state in
   Swift or the TUI.
-- Hand-edit generated gRPC/protobuf files (`swift/LooperRealtime/.../Generated`).
+- Hand-edit generated UniFFI bindings or generated protobuf/gRPC output.
 
 **Where.** New crate e.g. `crates/looper-client-core`. Consumers: `ios/LooperCompanion`,
 `macos/LooperMenuBar`, `crates/agent-control-plane/src/tui`.
@@ -332,8 +332,8 @@ Target coupling graph:
    the new contract.
 3. **Session FSM module** (ADR-003): extract implicit transitions from `control_plane.rs` into
    `session_fsm.rs`; route commands through `next()`.
-4. **Rust client core via UniFFI** (ADR-004): iOS first, then macOS, then retire
-   `swift/LooperRealtime`'s hand-driven client.
+4. **Rust client core via UniFFI** (ADR-004): iOS first, then macOS, then retire the
+   parallel Swift gRPC client.
 5. **Dependency lint in CI** (§8) to keep the graph honest.
 
 Steps 1–2 alone hit the latency goal. Steps 3–5 remove the edginess permanently.

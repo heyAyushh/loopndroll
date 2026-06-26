@@ -13,7 +13,7 @@ looper/
 ├── crates/orb-code/              # Rust orb-code generator/decoder and iOS staticlib
 ├── ios/                          # iPhone app, iOS Swift packages, app/UI tests
 ├── macos/LooperMenuBar/          # native menu bar app that bundles Rust binaries
-├── swift/LooperRealtime/         # shared Swift gRPC/realtime client package
+├── swift/LooperClientCore/       # UniFFI Swift package for Rust client-core
 ├── scripts/                      # install, package, release, generation, validation scripts
 └── docs/                         # authored docs, QA matrices, migration notes
 ```
@@ -26,7 +26,7 @@ looper/
 | Zed/Devin/ACP host control | `crates/agent-control-plane/src/acp`, `src/zed`, `src/devin`, `src/control_plane/acp_hosts.rs` | Keep host routes and runtime identity in Rust. |
 | iPhone companion state, search, scanner, App Intents | `ios/LooperCompanion`, `ios/LooperCompanionCore` | Native SwiftUI client of Rust HTTP/SSE/gRPC APIs. |
 | macOS menu bar lifecycle, settings, diagnostics | `macos/LooperMenuBar` | Native client that launches bundled Rust binaries. |
-| Shared realtime gRPC client | `swift/LooperRealtime` | Used by iOS and macOS; generated files live under `Sources/LooperRealtime/Generated`. |
+| Shared Rust client core bridge | `swift/LooperClientCore` | UniFFI Swift package used by iOS and macOS for realtime commands, state-mini sync, and local reducer projections. |
 | Orb pairing FFI | `crates/orb-code`, `ios/OrbCodeKit` | Rebuild XCFramework with `scripts/build-orb-code-ios-package.sh`. |
 | Packaging and install | `scripts/build-macos-menu-bar-package.sh`, `scripts/install-looper-cli.sh` | High-impact scripts; inspect targets before running. |
 | Release | `scripts/release-macos.sh` | Reads local `.env`, requires signing/notarization env, refuses dirty tree unless explicitly overridden. |
@@ -41,12 +41,12 @@ looper/
 | `CompanionAppModel` | Swift class | `ios/LooperCompanion/App/CompanionAppModel.swift:24` | central | iPhone snapshot, connectivity, realtime, search, Siri/open-url state. |
 | `loadSnapshot` | Swift method | `ios/LooperCompanion/App/CompanionAppModel.swift` | 6 callers | Main iPhone refresh path; keep concurrency and revision guards intact. |
 | `BundledControlPlaneService` | Swift class | `macos/LooperMenuBar/Sources/LooperMenuBarCore/LooperLifecycleCoordinator.swift:21` | lifecycle | Starts/stops embedded Rust server and filters launch env. |
-| `LooperRealtimeClient` | Swift class | `swift/LooperRealtime/Sources/LooperRealtime/LooperRealtimeClient.swift:6` | shared | gRPC streams for mobile events, desktop events, and prompt delivery. |
+| `LooperRealtimeClient` | Swift wrapper | `swift/LooperClientCore/Sources/LooperClientCore/LooperClientCoreRealtimeClient.swift:3` | shared | Thin wrapper over Rust client-core Session commands and state-mini stream lifecycle. |
 
 ## CONVENTIONS
 
 - Rust is the backend and control-plane source of truth. Do not add core backend, auth, mobile API, hook, notification, or session-control behavior outside `crates/agent-control-plane`.
-- Keep macOS, iOS, and TUI surfaces as clients of the Rust HTTP/SSE/gRPC API.
+- Keep macOS, iOS, and TUI surfaces as clients of Rust control-plane APIs: HTTP only for health/bootstrap, Session gRPC through Rust client-core for commands/state.
 - Local-first is the default. Tailscale-style reachable URLs are a remote-control boundary; hosted/cloud paths are not the default.
 - `looper` is the primary terminal command. `looper-cli` exists for compatibility callers and should not become the preferred product surface.
 - Apple projects are XcodeGen-driven. Update `ios/project.yml` or `macos/LooperMenuBar/project.yml` when target/package wiring changes, then regenerate and review the tracked project diff.
@@ -54,7 +54,7 @@ looper/
   `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`
   (`Xcode 27.0`, build `27A5194q`). Treat default `/Applications/Xcode.app`
   platform details as stale for Looper iOS verification.
-- Swift generated gRPC files under `swift/LooperRealtime/Sources/LooperRealtime/Generated` are no-edit zones. Regenerate with `scripts/generate-swift-grpc.sh`.
+- Swift generated UniFFI files under `swift/LooperClientCore/Sources/LooperClientCore/Generated` are no-edit zones. Regenerate with `scripts/build-looper-client-core-package.sh`.
 - Treat `.omo/`, `.build/`, `build/`, `target/`, DerivedData, generated packages, and release artifacts as evidence/build output, not source.
 
 ## ANTI-PATTERNS (THIS PROJECT)
@@ -75,7 +75,7 @@ pnpm run dev:ios-api
 pnpm run check:rust-control-plane
 swift test --package-path macos/LooperMenuBar
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios/LooperCompanionCore
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperRealtime
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperClientCore
 bash scripts/check-ios.sh
 bash scripts/build-macos-menu-bar-package.sh --no-install
 bash scripts/build-macos-menu-bar-xcode.sh --no-install

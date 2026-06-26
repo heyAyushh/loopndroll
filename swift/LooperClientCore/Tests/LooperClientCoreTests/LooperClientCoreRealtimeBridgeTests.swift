@@ -1,15 +1,8 @@
 import Foundation
-import class LooperClientCore.LooperClientCore
-import enum LooperClientCore.ClientCoreError
-import struct LooperClientCore.ClientCommandAck
-import struct LooperClientCore.ClientCommandAckEnvelope
-import struct LooperClientCore.ClientCommandBatchResponse
-import struct LooperClientCore.OutboundSessionFrame
 import Testing
+@testable import LooperClientCore
 
-@testable import LooperRealtime
-
-struct LooperRealtimeModelsTests {
+struct LooperClientCoreRealtimeBridgeTests {
     @Test
     func endpointStoresBaseURL() throws {
         let endpoint = try #require(URL(string: "https://192.168.1.4:8766"))

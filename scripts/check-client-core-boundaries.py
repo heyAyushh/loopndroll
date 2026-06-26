@@ -14,6 +14,7 @@ CLIENT_CORE_MANIFEST = ROOT_DIR / "crates" / "looper-client-core" / "Cargo.toml"
 CLIENT_CORE_ROOT = Path("crates/looper-client-core")
 RUNTIME_ROOTS = ("crates", "ios", "macos", "swift")
 CLIENT_RUNTIME_ROOTS = ("ios", "macos", "swift")
+RETIRED_RUNTIME_ROOTS = (Path("swift/LooperRealtime"),)
 
 FORBIDDEN_DEPENDENCIES = {
     "agent-control-plane",
@@ -140,6 +141,7 @@ def main() -> int:
     )
 
     if args.strict_runtime:
+        findings.extend(check_retired_runtime_roots())
         findings.extend(
             scan_files(
                 roots=tuple(Path(root) for root in RUNTIME_ROOTS),
@@ -221,6 +223,20 @@ def check_client_core_dependencies() -> list[Finding]:
             )
         )
 
+    return findings
+
+
+def check_retired_runtime_roots() -> list[Finding]:
+    findings: list[Finding] = []
+    for path in tracked_source_files(RETIRED_RUNTIME_ROOTS):
+        findings.append(
+            Finding(
+                path=path.relative_to(ROOT_DIR),
+                line=1,
+                rule="retired runtime root",
+                text="swift/LooperRealtime has been retired; use swift/LooperClientCore",
+            )
+        )
     return findings
 
 
