@@ -929,19 +929,11 @@ final class CompanionAppModel {
         _ result: CompanionSessionModeResult,
         sessionID: String
     ) async {
-        if let nextSnapshot = result.snapshot {
-            await applySnapshot(nextSnapshot)
-            if snapshotState.hasDetail(for: sessionID) {
-                await refreshSessionDetail(id: sessionID)
-            }
-            return
-        }
-
         connectionState = .connected
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
-            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
+            "mode:accepted sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset") mutationID=\(result.clientMutationID ?? "unknown")"
         )
     }
 
@@ -1222,19 +1214,11 @@ final class CompanionAppModel {
         sessionID: String,
         assistantSurface: CompanionAssistantSurface
     ) async {
-        if let nextSnapshot = result.snapshot {
-            await applySnapshot(nextSnapshot)
-            if snapshotState.hasDetail(for: sessionID) {
-                await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)
-            }
-            return
-        }
-
         connectionState = .connected
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
-            "prompt:accepted-without-snapshot sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown")"
+            "prompt:accepted sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown") mutationID=\(result.clientMutationID ?? "unknown")"
         )
         if snapshotState.hasDetail(for: sessionID) {
             await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)

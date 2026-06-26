@@ -7,19 +7,9 @@ struct ResolvedCompanionServerHealth: Sendable {
 }
 
 struct CompanionPromptSendResult: Sendable {
-    let snapshot: MobileSnapshot?
     let promptID: String?
     let dispatchKind: String?
     let clientMutationID: String?
-
-    static func snapshot(_ snapshot: MobileSnapshot, clientMutationID: String? = nil) -> Self {
-        Self(
-            snapshot: snapshot,
-            promptID: nil,
-            dispatchKind: nil,
-            clientMutationID: clientMutationID
-        )
-    }
 
     static func accepted(
         promptID: String?,
@@ -27,7 +17,6 @@ struct CompanionPromptSendResult: Sendable {
         clientMutationID: String?
     ) -> Self {
         Self(
-            snapshot: nil,
             promptID: promptID,
             dispatchKind: dispatchKind,
             clientMutationID: clientMutationID
@@ -36,19 +25,9 @@ struct CompanionPromptSendResult: Sendable {
 }
 
 struct CompanionSessionModeResult: Sendable {
-    let snapshot: MobileSnapshot?
     let acceptedMode: SessionMode?
     let serverTime: String?
     let clientMutationID: String?
-
-    static func snapshot(_ snapshot: MobileSnapshot, clientMutationID: String? = nil) -> Self {
-        Self(
-            snapshot: snapshot,
-            acceptedMode: nil,
-            serverTime: nil,
-            clientMutationID: clientMutationID
-        )
-    }
 
     static func accepted(
         mode: SessionMode?,
@@ -56,7 +35,6 @@ struct CompanionSessionModeResult: Sendable {
         clientMutationID: String?
     ) -> Self {
         Self(
-            snapshot: nil,
             acceptedMode: mode,
             serverTime: serverTime,
             clientMutationID: clientMutationID
