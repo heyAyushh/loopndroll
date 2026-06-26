@@ -83,23 +83,21 @@ struct HTTPCompanionService: CompanionService {
 
     init(
         baseURL: URL,
-        sessionRuntime: CompanionSessionRuntime? = nil,
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+        sessionRuntime: CompanionSessionRuntime? = nil
     ) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
-        self.sessionRuntime = sessionRuntime ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
+        self.sessionRuntime = sessionRuntime
     }
 
     init(
         baseURLs: [URL],
         bearerToken: String? = nil,
-        sessionRuntime: CompanionSessionRuntime? = nil,
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+        sessionRuntime: CompanionSessionRuntime? = nil
     ) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
-        self.sessionRuntime = sessionRuntime ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
+        self.sessionRuntime = sessionRuntime
     }
 
     func prepareSessionRuntime() async {

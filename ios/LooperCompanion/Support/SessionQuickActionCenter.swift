@@ -37,19 +37,12 @@ final class SessionQuickActionCenter {
     private var handler: Handler?
     private var pendingRequests: [SessionQuickActionRequest] = []
 
-    init(
-        sessionRuntime: CompanionSessionRuntime? = nil,
-        localStore: CompanionSessionMiniLocalStore? = nil
-    ) {
-        self.sessionRuntime = sessionRuntime ?? localStore.map(CompanionSessionRuntime.init)
+    init(sessionRuntime: CompanionSessionRuntime? = nil) {
+        self.sessionRuntime = sessionRuntime
     }
 
     func configureSessionRuntime(_ sessionRuntime: CompanionSessionRuntime?) {
         self.sessionRuntime = sessionRuntime
-    }
-
-    func configureLocalStore(_ localStore: CompanionSessionMiniLocalStore?) {
-        self.sessionRuntime = localStore.map(CompanionSessionRuntime.init)
     }
 
     func registerHandler(_ handler: @escaping Handler) {

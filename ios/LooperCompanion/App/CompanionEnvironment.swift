@@ -15,15 +15,13 @@ struct CompanionEnvironment {
     }
 
     static func live(
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil,
         sessionRuntime: CompanionSessionRuntime? = nil
     ) -> CompanionEnvironment {
         let connection = CompanionConfiguration.resolvedConnection()
         let baseURLs = connection.baseURLs
 
         if !baseURLs.isEmpty {
-            let localStore = sessionMiniLocalStore ?? CompanionSessionMiniLocalStore.liveDefault()
-            let runtime = sessionRuntime ?? localStore.map(CompanionSessionRuntime.init)
+            let runtime = sessionRuntime ?? CompanionSessionRuntime.liveDefault()
             return CompanionEnvironment(
                 service: HTTPCompanionService(
                     baseURLs: baseURLs,

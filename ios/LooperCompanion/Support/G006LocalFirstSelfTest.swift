@@ -304,7 +304,9 @@ enum G006LocalFirstSelfTest {
         let clientMutationID = G006LocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
-        let center = SessionQuickActionCenter(localStore: store)
+        let center = SessionQuickActionCenter(
+            sessionRuntime: CompanionSessionRuntime(localStore: store)
+        )
 
         await center.submit(
             SessionQuickActionRequest(
@@ -564,7 +566,9 @@ enum G006LocalFirstSelfTest {
 
         let notificationStartedAt = uptimeNanoseconds()
         let notificationID = "latency-notification-\(sampleIndex)"
-        await SessionQuickActionCenter(localStore: store).submit(
+        await SessionQuickActionCenter(
+            sessionRuntime: CompanionSessionRuntime(localStore: store)
+        ).submit(
             SessionQuickActionRequest(
                 action: .reply,
                 sessionID: Constants.cachedThreadID,

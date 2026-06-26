@@ -59,20 +59,20 @@ final class CompanionAppModel {
         notificationManager: LocalNotificationManager = LocalNotificationManager(),
         remotePushRegistrar: RemotePushRegistrar = .shared,
         spotlightIndexer: SessionSpotlightIndexer = .shared,
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = CompanionSessionMiniLocalStore.liveDefault()
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
     ) {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
         let sessionRuntime = environment.sessionRuntime
             ?? sessionMiniLocalStore.map(CompanionSessionRuntime.init)
+            ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection
             ? CompanionEnvironment.live(
-                sessionMiniLocalStore: sessionRuntime?.localStore,
                 sessionRuntime: sessionRuntime
             ).service
             : environment.service
@@ -529,7 +529,6 @@ final class CompanionAppModel {
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
         CompanionEnvironment.live(
-            sessionMiniLocalStore: sessionMiniController.localStore,
             sessionRuntime: sessionMiniController.sessionRuntime
         )
     }

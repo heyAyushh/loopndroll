@@ -6,8 +6,7 @@ import Testing
 struct HTTPCompanionServiceCommandCoreTests {
     @Test
     func sessionRuntimeStartIfNeededOwnsEndpointMapping() async throws {
-        let store = try Self.temporaryMiniStore()
-        let runtime = CompanionSessionRuntime(localStore: store)
+        let runtime = try Self.temporarySessionRuntime()
         let endpointURL = try #require(URL(string: "http://100.64.0.2:8765"))
         var endpointProviderCalls = 0
 
@@ -35,11 +34,12 @@ struct HTTPCompanionServiceCommandCoreTests {
 
     @Test
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let service = HTTPCompanionService(
             baseURLs: [],
             bearerToken: nil,
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         await #expect(throws: Error.self) {
@@ -72,11 +72,12 @@ struct HTTPCompanionServiceCommandCoreTests {
 
     @Test
     func generatedCommandMutationsComeFromRustCore() async throws {
-        let store = try Self.temporaryMiniStore()
+        let runtime = try Self.temporarySessionRuntime()
+        let store = runtime.localStore
         let service = HTTPCompanionService(
             baseURLs: [],
             bearerToken: nil,
-            sessionMiniLocalStore: store
+            sessionRuntime: runtime
         )
 
         await #expect(throws: Error.self) {
@@ -98,7 +99,7 @@ struct HTTPCompanionServiceCommandCoreTests {
         #expect(store.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
     }
 
-    private static func temporaryMiniStore() throws -> CompanionSessionMiniLocalStore {
+    private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
         let directoryURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .appendingPathComponent(
@@ -106,7 +107,7 @@ struct HTTPCompanionServiceCommandCoreTests {
                 isDirectory: true
             )
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        return try CompanionSessionMiniLocalStore(
+        return try CompanionSessionRuntime(
             fileURL: directoryURL.appendingPathComponent(
                 CompanionSessionMiniLocalStore.defaultFileName
             )

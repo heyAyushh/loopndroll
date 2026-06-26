@@ -51,6 +51,10 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
     }
 
+    fileprivate init(sessionManager: LooperClientCoreSessionManager) {
+        self.sessionManager = sessionManager
+    }
+
     static func liveDefault() -> CompanionSessionMiniLocalStore? {
         do {
             return try CompanionSessionMiniLocalStore(
@@ -173,7 +177,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         (try? sessionManager.localSnapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
-    private static func defaultFileURL() throws -> URL {
+    fileprivate static func defaultFileURL() throws -> URL {
         try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -232,12 +236,25 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 final class CompanionSessionRuntime: @unchecked Sendable {
     let localStore: CompanionSessionMiniLocalStore
     private let decoder = JSONDecoder()
+    private let sessionManager: LooperClientCoreSessionManager
 
-    private var sessionManager: LooperClientCoreSessionManager {
-        localStore.sessionManager
+    init(fileURL: URL) throws {
+        let sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
+        self.sessionManager = sessionManager
+        self.localStore = CompanionSessionMiniLocalStore(sessionManager: sessionManager)
+    }
+
+    static func liveDefault() -> CompanionSessionRuntime? {
+        do {
+            return try CompanionSessionRuntime(fileURL: CompanionSessionMiniLocalStore.defaultFileURL())
+        } catch {
+            CompanionDiagnostics.record("session-runtime:unavailable error=\(error.localizedDescription)")
+            return nil
+        }
     }
 
     init(localStore: CompanionSessionMiniLocalStore) {
+        self.sessionManager = localStore.sessionManager
         self.localStore = localStore
     }
 

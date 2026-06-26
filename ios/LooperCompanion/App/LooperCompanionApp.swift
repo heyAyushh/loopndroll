@@ -37,16 +37,16 @@ struct LooperApp: App {
         }
 
         Self.prepareUITestStateIfNeeded()
-        let sessionMiniLocalStore = (isRunningUnitTests || isRunningG006SelfTest)
+        let sessionRuntime = (isRunningUnitTests || isRunningG006SelfTest)
             ? nil
-            : CompanionSessionMiniLocalStore.liveDefault()
+            : CompanionSessionRuntime.liveDefault()
         _authenticator = State(initialValue: CompanionAppAuthenticator())
         _model = State(
             initialValue: CompanionAppModel(
                 environment: Self.environment(
-                    sessionMiniLocalStore: sessionMiniLocalStore
+                    sessionRuntime: sessionRuntime
                 ),
-                sessionMiniLocalStore: sessionMiniLocalStore
+                sessionMiniLocalStore: sessionRuntime?.localStore
             )
         )
 
@@ -102,7 +102,7 @@ struct LooperApp: App {
     }
 
     private static func environment(
-        sessionMiniLocalStore: CompanionSessionMiniLocalStore?
+        sessionRuntime: CompanionSessionRuntime?
     ) -> CompanionEnvironment {
         #if DEBUG
         if G006LocalFirstSelfTest.requestedCase != nil {
@@ -119,7 +119,7 @@ struct LooperApp: App {
         #endif
 
         return .live(
-            sessionMiniLocalStore: sessionMiniLocalStore
+            sessionRuntime: sessionRuntime
         )
     }
 

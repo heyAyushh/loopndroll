@@ -233,7 +233,9 @@ struct CompanionSessionMiniLocalFirstTests {
         let clientMutationID = SessionMiniLocalFirstServiceSpy.notificationReplyMutationID(
             notificationID: notificationID
         )
-        let center = SessionQuickActionCenter(localStore: store)
+        let center = SessionQuickActionCenter(
+            sessionRuntime: CompanionSessionRuntime(localStore: store)
+        )
 
         await center.submit(
             SessionQuickActionRequest(
@@ -286,7 +288,9 @@ struct CompanionSessionMiniLocalFirstTests {
     func testNotificationReplyQuickActionSubmitDoesNotWaitForNetworkHandler() async throws {
         let store = try Self.temporaryMiniStore()
         let notificationID = "notif-fast-completion-1"
-        let center = SessionQuickActionCenter(localStore: store)
+        let center = SessionQuickActionCenter(
+            sessionRuntime: CompanionSessionRuntime(localStore: store)
+        )
         center.registerHandler { _ in
             try? await Task.sleep(nanoseconds: Constants.slowQuickActionHandlerNanoseconds)
         }
