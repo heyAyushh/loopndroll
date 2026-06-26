@@ -65,8 +65,8 @@ final class CompanionAppModel {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
         self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
-        let sessionRuntime = environment.sessionRuntime
-            ?? providedSessionRuntime
+        let explicitSessionRuntime = environment.sessionRuntime ?? providedSessionRuntime
+        let sessionRuntime = explicitSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
 
@@ -78,7 +78,9 @@ final class CompanionAppModel {
             )
             : environment
         service = activeEnvironment.service
-        sessionCommands = activeEnvironment.sessionCommands
+        sessionCommands = activeEnvironment.sessionRuntime
+            ?? explicitSessionRuntime
+            ?? activeEnvironment.sessionCommands
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
@@ -538,7 +540,7 @@ final class CompanionAppModel {
     private func applyLiveEnvironmentFromSessionCore() {
         let environment = liveEnvironmentFromSessionCore()
         service = environment.service
-        sessionCommands = environment.sessionCommands
+        sessionCommands = environment.sessionRuntime ?? environment.sessionCommands
     }
 
     private func clearConnectionRouteStateIfNeeded(for state: ConnectivityState) {

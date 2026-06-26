@@ -63,7 +63,10 @@ struct CompanionSessionMiniLocalFirstTests {
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
 
         #expect(!didSend)
-        #expect(runtime.pendingCommands().isEmpty)
+        let pendingCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
+        #expect(pendingCommand.threadID == Constants.fallbackThreadID)
+        #expect(pendingCommand.prompt == "continue")
+        #expect(pendingCommand.attemptCount == 1)
     }
 
     @MainActor
@@ -99,16 +102,12 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(!didApplyMode)
         #expect(!didSend)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2)
-        #expect(service.modeClientMutationIDs.count == 1)
-        #expect(service.promptClientMutationIDs.count == 1)
-        #expect(service.modeClientMutationIDs.first?.isEmpty == false)
-        #expect(service.promptClientMutationIDs.first?.isEmpty == false)
-        #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(Set(runtime.pendingCommands().map(\.kind)) == [
-            ClientPendingCommandKind.setSessionMode,
-            ClientPendingCommandKind.sendSessionPrompt,
-        ])
+        let modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
+        let promptCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
+        #expect(modeCommand.clientMutationID.hasPrefix("mode-"))
+        #expect(promptCommand.clientMutationID.hasPrefix("prompt-"))
+        #expect(modeCommand.clientMutationID != promptCommand.clientMutationID)
     }
 
     @MainActor
@@ -146,17 +145,17 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(!didSendPrompt)
         #expect(!didApplyMode)
-        #expect(service.modeClientMutationIDs.count == 1)
-        #expect(service.promptClientMutationIDs.count == 1)
-        #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().map(\.kind) == [
-            ClientPendingCommandKind.setSessionMode,
-            ClientPendingCommandKind.sendSessionPrompt,
-        ])
+        var modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
+        let promptCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
+        #expect(modeCommand.clientMutationID.hasPrefix("mode-"))
+        #expect(promptCommand.clientMutationID.hasPrefix("prompt-"))
+        #expect(modeCommand.clientMutationID != promptCommand.clientMutationID)
 
         try await Task.sleep(nanoseconds: Constants.delayedModeDrainProbeNanoseconds)
-        #expect(service.modeClientMutationIDs.count == 1)
+        modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
+        #expect(Self.pendingCommands(in: runtime, kind: .setSessionMode).count == 1)
+        #expect(modeCommand.attemptCount == 1)
     }
 
     @MainActor
@@ -192,13 +191,11 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(!didSendPrompt)
         #expect(!didApplyMode)
-        #expect(service.modeClientMutationIDs.count == 1)
-        #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().map(\.kind) == [
-            ClientPendingCommandKind.setSessionMode,
-            ClientPendingCommandKind.sendSessionPrompt,
-        ])
+        let modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
+        let promptCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
+        #expect(modeCommand.clientMutationID.hasPrefix("mode-"))
+        #expect(promptCommand.clientMutationID.hasPrefix("prompt-"))
     }
 
     @MainActor
@@ -233,11 +230,14 @@ struct CompanionSessionMiniLocalFirstTests {
             notificationID: notificationID
         )
 
-        #expect(service.notificationReplyClientMutationIDs == [clientMutationID])
-        #expect(service.notificationReplyIDs == [notificationID])
         #expect(service.promptClientMutationIDs.isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().isEmpty)
+        let pendingCommand = try Self.pendingCommand(in: runtime, kind: .submitNotificationReply)
+        #expect(pendingCommand.clientMutationID == clientMutationID)
+        #expect(pendingCommand.threadID == Constants.cachedThreadID)
+        #expect(pendingCommand.notificationID == notificationID)
+        #expect(pendingCommand.prompt == "continue from notification")
+        #expect(pendingCommand.attemptCount == 1)
     }
 
     @MainActor
@@ -286,7 +286,7 @@ struct CompanionSessionMiniLocalFirstTests {
         pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
-        #expect(pendingCommands.first?.attemptCount == 0)
+        #expect(pendingCommands.first?.attemptCount == 1)
         #expect(service.notificationReplyClientMutationIDs.isEmpty)
         try runtime.enqueueNotificationReplyCommand(
             notificationID: notificationID,
@@ -328,6 +328,20 @@ struct CompanionSessionMiniLocalFirstTests {
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
         try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
+    }
+
+    private static func pendingCommand(
+        in runtime: CompanionSessionRuntime,
+        kind: ClientPendingCommandKind
+    ) throws -> CompanionSessionMiniPendingCommand {
+        try #require(pendingCommands(in: runtime, kind: kind).first)
+    }
+
+    private static func pendingCommands(
+        in runtime: CompanionSessionRuntime,
+        kind: ClientPendingCommandKind
+    ) -> [CompanionSessionMiniPendingCommand] {
+        runtime.pendingCommands().filter { $0.kind == kind }
     }
 
     private static func temporarySessionRuntime(
