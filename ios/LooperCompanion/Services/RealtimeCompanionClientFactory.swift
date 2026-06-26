@@ -1,6 +1,6 @@
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
-import LooperRealtime
 
 enum RealtimeCompanionClientFactory {
     private static let healthPath = "/api/mobile/health"

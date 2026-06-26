@@ -50,7 +50,6 @@
 		71037DCDA89369D211A5CB58 /* SessionQuickActionCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD83527C256675DC251E3F3A /* SessionQuickActionCenter.swift */; };
 		762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26E5665E69C8705992001B8 /* SessionSearchModel.swift */; };
 		7CDF49AAA7F79DA10FFF49A7 /* SessionEntityAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */; };
-		7FAF4B3AB03D36D13F699C73 /* LooperRealtime in Frameworks */ = {isa = PBXBuildFile; productRef = 4DA44BA34CBFEA3F1050C46E /* LooperRealtime */; };
 		815F93B4B67E08B8B6EC1403 /* CompanionPasskeyAuthenticationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */; };
 		8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */; };
 		83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64992FB2DA134F019F69163E /* RootTabView.swift */; };
@@ -141,7 +140,6 @@
 		4FFB7D36843E32894E13BD2E /* PinballDebugOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinballDebugOverlay.swift; sourceTree = "<group>"; };
 		5596E2F00F71A1D4FBC8A7DB /* LooperCompanionUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LooperCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56C79B6AF7BC32D952CE288D /* CompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionService.swift; sourceTree = "<group>"; };
-		57284556E78E9BB265560A6A /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
 		5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshotCache.swift; sourceTree = "<group>"; };
 		5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDestinationPresentationTests.swift; sourceTree = "<group>"; };
 		61C5887DE537870958CF9338 /* CompanionMobileSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionMobileSessionStore.swift; sourceTree = "<group>"; };
@@ -211,7 +209,6 @@
 				DEADABB2FAB9574917ACDCB3 /* LooperCompanionCore in Frameworks */,
 				2F0E0A2FC5EA825688BECDD4 /* LooperClientCore in Frameworks */,
 				3D4F937914550297AEEC1BC3 /* OrbCodeKit in Frameworks */,
-				7FAF4B3AB03D36D13F699C73 /* LooperRealtime in Frameworks */,
 				8690578148653BB37BE2A2E2 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -246,7 +243,6 @@
 			children = (
 				0CF6709FF4CA6D01C8716342 /* LooperClientCore */,
 				B652E921D017E22E586FFDED /* LooperCompanionCore */,
-				57284556E78E9BB265560A6A /* LooperRealtime */,
 				66B602FC6F0126FEDA7623BA /* OrbCodeKit */,
 			);
 			name = Packages;
@@ -547,7 +543,6 @@
 				4A1CE795142C8C486736E592 /* LooperCompanionCore */,
 				F580FEAB34C64461E8EBC953 /* LooperClientCore */,
 				350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */,
-				4DA44BA34CBFEA3F1050C46E /* LooperRealtime */,
 			);
 			productName = LooperCompanion;
 			productReference = 155542B6D3718553CC20717F /* LooperCompanion.app */;
@@ -590,7 +585,6 @@
 			packageReferences = (
 				0EC860B1916B3DCDE31793A5 /* XCLocalSwiftPackageReference "../swift/LooperClientCore" */,
 				B9671D4CAD974AF88DD98B73 /* XCLocalSwiftPackageReference "LooperCompanionCore" */,
-				9D4ED450CF4A03C5F17E1BAA /* XCLocalSwiftPackageReference "../swift/LooperRealtime" */,
 				3554AC755BD33C16845B5833 /* XCLocalSwiftPackageReference "OrbCodeKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1045,10 +1039,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = OrbCodeKit;
 		};
-		9D4ED450CF4A03C5F17E1BAA /* XCLocalSwiftPackageReference "../swift/LooperRealtime" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../swift/LooperRealtime;
-		};
 		B9671D4CAD974AF88DD98B73 /* XCLocalSwiftPackageReference "LooperCompanionCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = LooperCompanionCore;
@@ -1063,10 +1053,6 @@
 		4A1CE795142C8C486736E592 /* LooperCompanionCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LooperCompanionCore;
-		};
-		4DA44BA34CBFEA3F1050C46E /* LooperRealtime */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LooperRealtime;
 		};
 		F580FEAB34C64461E8EBC953 /* LooperClientCore */ = {
 			isa = XCSwiftPackageProductDependency;

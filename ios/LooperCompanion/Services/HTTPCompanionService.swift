@@ -1,7 +1,6 @@
 import Foundation
 import LooperClientCore
 import LooperCompanionCore
-import LooperRealtime
 
 private struct HTTPCompanionResponseData: Sendable {
     let data: Data

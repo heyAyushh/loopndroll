@@ -11,9 +11,6 @@ packages:
   OrbCodeKit:
     path: OrbCodeKit
     group: Packages
-  LooperRealtime:
-    path: ../swift/LooperRealtime
-    group: Packages
 settings:
   base:
     SWIFT_VERSION: 6.0
@@ -57,7 +54,6 @@ targets:
       - package: LooperCompanionCore
       - package: LooperClientCore
       - package: OrbCodeKit
-      - package: LooperRealtime
       - sdk: AppIntents.framework
   LooperCompanionTests:
     type: bundle.unit-test

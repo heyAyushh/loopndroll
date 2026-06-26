@@ -1,6 +1,6 @@
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
-import LooperRealtime
 
 private let mockCompanionBaseURL = "preview://looper"
 private let millisecondsPerSecond: TimeInterval = 1_000

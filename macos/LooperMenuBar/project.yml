@@ -7,9 +7,6 @@ packages:
   LooperClientCore:
     path: ../../swift/LooperClientCore
     group: Packages
-  LooperRealtime:
-    path: ../../swift/LooperRealtime
-    group: Packages
 settings:
   base:
     SWIFT_VERSION: 6.0
@@ -23,7 +20,6 @@ targets:
       - path: Sources/LooperMenuBarCore
     dependencies:
       - package: LooperClientCore
-      - package: LooperRealtime
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar.core
@@ -61,7 +57,6 @@ targets:
     dependencies:
       - target: LooperMenuBarCore
       - package: LooperClientCore
-      - package: LooperRealtime
     preBuildScripts:
       - name: Build Rust control plane
         shell: /bin/bash

@@ -71,6 +71,16 @@ CLIENT_RUNTIME_PATTERNS = (
         "client-side reducer ownership",
         re.compile(r"\b[A-Za-z0-9_]*Reducer[A-Za-z0-9_]*\b|\breducer\b"),
     ),
+    (
+        "retired LooperRealtime production bridge",
+        re.compile(
+            r"^\s*import\s+LooperRealtime\b|"
+            r"\bpackage:\s*LooperRealtime\b|"
+            r"LooperRealtime in Frameworks|"
+            r"XCLocalSwiftPackageReference \"(?:\.\./)+swift/LooperRealtime\"|"
+            r"\bproductName = LooperRealtime\b"
+        ),
+    ),
 )
 
 SCAN_SUFFIXES = {

@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
+import LooperClientCore
 import LooperCompanionCore
-import LooperRealtime
 import Security
 
 struct CompanionConnection: Sendable {

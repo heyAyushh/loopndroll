@@ -1,6 +1,5 @@
 import Foundation
 import LooperClientCore
-import LooperRealtime
 
 public protocol MenuBarSessionCommandClient: LooperRealtimeSessionCommandSubmitting {}
 

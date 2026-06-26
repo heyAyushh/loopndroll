@@ -1,6 +1,5 @@
 import Foundation
 import LooperClientCore
-import LooperRealtime
 import Testing
 @testable import Looper
 

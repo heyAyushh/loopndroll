@@ -1,5 +1,5 @@
 import Foundation
-import LooperRealtime
+import LooperClientCore
 
 public enum HookRepairTarget: String, CaseIterable, Equatable, Sendable {
   case codex

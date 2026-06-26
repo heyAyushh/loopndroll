@@ -30,7 +30,6 @@
 		AE5D7B9554852AF48FEF4A67 /* LooperDiagnosticsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8414FFD10C5DCAAF9F91E32 /* LooperDiagnosticsContent.swift */; };
 		B2EAD78BECB44A3651139391 /* looper in CopyFiles */ = {isa = PBXBuildFile; fileRef = 064C6B683AB182FF0C614500 /* looper */; };
 		B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */; };
-		D362C4FAD4AB5B9A4273C52D /* LooperRealtime in Frameworks */ = {isa = PBXBuildFile; productRef = 70389F85999007457E33EA68 /* LooperRealtime */; };
 		E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */; };
 		EF37339ED81D19FD868EB2C2 /* DesktopThreadDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */; };
 		F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */; };
@@ -66,7 +65,6 @@
 		03C0FFB7C13A78F16F3D488A /* LooperContinuationActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperContinuationActivity.swift; sourceTree = "<group>"; };
 		060F24CC3357705E8AD2E9C3 /* looper-server */ = {isa = PBXFileReference; name = "looper-server"; path = "../../crates/agent-control-plane/target/release/looper-server"; sourceTree = "<group>"; };
 		064C6B683AB182FF0C614500 /* looper */ = {isa = PBXFileReference; name = looper; path = "../../crates/agent-control-plane/target/release/looper"; sourceTree = "<group>"; };
-		067E9A0BE745F3C5AF29DE91 /* LooperRealtime */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LooperRealtime; path = ../../swift/LooperRealtime; sourceTree = SOURCE_ROOT; };
 		0CDDFFC62E1D5559E52E031C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameResolver.swift; sourceTree = "<group>"; };
 		31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarSessionMiniLocalStore.swift; sourceTree = "<group>"; };
@@ -101,7 +99,6 @@
 			files = (
 				A396630860ACE447D37C7C7B /* libLooperMenuBarCore.a in Frameworks */,
 				67987A5496AB5602B5575587 /* LooperClientCore in Frameworks */,
-				D362C4FAD4AB5B9A4273C52D /* LooperRealtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,7 +212,6 @@
 			isa = PBXGroup;
 			children = (
 				4838F9AD58554A59E8EE790F /* LooperClientCore */,
-				067E9A0BE745F3C5AF29DE91 /* LooperRealtime */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -261,7 +257,6 @@
 			name = LooperMenuBar;
 			packageProductDependencies = (
 				36F230CC8CB60DCBC7B4974D /* LooperClientCore */,
-				70389F85999007457E33EA68 /* LooperRealtime */,
 			);
 			productName = LooperMenuBar;
 			productReference = E0D6C532E19E5DCEFBA880AB /* LooperMenuBar.app */;
@@ -278,12 +273,10 @@
 			);
 			dependencies = (
 				F37B95FB37C95D21947E4C67 /* PBXTargetDependency */,
-				142E946C9F76904C17F3BFA3 /* PBXTargetDependency */,
 			);
 			name = LooperMenuBarCore;
 			packageProductDependencies = (
 				A9C3E5D3BDA6A3CE4CB57F3C /* LooperClientCore */,
-				698607AA8D46201478E2A2CE /* LooperRealtime */,
 			);
 			productName = LooperMenuBarCore;
 			productReference = ED70B3A7D828CFE836DD424A /* libLooperMenuBarCore.a */;
@@ -320,7 +313,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				F322775EAC5F8076175FD8BB /* XCLocalSwiftPackageReference "../../swift/LooperClientCore" */,
-				A27EF620672E0F7A6D97698D /* XCLocalSwiftPackageReference "../../swift/LooperRealtime" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -421,10 +413,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		142E946C9F76904C17F3BFA3 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 698607AA8D46201478E2A2CE /* LooperRealtime */;
-		};
 		A5037E5E9D568C2D1C4B48EF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = AAD7F57E2F0E115082EB5C7D /* LooperMenuBarCore */;
@@ -677,10 +665,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A27EF620672E0F7A6D97698D /* XCLocalSwiftPackageReference "../../swift/LooperRealtime" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../swift/LooperRealtime;
-		};
 		F322775EAC5F8076175FD8BB /* XCLocalSwiftPackageReference "../../swift/LooperClientCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../swift/LooperClientCore;
@@ -691,14 +675,6 @@
 		36F230CC8CB60DCBC7B4974D /* LooperClientCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LooperClientCore;
-		};
-		698607AA8D46201478E2A2CE /* LooperRealtime */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LooperRealtime;
-		};
-		70389F85999007457E33EA68 /* LooperRealtime */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LooperRealtime;
 		};
 		A9C3E5D3BDA6A3CE4CB57F3C /* LooperClientCore */ = {
 			isa = XCSwiftPackageProductDependency;

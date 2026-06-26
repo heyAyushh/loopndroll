@@ -1,6 +1,5 @@
 import Foundation
 import LooperClientCore
-import LooperRealtime
 
 struct ResolvedCompanionServerHealth: Sendable {
     let health: CompanionServerHealth

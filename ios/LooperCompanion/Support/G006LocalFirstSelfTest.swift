@@ -2,7 +2,6 @@
 import Darwin
 import Foundation
 import LooperClientCore
-import LooperRealtime
 
 @MainActor
 enum G006LocalFirstSelfTest {

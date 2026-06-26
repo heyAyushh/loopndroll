@@ -1,5 +1,5 @@
 import Foundation
-import LooperRealtime
+import LooperClientCore
 
 @MainActor
 protocol CompanionNotificationReplyCoordinatorDelegate: AnyObject {

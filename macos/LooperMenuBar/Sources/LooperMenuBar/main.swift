@@ -3,7 +3,6 @@ import Carbon.HIToolbox
 import Foundation
 import LooperClientCore
 import LooperMenuBarCore
-import LooperRealtime
 import OSLog
 
 @MainActor
