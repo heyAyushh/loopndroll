@@ -48,6 +48,12 @@ pub enum ClientCoreError {
     StateMiniStreamTransportFailed,
     #[error("state mini stream recovery is required")]
     StateMiniStreamRecoveryRequired,
+    #[error("local store path is required")]
+    LocalStorePathRequired,
+    #[error("local store read failed")]
+    LocalStoreReadFailed,
+    #[error("local store write failed")]
+    LocalStoreWriteFailed,
     #[error("client core state lock is poisoned")]
     StateLockPoisoned,
 }

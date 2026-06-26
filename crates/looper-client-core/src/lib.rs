@@ -4,11 +4,13 @@ mod client;
 mod command_batch;
 mod connection_reducer;
 mod error;
+mod local_store;
 mod mobile_snapshot;
 mod model;
 mod mutation_queue;
 mod session_transport;
 mod snapshot_reducer;
+mod state_mini;
 mod transport;
 
 pub use client::LooperClientCore;
@@ -18,13 +20,14 @@ pub use connection_reducer::{
     reduce_connection_failure, reduce_snapshot_load_failure,
 };
 pub use error::ClientCoreError;
+pub use local_store::{DEFAULT_LOCAL_STORE_FILE_NAME, LooperClientCoreLocalStore};
 pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientCommandMetadata, ClientEndpoint, ClientPendingMutation, ClientStateDelta,
-    ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
-    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
-    OutboundSessionFrameKind,
+    ClientCommandMetadata, ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand,
+    ClientPendingCommandKind, ClientPendingMutation, ClientStateDelta, ClientStateMini,
+    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
+    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 pub use mutation_queue::{
     ClientModeMutation, ClientModeMutationBatchFinish, ClientModeMutationDrainFinish,

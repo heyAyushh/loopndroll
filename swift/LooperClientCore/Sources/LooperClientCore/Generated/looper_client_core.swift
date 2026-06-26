@@ -1116,6 +1116,173 @@ public func FfiConverterTypeLooperClientCore_lower(_ value: LooperClientCore) ->
 
 
 
+
+
+public protocol LooperClientCoreLocalStoreProtocol: AnyObject, Sendable {
+
+    func enqueue(command: ClientPendingCommand) throws  -> ClientLocalStateSnapshot
+
+    func markAttempted(clientMutationId: String) throws  -> ClientLocalStateSnapshot
+
+    func markDelivered(clientMutationId: String) throws
+
+    func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
+
+    func snapshot() throws  -> ClientLocalStateSnapshot
+
+}
+open class LooperClientCoreLocalStore: LooperClientCoreLocalStoreProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_looper_client_core_fn_clone_looperclientcorelocalstore(self.handle, $0) }
+    }
+public convenience init(filePath: String)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_constructor_looperclientcorelocalstore_new(
+        FfiConverterString.lower(filePath),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_looper_client_core_fn_free_looperclientcorelocalstore(handle, $0) }
+    }
+
+
+
+
+open func enqueue(command: ClientPendingCommand)throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_enqueue(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientPendingCommand_lower(command),$0
+    )
+})
+}
+
+open func markAttempted(clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_mark_attempted(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func markDelivered(clientMutationId: String)throws   {try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_mark_delivered(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+}
+}
+
+open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_replace_state_minis(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientStateMiniSnapshot_lower(snapshot),$0
+    )
+})
+}
+
+open func snapshot()throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcorelocalstore_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLooperClientCoreLocalStore: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = LooperClientCoreLocalStore
+
+    public static func lift(_ handle: UInt64) throws -> LooperClientCoreLocalStore {
+        return LooperClientCoreLocalStore(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: LooperClientCoreLocalStore) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LooperClientCoreLocalStore {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: LooperClientCoreLocalStore, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLooperClientCoreLocalStore_lift(_ handle: UInt64) throws -> LooperClientCoreLocalStore {
+    return try FfiConverterTypeLooperClientCoreLocalStore.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLooperClientCoreLocalStore_lower(_ value: LooperClientCoreLocalStore) -> UInt64 {
+    return FfiConverterTypeLooperClientCoreLocalStore.lower(value)
+}
+
+
+
+
 public struct ClientAssistantSurfaceSelection: Equatable, Hashable {
     public var didChange: Bool
     public var hasUserSelectedAssistantSurface: Bool
@@ -1682,6 +1849,68 @@ public func FfiConverterTypeClientEndpoint_lower(_ value: ClientEndpoint) -> Rus
 }
 
 
+public struct ClientLocalStateSnapshot: Equatable, Hashable {
+    public var latestSeq: Int64
+    public var sessions: [ClientStateMini]
+    public var pendingCommands: [ClientPendingCommand]
+    public var serverTime: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(latestSeq: Int64, sessions: [ClientStateMini], pendingCommands: [ClientPendingCommand], serverTime: String) {
+        self.latestSeq = latestSeq
+        self.sessions = sessions
+        self.pendingCommands = pendingCommands
+        self.serverTime = serverTime
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientLocalStateSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientLocalStateSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientLocalStateSnapshot {
+        return
+            try ClientLocalStateSnapshot(
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientStateMini.read(from: &buf),
+                pendingCommands: FfiConverterSequenceTypeClientPendingCommand.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientLocalStateSnapshot, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterSequenceTypeClientStateMini.write(value.sessions, into: &buf)
+        FfiConverterSequenceTypeClientPendingCommand.write(value.pendingCommands, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientLocalStateSnapshot_lift(_ buf: RustBuffer) throws -> ClientLocalStateSnapshot {
+    return try FfiConverterTypeClientLocalStateSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientLocalStateSnapshot_lower(_ value: ClientLocalStateSnapshot) -> RustBuffer {
+    return FfiConverterTypeClientLocalStateSnapshot.lower(value)
+}
+
+
 public struct ClientMobileSnapshotProjection: Equatable, Hashable {
     public var hasSnapshot: Bool
     public var snapshotJson: String
@@ -2093,6 +2322,84 @@ public func FfiConverterTypeClientOptimisticModeProjection_lift(_ buf: RustBuffe
 #endif
 public func FfiConverterTypeClientOptimisticModeProjection_lower(_ value: ClientOptimisticModeProjection) -> RustBuffer {
     return FfiConverterTypeClientOptimisticModeProjection.lower(value)
+}
+
+
+public struct ClientPendingCommand: Equatable, Hashable {
+    public var kind: ClientPendingCommandKind
+    public var clientMutationId: String
+    public var threadId: String
+    public var preset: String
+    public var assistantSurface: String
+    public var prompt: String
+    public var notificationId: String
+    public var attemptCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, prompt: String, notificationId: String, attemptCount: UInt32) {
+        self.kind = kind
+        self.clientMutationId = clientMutationId
+        self.threadId = threadId
+        self.preset = preset
+        self.assistantSurface = assistantSurface
+        self.prompt = prompt
+        self.notificationId = notificationId
+        self.attemptCount = attemptCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientPendingCommand: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientPendingCommand {
+        return
+            try ClientPendingCommand(
+                kind: FfiConverterTypeClientPendingCommandKind.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                threadId: FfiConverterString.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf),
+                assistantSurface: FfiConverterString.read(from: &buf),
+                prompt: FfiConverterString.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf),
+                attemptCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientPendingCommand, into buf: inout [UInt8]) {
+        FfiConverterTypeClientPendingCommandKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterString.write(value.threadId, into: &buf)
+        FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterString.write(value.assistantSurface, into: &buf)
+        FfiConverterString.write(value.prompt, into: &buf)
+        FfiConverterString.write(value.notificationId, into: &buf)
+        FfiConverterUInt32.write(value.attemptCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientPendingCommand_lift(_ buf: RustBuffer) throws -> ClientPendingCommand {
+    return try FfiConverterTypeClientPendingCommand.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientPendingCommand_lower(_ value: ClientPendingCommand) -> RustBuffer {
+    return FfiConverterTypeClientPendingCommand.lower(value)
 }
 
 
@@ -3171,6 +3478,9 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case StateMiniStreamNotRunning
     case StateMiniStreamTransportFailed
     case StateMiniStreamRecoveryRequired
+    case LocalStorePathRequired
+    case LocalStoreReadFailed
+    case LocalStoreWriteFailed
     case StateLockPoisoned
 
 
@@ -3225,7 +3535,10 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 22: return .StateMiniStreamNotRunning
         case 23: return .StateMiniStreamTransportFailed
         case 24: return .StateMiniStreamRecoveryRequired
-        case 25: return .StateLockPoisoned
+        case 25: return .LocalStorePathRequired
+        case 26: return .LocalStoreReadFailed
+        case 27: return .LocalStoreWriteFailed
+        case 28: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3334,8 +3647,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(24))
 
 
-        case .StateLockPoisoned:
+        case .LocalStorePathRequired:
             writeInt(&buf, Int32(25))
+
+
+        case .LocalStoreReadFailed:
+            writeInt(&buf, Int32(26))
+
+
+        case .LocalStoreWriteFailed:
+            writeInt(&buf, Int32(27))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(28))
 
         }
     }
@@ -3355,6 +3680,80 @@ public func FfiConverterTypeClientCoreError_lift(_ buf: RustBuffer) throws -> Cl
 public func FfiConverterTypeClientCoreError_lower(_ value: ClientCoreError) -> RustBuffer {
     return FfiConverterTypeClientCoreError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ClientPendingCommandKind: Equatable, Hashable {
+
+    case setSessionMode
+    case sendSessionPrompt
+    case submitNotificationReply
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientPendingCommandKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientPendingCommandKind: FfiConverterRustBuffer {
+    typealias SwiftType = ClientPendingCommandKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientPendingCommandKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .setSessionMode
+
+        case 2: return .sendSessionPrompt
+
+        case 3: return .submitNotificationReply
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClientPendingCommandKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .setSessionMode:
+            writeInt(&buf, Int32(1))
+
+
+        case .sendSessionPrompt:
+            writeInt(&buf, Int32(2))
+
+
+        case .submitNotificationReply:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientPendingCommandKind_lift(_ buf: RustBuffer) throws -> ClientPendingCommandKind {
+    return try FfiConverterTypeClientPendingCommandKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientPendingCommandKind_lower(_ value: ClientPendingCommandKind) -> RustBuffer {
+    return FfiConverterTypeClientPendingCommandKind.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -3745,6 +4144,31 @@ fileprivate struct FfiConverterSequenceTypeClientEndpoint: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientPendingCommand: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientPendingCommand]
+
+    public static func write(_ value: [ClientPendingCommand], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientPendingCommand.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientPendingCommand] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientPendingCommand]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientPendingCommand.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientPendingMutation: FfiConverterRustBuffer {
     typealias SwiftType = [ClientPendingMutation]
 
@@ -4125,6 +4549,21 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_warm_connection() != 27831) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_enqueue() != 36317) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_mark_attempted() != 56156) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_mark_delivered() != 20008) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_replace_state_minis() != 46166) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcorelocalstore_snapshot() != 27558) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_clientmodemutationqueue_clear() != 49095) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4150,6 +4589,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_constructor_looperclientcore_new() != 12582) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_constructor_looperclientcorelocalstore_new() != 39811) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_constructor_clientmodemutationqueue_new() != 29307) {

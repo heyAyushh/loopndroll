@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum ConnectionPhase {
     Disconnected,
@@ -12,7 +14,7 @@ impl Default for ConnectionPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Enum)]
 pub enum ClientCommandKind {
     SetSessionMode,
     SendSessionPrompt,
@@ -37,6 +39,36 @@ pub struct ClientPendingMutation {
     pub client_mutation_id: String,
     pub command_kind: ClientCommandKind,
     pub thread_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+pub enum ClientPendingCommandKind {
+    #[serde(rename = "SetSessionMode")]
+    SetSessionMode,
+    #[serde(rename = "SendSessionPrompt")]
+    SendSessionPrompt,
+    #[serde(rename = "SubmitNotificationReply")]
+    SubmitNotificationReply,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct ClientPendingCommand {
+    #[serde(rename = "kind")]
+    pub kind: ClientPendingCommandKind,
+    #[serde(rename = "clientMutationID")]
+    pub client_mutation_id: String,
+    #[serde(rename = "threadID")]
+    pub thread_id: String,
+    #[serde(default)]
+    pub preset: String,
+    #[serde(rename = "assistantSurface", default)]
+    pub assistant_surface: String,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(rename = "notificationID", default)]
+    pub notification_id: String,
+    #[serde(rename = "attemptCount", default)]
+    pub attempt_count: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -101,19 +133,24 @@ pub struct ClientStateDelta {
     pub payload_json: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct ClientStateMini {
+    #[serde(rename = "sessionID", alias = "sessionId")]
     pub session_id: String,
+    #[serde(rename = "assistantSurface")]
     pub assistant_surface: String,
     pub seq: i64,
     pub revision: String,
+    #[serde(rename = "payloadJSON", alias = "payloadJson")]
     pub payload_json: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct ClientStateMiniSnapshot {
+    #[serde(rename = "latestSeq", alias = "latest_seq")]
     pub latest_seq: i64,
     pub sessions: Vec<ClientStateMini>,
+    #[serde(rename = "serverTime")]
     pub server_time: String,
 }
 
@@ -141,6 +178,17 @@ pub struct ClientStateSnapshot {
     pub pending_mutations: Vec<ClientPendingMutation>,
     pub outbox_depth: u32,
     pub last_error: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct ClientLocalStateSnapshot {
+    #[serde(rename = "latestSeq", alias = "latest_seq")]
+    pub latest_seq: i64,
+    pub sessions: Vec<ClientStateMini>,
+    #[serde(rename = "pendingCommands")]
+    pub pending_commands: Vec<ClientPendingCommand>,
+    #[serde(rename = "serverTime")]
+    pub server_time: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]

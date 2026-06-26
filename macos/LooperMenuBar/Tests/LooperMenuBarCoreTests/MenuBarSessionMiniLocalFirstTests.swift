@@ -54,19 +54,19 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("malformed cache falls back and failed ACK stays in outbox")
     func testMalformedMiniCacheFallsBackAndOutboxKeepsFailedCommand() async throws {
         let malformedFileURL = temporaryStoreFileURL()
-        let genericStore = try LooperRealtimeLocalStore(fileURL: malformedFileURL)
-        try genericStore.replace(with: LooperRealtimeStateMiniSnapshot(
+        let genericStore = try LooperClientCoreLocalStore(filePath: malformedFileURL.path)
+        _ = try genericStore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
             latestSeq: 3,
             sessions: [
-                LooperRealtimeStateMini(
-                    sessionID: "thread-main",
+                ClientStateMini(
+                    sessionId: "thread-main",
                     assistantSurface: "codex",
                     seq: 3,
                     revision: "rev-3",
-                    payloadJSON: #"{"id":"other-thread","sessionId":"other-thread","title":"bad"}"#
+                    payloadJson: #"{"id":"other-thread","sessionId":"other-thread","title":"bad"}"#
                 )
             ],
-            serverTime: nil
+            serverTime: ""
         ))
         let malformedStore = try MenuBarSessionMiniLocalStore(fileURL: malformedFileURL)
         let fallbackMiniSnapshot = try? malformedStore.cachedSnapshot()

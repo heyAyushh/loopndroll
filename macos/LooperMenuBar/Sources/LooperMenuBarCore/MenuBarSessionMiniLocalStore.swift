@@ -131,18 +131,18 @@ public enum MenuBarSessionMiniLocalStoreError: Error, Equatable, Sendable {
 }
 
 public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
-    public static let defaultFileName = LooperRealtimeLocalStore.defaultFileName
+    public static let defaultFileName = "looper-realtime-state-minis.json"
 
     private enum Defaults {
         static let applicationSupportDirectoryName = "looper"
     }
 
-    private let store: LooperRealtimeLocalStore
+    private let store: LooperClientCoreLocalStore
     private let clientCore: LooperClientCore
     private let decoder = JSONDecoder()
 
     public init(fileURL: URL) throws {
-        store = try LooperRealtimeLocalStore(recovering: fileURL)
+        store = try LooperClientCoreLocalStore(filePath: fileURL.path)
         clientCore = LooperClientCore()
         _ = try? clientCore.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(store.snapshot())
@@ -206,11 +206,15 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .setSessionMode,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
-                preset: preset
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: preset ?? "",
+                assistantSurface: "",
+                prompt: "",
+                notificationId: "",
+                attemptCount: 0
             )
         )
     }
@@ -222,12 +226,15 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .sendSessionPrompt,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
-                assistantSurface: assistantSurface,
-                prompt: prompt
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: "",
+                assistantSurface: assistantSurface ?? "",
+                prompt: prompt,
+                notificationId: "",
+                attemptCount: 0
             )
         )
     }
@@ -240,27 +247,29 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .submitNotificationReply,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
-                assistantSurface: assistantSurface,
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: "",
+                assistantSurface: assistantSurface ?? "",
                 prompt: prompt,
-                notificationID: notificationID
+                notificationId: notificationID,
+                attemptCount: 0
             )
         )
     }
 
     public func markAttempted(clientMutationID: String) throws {
-        _ = try store.markAttempted(clientMutationID: clientMutationID)
+        _ = try store.markAttempted(clientMutationId: clientMutationID)
     }
 
     public func markDelivered(clientMutationID: String) throws {
-        try store.markDelivered(clientMutationID: clientMutationID)
+        try store.markDelivered(clientMutationId: clientMutationID)
     }
 
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
-        store.snapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
+        (try? store.snapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
     public func startClientCoreStateMiniStream(
@@ -322,11 +331,11 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func localSnapshot(from snapshot: ClientStateSnapshot) -> LooperRealtimeLocalSnapshot {
-        let durableSnapshot = store.snapshot()
+        let durableSnapshot = try? store.snapshot()
         return LooperRealtimeLocalSnapshot(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.stateMinis.map(LooperRealtimeStateMini.init),
-            pendingCommands: durableSnapshot.pendingCommands,
+            pendingCommands: durableSnapshot?.pendingCommands.map(LooperRealtimePendingCommand.init) ?? [],
             serverTime: snapshot.serverTime.nilIfBlank
         )
     }
@@ -337,12 +346,23 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     {
         let sessions = snapshot.stateMinis.map(LooperRealtimeStateMini.init)
         _ = try menuSnapshot(from: snapshot.latestSeq, sessions: sessions)
-        return try store.replace(
-            with: LooperRealtimeStateMiniSnapshot(
-                latestSeq: snapshot.latestSeq,
-                sessions: sessions,
-                serverTime: snapshot.serverTime.nilIfBlank
+        return LooperRealtimeLocalSnapshot(
+            try store.replaceStateMinis(
+                snapshot: ClientStateMiniSnapshot(
+                    latestSeq: snapshot.latestSeq,
+                    sessions: sessions.map(ClientStateMini.init),
+                    serverTime: snapshot.serverTime
+                )
             )
+        )
+    }
+
+    private func localSnapshot(from snapshot: ClientLocalStateSnapshot) -> LooperRealtimeLocalSnapshot {
+        LooperRealtimeLocalSnapshot(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
+            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
+            serverTime: snapshot.serverTime.nilIfBlank
         )
     }
 
@@ -358,7 +378,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
         )
     }
-
     private func menuSnapshot(
         from latestSeq: Int64,
         sessions: [LooperRealtimeStateMini]
@@ -487,6 +506,45 @@ private extension MenuBarSessionMiniPendingCommand {
             attemptCount: command.attemptCount
         )
     }
+
+    init(_ command: ClientPendingCommand) {
+        self.init(
+            kind: LooperRealtimePendingCommand.Kind(command.kind),
+            clientMutationID: command.clientMutationId,
+            threadID: command.threadId,
+            notificationID: command.notificationId.nilIfBlank,
+            prompt: command.prompt.nilIfBlank,
+            attemptCount: Int(command.attemptCount)
+        )
+    }
+}
+
+private extension LooperRealtimePendingCommand {
+    init(_ command: ClientPendingCommand) {
+        self.init(
+            kind: LooperRealtimePendingCommand.Kind(command.kind),
+            clientMutationID: command.clientMutationId,
+            threadID: command.threadId,
+            preset: command.preset.nilIfBlank,
+            assistantSurface: command.assistantSurface.nilIfBlank,
+            prompt: command.prompt.nilIfBlank,
+            notificationID: command.notificationId.nilIfBlank,
+            attemptCount: Int(command.attemptCount)
+        )
+    }
+}
+
+private extension LooperRealtimePendingCommand.Kind {
+    init(_ kind: ClientPendingCommandKind) {
+        switch kind {
+        case .setSessionMode:
+            self = .setSessionMode
+        case .sendSessionPrompt:
+            self = .sendSessionPrompt
+        case .submitNotificationReply:
+            self = .submitNotificationReply
+        }
+    }
 }
 
 private extension LooperRealtimeStateMini {
@@ -516,7 +574,13 @@ extension MenuBarSessionMiniLocalStore {
         do {
             return try localSnapshot(from: clientCore.snapshot())
         } catch {
-            return store.snapshot()
+            return (try? LooperRealtimeLocalSnapshot(store.snapshot()))
+                ?? LooperRealtimeLocalSnapshot(
+                    latestSeq: 0,
+                    sessions: [],
+                    pendingCommands: [],
+                    serverTime: nil
+                )
         }
     }
 
@@ -573,11 +637,22 @@ private extension ClientStateMiniSnapshot {
         )
     }
 
-    init(_ snapshot: LooperRealtimeLocalSnapshot) {
+    init(_ snapshot: ClientLocalStateSnapshot) {
         self.init(
             latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(ClientStateMini.init),
-            serverTime: snapshot.serverTime ?? ""
+            sessions: snapshot.sessions,
+            serverTime: snapshot.serverTime
+        )
+    }
+}
+
+private extension LooperRealtimeLocalSnapshot {
+    init(_ snapshot: ClientLocalStateSnapshot) {
+        self.init(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
+            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
+            serverTime: snapshot.serverTime.nilIfBlank
         )
     }
 }

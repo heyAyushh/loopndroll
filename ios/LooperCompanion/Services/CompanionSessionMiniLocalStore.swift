@@ -26,14 +26,14 @@ struct CompanionClientCoreStateMiniStreamResult: Sendable {
 }
 
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
-    static let defaultFileName = LooperRealtimeLocalStore.defaultFileName
+    static let defaultFileName = "looper-realtime-state-minis.json"
 
-    private let store: LooperRealtimeLocalStore
+    private let store: LooperClientCoreLocalStore
     private let clientCore: LooperClientCore
     private let decoder = JSONDecoder()
 
     init(fileURL: URL) throws {
-        store = try LooperRealtimeLocalStore(recovering: fileURL)
+        store = try LooperClientCoreLocalStore(filePath: fileURL.path)
         clientCore = LooperClientCore()
         do {
             _ = try clientCore.replaceStateMinis(
@@ -105,11 +105,15 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .setSessionMode,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
-                preset: preset?.rawValue
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: preset?.rawValue ?? "",
+                assistantSurface: "",
+                prompt: "",
+                notificationId: "",
+                attemptCount: 0
             )
         )
     }
@@ -121,12 +125,15 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .sendSessionPrompt,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: "",
                 assistantSurface: assistantSurface.rawValue,
-                prompt: prompt
+                prompt: prompt,
+                notificationId: "",
+                attemptCount: 0
             )
         )
     }
@@ -139,36 +146,29 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         clientMutationID: String
     ) throws {
         _ = try store.enqueue(
-            LooperRealtimePendingCommand(
+            command: ClientPendingCommand(
                 kind: .submitNotificationReply,
-                clientMutationID: clientMutationID,
-                threadID: threadID,
-                assistantSurface: assistantSurface?.rawValue,
+                clientMutationId: clientMutationID,
+                threadId: threadID,
+                preset: "",
+                assistantSurface: assistantSurface?.rawValue ?? "",
                 prompt: prompt,
-                notificationID: notificationID
+                notificationId: notificationID,
+                attemptCount: 0
             )
         )
     }
 
     func markAttempted(clientMutationID: String) throws {
-        _ = try store.markAttempted(clientMutationID: clientMutationID)
+        _ = try store.markAttempted(clientMutationId: clientMutationID)
     }
 
     func markDelivered(clientMutationID: String) throws {
-        try store.markDelivered(clientMutationID: clientMutationID)
+        try store.markDelivered(clientMutationId: clientMutationID)
     }
 
     func pendingCommands() -> [CompanionSessionMiniPendingCommand] {
-        store.snapshot().pendingCommands.map {
-            CompanionSessionMiniPendingCommand(
-                kind: $0.kind,
-                clientMutationID: $0.clientMutationID,
-                threadID: $0.threadID,
-                notificationID: $0.notificationID,
-                prompt: $0.prompt,
-                attemptCount: $0.attemptCount
-            )
-        }
+        (try? store.snapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
     func startClientCoreStateMiniStream(
@@ -235,11 +235,11 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func localSnapshot(from snapshot: ClientStateSnapshot) -> LooperRealtimeLocalSnapshot {
-        let durableSnapshot = store.snapshot()
+        let durableSnapshot = try? store.snapshot()
         return LooperRealtimeLocalSnapshot(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.stateMinis.map(LooperRealtimeStateMini.init),
-            pendingCommands: durableSnapshot.pendingCommands,
+            pendingCommands: durableSnapshot?.pendingCommands.map(LooperRealtimePendingCommand.init) ?? [],
             serverTime: snapshot.serverTime.nilIfEmpty
         )
     }
@@ -254,12 +254,23 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             sessions: sessions,
             serverTime: snapshot.serverTime.nilIfEmpty
         )
-        return try store.replace(
-            with: LooperRealtimeStateMiniSnapshot(
-                latestSeq: snapshot.latestSeq,
-                sessions: sessions,
-                serverTime: snapshot.serverTime.nilIfEmpty
+        return LooperRealtimeLocalSnapshot(
+            try store.replaceStateMinis(
+                snapshot: ClientStateMiniSnapshot(
+                    latestSeq: snapshot.latestSeq,
+                    sessions: sessions.map(ClientStateMini.init),
+                    serverTime: snapshot.serverTime
+                )
             )
+        )
+    }
+
+    private func localSnapshot(from snapshot: ClientLocalStateSnapshot) -> LooperRealtimeLocalSnapshot {
+        LooperRealtimeLocalSnapshot(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
+            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
+            serverTime: snapshot.serverTime.nilIfEmpty
         )
     }
 
@@ -278,6 +289,47 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
 
         return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+    }
+}
+
+private extension CompanionSessionMiniPendingCommand {
+    init(_ command: ClientPendingCommand) {
+        self.init(
+            kind: LooperRealtimePendingCommand.Kind(command.kind),
+            clientMutationID: command.clientMutationId,
+            threadID: command.threadId,
+            notificationID: command.notificationId.nilIfEmpty,
+            prompt: command.prompt.nilIfEmpty,
+            attemptCount: Int(command.attemptCount)
+        )
+    }
+}
+
+private extension LooperRealtimePendingCommand {
+    init(_ command: ClientPendingCommand) {
+        self.init(
+            kind: LooperRealtimePendingCommand.Kind(command.kind),
+            clientMutationID: command.clientMutationId,
+            threadID: command.threadId,
+            preset: command.preset.nilIfEmpty,
+            assistantSurface: command.assistantSurface.nilIfEmpty,
+            prompt: command.prompt.nilIfEmpty,
+            notificationID: command.notificationId.nilIfEmpty,
+            attemptCount: Int(command.attemptCount)
+        )
+    }
+}
+
+private extension LooperRealtimePendingCommand.Kind {
+    init(_ kind: ClientPendingCommandKind) {
+        switch kind {
+        case .setSessionMode:
+            self = .setSessionMode
+        case .sendSessionPrompt:
+            self = .sendSessionPrompt
+        case .submitNotificationReply:
+            self = .submitNotificationReply
+        }
     }
 }
 
@@ -311,7 +363,13 @@ extension CompanionSessionMiniLocalStore {
             CompanionDiagnostics.record(
                 "session-mini:client-core-snapshot-failed error=\(error.localizedDescription)"
             )
-            return store.snapshot()
+            return (try? LooperRealtimeLocalSnapshot(store.snapshot()))
+                ?? LooperRealtimeLocalSnapshot(
+                    latestSeq: 0,
+                    sessions: [],
+                    pendingCommands: [],
+                    serverTime: nil
+                )
         }
     }
 
@@ -346,6 +404,17 @@ extension CompanionSessionMiniLocalStore {
     }
 }
 
+private extension LooperRealtimeLocalSnapshot {
+    init(_ snapshot: ClientLocalStateSnapshot) {
+        self.init(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
+            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
+            serverTime: snapshot.serverTime.nilIfEmpty
+        )
+    }
+}
+
 private extension ClientStateMini {
     init(_ mini: LooperRealtimeStateMini) {
         self.init(
@@ -375,11 +444,11 @@ private extension ClientStateMiniSnapshot {
         )
     }
 
-    init(_ snapshot: LooperRealtimeLocalSnapshot) {
+    init(_ snapshot: ClientLocalStateSnapshot) {
         self.init(
             latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(ClientStateMini.init),
-            serverTime: snapshot.serverTime ?? ""
+            sessions: snapshot.sessions,
+            serverTime: snapshot.serverTime
         )
     }
 }
