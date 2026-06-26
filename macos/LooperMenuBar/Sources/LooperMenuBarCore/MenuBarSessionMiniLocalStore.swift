@@ -508,7 +508,7 @@ private extension LooperRealtimeStateMini {
     }
 }
 
-extension MenuBarSessionMiniLocalStore: LooperRealtimeStateMiniLocalState {
+extension MenuBarSessionMiniLocalStore {
     public func currentStateMiniSnapshot() -> LooperRealtimeLocalSnapshot {
         do {
             return try localSnapshot(from: clientCore.snapshot())

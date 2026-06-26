@@ -557,7 +557,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return
     }
 
-    let transport = MenuBarStateMiniSyncTransport(client: client)
+    let transport = MenuBarStateMiniStreamTransport(client: client)
     sessionMiniSyncTask = Task { [weak self] in
       await self?.runClientCoreSessionMiniSync(
         store: sessionMiniLocalStore,
@@ -573,7 +573,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func runClientCoreSessionMiniSync(
     store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniSyncTransport
+    transport: MenuBarStateMiniStreamTransport
   ) async {
     defer {
       store.stopClientCoreStateMiniStream(using: transport)
@@ -601,7 +601,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func drainClientCoreSessionMiniSync(
     store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniSyncTransport
+    transport: MenuBarStateMiniStreamTransport
   ) async throws {
     while !Task.isCancelled {
       let result = try await store.nextClientCoreStateMiniStreamResult(using: transport)
@@ -627,7 +627,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func recoverClientCoreSessionMiniSync(
     store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniSyncTransport,
+    transport: MenuBarStateMiniStreamTransport,
     errorDescription: String
   ) async {
     if !errorDescription.isEmpty {
@@ -1894,7 +1894,7 @@ extension LooperHandoffHotkeyOption {
   }
 }
 
-private struct MenuBarStateMiniSyncTransport: LooperRealtimeClientCoreStateMiniStreamTransport {
+private struct MenuBarStateMiniStreamTransport: LooperRealtimeClientCoreStateMiniStreamTransport {
   let client: any ControlPlaneClient
 
   func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {

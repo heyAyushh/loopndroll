@@ -265,24 +265,8 @@ final class CompanionAppModel {
         }
     }
 
-    #if DEBUG
-    func runSessionMiniSyncCycleForSelfTest(
-        transport: any LooperRealtimeStateMiniSyncTransport
-    ) async -> LooperRealtimeStateMiniSyncCycleResult {
-        await sessionMiniController.runSyncCycleForSelfTest(
-            transport: transport,
-            connectionRevision: connectionRevision
-        ) { [weak self] update, connectionRevision in
-            self?.applySessionMiniSyncUpdate(
-                update,
-                connectionRevision: connectionRevision
-            )
-        }
-    }
-    #endif
-
     private func applySessionMiniSyncUpdate(
-        _ update: LooperRealtimeStateMiniSyncUpdate,
+        _ update: LooperRealtimeStateMiniUpdate,
         connectionRevision: Int
     ) {
         guard connectionRevision == self.connectionRevision else {

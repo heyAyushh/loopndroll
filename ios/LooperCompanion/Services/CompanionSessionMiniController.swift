@@ -29,7 +29,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
     private static let clientCoreStreamRetryDelay: Duration = .milliseconds(500)
 
     typealias SyncUpdateHandler = @MainActor @Sendable (
-        LooperRealtimeStateMiniSyncUpdate,
+        LooperRealtimeStateMiniUpdate,
         Int
     ) -> Void
     typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
@@ -81,29 +81,6 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
         syncTask?.cancel()
         syncTask = nil
     }
-
-    #if DEBUG
-    func runSyncCycleForSelfTest(
-        transport: any LooperRealtimeStateMiniSyncTransport,
-        connectionRevision: Int,
-        onUpdate: @escaping SyncUpdateHandler
-    ) async -> LooperRealtimeStateMiniSyncCycleResult {
-        guard let localStore else {
-            return .retry(
-                latestSeq: 0,
-                errorDescription: "session mini local store unavailable"
-            )
-        }
-
-        let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: localStore,
-            transport: transport
-        )
-        return await synchronizer.runOneCycle { update in
-            await onUpdate(update, connectionRevision)
-        }
-    }
-    #endif
 
     private func runClientCoreStateMiniStream(
         localStore: CompanionSessionMiniLocalStore,
@@ -188,7 +165,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
             let snapshot = try await transport.getStateMiniSnapshot()
             let localSnapshot = try localStore.replaceStateMinis(with: snapshot)
             onUpdate(
-                LooperRealtimeStateMiniSyncUpdate(
+                LooperRealtimeStateMiniUpdate(
                     reason: .recovery,
                     snapshot: localSnapshot
                 ),

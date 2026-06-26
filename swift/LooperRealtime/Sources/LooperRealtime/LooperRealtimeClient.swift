@@ -61,33 +61,6 @@ public final class LooperRealtimeClient: Sendable {
         throw lastError ?? LooperRealtimeError.unavailable
     }
 
-    public func streamStateMinis(
-        afterSeq: Int64,
-        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
-    ) async throws {
-        try await withFirstAvailableService { service, metadata in
-            try await service.session(
-                metadata: metadata,
-                options: LooperRealtimeLatencyPolicy.streamCallOptions,
-                requestProducer: { writer in
-                    var frame = Looper_V1_ClientFrame()
-                    var resume = Looper_V1_Resume()
-                    resume.afterSeq = afterSeq
-                    frame.resume = resume
-                    try await writer.write(frame)
-                },
-                onResponse: { response in
-                    for try await frame in response.messages {
-                        guard case let .stateDelta(delta)? = frame.frame else {
-                            continue
-                        }
-                        try await onDelta(LooperRealtimeStateMiniDelta(delta))
-                    }
-                }
-            )
-        }
-    }
-
     public func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
         _ = try clientCore.startStateMiniStream(
             endpoints: endpoints.map(\.clientCoreEndpoint),
@@ -167,7 +140,6 @@ public final class LooperRealtimeClient: Sendable {
     }
 }
 
-extension LooperRealtimeClient: LooperRealtimeStateMiniSyncTransport {}
 extension LooperRealtimeClient: LooperRealtimeSessionCommandSubmitting {}
 extension LooperRealtimeClient: LooperRealtimeClientCoreStateMiniStreamTransport {}
 

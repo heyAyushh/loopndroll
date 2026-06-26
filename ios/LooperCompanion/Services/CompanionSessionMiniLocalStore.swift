@@ -21,7 +21,7 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
 
 struct CompanionClientCoreStateMiniStreamResult: Sendable {
     let reason: ClientStateMiniStreamUpdateReason
-    let update: LooperRealtimeStateMiniSyncUpdate?
+    let update: LooperRealtimeStateMiniUpdate?
     let errorDescription: String
 }
 
@@ -195,7 +195,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         let localSnapshot = try persistValidated(streamUpdate.snapshot)
         return CompanionClientCoreStateMiniStreamResult(
             reason: streamUpdate.reason,
-            update: LooperRealtimeStateMiniSyncUpdate(
+            update: LooperRealtimeStateMiniUpdate(
                 reason: .delta,
                 snapshot: localSnapshot
             ),
@@ -294,7 +294,7 @@ private extension LooperRealtimeStateMini {
     }
 }
 
-extension CompanionSessionMiniLocalStore: LooperRealtimeStateMiniLocalState {
+extension CompanionSessionMiniLocalStore {
     func currentStateMiniSnapshot() -> LooperRealtimeLocalSnapshot {
         do {
             return try localSnapshot(from: clientCore.snapshot())

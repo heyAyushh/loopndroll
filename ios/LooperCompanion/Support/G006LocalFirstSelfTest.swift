@@ -1,6 +1,7 @@
 #if DEBUG
 import Darwin
 import Foundation
+import LooperClientCore
 import LooperRealtime
 
 @MainActor
@@ -469,7 +470,7 @@ enum G006LocalFirstSelfTest {
                 miniRecord(session: cachedSession, seq: 20, revision: "mini-revision-20"),
             ]
         )
-        let transport = G006StateMiniSyncTransport(
+        let transport = G006StateMiniStreamTransport(
             streamPlans: [
                 .deltas([
                     try stateMiniDelta(
@@ -483,22 +484,21 @@ enum G006LocalFirstSelfTest {
         let service = G006LocalFirstServiceSpy(
             snapshot: networkSnapshot()
         )
+        service.stateMiniStreamTransport = transport
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
             sessionMiniLocalStore: store
         )
 
-        let cycleResult = await model.runSessionMiniSyncCycleForSelfTest(transport: transport)
-        guard case let .streamEnded(latestSeq) = cycleResult, latestSeq == 21 else {
-            throw SelfTestError.assertionFailed("mini sync cycle did not finish at latest seq 21")
-        }
-
+        model.startRealtimeSessionSyncIfNeeded()
+        defer { model.stopRealtimeSessionSync() }
         try await waitUntil("mini sync did not apply delta") {
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Synced Mini"
         }
 
-        let observedAfterSeqs = await transport.observedAfterSeqs()
+        let observedAfterSeqs = transport.observedAfterSeqs()
         try require(observedAfterSeqs == [20], "mini sync did not resume from cached seq")
+        try require(store.currentStateMiniSnapshot().latestSeq == 21, "mini sync did not finish at latest seq 21")
         try require(service.loadSnapshotCallCount == 0, "mini sync triggered full snapshot")
         return "afterSeq=20 latestSeq=\(store.currentStateMiniSnapshot().latestSeq) loadSnapshotCallCount=0"
     }
@@ -558,7 +558,7 @@ enum G006LocalFirstSelfTest {
             ref: "C7",
             status: .active
         )
-        let transport = G006StateMiniSyncTransport(
+        let transport = G006StateMiniStreamTransport(
             streamPlans: [
                 .deltas([
                     try stateMiniDelta(
@@ -569,10 +569,12 @@ enum G006LocalFirstSelfTest {
                 ]),
             ]
         )
+        service.stateMiniStreamTransport = transport
 
-        let cycleResult = await model.runSessionMiniSyncCycleForSelfTest(transport: transport)
-        guard case let .streamEnded(latestSeq) = cycleResult, latestSeq == 32 else {
-            throw SelfTestError.assertionFailed("connected mini sync did not finish at seq 32")
+        model.startRealtimeSessionSyncIfNeeded()
+        defer { model.stopRealtimeSessionSync() }
+        try await waitUntil("connected mini sync did not finish at seq 32") {
+            store.currentStateMiniSnapshot().latestSeq == 32
         }
         try require(model.connectionState == .connected, "mini sync did not mark connection connected")
 
@@ -670,7 +672,7 @@ enum G006LocalFirstSelfTest {
             status: .active
         )
         let streamSeq = Int64(200 + sampleIndex)
-        let transport = G006StateMiniSyncTransport(
+        let transport = G006StateMiniStreamTransport(
             streamPlans: [
                 .deltas([
                     try stateMiniDelta(
@@ -681,14 +683,17 @@ enum G006LocalFirstSelfTest {
                 ]),
             ]
         )
+        service.stateMiniStreamTransport = transport
         let streamStartedAt = uptimeNanoseconds()
-        let cycleResult = await model.runSessionMiniSyncCycleForSelfTest(transport: transport)
-        guard case let .streamEnded(latestSeq) = cycleResult, latestSeq == streamSeq else {
-            throw SelfTestError.assertionFailed("latency stream did not finish at seq \(streamSeq)")
-        }
+        model.startRealtimeSessionSyncIfNeeded()
+        defer { model.stopRealtimeSessionSync() }
         try await waitUntilFast("stream delta did not render locally") {
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == syncedSession.title
         }
+        try require(
+            store.currentStateMiniSnapshot().latestSeq == streamSeq,
+            "latency stream did not finish at seq \(streamSeq)"
+        )
         let streamApplyMs = elapsedMilliseconds(since: streamStartedAt)
 
         return [
@@ -1043,6 +1048,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     private(set) var notificationReplyClientMutationIDs: [String] = []
     private(set) var notificationReplyIDs: [String] = []
     private(set) var mutationOrder: [String] = []
+    var stateMiniStreamTransport: (any LooperRealtimeClientCoreStateMiniStreamTransport)?
     var modeError: Error?
     var promptError: Error?
     var snapshotError: Error?
@@ -1056,6 +1062,12 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 
     func prepareRealtimeConnection() async {}
+
+    func makeClientCoreStateMiniStreamTransport() async
+        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+    {
+        stateMiniStreamTransport
+    }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
@@ -1241,12 +1253,16 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 }
 
-private actor G006StateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
+private final class G006StateMiniStreamTransport:
+    LooperRealtimeClientCoreStateMiniStreamTransport,
+    @unchecked Sendable
+{
     enum StreamPlan: Sendable {
         case deltas([LooperRealtimeStateMiniDelta])
         case recoveryRequired(snapshot: LooperRealtimeStateMiniSnapshot)
     }
 
+    private let lock = NSLock()
     private var streamPlans: [StreamPlan]
     private var afterSeqs: [Int64] = []
     private var pendingSnapshot: LooperRealtimeStateMiniSnapshot?
@@ -1256,38 +1272,111 @@ private actor G006StateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
     }
 
     func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        guard let pendingSnapshot else {
-            throw LooperRealtimeError.unavailable
+        try lock.withLock {
+            guard let pendingSnapshot else {
+                throw LooperRealtimeError.unavailable
+            }
+            self.pendingSnapshot = nil
+            return pendingSnapshot
         }
-        self.pendingSnapshot = nil
-        return pendingSnapshot
     }
 
-    func streamStateMinis(
-        afterSeq: Int64,
-        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
-    ) async throws {
-        afterSeqs.append(afterSeq)
-        let plan = streamPlans.isEmpty ? .deltas([]) : streamPlans.removeFirst()
+    func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
+        let latestSeq = try clientCore.snapshot().latestSeq
+        lock.withLock {
+            afterSeqs.append(latestSeq)
+        }
+    }
+
+    func nextClientCoreStateMiniStreamUpdate(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateMiniStreamUpdate {
+        let plan = lock.withLock {
+            streamPlans.isEmpty ? .deltas([]) : streamPlans.removeFirst()
+        }
         switch plan {
         case let .deltas(deltas):
+            var latestUpdate: ClientStateMiniStreamUpdate?
             for delta in deltas {
-                try await onDelta(delta)
+                latestUpdate = try apply(delta: delta, to: clientCore)
             }
+            return try latestUpdate ?? stoppedUpdate(clientCore: clientCore)
         case let .recoveryRequired(snapshot):
-            pendingSnapshot = snapshot
-            throw G006RecoveryRequiredError()
+            lock.withLock {
+                pendingSnapshot = snapshot
+            }
+            let coreSnapshot = try clientCore.snapshot()
+            return ClientStateMiniStreamUpdate(
+                reason: .recoveryRequired,
+                snapshot: coreSnapshot,
+                didChange: false,
+                latestSeq: coreSnapshot.latestSeq,
+                errorDescription: "state mini recovery required"
+            )
         }
     }
 
+    func stopClientCoreStateMiniStream(clientCore _: LooperClientCore) throws {}
+
     func observedAfterSeqs() -> [Int64] {
-        afterSeqs
+        lock.withLock { afterSeqs }
     }
+
+    private func apply(
+        delta: LooperRealtimeStateMiniDelta,
+        to clientCore: LooperClientCore
+    ) throws -> ClientStateMiniStreamUpdate {
+        let session = delta.session.map(Self.clientStateMini)
+        let result = try clientCore.applyStateMiniDeltaWithResult(
+            delta: ClientStateMiniDelta(
+                seq: delta.seq,
+                latestSeq: delta.latestSeq,
+                entityId: delta.entityID,
+                kind: delta.kind,
+                revision: delta.revision,
+                serverTime: delta.serverTime ?? "",
+                hasSession: session != nil,
+                session: session ?? Self.emptyClientStateMini,
+                sessions: session == nil ? delta.sessions.map(Self.clientStateMini) : []
+            )
+        )
+        return ClientStateMiniStreamUpdate(
+            reason: .delta,
+            snapshot: result.snapshot,
+            didChange: result.didChange,
+            latestSeq: result.snapshot.latestSeq,
+            errorDescription: ""
+        )
+    }
+
+    private func stoppedUpdate(clientCore: LooperClientCore) throws -> ClientStateMiniStreamUpdate {
+        let snapshot = try clientCore.snapshot()
+        return ClientStateMiniStreamUpdate(
+            reason: .stopped,
+            snapshot: snapshot,
+            didChange: false,
+            latestSeq: snapshot.latestSeq,
+            errorDescription: ""
+        )
+    }
+
+    private static func clientStateMini(from mini: LooperRealtimeStateMini) -> ClientStateMini {
+        ClientStateMini(
+            sessionId: mini.sessionID,
+            assistantSurface: mini.assistantSurface,
+            seq: mini.seq,
+            revision: mini.revision,
+            payloadJson: mini.payloadJSON
+        )
+    }
+
+    private static let emptyClientStateMini = ClientStateMini(
+        sessionId: "",
+        assistantSurface: "",
+        seq: 0,
+        revision: "",
+        payloadJson: ""
+    )
 }
 
-private struct G006RecoveryRequiredError: LocalizedError, Sendable {
-    var errorDescription: String? {
-        "state mini recovery required: requested_after_seq=99 latest_seq=1"
-    }
-}
 #endif

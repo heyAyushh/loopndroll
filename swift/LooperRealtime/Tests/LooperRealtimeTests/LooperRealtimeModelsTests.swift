@@ -417,65 +417,6 @@ struct LooperRealtimeModelsTests {
         #expect(snapshot.pendingCommands.isEmpty)
     }
 
-    @Test
-    func synchronizerRecoversThenResumesFromSnapshotSeq() async throws {
-        let fileURL = temporaryStoreFileURL()
-        let store = try LooperRealtimeLocalStore(fileURL: fileURL)
-        let recovered = LooperRealtimeStateMini(
-            sessionID: "thread-recovered",
-            assistantSurface: "codex",
-            seq: 6,
-            revision: "rev-6",
-            payloadJSON: #"{"sessionId":"thread-recovered","assistantSurface":"codex"}"#
-        )
-        let updated = LooperRealtimeStateMini(
-            sessionID: "thread-recovered",
-            assistantSurface: "codex",
-            seq: 7,
-            revision: "rev-7",
-            payloadJSON: #"{"sessionId":"thread-recovered","assistantSurface":"codex"}"#
-        )
-        let transport = RecordingStateMiniSyncTransport(
-            snapshots: [
-                LooperRealtimeStateMiniSnapshot(
-                    latestSeq: 6,
-                    sessions: [recovered],
-                    serverTime: nil
-                ),
-            ],
-            streamPlans: [
-                .recoveryRequired,
-                .deltas([
-                    LooperRealtimeStateMiniDelta(
-                        seq: 7,
-                        latestSeq: 7,
-                        entityID: "session-mini:codex:thread-recovered",
-                        kind: "session-mini.changed",
-                        revision: "rev-7",
-                        serverTime: nil,
-                        session: updated,
-                        sessionID: "thread-recovered",
-                        assistantSurface: "codex",
-                        sessions: [updated]
-                    ),
-                ]),
-            ]
-        )
-        let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: store,
-            transport: transport,
-            sleep: { _ in }
-        )
-
-        let first = await synchronizer.runOneCycle { _ in }
-        let second = await synchronizer.runOneCycle { _ in }
-
-        #expect(first == .recovered(latestSeq: 6))
-        #expect(second == .streamEnded(latestSeq: 7))
-        #expect(await transport.observedAfterSeqs() == [0, 6])
-        #expect(store.snapshot().sessions == [updated])
-    }
-
     private func temporaryStoreFileURL() -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
             .appending(path: "looper-realtime-tests")
@@ -499,57 +440,5 @@ private struct RecordingCommandSubmitter: LooperRealtimeSessionCommandSubmitting
         let response = try await handler(frames)
         _ = try clientCore.applyCommandBatchResponse(response: response)
         return LooperRealtimeSessionCommandBatchResponse(response)
-    }
-}
-
-private actor RecordingStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
-    enum StreamPlan: Sendable {
-        case deltas([LooperRealtimeStateMiniDelta])
-        case recoveryRequired
-    }
-
-    private var snapshots: [LooperRealtimeStateMiniSnapshot]
-    private var streamPlans: [StreamPlan]
-    private var afterSeqs: [Int64] = []
-
-    init(
-        snapshots: [LooperRealtimeStateMiniSnapshot],
-        streamPlans: [StreamPlan]
-    ) {
-        self.snapshots = snapshots
-        self.streamPlans = streamPlans
-    }
-
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        guard !snapshots.isEmpty else {
-            throw LooperRealtimeError.unavailable
-        }
-        return snapshots.removeFirst()
-    }
-
-    func streamStateMinis(
-        afterSeq: Int64,
-        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
-    ) async throws {
-        afterSeqs.append(afterSeq)
-        let plan = streamPlans.isEmpty ? .deltas([]) : streamPlans.removeFirst()
-        switch plan {
-        case let .deltas(deltas):
-            for delta in deltas {
-                try await onDelta(delta)
-            }
-        case .recoveryRequired:
-            throw RecordingRecoveryRequiredError()
-        }
-    }
-
-    func observedAfterSeqs() -> [Int64] {
-        afterSeqs
-    }
-}
-
-private struct RecordingRecoveryRequiredError: LocalizedError, Sendable {
-    var errorDescription: String? {
-        "state mini recovery required"
     }
 }

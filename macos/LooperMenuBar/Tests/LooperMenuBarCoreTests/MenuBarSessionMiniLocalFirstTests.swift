@@ -231,44 +231,26 @@ struct MenuBarSessionMiniLocalFirstTests {
             notificationTargetIds: ["macos"],
             lastActivityAtMs: 6
         )
-        let updatedRecord = try miniRecord(
-            id: "thread-recovered",
-            title: "Recovered row updated",
-            mode: "max-turns-1",
-            notificationTargetIds: ["macos"],
-            lastActivityAtMs: 7
-        )
-        let transport = RecordingStateMiniSyncTransport(
-            snapshots: [
-                LooperRealtimeStateMiniSnapshot(
-                    latestSeq: 6,
-                    sessions: [stateMini(from: recoveredRecord)],
-                    serverTime: nil
-                ),
-            ],
-            streamPlans: [
-                .recoveryRequired,
-                .deltas([
-                    stateMiniDelta(from: updatedRecord),
-                ]),
-            ]
-        )
-        let synchronizer = LooperRealtimeStateMiniSynchronizer(
-            store: store,
-            transport: transport,
-            sleep: { _ in }
+        let transport = RecordingRecoveryClientCoreStateMiniStreamTransport(
+            snapshot: LooperRealtimeStateMiniSnapshot(
+                latestSeq: 6,
+                sessions: [stateMini(from: recoveredRecord)],
+                serverTime: nil
+            )
         )
 
-        let recoveryResult = await synchronizer.runOneCycle { _ in }
-        let resumedResult = await synchronizer.runOneCycle { _ in }
+        try await store.startClientCoreStateMiniStream(using: transport)
+        let recoveryResult = try await store.nextClientCoreStateMiniStreamResult(using: transport)
+        let recoveredSnapshot = try await store.recoverClientCoreStateMiniStream(using: transport)
+        store.stopClientCoreStateMiniStream(using: transport)
         let snapshot = try #require(try store.cachedSnapshot())
 
-        #expect(recoveryResult == .recovered(latestSeq: 6))
-        #expect(resumedResult == .streamEnded(latestSeq: 7))
-        #expect(await transport.observedAfterSeqs() == [5, 6])
-        #expect(await transport.snapshotRequestCount() == 1)
+        #expect(recoveryResult.reason == .recoveryRequired)
+        #expect(recoveredSnapshot?.latestSeq == 6)
+        #expect(transport.observedAfterSeqs() == [5])
+        #expect(transport.snapshotRequestCount() == 1)
         #expect(snapshot.sessions.map(\.sessionID) == ["thread-recovered"])
-        #expect(snapshot.sessions.first?.effectiveMode == "max-turns-1")
+        #expect(snapshot.sessions.first?.effectiveMode == "await-reply")
         #expect(store.pendingCommands().map(\.clientMutationID) == ["mutation-pending"])
     }
 
@@ -676,58 +658,6 @@ private final class NoNetworkControlPlaneClient: @unchecked Sendable {
     }
 }
 
-private actor RecordingStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
-    enum StreamPlan: Sendable {
-        case deltas([LooperRealtimeStateMiniDelta])
-        case recoveryRequired
-    }
-
-    private var snapshots: [LooperRealtimeStateMiniSnapshot]
-    private var streamPlans: [StreamPlan]
-    private var afterSeqs: [Int64] = []
-    private var snapshotRequests = 0
-
-    init(
-        snapshots: [LooperRealtimeStateMiniSnapshot],
-        streamPlans: [StreamPlan]
-    ) {
-        self.snapshots = snapshots
-        self.streamPlans = streamPlans
-    }
-
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        snapshotRequests += 1
-        guard !snapshots.isEmpty else {
-            throw LooperRealtimeError.unavailable
-        }
-        return snapshots.removeFirst()
-    }
-
-    func streamStateMinis(
-        afterSeq: Int64,
-        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
-    ) async throws {
-        afterSeqs.append(afterSeq)
-        let plan = streamPlans.isEmpty ? .deltas([]) : streamPlans.removeFirst()
-        switch plan {
-        case let .deltas(deltas):
-            for delta in deltas {
-                try await onDelta(delta)
-            }
-        case .recoveryRequired:
-            throw RecordingRecoveryRequiredError()
-        }
-    }
-
-    func observedAfterSeqs() -> [Int64] {
-        afterSeqs
-    }
-
-    func snapshotRequestCount() -> Int {
-        snapshotRequests
-    }
-}
-
 private final class RecordingClientCoreStateMiniStreamTransport:
     LooperRealtimeClientCoreStateMiniStreamTransport,
     @unchecked Sendable
@@ -821,9 +751,54 @@ private final class RecordingClientCoreStateMiniStreamTransport:
     )
 }
 
-private struct RecordingRecoveryRequiredError: LocalizedError, Sendable {
-    var errorDescription: String? {
-        "state mini recovery required: requested_after_seq=99 latest_seq=6"
+private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
+    LooperRealtimeClientCoreStateMiniStreamTransport,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private let snapshot: LooperRealtimeStateMiniSnapshot
+    private var afterSeqs: [Int64] = []
+    private var snapshotRequests = 0
+
+    init(snapshot: LooperRealtimeStateMiniSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+        lock.withLock {
+            snapshotRequests += 1
+        }
+        return snapshot
+    }
+
+    func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
+        let latestSeq = try clientCore.snapshot().latestSeq
+        lock.withLock {
+            afterSeqs.append(latestSeq)
+        }
+    }
+
+    func nextClientCoreStateMiniStreamUpdate(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateMiniStreamUpdate {
+        let coreSnapshot = try clientCore.snapshot()
+        return ClientStateMiniStreamUpdate(
+            reason: .recoveryRequired,
+            snapshot: coreSnapshot,
+            didChange: false,
+            latestSeq: coreSnapshot.latestSeq,
+            errorDescription: "state mini recovery required: requested_after_seq=99 latest_seq=6"
+        )
+    }
+
+    func stopClientCoreStateMiniStream(clientCore _: LooperClientCore) throws {}
+
+    func observedAfterSeqs() -> [Int64] {
+        lock.withLock { afterSeqs }
+    }
+
+    func snapshotRequestCount() -> Int {
+        lock.withLock { snapshotRequests }
     }
 }
 
