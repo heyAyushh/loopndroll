@@ -77,28 +77,12 @@ if [[ -e "$FRAMEWORK_BUILD_DIR" ]]; then
 fi
 mkdir -p "$FRAMEWORK_BUILD_DIR"
 
-make_static_framework() {
-  local target="$1"
+write_framework_info_plist() {
+  local plist_path="$1"
   local min_os_version="$2"
-  local framework_dir="$FRAMEWORK_BUILD_DIR/${target}/${FFI_FRAMEWORK_NAME}"
-  local modules_dir="$framework_dir/Modules"
-  local headers_dir="$framework_dir/Headers"
-  local bundle_suffix
-  bundle_suffix="$(printf '%s' "$target" | tr -cd '[:alnum:]')"
+  local bundle_suffix="$3"
 
-  mkdir -p "$modules_dir" "$headers_dir"
-  cp "$CRATE_DIR/target/${target}/release/liblooper_client_core.a" \
-    "$framework_dir/${FFI_MODULE_NAME}"
-  cp "$BINDINGS_DIR/$FFI_HEADER_NAME" "$headers_dir/$FFI_HEADER_NAME"
-  strip_generated_whitespace "$headers_dir"
-  cat >"$modules_dir/module.modulemap" <<MODULEMAP
-framework module ${FFI_MODULE_NAME} {
-  umbrella header "${FFI_HEADER_NAME}"
-  export *
-  module * { export * }
-}
-MODULEMAP
-  cat >"$framework_dir/Info.plist" <<PLIST
+  cat >"$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -126,9 +110,68 @@ MODULEMAP
 PLIST
 }
 
-make_static_framework aarch64-apple-ios 18.0
-make_static_framework aarch64-apple-ios-sim 18.0
-make_static_framework aarch64-apple-darwin 15.0
+write_framework_modulemap() {
+  local modulemap_path="$1"
+
+  cat >"$modulemap_path" <<MODULEMAP
+framework module ${FFI_MODULE_NAME} {
+  umbrella header "${FFI_HEADER_NAME}"
+  export *
+  module * { export * }
+}
+MODULEMAP
+}
+
+make_shallow_static_framework() {
+  local target="$1"
+  local min_os_version="$2"
+  local framework_dir="$FRAMEWORK_BUILD_DIR/${target}/${FFI_FRAMEWORK_NAME}"
+  local modules_dir="$framework_dir/Modules"
+  local headers_dir="$framework_dir/Headers"
+  local bundle_suffix
+  bundle_suffix="$(printf '%s' "$target" | tr -cd '[:alnum:]')"
+
+  mkdir -p "$modules_dir" "$headers_dir"
+  cp "$CRATE_DIR/target/${target}/release/liblooper_client_core.a" \
+    "$framework_dir/${FFI_MODULE_NAME}"
+  cp "$BINDINGS_DIR/$FFI_HEADER_NAME" "$headers_dir/$FFI_HEADER_NAME"
+  strip_generated_whitespace "$headers_dir"
+  write_framework_modulemap "$modules_dir/module.modulemap"
+  write_framework_info_plist "$framework_dir/Info.plist" "$min_os_version" "$bundle_suffix"
+}
+
+make_versioned_macos_static_framework() {
+  local target="$1"
+  local min_os_version="$2"
+  local framework_dir="$FRAMEWORK_BUILD_DIR/${target}/${FFI_FRAMEWORK_NAME}"
+  local version_dir="$framework_dir/Versions/A"
+  local headers_dir="$version_dir/Headers"
+  local modules_dir="$version_dir/Modules"
+  local resources_dir="$version_dir/Resources"
+  local bundle_suffix
+  bundle_suffix="$(printf '%s' "$target" | tr -cd '[:alnum:]')"
+
+  mkdir -p "$headers_dir" "$modules_dir" "$resources_dir"
+  cp "$CRATE_DIR/target/${target}/release/liblooper_client_core.a" \
+    "$version_dir/${FFI_MODULE_NAME}"
+  cp "$BINDINGS_DIR/$FFI_HEADER_NAME" "$headers_dir/$FFI_HEADER_NAME"
+  strip_generated_whitespace "$headers_dir"
+  write_framework_modulemap "$modules_dir/module.modulemap"
+  write_framework_info_plist \
+    "$resources_dir/Info.plist" \
+    "$min_os_version" \
+    "$bundle_suffix"
+
+  ln -s A "$framework_dir/Versions/Current"
+  ln -s Versions/Current/Headers "$framework_dir/Headers"
+  ln -s Versions/Current/Modules "$framework_dir/Modules"
+  ln -s Versions/Current/Resources "$framework_dir/Resources"
+  ln -s "Versions/Current/${FFI_MODULE_NAME}" "$framework_dir/${FFI_MODULE_NAME}"
+}
+
+make_shallow_static_framework aarch64-apple-ios 18.0
+make_shallow_static_framework aarch64-apple-ios-sim 18.0
+make_versioned_macos_static_framework aarch64-apple-darwin 15.0
 
 echo "Creating $XCFRAMEWORK_DIR"
 xcodebuild -create-xcframework \
