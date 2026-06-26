@@ -2714,11 +2714,21 @@ public func FfiConverterTypeClientSessionSectionsProjection_lower(_ value: Clien
 
 public struct ClientSiriSessionEntityProjection: Equatable, Hashable {
     public var entries: [ClientSessionIndexEntry]
+    public var hasDefaultEntry: Bool
+    public var defaultEntry: ClientSessionIndexEntry
+    public var hasCurrentEntry: Bool
+    public var currentEntry: ClientSessionIndexEntry
+    public var unresolvedDefaultSessionId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entries: [ClientSessionIndexEntry]) {
+    public init(entries: [ClientSessionIndexEntry], hasDefaultEntry: Bool, defaultEntry: ClientSessionIndexEntry, hasCurrentEntry: Bool, currentEntry: ClientSessionIndexEntry, unresolvedDefaultSessionId: String) {
         self.entries = entries
+        self.hasDefaultEntry = hasDefaultEntry
+        self.defaultEntry = defaultEntry
+        self.hasCurrentEntry = hasCurrentEntry
+        self.currentEntry = currentEntry
+        self.unresolvedDefaultSessionId = unresolvedDefaultSessionId
     }
 
 
@@ -2737,12 +2747,22 @@ public struct FfiConverterTypeClientSiriSessionEntityProjection: FfiConverterRus
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSiriSessionEntityProjection {
         return
             try ClientSiriSessionEntityProjection(
-                entries: FfiConverterSequenceTypeClientSessionIndexEntry.read(from: &buf)
+                entries: FfiConverterSequenceTypeClientSessionIndexEntry.read(from: &buf),
+                hasDefaultEntry: FfiConverterBool.read(from: &buf),
+                defaultEntry: FfiConverterTypeClientSessionIndexEntry.read(from: &buf),
+                hasCurrentEntry: FfiConverterBool.read(from: &buf),
+                currentEntry: FfiConverterTypeClientSessionIndexEntry.read(from: &buf),
+                unresolvedDefaultSessionId: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: ClientSiriSessionEntityProjection, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeClientSessionIndexEntry.write(value.entries, into: &buf)
+        FfiConverterBool.write(value.hasDefaultEntry, into: &buf)
+        FfiConverterTypeClientSessionIndexEntry.write(value.defaultEntry, into: &buf)
+        FfiConverterBool.write(value.hasCurrentEntry, into: &buf)
+        FfiConverterTypeClientSessionIndexEntry.write(value.currentEntry, into: &buf)
+        FfiConverterString.write(value.unresolvedDefaultSessionId, into: &buf)
     }
 }
 

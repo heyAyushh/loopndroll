@@ -73,6 +73,11 @@ pub struct ClientSessionIndexProjection {
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientSiriSessionEntityProjection {
     pub entries: Vec<ClientSessionIndexEntry>,
+    pub has_default_entry: bool,
+    pub default_entry: ClientSessionIndexEntry,
+    pub has_current_entry: bool,
+    pub current_entry: ClientSessionIndexEntry,
+    pub unresolved_default_session_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,6 +151,7 @@ struct SortableSession {
     session: SessionDocument,
 }
 
+#[derive(Clone)]
 struct SortableSessionIndexEntry {
     surface: String,
     surface_index: u32,
@@ -323,26 +329,11 @@ pub fn reduce_siri_session_entities(
     assistant_surface_order: Vec<String>,
 ) -> Result<ClientSiriSessionEntityProjection, ClientCoreError> {
     let snapshot = parse_snapshot(&snapshot_json)?;
+    let candidate_entries = siri_session_candidates(&snapshot, assistant_surface_order);
     let mut entries_by_entity_id = BTreeMap::<(String, String), SortableSessionIndexEntry>::new();
 
-    for surface in assistant_surface_order {
-        for (surface_index, session) in sessions_for_surface(&snapshot, &surface)
-            .into_iter()
-            .enumerate()
-        {
-            if session.is_archived {
-                continue;
-            }
-
-            entries_by_entity_id.insert(
-                (surface.clone(), session.id.clone()),
-                SortableSessionIndexEntry {
-                    surface: surface.clone(),
-                    surface_index: surface_index as u32,
-                    session,
-                },
-            );
-        }
+    for entry in candidate_entries.iter().cloned() {
+        entries_by_entity_id.insert((entry.surface.clone(), entry.session.id.clone()), entry);
     }
 
     let mut sortable_entries = entries_by_entity_id.into_values().collect::<Vec<_>>();
@@ -355,7 +346,27 @@ pub fn reduce_siri_session_entities(
         })
         .collect();
 
-    Ok(ClientSiriSessionEntityProjection { entries })
+    let default_session_id = normalized_global_settings_string(&snapshot, "siriDefaultSessionId");
+    let default_entry = resolve_siri_session_entry(
+        default_session_id.as_deref(),
+        normalized_global_settings_string(&snapshot, "siriDefaultAssistantSurface").as_deref(),
+        &candidate_entries,
+    );
+    let current_entry = resolve_siri_session_entry(
+        normalized_global_settings_string(&snapshot, "siriCurrentSessionId").as_deref(),
+        normalized_global_settings_string(&snapshot, "siriCurrentAssistantSurface").as_deref(),
+        &candidate_entries,
+    )
+    .or_else(|| default_entry.clone());
+
+    Ok(ClientSiriSessionEntityProjection {
+        entries,
+        has_default_entry: default_entry.is_some(),
+        default_entry: default_entry.unwrap_or_else(blank_session_index_entry),
+        has_current_entry: current_entry.is_some(),
+        current_entry: current_entry.unwrap_or_else(blank_session_index_entry),
+        unresolved_default_session_id: default_session_id.unwrap_or_default(),
+    })
 }
 
 impl SessionDocument {
@@ -722,6 +733,93 @@ fn project_session_index(
     ClientSessionIndexProjection { entries, identity }
 }
 
+fn siri_session_candidates(
+    snapshot: &SnapshotDocument,
+    assistant_surface_order: Vec<String>,
+) -> Vec<SortableSessionIndexEntry> {
+    let surface_order = if assistant_surface_order.is_empty() {
+        default_assistant_surface_order()
+    } else {
+        assistant_surface_order
+    };
+    let mut entries = Vec::new();
+
+    for surface in surface_order {
+        for (surface_index, session) in sessions_for_surface(snapshot, &surface)
+            .into_iter()
+            .enumerate()
+        {
+            if session.is_archived || normalized_string(Some(&session.id)).is_none() {
+                continue;
+            }
+
+            entries.push(SortableSessionIndexEntry {
+                surface: surface.clone(),
+                surface_index: surface_index as u32,
+                session,
+            });
+        }
+    }
+
+    entries
+}
+
+fn resolve_siri_session_entry(
+    session_id: Option<&str>,
+    assistant_surface: Option<&str>,
+    candidates: &[SortableSessionIndexEntry],
+) -> Option<ClientSessionIndexEntry> {
+    let session_id = normalized_string(session_id)?;
+    let assistant_surface = normalized_string(assistant_surface)
+        .or_else(|| inferred_assistant_surface(&session_id, candidates))
+        .unwrap_or_else(|| DEFAULT_ASSISTANT_SURFACE.to_owned());
+
+    candidates
+        .iter()
+        .find(|entry| {
+            normalized_string(Some(&entry.session.id)).as_deref() == Some(session_id.as_str())
+                && entry.surface == assistant_surface
+        })
+        .map(|entry| ClientSessionIndexEntry {
+            surface: entry.surface.clone(),
+            session_index: entry.surface_index,
+        })
+}
+
+fn inferred_assistant_surface(
+    session_id: &str,
+    candidates: &[SortableSessionIndexEntry],
+) -> Option<String> {
+    candidates
+        .iter()
+        .find(|entry| normalized_string(Some(&entry.session.id)).as_deref() == Some(session_id))
+        .map(|entry| entry.surface.clone())
+}
+
+fn blank_session_index_entry() -> ClientSessionIndexEntry {
+    ClientSessionIndexEntry {
+        surface: String::new(),
+        session_index: 0,
+    }
+}
+
+fn normalized_global_settings_string(snapshot: &SnapshotDocument, key: &str) -> Option<String> {
+    normalized_string(
+        snapshot
+            .global_settings
+            .extra
+            .get(key)
+            .and_then(Value::as_str),
+    )
+}
+
+fn normalized_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn default_assistant_surface_order() -> Vec<String> {
     vec![
         DEFAULT_ASSISTANT_SURFACE.to_owned(),
@@ -1060,6 +1158,11 @@ mod tests {
                 },
             ]
         );
+        assert!(!projection.has_default_entry);
+        assert_eq!(projection.default_entry, blank_session_index_entry());
+        assert!(!projection.has_current_entry);
+        assert_eq!(projection.current_entry, blank_session_index_entry());
+        assert!(projection.unresolved_default_session_id.is_empty());
     }
 
     #[test]
@@ -1102,6 +1205,143 @@ mod tests {
                 session_index: 1,
             }]
         );
+        assert!(!projection.has_default_entry);
+        assert!(!projection.has_current_entry);
+    }
+
+    #[test]
+    fn siri_session_entities_resolve_current_session_before_default() {
+        let projection = reduce_siri_session_entities(
+            siri_resolution_json(
+                Some("current-thread"),
+                Some(DEVIN),
+                Some("default-thread"),
+                Some(CODEX),
+                false,
+            ),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert!(projection.has_default_entry);
+        assert_eq!(
+            projection.default_entry,
+            ClientSessionIndexEntry {
+                surface: CODEX.to_owned(),
+                session_index: 0,
+            }
+        );
+        assert!(projection.has_current_entry);
+        assert_eq!(
+            projection.current_entry,
+            ClientSessionIndexEntry {
+                surface: DEVIN.to_owned(),
+                session_index: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn siri_session_entities_fall_back_from_stale_current_to_default() {
+        let projection = reduce_siri_session_entities(
+            siri_resolution_json(
+                Some("stale-thread"),
+                Some(DEVIN),
+                Some("default-thread"),
+                Some(CODEX),
+                false,
+            ),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert!(projection.has_default_entry);
+        assert!(projection.has_current_entry);
+        assert_eq!(
+            projection.current_entry,
+            ClientSessionIndexEntry {
+                surface: CODEX.to_owned(),
+                session_index: 0,
+            }
+        );
+        assert_eq!(projection.unresolved_default_session_id, "default-thread");
+    }
+
+    #[test]
+    fn siri_session_entities_infer_unset_current_surface() {
+        let projection = reduce_siri_session_entities(
+            siri_resolution_json(
+                Some("current-thread"),
+                None,
+                Some("default-thread"),
+                Some(CODEX),
+                false,
+            ),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert!(projection.has_current_entry);
+        assert_eq!(
+            projection.current_entry,
+            ClientSessionIndexEntry {
+                surface: DEVIN.to_owned(),
+                session_index: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn siri_session_entities_do_not_choose_arbitrary_latest_session() {
+        let projection = reduce_siri_session_entities(
+            siri_resolution_json(None, None, None, None, false),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert!(!projection.has_default_entry);
+        assert!(!projection.has_current_entry);
+        assert!(projection.unresolved_default_session_id.is_empty());
+    }
+
+    #[test]
+    fn siri_session_entities_reject_archived_configured_sessions() {
+        let projection = reduce_siri_session_entities(
+            siri_resolution_json(
+                Some("current-thread"),
+                Some(DEVIN),
+                Some("default-thread"),
+                Some(CODEX),
+                true,
+            ),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert!(!projection.has_default_entry);
+        assert!(!projection.has_current_entry);
+        assert_eq!(projection.unresolved_default_session_id, "default-thread");
+    }
+
+    #[test]
+    fn siri_session_entities_ignore_blank_configured_session_ids() {
+        for blank_session_id in ["", " ", "\n", "\t"] {
+            let projection = reduce_siri_session_entities(
+                siri_resolution_json(
+                    Some(blank_session_id),
+                    Some(DEVIN),
+                    Some(blank_session_id),
+                    Some(CODEX),
+                    false,
+                ),
+                vec![CODEX.to_owned(), DEVIN.to_owned()],
+            )
+            .expect("project siri entities");
+
+            assert!(!projection.has_default_entry);
+            assert!(!projection.has_current_entry);
+            assert!(projection.unresolved_default_session_id.is_empty());
+        }
     }
 
     #[test]
@@ -1414,5 +1654,66 @@ mod tests {
             }
         }"#
         .to_owned()
+    }
+
+    fn siri_resolution_json(
+        current_session_id: Option<&str>,
+        current_assistant_surface: Option<&str>,
+        default_session_id: Option<&str>,
+        default_assistant_surface: Option<&str>,
+        configured_sessions_are_archived: bool,
+    ) -> String {
+        let current_session_id = optional_json_string("siriCurrentSessionId", current_session_id);
+        let current_assistant_surface =
+            optional_json_string("siriCurrentAssistantSurface", current_assistant_surface);
+        let default_session_id = optional_json_string("siriDefaultSessionId", default_session_id);
+        let default_assistant_surface =
+            optional_json_string("siriDefaultAssistantSurface", default_assistant_surface);
+        let archived = configured_sessions_are_archived;
+        format!(
+            r#"{{
+                "revision":"siri-resolution",
+                "globalSettings":{{
+                    "assistantSurface":"codex"{default_session_id}{default_assistant_surface}{current_session_id}{current_assistant_surface}
+                }},
+                "sessions":[],
+                "surfaceSessions":{{
+                    "codex":[
+                        {{
+                            "id":"default-thread",
+                            "ref":"C1",
+                            "status":"active",
+                            "lastActivityAtMs":1781596920000,
+                            "lastActivityAt":"2026-06-16T08:00:00Z",
+                            "isArchived":{archived}
+                        }},
+                        {{
+                            "id":"newer-thread",
+                            "ref":"C2",
+                            "status":"active",
+                            "lastActivityAtMs":1781596920500,
+                            "lastActivityAt":"2026-06-16T08:00:00.500Z",
+                            "isArchived":false
+                        }}
+                    ],
+                    "devin":[
+                        {{
+                            "id":"current-thread",
+                            "ref":"D1",
+                            "status":"active",
+                            "lastActivityAtMs":1781596920321,
+                            "lastActivityAt":"2026-06-16T08:02:00.321Z",
+                            "isArchived":{archived}
+                        }}
+                    ]
+                }}
+            }}"#
+        )
+    }
+
+    fn optional_json_string(key: &str, value: Option<&str>) -> String {
+        value
+            .map(|value| format!(r#","{key}":"{}""#, value.escape_default()))
+            .unwrap_or_default()
     }
 }

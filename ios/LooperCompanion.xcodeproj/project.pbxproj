@@ -71,7 +71,6 @@
 		99C302A2036DAEDDD87A0CBD /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */; };
 		A075E99DA429033BC81CF2D6 /* SpotlightSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACE4AA7E26A90DEF6007679B /* SpotlightSearchService.swift */; };
 		A5EF972A8241CA28D7373C86 /* LocalNetworkAccessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */; };
-		A648E7D55E958E45B4145511 /* LooperCurrentSessionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */; };
 		A6CE50C55BF7F4B3E91803C0 /* SKNode+Debug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F13390658F0003A8AB6656 /* SKNode+Debug.swift */; };
 		AC398A4365589659672558F5 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B574A6D33E4D4266BD522D3F /* Preview Assets.xcassets */; };
 		AEE02BA4C8872FDFB121F4F2 /* CompanionConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150B19C23F529638DF99E573 /* CompanionConfiguration.swift */; };
@@ -157,7 +156,6 @@
 		75F3F5A6F101C8D0578A7CA7 /* SessionsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsScreen.swift; sourceTree = "<group>"; };
 		76D0B59CE7C1F5F875BAFD28 /* OrbScannerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbScannerScreen.swift; sourceTree = "<group>"; };
 		78346AF56F5D457B05954C0B /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
-		7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCurrentSessionResolver.swift; sourceTree = "<group>"; };
 		80466873285B25A2D1353BE3 /* SpotlightIndexSyncWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightIndexSyncWorker.swift; sourceTree = "<group>"; };
 		80DC6E68627D2DF8604A322B /* MotionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionController.swift; sourceTree = "<group>"; };
 		8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */ = {isa = PBXFileReference; path = "codex-logo-dark.mp4"; sourceTree = "<group>"; };
@@ -319,7 +317,6 @@
 		744173B7F70D09504251A3FA /* AppIntents */ = {
 			isa = PBXGroup;
 			children = (
-				7BEAE51E686023A9E2A0ED70 /* LooperCurrentSessionResolver.swift */,
 				19E7C2A074BE52FD3EFF3A5A /* LooperSiriIntents.swift */,
 				3B740E73AB088B6BE7D38869 /* LooperSiriSessionSupport.swift */,
 			);
@@ -667,7 +664,6 @@
 				A5EF972A8241CA28D7373C86 /* LocalNetworkAccessMonitor.swift in Sources */,
 				961C8BD940EFE071CCF54F0D /* LocalNotificationManager.swift in Sources */,
 				626E73486A4D4B1DA9409649 /* LooperCompanionApp.swift in Sources */,
-				A648E7D55E958E45B4145511 /* LooperCurrentSessionResolver.swift in Sources */,
 				13C3246C36D7054C424ACD3F /* LooperSiriIntents.swift in Sources */,
 				E2EAF24D303EE6B8D48B349B /* LooperSiriSessionSupport.swift in Sources */,
 				903103D600804B62253BDCB3 /* MarkdownMessageView.swift in Sources */,

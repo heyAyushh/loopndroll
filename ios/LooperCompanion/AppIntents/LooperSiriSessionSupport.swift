@@ -367,25 +367,32 @@ struct LooperSiriSessionClient: Sendable {
         }
 
         let snapshot = try await service.loadSnapshot()
+        let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
+            snapshot,
+            surfaces: CompanionAssistantSurface.allCases
+        )
+        let entityByID = Dictionary(
+            projection.entries
+                .map { projectedEntity(from: $0, snapshot: snapshot) }
+                .map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         var entities: [LooperSessionEntity] = []
         var seenEntityIDs = Set<String>()
         for identifier in requestedIdentifiers {
             guard let entityIdentifier = LooperSiriEntityIdentifier
-                .parsedOrLegacyCodexIdentifier(rawValue: identifier),
-                let assistantSurface = CompanionAssistantSurface(
-                    rawValue: entityIdentifier.assistantSurface
-                )
+                .parsedOrLegacyCodexIdentifier(rawValue: identifier)
             else {
                 continue
             }
 
-            let entity = entityForSession(
-                id: entityIdentifier.sessionID,
-                assistantSurface: assistantSurface,
-                snapshot: snapshot
-            )
+            let entityID = LooperSiriEntityIdentifier(
+                assistantSurface: entityIdentifier.assistantSurface,
+                sessionID: entityIdentifier.sessionID
+            ).rawValue
 
-            if let entity, seenEntityIDs.insert(entity.id).inserted {
+            if let entity = entityByID[entityID], seenEntityIDs.insert(entity.id).inserted {
                 entities.append(entity)
             }
         }
@@ -414,29 +421,30 @@ struct LooperSiriSessionClient: Sendable {
 
     func defaultSiriSessionEntity() async throws -> LooperSessionEntity {
         let snapshot = try await service.loadSnapshot()
-        guard let sessionID = snapshot.globalSettings.siriDefaultSessionId else {
-            throw LooperSiriError.noDefaultSession
-        }
-
-        let assistantSurface = snapshot.globalSettings.siriDefaultAssistantSurface
-            ?? snapshot.assistantSurface(containingSessionID: sessionID)
-            ?? .codex
-
-        guard let session = snapshot.sessions(for: assistantSurface).first(where: { session in
-            session.id == sessionID && !session.isArchived
-        }) else {
-            throw LooperSiriError.defaultSessionUnavailable(sessionID)
-        }
-
-        return LooperSessionEntity(
-            session: session,
-            assistantSurface: assistantSurface
+        let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
+            snapshot,
+            surfaces: CompanionAssistantSurface.allCases
         )
+
+        guard projection.hasDefaultEntry else {
+            throw unresolvedDefaultSiriSessionError(from: projection)
+        }
+
+        return projectedEntity(from: projection.defaultEntry, snapshot: snapshot)
     }
 
     func currentSiriSessionEntity() async throws -> LooperSessionEntity {
         let snapshot = try await service.loadSnapshot()
-        return try LooperCurrentSessionResolver().currentEntity(from: snapshot)
+        let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
+            snapshot,
+            surfaces: CompanionAssistantSurface.allCases
+        )
+
+        guard projection.hasCurrentEntry else {
+            throw unresolvedDefaultSiriSessionError(from: projection)
+        }
+
+        return projectedEntity(from: projection.currentEntry, snapshot: snapshot)
     }
 
     func saveDefaultSiriSession(_ entity: LooperSessionEntity) async throws {
@@ -492,38 +500,36 @@ struct LooperSiriSessionClient: Sendable {
         )
 
         return projection.entries.map { entry in
-            guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
-                fatalError("Siri session entity projection returned unknown surface: \(entry.surface)")
-            }
-
-            let sessions = snapshot.sessions(for: surface)
-            let sessionIndex = Int(entry.sessionIndex)
-            guard sessions.indices.contains(sessionIndex) else {
-                fatalError("Siri session entity projection returned invalid index \(sessionIndex) for \(surface.rawValue)")
-            }
-
-            return LooperSessionEntity(
-                session: sessions[sessionIndex],
-                assistantSurface: surface
-            )
+            projectedEntity(from: entry, snapshot: snapshot)
         }
     }
 
-    private func entityForSession(
-        id sessionID: String,
-        assistantSurface: CompanionAssistantSurface,
+    private func projectedEntity(
+        from entry: ClientSessionIndexEntry,
         snapshot: MobileSnapshot
-    ) -> LooperSessionEntity? {
-        snapshot.sessions(for: assistantSurface)
-            .first { session in
-                session.id == sessionID && !session.isArchived
-            }
-            .map { session in
-                LooperSessionEntity(
-                    session: session,
-                    assistantSurface: assistantSurface
-                )
-            }
+    ) -> LooperSessionEntity {
+        guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
+            fatalError("Siri session entity projection returned unknown surface: \(entry.surface)")
+        }
+
+        let sessions = snapshot.sessions(for: surface)
+        let sessionIndex = Int(entry.sessionIndex)
+        guard sessions.indices.contains(sessionIndex) else {
+            fatalError("Siri session entity projection returned invalid index \(sessionIndex) for \(surface.rawValue)")
+        }
+
+        return LooperSessionEntity(
+            session: sessions[sessionIndex],
+            assistantSurface: surface
+        )
+    }
+
+    private func unresolvedDefaultSiriSessionError(
+        from projection: ClientSiriSessionEntityProjection
+    ) -> LooperSiriError {
+        projection.unresolvedDefaultSessionId.isEmpty
+            ? .noDefaultSession
+            : .defaultSessionUnavailable(projection.unresolvedDefaultSessionId)
     }
 
     private func entityMatchesSearch(

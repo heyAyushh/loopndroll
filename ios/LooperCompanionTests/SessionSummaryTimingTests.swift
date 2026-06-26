@@ -179,6 +179,85 @@ struct SessionSummaryTimingTests {
         #expect(!entities.map(\.sessionID).contains("archived-thread"))
     }
 
+    @Test("Siri default and current sessions use Rust projection")
+    func siriDefaultAndCurrentSessionsUseRustProjection() async throws {
+        let defaultCodex = try sessionSummary(
+            id: "default-thread",
+            ref: "C1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let currentDevin = try sessionSummary(
+            id: "current-thread",
+            ref: "D1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = siriRoutingSnapshot(
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex,
+                siriDefaultSessionId: "default-thread",
+                siriDefaultAssistantSurface: .codex,
+                siriCurrentSessionId: "current-thread",
+                siriCurrentAssistantSurface: nil
+            ),
+            codexSessions: [defaultCodex],
+            devinSessions: [currentDevin]
+        )
+        let client = LooperSiriSessionClient(
+            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+        )
+
+        let defaultEntity = try await client.defaultSiriSessionEntity()
+        let currentEntity = try await client.currentSiriSessionEntity()
+
+        #expect(defaultEntity.sessionID == "default-thread")
+        #expect(defaultEntity.assistantSurfaceRawValue == "codex")
+        #expect(currentEntity.sessionID == "current-thread")
+        #expect(currentEntity.assistantSurfaceRawValue == "devin")
+    }
+
+    @Test("Siri current session falls back to Rust projected default")
+    func siriCurrentSessionFallsBackToRustProjectedDefault() async throws {
+        let defaultCodex = try sessionSummary(
+            id: "default-thread",
+            ref: "C1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = siriRoutingSnapshot(
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex,
+                siriDefaultSessionId: "default-thread",
+                siriDefaultAssistantSurface: .codex,
+                siriCurrentSessionId: "stale-thread",
+                siriCurrentAssistantSurface: .devin
+            ),
+            codexSessions: [defaultCodex],
+            devinSessions: []
+        )
+        let client = LooperSiriSessionClient(
+            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+        )
+
+        let currentEntity = try await client.currentSiriSessionEntity()
+
+        #expect(currentEntity.sessionID == "default-thread")
+        #expect(currentEntity.assistantSurfaceRawValue == "codex")
+    }
+
     @Test("Mobile snapshot decodes Codex work status")
     func mobileSnapshotDecodesCodexWorkStatus() throws {
         let sessionPayload = sessionPayload(
@@ -393,6 +472,31 @@ struct SessionSummaryTimingTests {
         )
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try decoder.decode(SessionSummary.self, from: data)
+    }
+
+    private func siriRoutingSnapshot(
+        globalSettings: GlobalSettings,
+        codexSessions: [SessionSummary],
+        devinSessions: [SessionSummary]
+    ) -> MobileSnapshot {
+        MobileSnapshot(
+            revision: "siri-routing",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: globalSettings,
+            sessions: codexSessions,
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: codexSessions,
+                CompanionAssistantSurface.devin.rawValue: devinSessions,
+            ],
+            notifications: [],
+            completionChecks: []
+        )
     }
 
     private func sessionPayload(

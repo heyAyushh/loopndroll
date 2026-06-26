@@ -61,5 +61,5 @@ bash scripts/build-orb-code-ios-package.sh
 - `LooperCompanionUITests/LooperCompanionControlFlowUITests.swift`: onboarding, scanner, sessions, settings, search, session control.
 - `LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift`: cached Session mini sync and local-first behavior.
 - `LooperCompanionTests/SessionSummaryTimingTests.swift`: mobile timing display behavior.
-- `LooperCompanionCore/Tests/LooperCompanionCoreTests/LooperCurrentSessionResolutionTests.swift`: current/default session routing.
+- `LooperCompanionTests/SessionSummaryTimingTests.swift`: Siri entity wrapper projection and current/default session routing.
 - `LooperCompanionCore/Tests/LooperCompanionCoreTests/LooperSessionFreshnessTests.swift`: activity ordering.
