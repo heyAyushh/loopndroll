@@ -76,10 +76,6 @@ struct HTTPCompanionService: CompanionService {
     let bearerToken: String?
     private let commandClientCore: LooperClientCore
 
-    var supportsModePromptBatch: Bool {
-        true
-    }
-
     var sessionCommandClientCore: LooperClientCore? {
         commandClientCore
     }
@@ -97,20 +93,19 @@ struct HTTPCompanionService: CompanionService {
     }
 
     func prepareRealtimeConnection() async {
-        await RealtimeCompanionClientFactory.prepareClient(
-            baseURLs: baseURLs,
-            bearerToken: bearerToken,
-            clientCore: commandClientCore
-        )
+        do {
+            try await configureSessionRuntime()
+            CompanionDiagnostics.record("realtime:warm-success")
+        } catch {
+            CompanionDiagnostics.record("realtime:warm-failed error=\(error.localizedDescription)")
+        }
     }
 
     func makeClientCoreStateMiniStreamTransport() async
         -> (any LooperClientCoreStateMiniStreamTransport)?
     {
-        await RealtimeCompanionClientFactory.makeClient(
-            baseURLs: baseURLs,
-            bearerToken: bearerToken
-        )
+        await prepareCommandRuntimeIfNeeded()
+        return commandClientCore
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -145,24 +140,23 @@ struct HTTPCompanionService: CompanionService {
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
-        _ = try commandClientCore.setMode(
+        await prepareCommandRuntimeIfNeeded()
+        let envelope = try await commandClientCore.submitSetMode(
             threadId: id,
             preset: preset?.rawValue ?? "",
             clientMutationId: clientMutationID
         )
-        let envelope = try await submitSessionCommand(
-            expectedClientMutationID: clientMutationID,
-            expectedCommandKind: .setSessionMode,
-            unavailableDiagnostic: "mode:grpc-unavailable id=\(id)",
-            invalidDiagnostic: "mode:grpc-invalid id=\(id)"
-        )
+        guard envelope.ack.accepted else {
+            CompanionDiagnostics.record("mode:grpc-invalid id=\(id)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
         CompanionDiagnostics.record(
             "mode:grpc-accepted id=\(id) ackSeq=\(envelope.ack.ackSeq)"
         )
         return .accepted(
-            mode: envelope.preset.flatMap(SessionMode.init(rawValue:)) ?? preset,
+            mode: Self.sessionMode(from: envelope.preset) ?? preset,
             serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationID
+            clientMutationID: envelope.ack.clientMutationId
         )
     }
 
@@ -184,88 +178,24 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
-        _ = try commandClientCore.sendPrompt(
+        await prepareCommandRuntimeIfNeeded()
+        let envelope = try await commandClientCore.submitSendPrompt(
             threadId: id,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationId: clientMutationID
         )
-        let envelope = try await submitSessionCommand(
-            expectedClientMutationID: clientMutationID,
-            expectedCommandKind: .sendSessionPrompt,
-            unavailableDiagnostic: "prompt:grpc-unavailable id=\(id)",
-            invalidDiagnostic: "prompt:grpc-invalid id=\(id)"
-        )
+        guard envelope.ack.accepted else {
+            CompanionDiagnostics.record("prompt:grpc-invalid id=\(id)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
         CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(id) kind=\(envelope.dispatchKind ?? "accepted")"
+            "prompt:grpc-accepted id=\(id) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
         )
         return .accepted(
-            promptID: envelope.promptID,
-            dispatchKind: envelope.dispatchKind ?? "accepted",
-            clientMutationID: envelope.ack.clientMutationID
-        )
-    }
-
-    func sendSessionPromptAfterMode(
-        id: String,
-        modePreset: SessionMode?,
-        modeClientMutationID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        promptClientMutationID: String
-    ) async throws -> CompanionModePromptBatchResult {
-        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
-            baseURLs: baseURLs,
-            bearerToken: bearerToken
-        ) else {
-            CompanionDiagnostics.record(
-                "prompt:grpc-batch-unavailable id=\(id)"
-            )
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        _ = try commandClientCore.setMode(
-            threadId: id,
-            preset: modePreset?.rawValue ?? "",
-            clientMutationId: modeClientMutationID
-        )
-        _ = try commandClientCore.sendPrompt(
-            threadId: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationId: promptClientMutationID
-        )
-        let expectedClientMutationIDs = try pendingCommandMutationIDs()
-        let response = try await realtimeClient.submitClientCoreOutbox(
-            clientCore: commandClientCore,
-            expectedClientMutationIDs: expectedClientMutationIDs
-        )
-        let modeAck = try response.expectedAcknowledgement(
-            commandKind: .setSessionMode,
-            clientMutationID: modeClientMutationID
-        )
-        let promptAck = try response.expectedAcknowledgement(
-            commandKind: .sendSessionPrompt,
-            clientMutationID: promptClientMutationID
-        )
-        guard response.accepted, modeAck.ack.accepted, promptAck.ack.accepted else {
-            CompanionDiagnostics.record("prompt:grpc-batch-invalid id=\(id)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-
-        CompanionDiagnostics.record(
-            "prompt:grpc-batch-accepted id=\(id) modeAckSeq=\(modeAck.ack.ackSeq) promptAckSeq=\(promptAck.ack.ackSeq)"
-        )
-        return CompanionModePromptBatchResult(
-            mode: .accepted(
-                mode: modeAck.preset.flatMap(SessionMode.init(rawValue:)) ?? modePreset,
-                serverTime: modeAck.ack.serverTime,
-                clientMutationID: modeAck.ack.clientMutationID
-            ),
-            prompt: .accepted(
-                promptID: promptAck.promptID,
-                dispatchKind: promptAck.dispatchKind,
-                clientMutationID: promptAck.ack.clientMutationID
-            )
+            promptID: Self.nonEmpty(envelope.promptId),
+            dispatchKind: Self.dispatchKind(from: envelope.dispatchKind),
+            clientMutationID: envelope.ack.clientMutationId
         )
     }
 
@@ -276,67 +206,88 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        _ = try commandClientCore.submitNotificationReply(
+        await prepareCommandRuntimeIfNeeded()
+        let envelope = try await commandClientCore.submitNotificationReplyCommand(
             notificationId: notificationID,
             threadId: sessionID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationId: clientMutationID
         )
-        let envelope = try await submitSessionCommand(
-            expectedClientMutationID: clientMutationID,
-            expectedCommandKind: .submitNotificationReply,
-            unavailableDiagnostic: "notification-reply:grpc-unavailable id=\(sessionID) notificationID=\(notificationID)",
-            invalidDiagnostic: "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
-        )
+        guard envelope.ack.accepted else {
+            CompanionDiagnostics.record(
+                "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
         CompanionDiagnostics.record(
-            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(envelope.dispatchKind ?? "accepted")"
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
         )
         return LooperRealtimeNotificationReplyResponse(
             accepted: envelope.ack.accepted,
-            dispatchKind: envelope.dispatchKind ?? "accepted",
-            promptID: envelope.promptID,
+            dispatchKind: Self.dispatchKind(from: envelope.dispatchKind),
+            promptID: Self.nonEmpty(envelope.promptId),
             serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationID,
+            clientMutationID: envelope.ack.clientMutationId,
             ackSeq: envelope.ack.ackSeq,
-            entityID: envelope.ack.entityID,
+            entityID: envelope.ack.entityId,
             revision: envelope.ack.revision,
             idempotentReplay: envelope.ack.idempotentReplay,
-            notificationID: envelope.notificationID ?? notificationID
+            notificationID: Self.nonEmpty(envelope.notificationId) ?? notificationID
         )
     }
 
-    private func submitSessionCommand(
-        expectedClientMutationID: String,
-        expectedCommandKind: ClientCommandKind,
-        unavailableDiagnostic: String,
-        invalidDiagnostic: String
-    ) async throws -> LooperRealtimeCommandAckEnvelope {
-        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
-            baseURLs: baseURLs,
-            bearerToken: bearerToken
-        ) else {
-            CompanionDiagnostics.record(unavailableDiagnostic)
-            throw HTTPCompanionServiceError.invalidResponse
+    private func prepareCommandRuntimeIfNeeded() async {
+        guard (try? commandClientCore.snapshot().endpointUrl.isEmpty) != false else {
+            return
         }
-
-        let response = try await realtimeClient.submitClientCoreOutbox(
-            clientCore: commandClientCore,
-            expectedClientMutationIDs: pendingCommandMutationIDs()
-        )
-        let envelope = try response.expectedAcknowledgement(
-            commandKind: expectedCommandKind,
-            clientMutationID: expectedClientMutationID
-        )
-        guard response.accepted, envelope.ack.accepted else {
-            CompanionDiagnostics.record(invalidDiagnostic)
-            throw HTTPCompanionServiceError.invalidResponse
+        do {
+            try await configureSessionRuntime()
+        } catch {
+            CompanionDiagnostics.record(
+                "realtime:configure-failed error=\(error.localizedDescription)"
+            )
         }
-        return envelope
     }
 
-    private func pendingCommandMutationIDs() throws -> [String] {
-        try commandClientCore.pendingOutboxClientMutationIds()
+    private func configureSessionRuntime() async throws {
+        let responseData = try await responseDataWithConfiguredURLs(
+            path: Self.healthPath,
+            method: .get,
+            includesAuthentication: false
+        )
+        let health = try JSONDecoder().decode(CompanionServerHealth.self, from: responseData.data)
+        let endpoints = Self.clientCoreEndpoints(from: health)
+        guard !endpoints.isEmpty else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        _ = try commandClientCore.configureSessionRuntime(
+            endpoints: endpoints,
+            bearerToken: bearerToken ?? "",
+            mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
+        )
+    }
+
+    private static func clientCoreEndpoints(from health: CompanionServerHealth) -> [ClientEndpoint] {
+        let realtimeURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
+            ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
+        )
+        return realtimeURLs.map { url in
+            ClientEndpoint(url: url.absoluteString, lastGood: false)
+        }
+    }
+
+    private static func sessionMode(from preset: String) -> SessionMode? {
+        nonEmpty(preset).flatMap(SessionMode.init(rawValue:))
+    }
+
+    private static func dispatchKind(from value: String) -> String {
+        nonEmpty(value) ?? "accepted"
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     #if DEBUG

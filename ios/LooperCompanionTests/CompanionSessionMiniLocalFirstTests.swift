@@ -63,19 +63,7 @@ struct CompanionSessionMiniLocalFirstTests {
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
 
         #expect(!didSend)
-        let pendingCommands = store.pendingCommands()
-        #expect(pendingCommands.count == 1)
-        #expect(pendingCommands.first?.threadID == Constants.fallbackThreadID)
-        #expect(pendingCommands.first?.clientMutationID.isEmpty == false)
-        #expect(pendingCommands.first?.attemptCount == 1)
-
-        try store.enqueuePromptCommand(
-            threadID: Constants.fallbackThreadID,
-            prompt: "continue",
-            assistantSurface: .codex,
-            clientMutationID: pendingCommands.first?.clientMutationID ?? ""
-        )
-        #expect(store.pendingCommands().count == 1)
+        #expect(store.pendingCommands().isEmpty)
     }
 
     @MainActor
@@ -117,9 +105,8 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testPromptBehindPendingModeUsesBatchCommandWhenSupported() async throws {
+    func testPromptBehindPendingModeUsesRustCoreCommandsWithoutSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        service.isModePromptBatchSupported = true
         service.modeResponseDelayNanoseconds = 200_000_000
         let store = try Self.temporaryMiniStore()
         let cachedSession = Self.sessionSummary(
@@ -146,24 +133,21 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(didSendPrompt)
         #expect(didApplyMode)
-        #expect(service.batchModeClientMutationIDs.count == 1)
-        #expect(service.batchPromptClientMutationIDs.count == 1)
-        #expect(service.batchModeClientMutationIDs.first != service.batchPromptClientMutationIDs.first)
-        #expect(service.modeClientMutationIDs.isEmpty)
-        #expect(service.promptClientMutationIDs.isEmpty)
+        #expect(service.modeClientMutationIDs.count == 1)
+        #expect(service.promptClientMutationIDs.count == 1)
+        #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
         #expect(store.pendingCommands().isEmpty)
 
         try await Task.sleep(nanoseconds: Constants.delayedModeDrainProbeNanoseconds)
-        #expect(service.modeClientMutationIDs.isEmpty)
+        #expect(service.modeClientMutationIDs.count == 1)
     }
 
     @MainActor
     @Test
-    func testFailedModePromptBatchDoesNotFallbackToUnaryPrompt() async throws {
+    func testFailedPromptBehindModeDoesNotFallbackToSnapshotRefresh() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        service.isModePromptBatchSupported = true
-        service.modePromptBatchError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
+        service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
         service.modeResponseDelayNanoseconds = 200_000_000
         let store = try Self.temporaryMiniStore()
         let cachedSession = Self.sessionSummary(
@@ -190,11 +174,10 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(!didSendPrompt)
         #expect(didApplyMode)
-        #expect(service.batchModeClientMutationIDs.count == 1)
-        #expect(service.batchPromptClientMutationIDs.count == 1)
+        #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().count == 1)
+        #expect(store.pendingCommands().isEmpty)
     }
 
     @MainActor
@@ -431,21 +414,13 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     private(set) var loadSnapshotCallCount = 0
     private(set) var modeClientMutationIDs: [String] = []
     private(set) var promptClientMutationIDs: [String] = []
-    private(set) var batchModeClientMutationIDs: [String] = []
-    private(set) var batchPromptClientMutationIDs: [String] = []
     private(set) var notificationReplyClientMutationIDs: [String] = []
     private(set) var notificationReplyIDs: [String] = []
-    var isModePromptBatchSupported = false
     var modeResponseDelayNanoseconds: UInt64 = 0
     var promptError: Error?
-    var modePromptBatchError: Error?
 
     init(snapshot: MobileSnapshot) {
         self.snapshot = snapshot
-    }
-
-    var supportsModePromptBatch: Bool {
-        isModePromptBatchSupported
     }
 
     func prepareRealtimeConnection() async {}
@@ -507,33 +482,6 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         )
     }
 
-    func sendSessionPromptAfterMode(
-        id _: String,
-        modePreset: SessionMode?,
-        modeClientMutationID: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        promptClientMutationID: String
-    ) async throws -> CompanionModePromptBatchResult {
-        appendBatchModeClientMutationID(modeClientMutationID)
-        appendBatchPromptClientMutationID(promptClientMutationID)
-        if let modePromptBatchError {
-            throw modePromptBatchError
-        }
-        return CompanionModePromptBatchResult(
-            mode: .accepted(
-                mode: modePreset,
-                serverTime: nil,
-                clientMutationID: modeClientMutationID
-            ),
-            prompt: .accepted(
-                promptID: "prompt-1",
-                dispatchKind: "resume",
-                clientMutationID: promptClientMutationID
-            )
-        )
-    }
-
     func submitNotificationReply(
         notificationID: String,
         sessionID: String,
@@ -576,18 +524,6 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         lock.lock()
         defer { lock.unlock() }
         promptClientMutationIDs.append(clientMutationID)
-    }
-
-    private func appendBatchModeClientMutationID(_ clientMutationID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        batchModeClientMutationIDs.append(clientMutationID)
-    }
-
-    private func appendBatchPromptClientMutationID(_ clientMutationID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        batchPromptClientMutationIDs.append(clientMutationID)
     }
 
     private func appendNotificationReply(notificationID: String, clientMutationID: String) {

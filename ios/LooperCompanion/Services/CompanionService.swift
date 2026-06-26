@@ -64,13 +64,7 @@ struct CompanionSessionModeResult: Sendable {
     }
 }
 
-struct CompanionModePromptBatchResult: Sendable {
-    let mode: CompanionSessionModeResult
-    let prompt: CompanionPromptSendResult
-}
-
 protocol CompanionService: Sendable {
-    var supportsModePromptBatch: Bool { get }
     var sessionCommandClientCore: LooperClientCore? { get }
     func prepareRealtimeConnection() async
     func makeClientCoreStateMiniStreamTransport() async
@@ -92,14 +86,6 @@ protocol CompanionService: Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult
-    func sendSessionPromptAfterMode(
-        id: String,
-        modePreset: SessionMode?,
-        modeClientMutationID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        promptClientMutationID: String
-    ) async throws -> CompanionModePromptBatchResult
     func submitNotificationReply(
         notificationID: String,
         sessionID: String,
@@ -123,10 +109,6 @@ protocol CompanionService: Sendable {
 }
 
 extension CompanionService {
-    var supportsModePromptBatch: Bool {
-        false
-    }
-
     var sessionCommandClientCore: LooperClientCore? {
         nil
     }
@@ -144,25 +126,4 @@ extension CompanionService {
         nil
     }
 
-    func sendSessionPromptAfterMode(
-        id: String,
-        modePreset: SessionMode?,
-        modeClientMutationID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        promptClientMutationID: String
-    ) async throws -> CompanionModePromptBatchResult {
-        let mode = try await setSessionMode(
-            id: id,
-            preset: modePreset,
-            clientMutationID: modeClientMutationID
-        )
-        let prompt = try await sendSessionPrompt(
-            id: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: promptClientMutationID
-        )
-        return CompanionModePromptBatchResult(mode: mode, prompt: prompt)
-    }
 }

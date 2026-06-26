@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::mpsc;
 
+use crate::command_batch::reduce_expected_command_ack;
 use crate::error::ClientCoreError;
 use crate::model::{
-    ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientEndpoint,
-    ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
+    ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
+    ClientEndpoint, ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
     ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
     ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
     OutboundSessionFrameKind,
@@ -40,10 +41,19 @@ struct ClientCoreState {
     last_error: String,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ClientCoreRuntimeConfig {
+    endpoints: Vec<ClientEndpoint>,
+    bearer_token: String,
+    mobile_session_header: String,
+}
+
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCore {
     state: Mutex<ClientCoreState>,
     stream: Mutex<Option<ClientCoreStream>>,
+    runtime_config: Mutex<Option<ClientCoreRuntimeConfig>>,
+    command_flush: tokio::sync::Mutex<()>,
     mode_mutations: Arc<ClientModeMutationQueue>,
     runtime: tokio::runtime::Runtime,
 }
@@ -64,9 +74,58 @@ impl LooperClientCore {
                 ..ClientCoreState::default()
             }),
             stream: Mutex::new(None),
+            runtime_config: Mutex::new(None),
+            command_flush: tokio::sync::Mutex::new(()),
             mode_mutations: ClientModeMutationQueue::new(),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
+    }
+
+    pub fn configure_session_runtime(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        let endpoint = select_endpoint(&endpoints)?;
+        validate_endpoint_url(&endpoint.url)?;
+
+        let config = ClientCoreRuntimeConfig {
+            endpoints,
+            bearer_token,
+            mobile_session_header,
+        };
+        *self.lock_runtime_config()? = Some(config);
+
+        let mut state = self.lock_state()?;
+        state.phase = ConnectionPhase::Ready;
+        state.endpoint_url = endpoint.url;
+        state.last_error.clear();
+        Ok(state.snapshot())
+    }
+
+    pub fn start(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        self.configure_session_runtime(
+            endpoints.clone(),
+            bearer_token.clone(),
+            mobile_session_header.clone(),
+        )?;
+        self.start_state_mini_stream(endpoints, bearer_token, mobile_session_header)
+    }
+
+    pub fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
+        self.replace_stream_none()?;
+        *self.lock_runtime_config()? = None;
+        self.disconnect()
+    }
+
+    pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
+        self.next_state_mini_stream_update().await
     }
 
     pub fn connect(
@@ -382,6 +441,74 @@ impl LooperClientCore {
         Ok(response)
     }
 
+    pub async fn submit_pending_outbox(
+        &self,
+        expected_client_mutation_ids: Vec<String>,
+    ) -> Result<ClientCommandBatchResponse, ClientCoreError> {
+        let config = self.runtime_config()?;
+        self.submit_expected_outbox(
+            config.endpoints,
+            config.bearer_token,
+            config.mobile_session_header,
+            expected_client_mutation_ids,
+        )
+        .await
+    }
+
+    pub async fn submit_set_mode(
+        &self,
+        thread_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.set_mode(thread_id, preset, client_mutation_id.clone())?;
+        self.submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
+            .await
+    }
+
+    pub async fn submit_send_prompt(
+        &self,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.send_prompt(
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        self.submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
+            .await
+    }
+
+    pub async fn submit_notification_reply_command(
+        &self,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.submit_notification_reply(
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        reduce_expected_command_ack(
+            self.submit_pending_outbox(self.pending_outbox_client_mutation_ids()?)
+                .await?,
+            ClientCommandKind::SubmitNotificationReply,
+            client_mutation_id,
+        )
+    }
+
     pub async fn warm_connection(
         &self,
         endpoints: Vec<ClientEndpoint>,
@@ -440,6 +567,17 @@ impl LooperClientCore {
         self.snapshot()
     }
 
+    pub fn start_configured_state_mini_stream(
+        &self,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        let config = self.runtime_config()?;
+        self.start_state_mini_stream(
+            config.endpoints,
+            config.bearer_token,
+            config.mobile_session_header,
+        )
+    }
+
     pub async fn next_state_mini_stream_update(
         &self,
     ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
@@ -480,6 +618,32 @@ impl LooperClientCore {
         self.stream
             .lock()
             .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn lock_runtime_config(
+        &self,
+    ) -> Result<MutexGuard<'_, Option<ClientCoreRuntimeConfig>>, ClientCoreError> {
+        self.runtime_config
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn runtime_config(&self) -> Result<ClientCoreRuntimeConfig, ClientCoreError> {
+        self.lock_runtime_config()?
+            .clone()
+            .ok_or(ClientCoreError::NoEndpoint)
+    }
+
+    async fn submit_pending_command_ack(
+        &self,
+        command_kind: ClientCommandKind,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let expected_client_mutation_ids = self.pending_outbox_client_mutation_ids()?;
+        let response = self
+            .submit_pending_outbox(expected_client_mutation_ids)
+            .await?;
+        reduce_expected_command_ack(response, command_kind, client_mutation_id)
     }
 
     fn replace_stream(&self, stream: ClientCoreStream) -> Result<(), ClientCoreError> {
@@ -909,6 +1073,55 @@ mod tests {
         assert_eq!(
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
+        );
+    }
+
+    #[test]
+    fn configure_session_runtime_records_last_good_endpoint() {
+        let core = LooperClientCore::new();
+
+        let snapshot = core
+            .configure_session_runtime(
+                vec![
+                    ClientEndpoint {
+                        url: ENDPOINT_PRIMARY.to_owned(),
+                        last_good: false,
+                    },
+                    ClientEndpoint {
+                        url: ENDPOINT_LAST_GOOD.to_owned(),
+                        last_good: true,
+                    },
+                ],
+                "token".to_owned(),
+                "mobile-session".to_owned(),
+            )
+            .expect("configure runtime");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+        assert!(snapshot.last_error.is_empty());
+    }
+
+    #[test]
+    fn submit_intent_queues_before_missing_runtime_error() {
+        let core = LooperClientCore::new();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let error = runtime
+            .block_on(core.submit_set_mode(
+                "thread-1".to_owned(),
+                "await-reply".to_owned(),
+                "cmid-mode".to_owned(),
+            ))
+            .expect_err("missing runtime rejects");
+
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            snapshot.pending_mutations[0].command_kind,
+            ClientCommandKind::SetSessionMode
         );
     }
 

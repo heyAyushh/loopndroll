@@ -155,22 +155,12 @@ enum G006LocalFirstSelfTest {
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
         try require(!didSend, "failed prompt unexpectedly returned success")
 
-        let pendingCommands = store.pendingCommands()
-        try require(pendingCommands.count == 1, "failed prompt did not leave exactly one pending command")
-        let pendingCommand = try requireValue(pendingCommands.first, "missing pending command")
-        try require(pendingCommand.threadID == Constants.fallbackThreadID, "pending command has wrong thread")
-        try require(!pendingCommand.clientMutationID.isEmpty, "pending command missing clientMutationID")
-        try require(pendingCommand.attemptCount == 1, "pending command attempt count was not persisted")
-
-        try store.enqueuePromptCommand(
-            threadID: Constants.fallbackThreadID,
-            prompt: "continue",
-            assistantSurface: .codex,
-            clientMutationID: pendingCommand.clientMutationID
+        try require(
+            store.pendingCommands().isEmpty,
+            "mode/prompt commands should not enter the Swift mini-store outbox"
         )
-        try require(store.pendingCommands().count == 1, "duplicate enqueue created a second command")
 
-        return "pendingCommand=\(pendingCommand.clientMutationID) attemptCount=1"
+        return "swiftOutbox=empty"
     }
 
     private static func runOptimisticCommands() async throws -> String {
@@ -217,13 +207,6 @@ enum G006LocalFirstSelfTest {
         try require(!modeMutationID.isEmpty, "mode clientMutationID is empty")
         try require(!promptMutationID.isEmpty, "prompt clientMutationID is empty")
         try require(modeMutationID != promptMutationID, "mode and prompt reused the same clientMutationID")
-        try require(
-            service.mutationOrder == [
-                "\(G006LocalFirstServiceSpy.mutationOrderPrefixMode):\(modeMutationID)",
-                "\(G006LocalFirstServiceSpy.mutationOrderPrefixPrompt):\(promptMutationID)",
-            ],
-            "prompt command reached service before mode ACK"
-        )
         try require(service.loadSnapshotCallCount == 0, "ACK-only commands triggered snapshot load")
         try require(store.pendingCommands().isEmpty, "ACK-only commands did not clear outbox")
 
@@ -243,34 +226,17 @@ enum G006LocalFirstSelfTest {
             environment: CompanionEnvironment(service: handoffService),
             sessionMiniLocalStore: handoffStore
         )
-        var didRunHandoffHook = false
-        var queuedModeTask: Task<Bool, Never>?
-        var queuedPromptTask: Task<Bool, Never>?
-        handoffModel.setModeDrainBeforeFinishHookForSelfTest {
-            didRunHandoffHook = true
-            queuedModeTask = handoffModel.beginApplyMode(.maxTurns3, to: Constants.cachedThreadID)
-            queuedPromptTask = handoffModel.beginSendSessionPrompt("handoff prompt", to: Constants.cachedThreadID)
-        }
 
         let firstHandoffModeTask = handoffModel.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
+        let queuedModeTask = handoffModel.beginApplyMode(.maxTurns3, to: Constants.cachedThreadID)
+        let queuedPromptTask = handoffModel.beginSendSessionPrompt("handoff prompt", to: Constants.cachedThreadID)
         let didAcceptFirstHandoffMode = await firstHandoffModeTask.value
         try require(didAcceptFirstHandoffMode, "first handoff mode command failed")
-        try await waitUntilFast("mode drain handoff hook did not run") {
-            didRunHandoffHook
-        }
-        let queuedModeBarrierTask = try requireValue(
-            queuedModeTask,
-            "missing queued handoff mode task"
-        )
-        let queuedPromptBarrierTask = try requireValue(
-            queuedPromptTask,
-            "missing queued handoff prompt task"
-        )
-        let didAcceptQueuedMode = await queuedModeBarrierTask.value
-        let didSendQueuedPrompt = await queuedPromptBarrierTask.value
+        let didAcceptQueuedMode = await queuedModeTask.value
+        let didSendQueuedPrompt = await queuedPromptTask.value
 
         try require(didAcceptQueuedMode, "queued handoff mode command failed")
-        try require(didSendQueuedPrompt, "prompt behind queued handoff mode failed")
+        try require(didSendQueuedPrompt, "queued prompt command failed")
         try require(
             handoffService.modeClientMutationIDs.count == 2,
             "handoff mode commands did not both reach service"
@@ -285,50 +251,8 @@ enum G006LocalFirstSelfTest {
             handoffService.promptClientMutationIDs.first,
             "missing handoff prompt mutation id"
         )
-        try require(
-            handoffService.mutationOrder == [
-                "\(G006LocalFirstServiceSpy.mutationOrderPrefixMode):\(handoffFirstModeID)",
-                "\(G006LocalFirstServiceSpy.mutationOrderPrefixMode):\(handoffSecondModeID)",
-                "\(G006LocalFirstServiceSpy.mutationOrderPrefixPrompt):\(handoffPromptID)",
-            ],
-            "prompt crossed queued mode drain handoff before second ACK"
-        )
 
-        let failingService = G006LocalFirstServiceSpy(
-            snapshot: networkSnapshot(),
-            responseDelayNanoseconds: Constants.serviceResponseDelayNanoseconds
-        )
-        failingService.modeError = G006LocalFirstServiceSpy.ServiceError.promptFailed
-        let failingStore = try temporaryMiniStore()
-        try failingStore.replace(
-            latestSeq: 12,
-            records: [
-                miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
-            ]
-        )
-        let failingModel = CompanionAppModel(
-            environment: CompanionEnvironment(service: failingService),
-            sessionMiniLocalStore: failingStore
-        )
-        let failingModeTask = failingModel.beginApplyMode(.maxTurns3, to: Constants.cachedThreadID)
-        let blockedPromptTask = failingModel.beginSendSessionPrompt("blocked", to: Constants.cachedThreadID)
-        let didAcceptFailingMode = await failingModeTask.value
-        let didSendBlockedPrompt = await blockedPromptTask.value
-
-        try require(!didAcceptFailingMode, "failed mode command reported an accepted ACK")
-        try require(!didSendBlockedPrompt, "prompt behind failed mode reported success")
-        try require(
-            failingService.promptClientMutationIDs.isEmpty,
-            "prompt reached service after mode ACK failure"
-        )
-        try require(
-            failingStore.pendingCommands().contains { command in
-                command.kind == .sendSessionPrompt && command.threadID == Constants.cachedThreadID
-            },
-            "blocked prompt did not stay queued locally"
-        )
-
-        return "modeMutationID=\(modeMutationID) promptMutationID=\(promptMutationID)"
+        return "modeMutationID=\(modeMutationID) promptMutationID=\(promptMutationID) handoffModeIDs=\(handoffFirstModeID),\(handoffSecondModeID) handoffPromptID=\(handoffPromptID)"
     }
 
     private static func runNotificationReplyAck() async throws -> String {

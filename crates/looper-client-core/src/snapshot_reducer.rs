@@ -121,11 +121,19 @@ struct GoalDocument {
     #[serde(default)]
     id: String,
     #[serde(default)]
+    title: String,
+    #[serde(default)]
     status: String,
     #[serde(default)]
     lifecycle: String,
     #[serde(default)]
     running: bool,
+    #[serde(rename = "tokenBudget", default)]
+    token_budget: Option<i64>,
+    #[serde(rename = "tokensUsed", default)]
+    tokens_used: Option<i64>,
+    #[serde(rename = "timeUsedSeconds", default)]
+    time_used_seconds: Option<i64>,
     #[serde(rename = "updatedAtMs", default)]
     updated_at_ms: Option<i64>,
 }
@@ -1073,6 +1081,68 @@ mod tests {
         assert!(projection.did_update);
         assert_eq!(snapshot.sessions[0].effective_mode, None);
         assert_eq!(detail.effective_mode, None);
+    }
+
+    #[test]
+    fn optimistic_mode_preserves_goal_payload_fields() {
+        let projection = reduce_mobile_snapshot_optimistic_mode(
+            r#"{
+                "revision":"rev-goal",
+                "globalSettings":{"assistantSurface":"codex"},
+                "sessions":[{
+                    "id":"goal-thread",
+                    "ref":"G1",
+                    "status":"active",
+                    "lastUpdatedAt":"2026-06-16T08:00:00Z",
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false,
+                    "goal":{
+                        "id":"goal-1",
+                        "title":"Ship realtime",
+                        "status":"blocked",
+                        "lifecycle":"blocked",
+                        "running":false,
+                        "tokenBudget":1000,
+                        "tokensUsed":250,
+                        "timeUsedSeconds":60,
+                        "updatedAtMs":1781596920321
+                    }
+                }],
+                "surfaceSessions":{"codex":[{
+                    "id":"goal-thread",
+                    "ref":"G1",
+                    "status":"active",
+                    "lastUpdatedAt":"2026-06-16T08:00:00Z",
+                    "lastActivityAt":"2026-06-16T08:00:00Z",
+                    "isArchived":false,
+                    "goal":{
+                        "id":"goal-1",
+                        "title":"Ship realtime",
+                        "status":"blocked",
+                        "lifecycle":"blocked",
+                        "running":false,
+                        "tokenBudget":1000,
+                        "tokensUsed":250,
+                        "timeUsedSeconds":60,
+                        "updatedAtMs":1781596920321
+                    }
+                }]}
+            }"#
+            .to_owned(),
+            String::new(),
+            "goal-thread".to_owned(),
+            "await-reply".to_owned(),
+            CODEX.to_owned(),
+        )
+        .expect("optimistic mode");
+        let snapshot: Value =
+            serde_json::from_str(&projection.visible_snapshot_json).expect("snapshot json");
+        let goal = &snapshot["sessions"][0]["goal"];
+
+        assert_eq!(goal["title"], "Ship realtime");
+        assert_eq!(goal["tokenBudget"], 1000);
+        assert_eq!(goal["tokensUsed"], 250);
+        assert_eq!(goal["timeUsedSeconds"], 60);
     }
 
     #[test]

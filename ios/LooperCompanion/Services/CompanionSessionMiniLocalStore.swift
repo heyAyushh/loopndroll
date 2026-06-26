@@ -114,45 +114,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    func enqueueModeCommand(
-        threadID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .setSessionMode,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: preset?.rawValue ?? "",
-                assistantSurface: "",
-                prompt: "",
-                notificationId: "",
-                attemptCount: 0
-            )
-        )
-    }
-
-    func enqueuePromptCommand(
-        threadID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .sendSessionPrompt,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: "",
-                assistantSurface: assistantSurface.rawValue,
-                prompt: prompt,
-                notificationId: "",
-                attemptCount: 0
-            )
-        )
-    }
-
     func enqueueNotificationReplyCommand(
         notificationID: String,
         threadID: String,

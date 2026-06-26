@@ -2,17 +2,6 @@ import Foundation
 
 @MainActor
 protocol CompanionSessionCommandLocalStore: AnyObject {
-    func enqueueModeCommand(
-        sessionID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    )
-    func enqueuePromptCommand(
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    )
     func enqueueNotificationReplyCommand(
         notificationID: String,
         sessionID: String,
@@ -193,46 +182,6 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
         cancelNotificationReplyOutboxRetry()
         notificationReplyOutboxRetryDelayNanoseconds =
             NotificationReplyOutboxRetry.initialDelayNanoseconds
-    }
-
-    func enqueueModeCommand(
-        sessionID: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) {
-        do {
-            try localStore?.enqueueModeCommand(
-                threadID: sessionID,
-                preset: preset,
-                clientMutationID: clientMutationID
-            )
-            markCommandAttempted(clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:mode-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-        }
-    }
-
-    func enqueuePromptCommand(
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface,
-        clientMutationID: String
-    ) {
-        do {
-            try localStore?.enqueuePromptCommand(
-                threadID: sessionID,
-                prompt: prompt,
-                assistantSurface: assistantSurface,
-                clientMutationID: clientMutationID
-            )
-            markCommandAttempted(clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:prompt-outbox-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-        }
     }
 
     func enqueueNotificationReplyCommand(

@@ -22,6 +22,11 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
+struct ModeRollbackState: Sendable {
+    let snapshot: MobileSnapshot?
+    let detail: SessionDetail?
+}
+
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -51,7 +56,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var notificationReplyCoordinator: CompanionNotificationReplyCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
-    @ObservationIgnored private var sessionMutationCoordinator: CompanionSessionMutationCoordinator?
     @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
     @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
@@ -89,11 +93,6 @@ final class CompanionAppModel {
             delegate: self
         )
         snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
-        sessionMutationCoordinator = CompanionSessionMutationCoordinator(
-            commandStore: sessionMiniController,
-            clientCore: service.sessionCommandClientCore,
-            delegate: self
-        )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
         if didActivateBundledConnection {
@@ -163,13 +162,6 @@ final class CompanionAppModel {
 
     var sessionIndex: SessionIndex {
         snapshotState.sessionIndex
-    }
-
-    private var sessionMutations: CompanionSessionMutationCoordinator {
-        guard let sessionMutationCoordinator else {
-            preconditionFailure("Session mutation coordinator used before initialization")
-        }
-        return sessionMutationCoordinator
     }
 
     private var connectionActions: CompanionConnectionCoordinator {
@@ -242,16 +234,7 @@ final class CompanionAppModel {
     }
 
     func stopRealtimeSessionSync() {
-        stopRealtimeSessionSync(disconnectCachedClients: true)
-    }
-
-    private func stopRealtimeSessionSync(disconnectCachedClients: Bool) {
         sessionMiniController.stopSync()
-        if disconnectCachedClients {
-            Task {
-                await RealtimeCompanionClientFactory.disconnectCachedClients()
-            }
-        }
     }
 
     func startRealtimeSessionSyncIfNeeded() {
@@ -348,9 +331,8 @@ final class CompanionAppModel {
         connectionRevision += 1
         snapshotLoads.cancelCachedSnapshotRestore()
         snapshotLoads.cancelSnapshotLoad()
-        stopRealtimeSessionSync(disconnectCachedClients: false)
+        stopRealtimeSessionSync()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        await sessionMutations.cancelAllModeMutations(resolveAs: false)
         stopNotificationReplyOutboxDrain()
         lastAppliedRealtimeRevision = nil
         hasValidatedCurrentSnapshotWithHTTP = false
@@ -372,7 +354,6 @@ final class CompanionAppModel {
         } else {
             resetSnapshotState(cachedSnapshotRestoreReason: nil)
         }
-        await RealtimeCompanionClientFactory.invalidateCachedConnections()
         prepareRealtimeConnectionInBackground()
         return shouldRestartEventStream
     }
@@ -554,7 +535,6 @@ final class CompanionAppModel {
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         service = CompanionEnvironment.live().service
-        await RealtimeCompanionClientFactory.invalidateCachedConnections()
         prepareRealtimeConnectionInBackground()
         restartRealtimeSessionSyncIfActive()
         CompanionDiagnostics.record(
@@ -873,23 +853,15 @@ final class CompanionAppModel {
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
-        await sessionMutations.applyMode(preset, to: sessionID)
+        _ = await applyModeIntent(preset, to: sessionID)
     }
 
     @discardableResult
     func beginApplyMode(_ preset: SessionMode?, to sessionID: String) -> Task<Bool, Never> {
-        sessionMutations.beginApplyMode(preset, to: sessionID)
+        Task { @MainActor [weak self] in
+            await self?.applyModeIntent(preset, to: sessionID) ?? false
+        }
     }
-
-    private func resolveModeMutationBarriers(_ accepted: Bool) async {
-        await sessionMutations.resolveModeMutationBarriers(accepted)
-    }
-
-    #if DEBUG
-    func setModeDrainBeforeFinishHookForSelfTest(_ hook: (() async -> Void)?) {
-        sessionMutations.setModeDrainBeforeFinishHookForSelfTest(hook)
-    }
-    #endif
 
     func setSessionArchived(_ archived: Bool, sessionID: String) async {
         let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
@@ -913,12 +885,124 @@ final class CompanionAppModel {
 
     @discardableResult
     func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
-        await sessionMutations.sendSessionPrompt(prompt, to: sessionID)
+        await sendPromptIntent(prompt, to: sessionID)
     }
 
     @discardableResult
     func beginSendSessionPrompt(_ prompt: String, to sessionID: String) -> Task<Bool, Never> {
-        sessionMutations.beginSendSessionPrompt(prompt, to: sessionID)
+        Task { @MainActor [weak self] in
+            await self?.sendPromptIntent(prompt, to: sessionID) ?? false
+        }
+    }
+
+    private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
+        let rollbackState = snapshotState.rollbackState(for: sessionID)
+        let clientMutationID = makeClientMutationID()
+        let targetService = service
+        let targetRevision = connectionRevision
+
+        applyOptimisticMode(preset, to: sessionID)
+
+        do {
+            let result = try await targetService.setSessionMode(
+                id: sessionID,
+                preset: preset,
+                clientMutationID: clientMutationID
+            )
+            guard targetRevision == connectionRevision else {
+                CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(sessionID)")
+                return false
+            }
+            await applyModeResult(result, sessionID: sessionID)
+            return true
+        } catch {
+            guard targetRevision == connectionRevision else {
+                CompanionDiagnostics.record(
+                    "mode:mutation-stale-error-skip sessionID=\(sessionID) error=\(error.localizedDescription)"
+                )
+                return false
+            }
+            restoreOptimisticModeSnapshot(
+                rollbackState.snapshot,
+                previousDetail: rollbackState.detail,
+                sessionID: sessionID
+            )
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
+            Haptics.error()
+            return false
+        }
+    }
+
+    private func applyModeResult(
+        _ result: CompanionSessionModeResult,
+        sessionID: String
+    ) async {
+        if let nextSnapshot = result.snapshot {
+            await applySnapshot(nextSnapshot)
+            if snapshotState.hasDetail(for: sessionID) {
+                await refreshSessionDetail(id: sessionID)
+            }
+            return
+        }
+
+        connectionState = .connected
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
+        )
+    }
+
+    private func sendPromptIntent(_ prompt: String, to sessionID: String) async -> Bool {
+        let targetSurface = snapshotState.assistantSurface(for: sessionID)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else {
+            errorMessage = "Prompt is required."
+            Haptics.warning()
+            return false
+        }
+
+        guard !mutatingSessionIDs.contains(sessionID) else {
+            return false
+        }
+
+        let clientMutationID = makeClientMutationID()
+        let targetService = service
+        let targetRevision = connectionRevision
+
+        setSessionMutation(true, sessionID: sessionID)
+        defer {
+            setSessionMutation(false, sessionID: sessionID)
+        }
+
+        do {
+            let result = try await targetService.sendSessionPrompt(
+                id: sessionID,
+                prompt: trimmedPrompt,
+                assistantSurface: targetSurface,
+                clientMutationID: clientMutationID
+            )
+            guard targetRevision == connectionRevision else {
+                CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(sessionID)")
+                return false
+            }
+            await applyPromptSendResult(
+                result,
+                sessionID: sessionID,
+                assistantSurface: targetSurface
+            )
+            return true
+        } catch {
+            guard targetRevision == connectionRevision else {
+                CompanionDiagnostics.record(
+                    "prompt:mutation-stale-error-skip sessionID=\(sessionID) error=\(error.localizedDescription)"
+                )
+                return false
+            }
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
+            Haptics.error()
+            return false
+        }
     }
 
     @discardableResult
@@ -1566,98 +1650,6 @@ extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {
 
     func snapshotLoadPerform(loadRevision: Int) async {
         await performSnapshotLoad(loadRevision: loadRevision)
-    }
-}
-
-extension CompanionAppModel: CompanionSessionMutationCoordinatorDelegate {
-    var sessionMutationService: any CompanionService {
-        service
-    }
-
-    var sessionMutationConnectionRevision: Int {
-        connectionRevision
-    }
-
-    func sessionMutationMakeClientMutationID() -> String {
-        makeClientMutationID()
-    }
-
-    func sessionMutationRollbackState(for sessionID: String) -> ModeRollbackState {
-        snapshotState.rollbackState(for: sessionID)
-    }
-
-    func sessionMutationAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
-        snapshotState.assistantSurface(for: sessionID)
-    }
-
-    func sessionMutationCanSendPrompt(to sessionID: String) -> Bool {
-        !mutatingSessionIDs.contains(sessionID)
-    }
-
-    func sessionMutationRejectPrompt(_ message: String) {
-        errorMessage = message
-        Haptics.warning()
-    }
-
-    func sessionMutationApplyOptimisticMode(_ preset: SessionMode?, to sessionID: String) {
-        applyOptimisticMode(preset, to: sessionID)
-    }
-
-    func sessionMutationApplyModeResult(
-        _ result: CompanionSessionModeResult,
-        sessionID: String
-    ) async {
-        if let nextSnapshot = result.snapshot {
-            await applySnapshot(nextSnapshot)
-            if snapshotState.hasDetail(for: sessionID) {
-                await refreshSessionDetail(id: sessionID)
-            }
-            return
-        }
-
-        connectionState = .connected
-        errorMessage = nil
-        lastUpdatedAt = Date()
-        CompanionDiagnostics.record(
-            "mode:accepted-without-snapshot sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
-        )
-    }
-
-    func sessionMutationHandleModeFailure(
-        _ error: Error,
-        sessionID: String,
-        rollbackState: ModeRollbackState?
-    ) -> Bool {
-        restoreOptimisticModeSnapshot(
-            rollbackState?.snapshot,
-            previousDetail: rollbackState?.detail,
-            sessionID: sessionID
-        )
-        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
-        Haptics.error()
-        return false
-    }
-
-    func sessionMutationSetPromptMutating(_ isMutating: Bool, sessionID: String) {
-        setSessionMutation(isMutating, sessionID: sessionID)
-    }
-
-    func sessionMutationApplyPromptResult(
-        _ result: CompanionPromptSendResult,
-        sessionID: String,
-        assistantSurface: CompanionAssistantSurface
-    ) async {
-        await applyPromptSendResult(
-            result,
-            sessionID: sessionID,
-            assistantSurface: assistantSurface
-        )
-    }
-
-    func sessionMutationHandlePromptFailure(_ error: Error, sessionID: String) -> Bool {
-        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
-        Haptics.error()
-        return false
     }
 }
 
