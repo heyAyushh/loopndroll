@@ -277,6 +277,38 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func usesNewestSessionMiniAsContinuationTarget() throws {
+        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        try store.replace(latestSeq: 9, records: [
+            miniRecord(id: "old-mini", title: "Old Mini", archived: false, updatedAtMs: 1),
+            miniRecord(id: "archived-mini", title: "Archived Mini", archived: true, updatedAtMs: 9),
+            miniRecord(
+                id: "fresh-mini",
+                title: "Fresh Mini",
+                archived: false,
+                assistantPreview: "Live mini preview",
+                updatedAtMs: 4
+            ),
+        ])
+        let snapshot = try #require(try store.cachedSnapshot())
+
+        let descriptor = LooperContinuationActivityBuilder.descriptor(
+            from: snapshot,
+            handoffBaseURL: URL(string: "http://100.64.0.8:8765")
+        )
+
+        #expect(descriptor.title == "Fresh Mini")
+        #expect(descriptor.targetContentIdentifier == "looper.session.fresh-mini")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "fresh-mini")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionPreview] == "Live mini preview")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.updatedAtMilliseconds] == "4")
+        #expect(
+            descriptor.userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL]
+                == "http://100.64.0.8:8765/handoff/sessions/fresh-mini"
+        )
+    }
+
+    @Test
     func blankContinuationTitleFallsBackToThreadID() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(from: desktopSnapshot(threads: [
             thread(id: "thread-main", title: "   ", updatedAtMs: 1),
@@ -466,4 +498,70 @@ struct LooperContinuationActivityTests {
             )
         )
     }
+
+    private func temporaryStoreFileURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("LooperContinuationTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(MenuBarSessionMiniLocalStore.defaultFileName)
+    }
+
+    private func miniRecord(
+        id: String,
+        title: String,
+        archived: Bool,
+        assistantPreview: String = "Ready",
+        updatedAtMs: Int64
+    ) throws -> MenuBarSessionMiniRecord {
+        let payload = ContinuationMiniPayload(
+            id: id,
+            sessionId: id,
+            ref: id,
+            title: title,
+            status: archived ? "archived" : "active",
+            effectiveMode: "await-reply",
+            canSendPrompt: true,
+            replyable: true,
+            queueCount: 0,
+            lifecycle: "active",
+            isArchived: archived,
+            assistantPreview: assistantPreview,
+            metadata: ContinuationMiniMetadata(
+                projectName: "looper",
+                projectPath: "/Users/test/looper"
+            ),
+            lastActivityAtMs: updatedAtMs,
+            updatedAtMs: updatedAtMs
+        )
+        let data = try JSONEncoder().encode(payload)
+        return MenuBarSessionMiniRecord(
+            sessionID: id,
+            assistantSurface: "codex",
+            seq: updatedAtMs,
+            revision: "rev-\(updatedAtMs)",
+            payloadJSON: String(decoding: data, as: UTF8.self)
+        )
+    }
+}
+
+private struct ContinuationMiniPayload: Encodable {
+    let id: String
+    let sessionId: String
+    let ref: String
+    let title: String
+    let status: String
+    let effectiveMode: String
+    let canSendPrompt: Bool
+    let replyable: Bool
+    let queueCount: Int
+    let lifecycle: String
+    let isArchived: Bool
+    let assistantPreview: String
+    let metadata: ContinuationMiniMetadata
+    let lastActivityAtMs: Int64
+    let updatedAtMs: Int64
+}
+
+private struct ContinuationMiniMetadata: Encodable {
+    let projectName: String
+    let projectPath: String
 }

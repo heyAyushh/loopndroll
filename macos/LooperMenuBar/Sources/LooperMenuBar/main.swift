@@ -166,17 +166,22 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshMenu(force: Bool = false) async {
-    if !force, restoreSessionMiniMenuIfAvailable() {
-      return
+    let sessionMiniSnapshot = cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
+    if !force, let sessionMiniSnapshot {
+      replaceMenu(snapshot: nil, sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
     }
 
     let result = await menuRefreshCoordinator.refresh(force: force)
     if let snapshot = result.snapshot {
       updateMobileState(
         result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
-      publishContinuationActivity(from: snapshot)
+      publishContinuationActivity(
+        sessionMiniSnapshot: sessionMiniSnapshot ?? cachedSessionMiniSnapshot,
+        snapshot: snapshot
+      )
       replaceMenu(
         snapshot: snapshot,
+        sessionMiniSnapshot: sessionMiniSnapshot ?? cachedSessionMiniSnapshot,
         connections: result.connections,
         acpClientHosts: result.acpClientHosts,
         error: nil
@@ -206,22 +211,48 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshContinuationActivity() async {
-    if restoreSessionMiniMenuIfAvailable() {
-      continuationPublisher.publishFallbackIfIdle(
-        LooperContinuationActivityBuilder.genericDescriptor())
-      return
+    let sessionMiniSnapshot = cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
+    if let sessionMiniSnapshot {
+      publishContinuationActivity(from: sessionMiniSnapshot)
     }
 
     let result = await menuRefreshCoordinator.refresh()
     if let snapshot = result.snapshot {
       updateMobileState(
         result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
-      publishContinuationActivity(from: snapshot)
+      publishContinuationActivity(
+        sessionMiniSnapshot: sessionMiniSnapshot ?? cachedSessionMiniSnapshot,
+        snapshot: snapshot
+      )
     } else {
       updateMobileState(nil, pushDevices: nil, health: nil)
-      continuationPublisher.publishFallbackIfIdle(
-        LooperContinuationActivityBuilder.genericDescriptor())
+      if sessionMiniSnapshot == nil {
+        continuationPublisher.publishFallbackIfIdle(
+          LooperContinuationActivityBuilder.genericDescriptor())
+      }
     }
+  }
+
+  private func publishContinuationActivity(
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
+    snapshot: DesktopSnapshotResponse
+  ) {
+    if let sessionMiniSnapshot {
+      publishContinuationActivity(from: sessionMiniSnapshot)
+      return
+    }
+
+    publishContinuationActivity(from: snapshot)
+  }
+
+  private func publishContinuationActivity(from snapshot: MenuBarSessionMiniLocalSnapshot) {
+    continuationPublisher.publish(
+      LooperContinuationActivityBuilder.descriptor(
+        from: snapshot,
+        handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL(
+          preference: mobileRoutePreference)
+      )
+    )
   }
 
   private func publishContinuationActivity(from snapshot: DesktopSnapshotResponse) {
@@ -263,12 +294,17 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return nil
     }
 
-    let result = await menuRefreshCoordinator.refresh()
-    if let snapshot = result.snapshot {
-      return openTarget(for: threadID, snapshot: snapshot)
+    let sessionMiniSnapshot = cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
+    if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
+      return target
     }
 
-    return openTarget(for: threadID, snapshot: nil)
+    let result = await menuRefreshCoordinator.refresh()
+    if let snapshot = result.snapshot {
+      return openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot, snapshot: snapshot)
+    }
+
+    return openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot, snapshot: nil)
   }
 
   private func shouldDeliverMacOSNotification(state: DesktopMobileStateResponse?) -> Bool {
@@ -290,15 +326,23 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func openThreadFromNotification(_ threadID: String) async {
+    let sessionMiniSnapshot = cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
+    if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
+      _ = openThread(target)
+      return
+    }
+
     let result = await menuRefreshCoordinator.refresh(force: true)
     if let snapshot = result.snapshot {
       updateMobileState(
         result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
-      _ = openThread(openTarget(for: threadID, snapshot: snapshot))
+      _ = openThread(
+        openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot, snapshot: snapshot)
+      )
       return
     }
 
-    _ = openThread(openTarget(for: threadID, snapshot: nil))
+    _ = openThread(openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot, snapshot: nil))
   }
 
   private func replyToThreadFromNotification(
@@ -330,8 +374,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func openTarget(
     for threadID: String,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
     snapshot: DesktopSnapshotResponse?
   ) -> LooperThreadOpenTarget {
+    if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
+      return target
+    }
+
     if let thread = snapshot?.threads.first(where: { $0.threadId == threadID }) {
       return LooperThreadOpenTarget(
         threadId: thread.threadId,
@@ -348,6 +397,21 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     )
   }
 
+  private func openTarget(
+    for threadID: String,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+  ) -> LooperThreadOpenTarget? {
+    guard let session = sessionMiniSnapshot?.sessions.first(where: { $0.sessionID == threadID }) else {
+      return nil
+    }
+
+    return LooperThreadOpenTarget(
+      threadId: session.sessionID,
+      transcriptPath: nil,
+      workingDirectory: session.projectPath
+    )
+  }
+
   private func replaceMenu(
     snapshot: DesktopSnapshotResponse?,
     sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot? = nil,
@@ -355,10 +419,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     acpClientHosts: AcpClientHostsResponse? = nil,
     error: Error?
   ) {
+    let effectiveSessionMiniSnapshot = sessionMiniSnapshot ?? cachedSessionMiniSnapshot
     updateStatusItem(snapshot: snapshot, error: error)
     let menu = makeMenu(
       snapshot: snapshot,
-      sessionMiniSnapshot: sessionMiniSnapshot,
+      sessionMiniSnapshot: effectiveSessionMiniSnapshot,
       connections: connections,
       acpClientHosts: acpClientHosts,
       error: error
@@ -379,10 +444,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     addDisabledItem(Layout.appDisplayName, to: menu)
     menu.addItem(NSMenuItem.separator())
 
-    if let snapshot {
-      addSnapshotThreadSections(snapshot, to: menu)
-    } else if let sessionMiniSnapshot {
+    if let sessionMiniSnapshot {
       addSessionMiniThreadSections(sessionMiniSnapshot, to: menu)
+    } else if let snapshot {
+      addSnapshotThreadSections(snapshot, to: menu)
     }
 
     menu.addItem(NSMenuItem.separator())
@@ -390,7 +455,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     addActionItem(
       Layout.diagnosticsMenuTitle, action: #selector(showDiagnosticsAction(_:)), keyEquivalent: "d",
       to: menu)
-    addDetailsItem(snapshot: snapshot, connections: connections, error: error, to: menu)
+    addDetailsItem(
+      snapshot: snapshot,
+      sessionMiniSnapshot: sessionMiniSnapshot,
+      connections: connections,
+      error: error,
+      to: menu
+    )
     addSettingsItem(snapshot: snapshot, acpClientHosts: acpClientHosts, to: menu)
     addActionItem(
       "Stop Server", action: #selector(stopServerAction(_:)), keyEquivalent: "", to: menu)
@@ -402,6 +473,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func addDetailsItem(
     snapshot: DesktopSnapshotResponse?,
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
     connections: DesktopConnectionsResponse? = nil,
     error: Error?,
     to menu: NSMenu
@@ -414,12 +486,38 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       addSnapshotDetails(snapshot, connections: connections, to: submenu)
     } else if error != nil {
       addUnavailableDetails(to: submenu)
+    } else if let sessionMiniSnapshot {
+      addSessionMiniDetails(sessionMiniSnapshot, to: submenu)
     } else {
       addStartingDetails(to: submenu)
     }
 
     item.submenu = submenu
     menu.addItem(item)
+  }
+
+  private func addSessionMiniDetails(
+    _ snapshot: MenuBarSessionMiniLocalSnapshot,
+    to menu: NSMenu
+  ) {
+    let activeCount = snapshot.sessions.filter { !$0.isArchived }.count
+    let archivedCount = snapshot.sessions.count - activeCount
+    addDisabledItem("Status: Realtime", to: menu)
+    addDisabledItem("State: SessionMini seq \(snapshot.latestSeq)", to: menu)
+    addDisabledItem("iPhone: \(mobileStatusTitle())", to: menu)
+    addMobileRouteDetails(to: menu)
+    addDisabledItem(
+      "Chats: \(activeCount) active, \(archivedCount) archived",
+      to: menu
+    )
+
+    let pendingCount = snapshot.pendingCommands.count
+    guard pendingCount > 0 else {
+      return
+    }
+
+    menu.addItem(NSMenuItem.separator())
+    addDisabledItem("Pending commands: \(pendingCount)", to: menu)
   }
 
   private func addSnapshotDetails(
@@ -1378,7 +1476,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     if let snapshot = result.snapshot {
       updateMobileState(
         result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
-      publishContinuationActivity(from: snapshot)
+      publishContinuationActivity(
+        sessionMiniSnapshot: cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot(),
+        snapshot: snapshot
+      )
       replaceMenu(
         snapshot: snapshot,
         connections: result.connections,

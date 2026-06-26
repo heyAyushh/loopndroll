@@ -203,6 +203,49 @@ public enum LooperContinuationActivityBuilder {
         )
     }
 
+    public static func descriptor(
+        from snapshot: MenuBarSessionMiniLocalSnapshot,
+        handoffBaseURL: URL? = nil
+    ) -> LooperContinuationActivityDescriptor {
+        guard let session = continuationSession(from: snapshot.sessions) else {
+            return genericDescriptor()
+        }
+
+        let title = nonBlank(session.title) ?? session.sessionID
+        let subtitle = nonBlank(session.projectName) ?? nonBlank(session.assistantSurface) ?? ""
+        let webpageURL = handoffBaseURL.map {
+            handoffWebpageURL(baseURL: $0, threadID: session.sessionID)
+        }
+        var userInfo = [
+            LooperContinuationActivity.UserInfoKey.kind: sessionActivityKind,
+            LooperContinuationActivity.UserInfoKey.sessionID: session.sessionID,
+            LooperContinuationActivity.UserInfoKey.sessionTitle: title,
+            LooperContinuationActivity.UserInfoKey.sessionSubtitle: subtitle,
+        ]
+
+        if let updatedAtMs = session.updatedAtMs ?? session.lastActivityAtMs {
+            userInfo[LooperContinuationActivity.UserInfoKey.updatedAtMilliseconds] =
+                String(updatedAtMs)
+        }
+
+        if let webpageURL {
+            userInfo[LooperContinuationActivity.UserInfoKey.handoffWebpageURL] =
+                webpageURL.absoluteString
+        }
+
+        if let assistantPreview = nonBlank(session.assistantPreview) {
+            userInfo[LooperContinuationActivity.UserInfoKey.sessionPreview] = assistantPreview
+        }
+
+        return LooperContinuationActivityDescriptor(
+            title: title,
+            targetContentIdentifier:
+                "\(LooperContinuationActivity.sessionTargetContentIdentifierPrefix)\(session.sessionID)",
+            webpageURL: webpageURL,
+            userInfo: userInfo
+        )
+    }
+
     public static func genericDescriptor() -> LooperContinuationActivityDescriptor {
         LooperContinuationActivityDescriptor(
             title: genericActivityTitle,
@@ -221,14 +264,39 @@ public enum LooperContinuationActivityBuilder {
             ?? newestThread(from: threads)
     }
 
+    private static func continuationSession(from sessions: [MenuBarSessionMini]) -> MenuBarSessionMini? {
+        let activeSessions = sessions.filter { !$0.isArchived }
+
+        return newestSession(from: activeSessions)
+            ?? newestSession(from: sessions)
+    }
+
     private static func newestThread(from threads: [DesktopThreadSummary]) -> DesktopThreadSummary? {
         threads.max { left, right in
             timestamp(for: left) < timestamp(for: right)
         }
     }
 
+    private static func newestSession(from sessions: [MenuBarSessionMini]) -> MenuBarSessionMini? {
+        sessions.max { left, right in
+            timestamp(for: left) < timestamp(for: right)
+        }
+    }
+
     private static func timestamp(for thread: DesktopThreadSummary) -> Int64 {
         thread.updatedAtMs ?? Int64.min
+    }
+
+    private static func timestamp(for session: MenuBarSessionMini) -> Int64 {
+        session.updatedAtMs ?? session.lastActivityAtMs ?? Int64.min
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 
     private static func handoffWebpageURL(baseURL: URL, threadID: String) -> URL {
