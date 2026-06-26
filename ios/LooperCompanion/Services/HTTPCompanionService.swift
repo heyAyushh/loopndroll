@@ -311,9 +311,6 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func prepareCommandRuntimeIfNeeded() async {
-        guard (try? sessionRuntime?.isConfigured()) != true else {
-            return
-        }
         do {
             try await startSessionRuntime()
         } catch {
@@ -324,29 +321,19 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func startSessionRuntime() async throws {
-        let responseData = try await responseDataWithConfiguredURLs(
-            path: Self.healthPath,
-            method: .get,
-            includesAuthentication: false
-        )
-        let health = try JSONDecoder().decode(CompanionServerHealth.self, from: responseData.data)
-        let endpoints = Self.clientCoreEndpoints(from: health)
-        guard !endpoints.isEmpty else {
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        _ = try requiredSessionRuntime().start(
-            endpoints: endpoints,
+        _ = try await requiredSessionRuntime().startIfNeeded(
             bearerToken: bearerToken,
             mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
-        )
-    }
-
-    private static func clientCoreEndpoints(from health: CompanionServerHealth) -> [ClientEndpoint] {
-        let realtimeURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
-            ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
-        )
-        return realtimeURLs.map { url in
-            ClientEndpoint(url: url.absoluteString, lastGood: false)
+        ) {
+            let responseData = try await responseDataWithConfiguredURLs(
+                path: Self.healthPath,
+                method: .get,
+                includesAuthentication: false
+            )
+            let health = try JSONDecoder().decode(CompanionServerHealth.self, from: responseData.data)
+            return CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
+                ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
+            )
         }
     }
 

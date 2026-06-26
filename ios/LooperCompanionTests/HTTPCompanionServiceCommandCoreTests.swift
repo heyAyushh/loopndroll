@@ -5,6 +5,35 @@ import Testing
 @Suite("HTTPCompanionService command core")
 struct HTTPCompanionServiceCommandCoreTests {
     @Test
+    func sessionRuntimeStartIfNeededOwnsEndpointMapping() async throws {
+        let store = try Self.temporaryMiniStore()
+        let runtime = CompanionSessionRuntime(localStore: store)
+        let endpointURL = try #require(URL(string: "http://100.64.0.2:8765"))
+        var endpointProviderCalls = 0
+
+        let snapshot = try await runtime.startIfNeeded(
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
+        ) {
+            endpointProviderCalls += 1
+            return [endpointURL]
+        }
+
+        let secondStart = try await runtime.startIfNeeded(
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
+        ) {
+            endpointProviderCalls += 1
+            return []
+        }
+
+        #expect(snapshot?.phase == .ready)
+        #expect(snapshot?.endpointUrl == endpointURL.absoluteString)
+        #expect(secondStart == nil)
+        #expect(endpointProviderCalls == 1)
+    }
+
+    @Test
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
         let store = try Self.temporaryMiniStore()
         let service = HTTPCompanionService(

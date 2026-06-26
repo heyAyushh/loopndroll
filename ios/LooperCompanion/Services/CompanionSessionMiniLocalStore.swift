@@ -242,7 +242,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
-    func start(
+    private func start(
         endpoints: [ClientEndpoint],
         bearerToken: String?,
         mobileSessionHeader: String?
@@ -255,11 +255,33 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
+    func startIfNeeded(
+        bearerToken: String?,
+        mobileSessionHeader: String?,
+        preferredRealtimeEndpointURLs: () async throws -> [URL]
+    ) async throws -> ClientStateSnapshot? {
+        if (try? isConfigured()) == true {
+            return nil
+        }
+        let endpoints = try await preferredRealtimeEndpointURLs().map {
+            ClientEndpoint(url: $0.absoluteString, lastGood: false)
+        }
+        guard !endpoints.isEmpty else {
+            throw CompanionSessionRuntimeError.noRealtimeEndpoint
+        }
+        return try start(
+            endpoints: endpoints,
+            bearerToken: bearerToken,
+            mobileSessionHeader: mobileSessionHeader
+        )
+    }
+
+    @discardableResult
     func stop() throws -> ClientStateSnapshot {
         try sessionManager.stop()
     }
 
-    func isConfigured() throws -> Bool {
+    private func isConfigured() throws -> Bool {
         try sessionManager.isRuntimeConfigured()
     }
 
@@ -504,6 +526,17 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             if result.shouldStop {
                 return
             }
+        }
+    }
+}
+
+enum CompanionSessionRuntimeError: LocalizedError {
+    case noRealtimeEndpoint
+
+    var errorDescription: String? {
+        switch self {
+        case .noRealtimeEndpoint:
+            "No realtime endpoint available"
         }
     }
 }
