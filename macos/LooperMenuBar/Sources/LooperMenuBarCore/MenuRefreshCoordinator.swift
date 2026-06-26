@@ -9,6 +9,7 @@ public struct MenuRefreshError: Error, Equatable, Sendable {
 }
 
 public struct MenuRefreshResult: Equatable, Sendable {
+    public let sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
     public let snapshot: DesktopSnapshotResponse?
     public let connections: DesktopConnectionsResponse?
     public let acpClientHosts: AcpClientHostsResponse?
@@ -18,7 +19,7 @@ public struct MenuRefreshResult: Equatable, Sendable {
     public let error: MenuRefreshError?
 
     public var succeeded: Bool {
-        snapshot != nil
+        sessionMiniSnapshot != nil || snapshot != nil
     }
 }
 
@@ -35,6 +36,7 @@ public actor MenuRefreshCoordinator {
     }
 
     private let client: any ControlPlaneClient
+    private let sessionRuntime: MenuBarSessionRuntime?
     private let clock = ContinuousClock()
     private let freshReuseDuration: Duration
     private var inFlight: InFlightRefresh?
@@ -43,9 +45,11 @@ public actor MenuRefreshCoordinator {
 
     public init(
         client: any ControlPlaneClient,
+        sessionRuntime: MenuBarSessionRuntime? = nil,
         freshReuseDuration: Duration = .milliseconds(750)
     ) {
         self.client = client
+        self.sessionRuntime = sessionRuntime
         self.freshReuseDuration = freshReuseDuration
     }
 
@@ -86,10 +90,11 @@ public actor MenuRefreshCoordinator {
         }
 
         let client = self.client
+        let sessionRuntime = self.sessionRuntime
         let refreshID = nextRefreshID
         nextRefreshID += 1
         let task = Task {
-            await Self.fetch(client: client)
+            await Self.fetch(client: client, sessionRuntime: sessionRuntime)
         }
         inFlight = InFlightRefresh(id: refreshID, task: task, bypassesCache: bypassingCache)
         let result = await task.value
@@ -100,7 +105,11 @@ public actor MenuRefreshCoordinator {
         return result
     }
 
-    private static func fetch(client: any ControlPlaneClient) async -> MenuRefreshResult {
+    private static func fetch(
+        client: any ControlPlaneClient,
+        sessionRuntime: MenuBarSessionRuntime?
+    ) async -> MenuRefreshResult {
+        let sessionMiniSnapshot = fetchSessionMiniSnapshot(sessionRuntime)
         async let snapshotResult = fetchSnapshot(client: client)
         async let connections = fetchDesktopConnections(client: client)
         async let acpClientHosts = fetchAcpClientHosts(client: client)
@@ -111,6 +120,7 @@ public actor MenuRefreshCoordinator {
         switch await snapshotResult {
         case let .success(snapshot):
             return MenuRefreshResult(
+                sessionMiniSnapshot: sessionMiniSnapshot,
                 snapshot: snapshot,
                 connections: await connections,
                 acpClientHosts: await acpClientHosts,
@@ -121,6 +131,7 @@ public actor MenuRefreshCoordinator {
             )
         case let .failure(error):
             return MenuRefreshResult(
+                sessionMiniSnapshot: sessionMiniSnapshot,
                 snapshot: nil,
                 connections: await connections,
                 acpClientHosts: await acpClientHosts,
@@ -130,6 +141,12 @@ public actor MenuRefreshCoordinator {
                 error: error
             )
         }
+    }
+
+    private static func fetchSessionMiniSnapshot(
+        _ sessionRuntime: MenuBarSessionRuntime?
+    ) -> MenuBarSessionMiniLocalSnapshot? {
+        try? sessionRuntime?.cachedSnapshot()
     }
 
     private static func fetchSnapshot(

@@ -7,6 +7,7 @@ struct LooperDiagnosticsContentTests {
     func rendersAcpTimingRoutesAndClassification() {
         let report = LooperDiagnosticsContent.report(
             from: MenuRefreshResult(
+                sessionMiniSnapshot: nil,
                 snapshot: snapshot(),
                 connections: nil,
                 acpClientHosts: acpClientHosts(),
@@ -51,6 +52,7 @@ struct LooperDiagnosticsContentTests {
     @Test
     func rendersUnavailableRefreshError() {
         let report = LooperDiagnosticsContent.report(from: MenuRefreshResult(
+            sessionMiniSnapshot: nil,
             snapshot: nil,
             connections: nil,
             acpClientHosts: nil,

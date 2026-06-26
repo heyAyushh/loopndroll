@@ -140,6 +140,35 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.healthCalls == 1)
     }
 
+    @Test("cached SessionMini makes refresh successful when HTTP snapshot fails")
+    func cachedSessionMiniMakesRefreshSuccessfulWhenHTTPSnapshotFails() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 301,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient(
+            snapshotResult: .failure(ControlPlaneClientError.timeout)
+        )
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .zero
+        )
+
+        let result = await coordinator.refresh(force: true)
+
+        #expect(result.succeeded)
+        #expect(result.snapshot == nil)
+        #expect(result.sessionMiniSnapshot?.latestSeq == 301)
+        #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        #expect(result.error?.message.contains("timeout") == true)
+        #expect(client.snapshotCalls == 1)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
+        #expect(client.healthCalls == 1)
+    }
+
     @Test("failed refresh replaces prior success cache during reuse window")
     func failedRefreshReplacesPriorSuccessCacheDuringReuseWindow() async {
         let client = MenuRefreshRecordingClient()
@@ -420,4 +449,75 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
             agents: []
         )
     }
+}
+
+private func seededRuntime(
+    latestSeq: Int64,
+    sessionID: String,
+    title: String
+) throws -> MenuBarSessionRuntime {
+    let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LooperMenuRefreshTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
+    let payload = TestMenuRefreshMiniPayload(
+        id: sessionID,
+        sessionId: sessionID,
+        ref: "S301",
+        title: title,
+        status: "active",
+        canSendPrompt: true,
+        replyable: true,
+        queueCount: 0,
+        lifecycle: "active",
+        isArchived: false,
+        metadata: TestMenuRefreshMiniMetadata(
+            projectName: "looper",
+            projectPath: "/Users/test/looper"
+        ),
+        lastActivityAtMs: latestSeq,
+        updatedAtMs: latestSeq
+    )
+    let payloadData = try JSONEncoder().encode(payload)
+    let cache: [String: Any] = [
+        "latestSeq": latestSeq,
+        "sessions": [
+            [
+                "sessionId": sessionID,
+                "assistantSurface": "codex",
+                "seq": latestSeq,
+                "revision": "rev-\(latestSeq)",
+                "payloadJson": String(decoding: payloadData, as: UTF8.self),
+            ],
+        ],
+        "pendingCommands": [],
+        "serverTime": "",
+    ]
+    let data = try JSONSerialization.data(withJSONObject: cache, options: [.sortedKeys])
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try data.write(to: fileURL, options: .atomic)
+    return try MenuBarSessionRuntime(fileURL: fileURL)
+}
+
+private struct TestMenuRefreshMiniPayload: Encodable {
+    let id: String
+    let sessionId: String
+    let ref: String
+    let title: String
+    let status: String
+    let canSendPrompt: Bool
+    let replyable: Bool
+    let queueCount: Int
+    let lifecycle: String
+    let isArchived: Bool
+    let metadata: TestMenuRefreshMiniMetadata
+    let lastActivityAtMs: Int64
+    let updatedAtMs: Int64
+}
+
+private struct TestMenuRefreshMiniMetadata: Encodable {
+    let projectName: String
+    let projectPath: String
 }

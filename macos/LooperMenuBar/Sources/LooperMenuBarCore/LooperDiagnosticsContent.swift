@@ -24,6 +24,8 @@ public enum LooperDiagnosticsContent {
             lines.append("refresh_error=\(error.message)")
         }
 
+        appendSessionMini(result.sessionMiniSnapshot, to: &lines)
+
         guard let snapshot = result.snapshot else {
             return lines.joined(separator: "\n")
         }
@@ -37,6 +39,42 @@ public enum LooperDiagnosticsContent {
         appendClassification(snapshot, to: &lines)
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func appendSessionMini(
+        _ snapshot: MenuBarSessionMiniLocalSnapshot?,
+        to lines: inout [String]
+    ) {
+        appendSection("SessionMini", to: &lines)
+        guard let snapshot else {
+            lines.append("session_mini=missing")
+            return
+        }
+
+        let activeCount = snapshot.sessions.filter { !$0.isArchived }.count
+        let archivedCount = snapshot.sessions.count - activeCount
+        lines.append(
+            [
+                "source=client-core",
+                "seq=\(snapshot.latestSeq)",
+                "sessions=\(snapshot.sessions.count)",
+                "active=\(activeCount)",
+                "archived=\(archivedCount)",
+                "pending_commands=\(snapshot.pendingCommands.count)",
+            ].joined(separator: " ")
+        )
+        for session in snapshot.sessions.prefix(Layout.maxThreadTimingRows) {
+            lines.append(
+                [
+                    "mini_session=\(session.sessionID)",
+                    "surface=\(session.assistantSurface)",
+                    "revision=\(session.revision)",
+                    "status=\(session.status)",
+                    "replyable=\(session.replyable)",
+                    "queue=\(session.queueCount)",
+                ].joined(separator: " ")
+            )
+        }
     }
 
     private static func appendControlPlane(_ status: ControlPlaneStatusResponse, to lines: inout [String]) {
