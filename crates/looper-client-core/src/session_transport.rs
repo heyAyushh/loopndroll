@@ -25,7 +25,6 @@ pub(crate) mod proto {
 }
 
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
-const CONNECTION_WARMUP_TIMEOUT: Duration = Duration::from_millis(1_500);
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
@@ -121,28 +120,6 @@ pub(crate) async fn submit_expected_session_outbox(
     .map_err(|_| ClientCoreError::SessionCommandAckTimedOut)??;
 
     build_command_batch_response(command_metadata, acks)
-}
-
-pub(crate) async fn warm_realtime_connection(
-    endpoints: Vec<ClientEndpoint>,
-    bearer_token: String,
-    mobile_session_header: String,
-) -> Result<(), ClientCoreError> {
-    let endpoint = select_transport_endpoint(&endpoints)?;
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
-        .await
-        .map_err(|_| ClientCoreError::RealtimeConnectionWarmupFailed)?;
-    let mut request = TonicRequest::new(proto::HealthRequest {});
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)?;
-    let response = tokio::time::timeout(CONNECTION_WARMUP_TIMEOUT, client.health(request))
-        .await
-        .map_err(|_| ClientCoreError::RealtimeConnectionWarmupTimedOut)?
-        .map_err(|_| ClientCoreError::RealtimeConnectionWarmupFailed)?;
-    if response.into_inner().ok {
-        Ok(())
-    } else {
-        Err(ClientCoreError::RealtimeConnectionWarmupFailed)
-    }
 }
 
 pub(crate) async fn fetch_state_mini_snapshot(

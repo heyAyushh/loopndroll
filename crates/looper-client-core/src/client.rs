@@ -8,20 +8,19 @@ use tokio::{
 use crate::command_batch::reduce_expected_command_ack;
 use crate::error::ClientCoreError;
 use crate::local_store::LooperClientCoreLocalStore;
+#[cfg(test)]
+use crate::model::ClientStateDelta;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
+    ClientEndpoint, ClientPendingMutation, ClientStateMini, ClientStateMiniDelta,
     ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
     ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
     OutboundSessionFrameKind,
 };
-use crate::mutation_queue::{
-    ClientModeMutationBatchFinish, ClientModeMutationDrainFinish, ClientModeMutationEnqueueResult,
-    ClientModeMutationOption, ClientModeMutationQueue,
-};
+#[cfg(test)]
+use crate::session_transport::fetch_state_mini_snapshot;
 use crate::session_transport::{
-    StateMiniStreamEvent, fetch_state_mini_snapshot, run_state_mini_stream,
-    submit_expected_session_outbox, warm_realtime_connection,
+    StateMiniStreamEvent, run_state_mini_stream, submit_expected_session_outbox,
 };
 use crate::state_mini::{
     latest_state_mini_revision, normalize_state_minis, require_valid_sequence, same_state_mini_key,
@@ -58,7 +57,6 @@ pub struct LooperClientCore {
     stream: Mutex<Option<ClientCoreStream>>,
     runtime_config: Mutex<Option<ClientCoreRuntimeConfig>>,
     command_flush: tokio::sync::Mutex<()>,
-    mode_mutations: Arc<ClientModeMutationQueue>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -80,7 +78,6 @@ impl LooperClientCore {
             stream: Mutex::new(None),
             runtime_config: Mutex::new(None),
             command_flush: tokio::sync::Mutex::new(()),
-            mode_mutations: ClientModeMutationQueue::new(),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
     }
@@ -131,8 +128,11 @@ impl LooperClientCore {
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         self.next_state_mini_stream_update().await
     }
+}
 
-    pub fn connect(
+impl LooperClientCore {
+    #[cfg(test)]
+    fn connect(
         &self,
         endpoints: Vec<ClientEndpoint>,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -146,19 +146,14 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn mark_reconnecting(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let mut state = self.lock_state()?;
-        state.phase = ConnectionPhase::Reconnecting;
-        Ok(state.snapshot())
-    }
-
-    pub fn disconnect(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
+    fn disconnect(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
         let mut state = self.lock_state()?;
         state.phase = ConnectionPhase::Disconnected;
         Ok(state.snapshot())
     }
 
-    pub fn resume_after(&self, after_seq: i64) -> Result<ClientStateSnapshot, ClientCoreError> {
+    #[cfg(test)]
+    fn resume_after(&self, after_seq: i64) -> Result<ClientStateSnapshot, ClientCoreError> {
         let mut state = self.lock_state()?;
         state.outbox.push(OutboundSessionFrame {
             frame_kind: OutboundSessionFrameKind::Resume,
@@ -174,7 +169,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn set_mode(
+    fn set_mode(
         &self,
         thread_id: String,
         preset: String,
@@ -198,7 +193,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn send_prompt(
+    fn send_prompt(
         &self,
         thread_id: String,
         prompt: String,
@@ -224,7 +219,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn submit_notification_reply(
+    fn submit_notification_reply(
         &self,
         notification_id: String,
         thread_id: String,
@@ -252,7 +247,8 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn apply_command_ack(
+    #[cfg(test)]
+    fn apply_command_ack(
         &self,
         ack: ClientCommandAck,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -261,7 +257,8 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn apply_command_batch_response(
+    #[cfg(test)]
+    fn apply_command_batch_response(
         &self,
         response: ClientCommandBatchResponse,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -272,7 +269,8 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn apply_state_delta(
+    #[cfg(test)]
+    fn apply_state_delta(
         &self,
         delta: ClientStateDelta,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -285,7 +283,10 @@ impl LooperClientCore {
         state.last_error.clear();
         Ok(state.snapshot())
     }
+}
 
+#[uniffi::export]
+impl LooperClientCore {
     pub fn replace_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
@@ -302,13 +303,6 @@ impl LooperClientCore {
         }
         state.last_error.clear();
         Ok(state.snapshot())
-    }
-
-    pub fn apply_state_mini_delta(
-        &self,
-        delta: ClientStateMiniDelta,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        Ok(self.apply_state_mini_delta_with_result(delta)?.snapshot)
     }
 
     pub fn apply_state_mini_delta_with_result(
@@ -328,80 +322,22 @@ impl LooperClientCore {
         let state = self.lock_state()?;
         Ok(state.snapshot())
     }
+}
 
-    pub fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
+impl LooperClientCore {
+    fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
         let state = self.lock_state()?;
         Ok(state.pending_outbox_client_mutation_ids())
     }
 
-    pub fn enqueue_mode_mutation(
-        &self,
-        session_id: String,
-        preset: String,
-        client_mutation_id: String,
-    ) -> Result<ClientModeMutationEnqueueResult, ClientCoreError> {
-        self.mode_mutations
-            .enqueue_mode_mutation(session_id, preset, client_mutation_id)
-    }
-
-    pub fn start_mode_drain(
-        &self,
-        session_id: String,
-        drain_id: String,
-    ) -> Result<(), ClientCoreError> {
-        self.mode_mutations.start_mode_drain(session_id, drain_id)
-    }
-
-    pub fn take_next_mode_mutation(
-        &self,
-        session_id: String,
-    ) -> Result<ClientModeMutationOption, ClientCoreError> {
-        self.mode_mutations.take_next_mode_mutation(session_id)
-    }
-
-    pub fn finish_mode_drain(
-        &self,
-        session_id: String,
-        drain_id: String,
-    ) -> Result<ClientModeMutationDrainFinish, ClientCoreError> {
-        self.mode_mutations.finish_mode_drain(session_id, drain_id)
-    }
-
-    pub fn finish_batched_mode_mutation(
-        &self,
-        session_id: String,
-        client_mutation_id: String,
-    ) -> Result<ClientModeMutationBatchFinish, ClientCoreError> {
-        self.mode_mutations
-            .finish_batched_mode_mutation(session_id, client_mutation_id)
-    }
-
-    pub fn latest_mode_mutation(
-        &self,
-        session_id: String,
-    ) -> Result<ClientModeMutationOption, ClientCoreError> {
-        self.mode_mutations.latest_mode_mutation(session_id)
-    }
-
-    pub fn is_latest_mode_mutation(
-        &self,
-        session_id: String,
-        client_mutation_id: String,
-    ) -> Result<bool, ClientCoreError> {
-        self.mode_mutations
-            .is_latest_mode_mutation(session_id, client_mutation_id)
-    }
-
-    pub fn clear_mode_mutations(&self) -> Result<(), ClientCoreError> {
-        self.mode_mutations.clear()
-    }
-
-    pub fn take_outbox(&self) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
+    #[cfg(test)]
+    fn take_outbox(&self) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
         let mut state = self.lock_state()?;
         Ok(std::mem::take(&mut state.outbox))
     }
 
-    pub fn take_expected_outbox(
+    #[cfg(test)]
+    fn take_expected_outbox(
         &self,
         expected_client_mutation_ids: Vec<String>,
     ) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
@@ -422,7 +358,7 @@ impl LooperClientCore {
         Ok(std::mem::take(&mut state.outbox))
     }
 
-    pub async fn submit_expected_outbox(
+    async fn submit_expected_outbox(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
@@ -445,7 +381,7 @@ impl LooperClientCore {
         Ok(response)
     }
 
-    pub async fn submit_pending_outbox(
+    async fn submit_pending_outbox(
         &self,
         expected_client_mutation_ids: Vec<String>,
     ) -> Result<ClientCommandBatchResponse, ClientCoreError> {
@@ -458,7 +394,10 @@ impl LooperClientCore {
         )
         .await
     }
+}
 
+#[uniffi::export]
+impl LooperClientCore {
     pub async fn submit_set_mode_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
@@ -573,25 +512,11 @@ impl LooperClientCore {
             }
         }
     }
+}
 
-    pub async fn warm_connection(
-        &self,
-        endpoints: Vec<ClientEndpoint>,
-        bearer_token: String,
-        mobile_session_header: String,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let endpoint = select_endpoint(&endpoints)?;
-        validate_endpoint_url(&endpoint.url)?;
-        warm_realtime_connection(endpoints, bearer_token, mobile_session_header).await?;
-
-        let mut state = self.lock_state()?;
-        state.phase = ConnectionPhase::Ready;
-        state.endpoint_url = endpoint.url;
-        state.last_error.clear();
-        Ok(state.snapshot())
-    }
-
-    pub async fn recover_state_mini_snapshot(
+impl LooperClientCore {
+    #[cfg(test)]
+    async fn recover_state_mini_snapshot(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
@@ -602,7 +527,7 @@ impl LooperClientCore {
         self.replace_state_minis(snapshot)
     }
 
-    pub fn start_state_mini_stream(
+    fn start_state_mini_stream(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
@@ -631,7 +556,10 @@ impl LooperClientCore {
         })?;
         self.snapshot()
     }
+}
 
+#[uniffi::export]
+impl LooperClientCore {
     pub fn start_configured_state_mini_stream(
         &self,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -642,8 +570,10 @@ impl LooperClientCore {
             config.mobile_session_header,
         )
     }
+}
 
-    pub async fn next_state_mini_stream_update(
+impl LooperClientCore {
+    async fn next_state_mini_stream_update(
         &self,
     ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let mut receiver = {
@@ -665,7 +595,10 @@ impl LooperClientCore {
         }
         self.apply_state_mini_stream_event(event?)
     }
+}
 
+#[uniffi::export]
+impl LooperClientCore {
     pub fn stop_state_mini_stream(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
         self.replace_stream_none()?;
         self.disconnect()
@@ -1185,41 +1118,6 @@ mod tests {
     }
 
     #[test]
-    fn client_core_owns_mode_mutation_queue() {
-        let core = LooperClientCore::new();
-        let first = core
-            .enqueue_mode_mutation(
-                "thread-1".to_owned(),
-                "await-reply".to_owned(),
-                "cmid-mode-1".to_owned(),
-            )
-            .expect("enqueue first");
-        core.start_mode_drain("thread-1".to_owned(), "drain-1".to_owned())
-            .expect("start drain");
-        let second = core
-            .enqueue_mode_mutation(
-                "thread-1".to_owned(),
-                "infinite".to_owned(),
-                "cmid-mode-2".to_owned(),
-            )
-            .expect("enqueue second");
-
-        assert!(first.should_start_drain);
-        assert!(!second.should_start_drain);
-        assert!(
-            core.is_latest_mode_mutation("thread-1".to_owned(), "cmid-mode-2".to_owned())
-                .expect("latest check")
-        );
-
-        let finish = core
-            .finish_mode_drain("thread-1".to_owned(), "drain-1".to_owned())
-            .expect("finish drain");
-        assert!(!finish.is_stale);
-        assert!(finish.has_next_mutation);
-        assert_eq!(finish.next_mutation.client_mutation_id, "cmid-mode-2");
-    }
-
-    #[test]
     fn submit_expected_outbox_keeps_commands_queued_when_transport_fails() {
         let core = LooperClientCore::new();
         core.send_prompt(
@@ -1333,22 +1231,6 @@ mod tests {
         let local_snapshot = store.snapshot().expect("store snapshot");
         assert_eq!(local_snapshot.pending_commands.len(), 1);
         assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
-    }
-
-    #[test]
-    fn warm_connection_rejects_missing_endpoint_without_state_change() {
-        let core = LooperClientCore::new();
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-
-        let error = runtime
-            .block_on(core.warm_connection(Vec::new(), String::new(), String::new()))
-            .expect_err("missing endpoint rejects");
-
-        assert_eq!(error, ClientCoreError::NoEndpoint);
-        assert_eq!(
-            core.snapshot().expect("snapshot").phase,
-            ConnectionPhase::Disconnected
-        );
     }
 
     #[test]

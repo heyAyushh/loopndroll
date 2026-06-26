@@ -8,14 +8,12 @@ mod local_store;
 mod menu_snapshot;
 mod mobile_snapshot;
 mod model;
-mod mutation_queue;
 mod session_transport;
 mod snapshot_reducer;
 mod state_mini;
 mod transport;
 
 pub use client::LooperClientCore;
-pub use command_batch::{build_command_batch_response, reduce_expected_command_ack};
 pub use connection_reducer::{
     ClientConnectionFailureProjection, ClientSnapshotLoadFailureProjection,
     reduce_connection_failure, reduce_snapshot_load_failure,
@@ -34,10 +32,6 @@ pub use model::{
     ClientPendingCommandKind, ClientPendingMutation, ClientStateDelta, ClientStateMini,
     ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
     ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
-};
-pub use mutation_queue::{
-    ClientModeMutation, ClientModeMutationBatchFinish, ClientModeMutationDrainFinish,
-    ClientModeMutationEnqueueResult, ClientModeMutationOption, ClientModeMutationQueue,
 };
 pub use snapshot_reducer::{
     ClientAssistantSurfaceSelection, ClientDetailCacheProjection, ClientDetailModeProjection,

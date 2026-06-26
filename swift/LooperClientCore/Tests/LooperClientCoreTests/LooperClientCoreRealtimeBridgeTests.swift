@@ -143,27 +143,31 @@ struct LooperClientCoreRealtimeBridgeTests {
     }
 
     @Test
-    func duplicateClientMutationReplacesCoreOutboxFrame() throws {
+    func duplicateDurablePromptMutationDedupesPendingCommand() async throws {
         let core = LooperClientCore()
-        _ = try core.sendPrompt(
-            threadId: "thread-main",
-            prompt: "first",
-            assistantSurface: "codex",
-            clientMutationId: "mutation-prompt"
-        )
-        _ = try core.sendPrompt(
-            threadId: "thread-main",
-            prompt: "second",
-            assistantSurface: "codex",
-            clientMutationId: "mutation-prompt"
-        )
+        let store = try localStore(named: "durable-prompt-dedupe")
 
-        let outbox = try core.takeExpectedOutbox(
-            expectedClientMutationIds: ["mutation-prompt"]
-        )
-        #expect(outbox.count == 1)
-        #expect(outbox.first?.prompt == "second")
-        #expect(outbox.first?.clientMutationId == "mutation-prompt")
+        for prompt in ["first", "second"] {
+            do {
+                _ = try await core.submitSendPromptDurable(
+                    localStore: store,
+                    threadId: "thread-main",
+                    prompt: prompt,
+                    assistantSurface: "codex",
+                    clientMutationId: "mutation-prompt"
+                )
+                Issue.record("expected missing runtime config")
+            } catch let error as ClientCoreError {
+                #expect(error == .NoEndpoint)
+            }
+        }
+
+        let snapshot = try store.snapshot()
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.prompt == "second")
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-prompt")
+        #expect(snapshot.pendingCommands.first?.attemptCount == 2)
+        #expect(try core.snapshot().outboxDepth == 1)
     }
 
     private func localStore(named name: String) throws -> LooperClientCoreLocalStore {

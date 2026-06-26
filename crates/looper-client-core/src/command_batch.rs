@@ -6,7 +6,6 @@ use crate::model::{
 
 const REJECTED_DISPATCH_KIND: &str = "rejected";
 
-#[uniffi::export]
 pub fn build_command_batch_response(
     commands: Vec<ClientCommandMetadata>,
     acks: Vec<ClientCommandAck>,
@@ -62,7 +61,6 @@ pub fn build_command_batch_response(
     })
 }
 
-#[uniffi::export]
 pub fn reduce_expected_command_ack(
     response: ClientCommandBatchResponse,
     command_kind: ClientCommandKind,

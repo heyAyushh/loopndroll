@@ -36,10 +36,6 @@ pub enum ClientCoreError {
     SessionCommandTransportFailed,
     #[error("session command acknowledgement timed out")]
     SessionCommandAckTimedOut,
-    #[error("realtime connection warmup failed")]
-    RealtimeConnectionWarmupFailed,
-    #[error("realtime connection warmup timed out")]
-    RealtimeConnectionWarmupTimedOut,
     #[error("state mini snapshot transport failed")]
     StateMiniSnapshotTransportFailed,
     #[error("state mini snapshot timed out")]

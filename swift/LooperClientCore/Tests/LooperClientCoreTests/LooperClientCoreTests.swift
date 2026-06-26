@@ -6,17 +6,20 @@ struct LooperClientCoreTests {
     private let primaryEndpoint = "http://127.0.0.1:8765"
     private let lastGoodEndpoint = "http://100.64.0.2:8765"
     private let threadID = "thread-1"
-    private let mutationID = "mutation-1"
     private let serverTime = "2026-06-25T00:00:00Z"
 
     @Test
-    func connectPrefersLastGoodEndpoint() throws {
+    func configureSessionRuntimePrefersLastGoodEndpoint() throws {
         let core = LooperClientCore()
 
-        let snapshot = try core.connect(endpoints: [
-            ClientEndpoint(url: primaryEndpoint, lastGood: false),
-            ClientEndpoint(url: lastGoodEndpoint, lastGood: true),
-        ])
+        let snapshot = try core.configureSessionRuntime(
+            endpoints: [
+                ClientEndpoint(url: primaryEndpoint, lastGood: false),
+                ClientEndpoint(url: lastGoodEndpoint, lastGood: true),
+            ],
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
+        )
 
         #expect(snapshot.phase == .ready)
         #expect(snapshot.endpointUrl == lastGoodEndpoint)
@@ -24,241 +27,19 @@ struct LooperClientCoreTests {
     }
 
     @Test
-    func modeCommandQueuesPendingMutationAndOutboundFrame() throws {
+    func snapshotReflectsConfiguredRuntime() throws {
         let core = LooperClientCore()
 
-        let snapshot = try core.setMode(
-            threadId: threadID,
-            preset: "ask",
-            clientMutationId: mutationID
+        _ = try core.configureSessionRuntime(
+            endpoints: [ClientEndpoint(url: primaryEndpoint, lastGood: true)],
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
         )
+        let snapshot = try core.snapshot()
 
-        #expect(snapshot.outboxDepth == 1)
-        #expect(snapshot.pendingMutations.map(\.clientMutationId) == [mutationID])
-        #expect(snapshot.pendingMutations.first?.commandKind == .setSessionMode)
-
-        let frames = try core.takeOutbox()
-        #expect(frames.count == 1)
-        #expect(frames.first?.frameKind == .command)
-        #expect(frames.first?.commandKind == .setSessionMode)
-        #expect(frames.first?.threadId == threadID)
-        #expect(frames.first?.preset == "ask")
-        #expect(frames.first?.clientMutationId == mutationID)
-        #expect(try core.snapshot().outboxDepth == 0)
-    }
-
-    @Test
-    func expectedOutboxValidatesMutationOrderBeforeDrain() throws {
-        let core = LooperClientCore()
-        _ = try core.setMode(
-            threadId: threadID,
-            preset: "ask",
-            clientMutationId: "mutation-mode"
-        )
-        _ = try core.sendPrompt(
-            threadId: threadID,
-            prompt: "reply now",
-            assistantSurface: "ios",
-            clientMutationId: "mutation-prompt"
-        )
-
-        #expect(throws: ClientCoreError.UnexpectedOutboxMutations) {
-            _ = try core.takeExpectedOutbox(
-            expectedClientMutationIds: ["mutation-prompt", "mutation-mode"]
-            )
-        }
-        #expect(try core.snapshot().outboxDepth == 2)
-
-        let frames = try core.takeExpectedOutbox(
-            expectedClientMutationIds: ["mutation-mode", "mutation-prompt"]
-        )
-
-        #expect(frames.map(\.clientMutationId) == ["mutation-mode", "mutation-prompt"])
-        #expect(try core.snapshot().outboxDepth == 0)
-    }
-
-    @Test
-    func acceptedAckClearsPendingMutation() throws {
-        let core = LooperClientCore()
-        _ = try core.sendPrompt(
-            threadId: threadID,
-            prompt: "reply now",
-            assistantSurface: "ios",
-            clientMutationId: mutationID
-        )
-
-        let snapshot = try core.applyCommandAck(ack: ClientCommandAck(
-            accepted: true,
-            clientMutationId: mutationID,
-            ackSeq: 42,
-            entityId: threadID,
-            revision: "rev-42",
-            serverTime: "2026-06-25T00:00:00Z",
-            idempotentReplay: false,
-            errorCode: "",
-            rejectReason: "",
-            currentState: ""
-        ))
-
+        #expect(snapshot.phase == .ready)
+        #expect(snapshot.endpointUrl == primaryEndpoint)
         #expect(snapshot.pendingMutations.isEmpty)
-        #expect(snapshot.latestSeq == 42)
-        #expect(snapshot.revision == "rev-42")
-        #expect(snapshot.lastError == "")
-    }
-
-    @Test
-    func rejectedAckRecordsStableError() throws {
-        let core = LooperClientCore()
-        _ = try core.setMode(
-            threadId: threadID,
-            preset: "send",
-            clientMutationId: mutationID
-        )
-
-        let snapshot = try core.applyCommandAck(ack: ClientCommandAck(
-            accepted: false,
-            clientMutationId: mutationID,
-            ackSeq: 7,
-            entityId: threadID,
-            revision: "rev-7",
-            serverTime: "2026-06-25T00:00:00Z",
-            idempotentReplay: false,
-            errorCode: "mode_required",
-            rejectReason: "session is waiting for a mode",
-            currentState: "awaiting_mode"
-        ))
-
-        #expect(snapshot.pendingMutations == [])
-        #expect(snapshot.latestSeq == 7)
-        #expect(snapshot.lastError == "mode_required: session is waiting for a mode")
-    }
-
-    @Test
-    func commandBatchResponseReconcilesInRustCore() throws {
-        let core = LooperClientCore()
-        _ = try core.setMode(
-            threadId: threadID,
-            preset: "ask",
-            clientMutationId: "mutation-mode"
-        )
-        _ = try core.sendPrompt(
-            threadId: threadID,
-            prompt: "reply now",
-            assistantSurface: "ios",
-            clientMutationId: "mutation-prompt"
-        )
-
-        let snapshot = try core.applyCommandBatchResponse(response: ClientCommandBatchResponse(
-            accepted: false,
-            commandAcks: [
-                ClientCommandAckEnvelope(
-                    commandKind: .setSessionMode,
-                    ack: commandAck(
-                        clientMutationID: "mutation-mode",
-                        accepted: true,
-                        ackSeq: 41
-                    ),
-                    preset: "ask",
-                    dispatchKind: "",
-                    promptId: "",
-                    notificationId: ""
-                ),
-                ClientCommandAckEnvelope(
-                    commandKind: .sendSessionPrompt,
-                    ack: commandAck(
-                        clientMutationID: "mutation-prompt",
-                        accepted: false,
-                        ackSeq: 42,
-                        errorCode: "mode_required",
-                        rejectReason: "session is waiting for a mode"
-                    ),
-                    preset: "",
-                    dispatchKind: "rejected",
-                    promptId: "",
-                    notificationId: ""
-                ),
-            ]
-        ))
-
-        #expect(snapshot.pendingMutations.isEmpty)
-        #expect(snapshot.latestSeq == 42)
-        #expect(snapshot.revision == "rev-42")
-        #expect(snapshot.lastError == "mode_required: session is waiting for a mode")
-    }
-
-    @Test
-    func commandBatchResponseMatchesAcksInRustCore() throws {
-        let response = try buildCommandBatchResponse(
-            commands: [
-                ClientCommandMetadata(
-                    commandKind: .setSessionMode,
-                    clientMutationId: "mutation-mode",
-                    preset: "await-reply",
-                    dispatchKind: "",
-                    notificationId: ""
-                ),
-                ClientCommandMetadata(
-                    commandKind: .sendSessionPrompt,
-                    clientMutationId: "mutation-prompt",
-                    preset: "",
-                    dispatchKind: "accepted",
-                    notificationId: ""
-                ),
-            ],
-            acks: [
-                commandAck(clientMutationID: "unknown", accepted: true, ackSeq: 40),
-                commandAck(clientMutationID: "mutation-prompt", accepted: true, ackSeq: 42),
-                commandAck(clientMutationID: "mutation-mode", accepted: true, ackSeq: 41),
-            ]
-        )
-
-        #expect(response.accepted)
-        #expect(response.commandAcks.map(\.ack.clientMutationId) == [
-            "mutation-prompt",
-            "mutation-mode",
-        ])
-        #expect(response.commandAcks.first?.dispatchKind == "accepted")
-        #expect(response.commandAcks.last?.preset == "await-reply")
-    }
-
-    @Test
-    func rejectedCommandBatchAckUsesRejectedDispatchKind() throws {
-        let response = try buildCommandBatchResponse(
-            commands: [
-                ClientCommandMetadata(
-                    commandKind: .submitNotificationReply,
-                    clientMutationId: mutationID,
-                    preset: "",
-                    dispatchKind: "accepted",
-                    notificationId: "notification-1"
-                ),
-            ],
-            acks: [
-                commandAck(clientMutationID: mutationID, accepted: false, ackSeq: 42),
-            ]
-        )
-
-        #expect(!response.accepted)
-        #expect(response.commandAcks.first?.dispatchKind == "rejected")
-        #expect(response.commandAcks.first?.notificationId == "notification-1")
-    }
-
-    @Test
-    func stateDeltaAdvancesSequenceAndRevision() throws {
-        let core = LooperClientCore()
-
-        let snapshot = try core.applyStateDelta(delta: ClientStateDelta(
-            seq: 99,
-            entityId: threadID,
-            kind: "session_mini",
-            revision: "rev-99",
-            serverTime: serverTime,
-            payloadJson: "{}"
-        ))
-
-        #expect(snapshot.latestSeq == 99)
-        #expect(snapshot.revision == "rev-99")
-        #expect(snapshot.serverTime == serverTime)
     }
 
     @Test
@@ -291,7 +72,7 @@ struct LooperClientCoreTests {
             serverTime: ""
         ))
 
-        let snapshot = try core.applyStateMiniDelta(delta: ClientStateMiniDelta(
+        let result = try core.applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta(
             seq: 3,
             latestSeq: 3,
             entityId: threadID,
@@ -302,12 +83,14 @@ struct LooperClientCoreTests {
             session: stateMini(sessionID: threadID, seq: 3, revision: "rev-3", title: "new"),
             sessions: []
         ))
+        let snapshot = result.snapshot
 
+        #expect(result.didChange)
         #expect(snapshot.latestSeq == 3)
         #expect(snapshot.revision == "rev-3")
         #expect(snapshot.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
 
-        let stale = try core.applyStateMiniDelta(delta: ClientStateMiniDelta(
+        let staleResult = try core.applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta(
             seq: 2,
             latestSeq: 2,
             entityId: threadID,
@@ -318,7 +101,9 @@ struct LooperClientCoreTests {
             session: stateMini(sessionID: threadID, seq: 2, revision: "rev-stale", title: "stale"),
             sessions: []
         ))
+        let stale = staleResult.snapshot
 
+        #expect(!staleResult.didChange)
         #expect(stale.latestSeq == 3)
         #expect(stale.revision == "rev-3")
         #expect(stale.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
@@ -337,27 +122,6 @@ struct LooperClientCoreTests {
             seq: seq,
             revision: revision,
             payloadJson: #"{"title":"\#(title)"}"#
-        )
-    }
-
-    private func commandAck(
-        clientMutationID: String,
-        accepted: Bool,
-        ackSeq: Int64,
-        errorCode: String = "",
-        rejectReason: String = ""
-    ) -> ClientCommandAck {
-        ClientCommandAck(
-            accepted: accepted,
-            clientMutationId: clientMutationID,
-            ackSeq: ackSeq,
-            entityId: threadID,
-            revision: "rev-\(ackSeq)",
-            serverTime: serverTime,
-            idempotentReplay: false,
-            errorCode: errorCode,
-            rejectReason: rejectReason,
-            currentState: ""
         )
     }
 }
