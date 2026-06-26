@@ -266,7 +266,7 @@ final class CompanionAppModel {
     }
 
     private func applySessionMiniSyncUpdate(
-        _ update: LooperRealtimeStateMiniUpdate,
+        _ update: CompanionSessionMiniSyncUpdate,
         connectionRevision: Int
     ) {
         guard connectionRevision == self.connectionRevision else {

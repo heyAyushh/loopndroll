@@ -232,10 +232,10 @@ struct MenuBarSessionMiniLocalFirstTests {
             lastActivityAtMs: 6
         )
         let transport = RecordingRecoveryClientCoreStateMiniStreamTransport(
-            snapshot: LooperRealtimeStateMiniSnapshot(
+            snapshot: ClientStateMiniSnapshot(
                 latestSeq: 6,
                 sessions: [stateMini(from: recoveredRecord)],
-                serverTime: nil
+                serverTime: ""
             )
         )
 
@@ -360,29 +360,28 @@ struct MenuBarSessionMiniLocalFirstTests {
         )
     }
 
-    private func stateMini(from record: MenuBarSessionMiniRecord) -> LooperRealtimeStateMini {
-        LooperRealtimeStateMini(
-            sessionID: record.sessionID,
+    private func stateMini(from record: MenuBarSessionMiniRecord) -> ClientStateMini {
+        ClientStateMini(
+            sessionId: record.sessionID,
             assistantSurface: record.assistantSurface,
             seq: record.seq,
             revision: record.revision,
-            payloadJSON: record.payloadJSON
+            payloadJson: record.payloadJSON
         )
     }
 
-    private func stateMiniDelta(from record: MenuBarSessionMiniRecord) -> LooperRealtimeStateMiniDelta {
+    private func stateMiniDelta(from record: MenuBarSessionMiniRecord) -> ClientStateMiniDelta {
         let mini = stateMini(from: record)
-        return LooperRealtimeStateMiniDelta(
+        return ClientStateMiniDelta(
             seq: record.seq,
             latestSeq: record.seq,
-            entityID: "session-mini:\(record.assistantSurface):\(record.sessionID)",
+            entityId: "session-mini:\(record.assistantSurface):\(record.sessionID)",
             kind: "session-mini.changed",
             revision: record.revision,
-            serverTime: nil,
+            serverTime: "",
+            hasSession: true,
             session: mini,
-            sessionID: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            sessions: [mini]
+            sessions: []
         )
     }
 
@@ -659,15 +658,15 @@ private final class NoNetworkControlPlaneClient: @unchecked Sendable {
 }
 
 private final class RecordingClientCoreStateMiniStreamTransport:
-    LooperRealtimeClientCoreStateMiniStreamTransport,
+    LooperClientCoreStateMiniStreamTransport,
     @unchecked Sendable
 {
     private let lock = NSLock()
-    private var deltas: [LooperRealtimeStateMiniDelta]
+    private var deltas: [ClientStateMiniDelta]
     private var recordedStartCount = 0
     private var recordedStopCount = 0
 
-    init(deltas: [LooperRealtimeStateMiniDelta]) {
+    init(deltas: [ClientStateMiniDelta]) {
         self.deltas = deltas
     }
 
@@ -707,19 +706,8 @@ private final class RecordingClientCoreStateMiniStreamTransport:
             )
         }
 
-        let session = delta.session.map(Self.clientStateMini)
         let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: ClientStateMiniDelta(
-                seq: delta.seq,
-                latestSeq: delta.latestSeq,
-                entityId: delta.entityID,
-                kind: delta.kind,
-                revision: delta.revision,
-                serverTime: delta.serverTime ?? "",
-                hasSession: session != nil,
-                session: session ?? Self.emptyClientStateMini,
-                sessions: session == nil ? delta.sessions.map(Self.clientStateMini) : []
-            )
+            delta: delta
         )
         return ClientStateMiniStreamUpdate(
             reason: .delta,
@@ -736,35 +724,18 @@ private final class RecordingClientCoreStateMiniStreamTransport:
         }
     }
 
-    private static func clientStateMini(from mini: LooperRealtimeStateMini) -> ClientStateMini {
-        ClientStateMini(
-            sessionId: mini.sessionID,
-            assistantSurface: mini.assistantSurface,
-            seq: mini.seq,
-            revision: mini.revision,
-            payloadJson: mini.payloadJSON
-        )
-    }
-
-    private static let emptyClientStateMini = ClientStateMini(
-        sessionId: "",
-        assistantSurface: "",
-        seq: 0,
-        revision: "",
-        payloadJson: ""
-    )
 }
 
 private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
-    LooperRealtimeClientCoreStateMiniStreamTransport,
+    LooperClientCoreStateMiniStreamTransport,
     @unchecked Sendable
 {
     private let lock = NSLock()
-    private let snapshot: LooperRealtimeStateMiniSnapshot
+    private let snapshot: ClientStateMiniSnapshot
     private var afterSeqs: [Int64] = []
     private var snapshotRequests = 0
 
-    init(snapshot: LooperRealtimeStateMiniSnapshot) {
+    init(snapshot: ClientStateMiniSnapshot) {
         self.snapshot = snapshot
     }
 
@@ -774,7 +745,7 @@ private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
         lock.withLock {
             snapshotRequests += 1
         }
-        return try clientCore.replaceStateMinis(snapshot: Self.clientStateMiniSnapshot(snapshot))
+        return try clientCore.replaceStateMinis(snapshot: snapshot)
     }
 
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
@@ -807,23 +778,6 @@ private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
         lock.withLock { snapshotRequests }
     }
 
-    private static func clientStateMiniSnapshot(
-        _ snapshot: LooperRealtimeStateMiniSnapshot
-    ) -> ClientStateMiniSnapshot {
-        ClientStateMiniSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map {
-                ClientStateMini(
-                    sessionId: $0.sessionID,
-                    assistantSurface: $0.assistantSurface,
-                    seq: $0.seq,
-                    revision: $0.revision,
-                    payloadJson: $0.payloadJSON
-                )
-            },
-            serverTime: snapshot.serverTime ?? ""
-        )
-    }
 }
 
 private extension String {

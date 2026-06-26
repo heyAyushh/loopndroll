@@ -558,10 +558,17 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     let transport = MenuBarStateMiniStreamTransport(client: client)
+    let retryDelay = Layout.sessionMiniStreamRetryDelay
     sessionMiniSyncTask = Task { [weak self] in
-      await self?.runClientCoreSessionMiniSync(
-        store: sessionMiniLocalStore,
-        transport: transport
+      await sessionMiniLocalStore.runClientCoreStateMiniSync(
+        using: transport,
+        retryDelay: retryDelay,
+        onSnapshot: { [weak self] snapshot in
+          self?.applySessionMiniSnapshot(snapshot)
+        },
+        onDebugMessage: { message in
+          os_log(.debug, log: .default, "%{public}@", message)
+        }
       )
     }
   }
@@ -569,78 +576,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func stopSessionMiniSync() {
     sessionMiniSyncTask?.cancel()
     sessionMiniSyncTask = nil
-  }
-
-  private func runClientCoreSessionMiniSync(
-    store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniStreamTransport
-  ) async {
-    defer {
-      store.stopClientCoreStateMiniStream(using: transport)
-    }
-
-    while !Task.isCancelled {
-      do {
-        try await store.startClientCoreStateMiniStream(using: transport)
-        try await drainClientCoreSessionMiniSync(store: store, transport: transport)
-      } catch {
-        await recoverClientCoreSessionMiniSync(
-          store: store,
-          transport: transport,
-          errorDescription: error.localizedDescription
-        )
-      }
-
-      do {
-        try await Task.sleep(for: Layout.sessionMiniStreamRetryDelay)
-      } catch {
-        return
-      }
-    }
-  }
-
-  private func drainClientCoreSessionMiniSync(
-    store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniStreamTransport
-  ) async throws {
-    while !Task.isCancelled {
-      let result = try await store.nextClientCoreStateMiniStreamResult(using: transport)
-      switch result.reason {
-      case .delta:
-        if let snapshot = result.snapshot {
-          applySessionMiniSnapshot(snapshot)
-        }
-      case .heartbeat, .reconnecting:
-        continue
-      case .recoveryRequired:
-        await recoverClientCoreSessionMiniSync(
-          store: store,
-          transport: transport,
-          errorDescription: result.errorDescription
-        )
-        return
-      case .stopped:
-        return
-      }
-    }
-  }
-
-  private func recoverClientCoreSessionMiniSync(
-    store: MenuBarSessionMiniLocalStore,
-    transport: MenuBarStateMiniStreamTransport,
-    errorDescription: String
-  ) async {
-    if !errorDescription.isEmpty {
-      os_log(.debug, log: .default, "session mini stream recovery: %{public}@", errorDescription)
-    }
-
-    do {
-      if let snapshot = try await store.recoverClientCoreStateMiniStream(using: transport) {
-        applySessionMiniSnapshot(snapshot)
-      }
-    } catch {
-      os_log(.debug, log: .default, "session mini stream recovery failed: %{public}@", error.localizedDescription)
-    }
   }
 
   private func applySessionMiniSnapshot(_ snapshot: MenuBarSessionMiniLocalSnapshot) {
@@ -1894,7 +1829,7 @@ extension LooperHandoffHotkeyOption {
   }
 }
 
-private struct MenuBarStateMiniStreamTransport: LooperRealtimeClientCoreStateMiniStreamTransport {
+private struct MenuBarStateMiniStreamTransport: LooperClientCoreStateMiniStreamTransport {
   let client: any ControlPlaneClient
 
   func recoverClientCoreStateMiniSnapshot(

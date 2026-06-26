@@ -1,6 +1,5 @@
 import Foundation
 import LooperClientCore
-import LooperRealtime
 
 public struct MenuBarSessionMiniRecord: Equatable, Sendable {
     public let sessionID: String
@@ -31,7 +30,7 @@ public struct MenuBarSessionMiniLocalSnapshot: Equatable, Sendable {
 }
 
 public struct MenuBarSessionMiniPendingCommand: Equatable, Sendable {
-    public let kind: LooperRealtimePendingCommand.Kind
+    public let kind: ClientPendingCommandKind
     public let clientMutationID: String
     public let threadID: String
     public let notificationID: String?
@@ -76,13 +75,13 @@ public struct MenuBarSessionMini: Equatable, Sendable {
     public let lastActivityAtMs: Int64?
     public let updatedAtMs: Int64?
 
-    fileprivate init(record: LooperRealtimeStateMini, payload: MenuBarSessionMiniPayload) {
-        self.sessionID = record.sessionID
+    fileprivate init(record: ClientStateMini, payload: MenuBarSessionMiniPayload) {
+        self.sessionID = record.sessionId
         self.assistantSurface = record.assistantSurface
         self.seq = record.seq
         self.revision = record.revision
         self.ref = payload.ref
-        self.title = payload.displayTitle(fallbackID: record.sessionID)
+        self.title = payload.displayTitle(fallbackID: record.sessionId)
         self.status = payload.status
         self.effectiveMode = payload.effectiveMode?.nilIfBlank
         self.replyable = payload.replyable
@@ -170,7 +169,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func replace(with snapshot: LooperRealtimeStateMiniSnapshot) throws
+    public func replace(with snapshot: ClientStateMiniSnapshot) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
         let localSnapshot = try replaceStateMinis(with: snapshot)
@@ -178,7 +177,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func apply(_ delta: LooperRealtimeStateMiniDelta) throws
+    public func apply(_ delta: ClientStateMiniDelta) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
         let localSnapshot = try applyStateMiniDelta(delta)
@@ -192,10 +191,10 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         serverTime: String? = nil
     ) throws -> MenuBarSessionMiniLocalSnapshot? {
         try replace(
-            with: LooperRealtimeStateMiniSnapshot(
+            with: ClientStateMiniSnapshot(
                 latestSeq: latestSeq,
-                sessions: records.map(LooperRealtimeStateMini.init),
-                serverTime: serverTime
+                sessions: records.map(ClientStateMini.init),
+                serverTime: serverTime ?? ""
             )
         )
     }
@@ -273,14 +272,14 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     public func startClientCoreStateMiniStream(
-        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+        using transport: any LooperClientCoreStateMiniStreamTransport
     ) async throws {
         _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
         try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
     }
 
     public func nextClientCoreStateMiniStreamResult(
-        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+        using transport: any LooperClientCoreStateMiniStreamTransport
     ) async throws -> MenuBarClientCoreStateMiniStreamResult {
         let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
             clientCore: clientCore
@@ -304,7 +303,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     public func recoverClientCoreStateMiniStream(
-        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+        using transport: any LooperClientCoreStateMiniStreamTransport
     ) async throws -> MenuBarSessionMiniLocalSnapshot? {
         let snapshot = try await transport.recoverClientCoreStateMiniSnapshot(
             clientCore: clientCore
@@ -314,9 +313,44 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     public func stopClientCoreStateMiniStream(
-        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+        using transport: any LooperClientCoreStateMiniStreamTransport
     ) {
         try? transport.stopClientCoreStateMiniStream(clientCore: clientCore)
+    }
+
+    public func runClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        retryDelay: Duration,
+        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
+        onDebugMessage: @escaping @MainActor (String) -> Void
+    ) async {
+        defer {
+            stopClientCoreStateMiniStream(using: transport)
+        }
+
+        while !Task.isCancelled {
+            do {
+                try await startClientCoreStateMiniStream(using: transport)
+                try await drainClientCoreStateMiniSync(
+                    using: transport,
+                    onSnapshot: onSnapshot,
+                    onDebugMessage: onDebugMessage
+                )
+            } catch {
+                await recoverClientCoreStateMiniSync(
+                    using: transport,
+                    errorDescription: error.localizedDescription,
+                    onSnapshot: onSnapshot,
+                    onDebugMessage: onDebugMessage
+                )
+            }
+
+            do {
+                try await Task.sleep(for: retryDelay)
+            } catch {
+                return
+            }
+        }
     }
 
     private static func defaultFileURL() throws -> URL {
@@ -330,43 +364,81 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         .appendingPathComponent(defaultFileName)
     }
 
-    private func localSnapshot(from snapshot: ClientStateSnapshot) -> LooperRealtimeLocalSnapshot {
+    private func drainClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
+        onDebugMessage: @escaping @MainActor (String) -> Void
+    ) async throws {
+        while !Task.isCancelled {
+            let result = try await nextClientCoreStateMiniStreamResult(using: transport)
+            switch result.reason {
+            case .delta:
+                if let snapshot = result.snapshot {
+                    await onSnapshot(snapshot)
+                }
+            case .heartbeat, .reconnecting:
+                continue
+            case .recoveryRequired:
+                await recoverClientCoreStateMiniSync(
+                    using: transport,
+                    errorDescription: result.errorDescription,
+                    onSnapshot: onSnapshot,
+                    onDebugMessage: onDebugMessage
+                )
+                return
+            case .stopped:
+                return
+            }
+        }
+    }
+
+    private func recoverClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        errorDescription: String,
+        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
+        onDebugMessage: @escaping @MainActor (String) -> Void
+    ) async {
+        if !errorDescription.isEmpty {
+            await onDebugMessage("session mini stream recovery: \(errorDescription)")
+        }
+
+        do {
+            if let snapshot = try await recoverClientCoreStateMiniStream(using: transport) {
+                await onSnapshot(snapshot)
+            }
+        } catch {
+            await onDebugMessage(
+                "session mini stream recovery failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func localSnapshot(from snapshot: ClientStateSnapshot) -> ClientLocalStateSnapshot {
         let durableSnapshot = try? store.snapshot()
-        return LooperRealtimeLocalSnapshot(
+        return ClientLocalStateSnapshot(
             latestSeq: snapshot.latestSeq,
-            sessions: snapshot.stateMinis.map(LooperRealtimeStateMini.init),
-            pendingCommands: durableSnapshot?.pendingCommands.map(LooperRealtimePendingCommand.init) ?? [],
-            serverTime: snapshot.serverTime.nilIfBlank
+            sessions: snapshot.stateMinis,
+            pendingCommands: durableSnapshot?.pendingCommands ?? [],
+            serverTime: snapshot.serverTime
         )
     }
 
     @discardableResult
     private func persistValidated(_ snapshot: ClientStateSnapshot) throws
-        -> LooperRealtimeLocalSnapshot
+        -> ClientLocalStateSnapshot
     {
-        let sessions = snapshot.stateMinis.map(LooperRealtimeStateMini.init)
+        let sessions = snapshot.stateMinis
         _ = try menuSnapshot(from: snapshot.latestSeq, sessions: sessions)
-        return LooperRealtimeLocalSnapshot(
-            try store.replaceStateMinis(
-                snapshot: ClientStateMiniSnapshot(
-                    latestSeq: snapshot.latestSeq,
-                    sessions: sessions.map(ClientStateMini.init),
-                    serverTime: snapshot.serverTime
-                )
+        return try store.replaceStateMinis(
+            snapshot: ClientStateMiniSnapshot(
+                latestSeq: snapshot.latestSeq,
+                sessions: sessions,
+                serverTime: snapshot.serverTime
             )
         )
     }
 
-    private func localSnapshot(from snapshot: ClientLocalStateSnapshot) -> LooperRealtimeLocalSnapshot {
-        LooperRealtimeLocalSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
-            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
-            serverTime: snapshot.serverTime.nilIfBlank
-        )
-    }
-
-    private func menuSnapshot(from snapshot: LooperRealtimeLocalStateSnapshot) throws
+    private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
         guard !snapshot.sessions.isEmpty else {
@@ -380,7 +452,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
     private func menuSnapshot(
         from latestSeq: Int64,
-        sessions: [LooperRealtimeStateMini]
+        sessions: [ClientStateMini]
     ) throws -> MenuBarSessionMiniLocalSnapshot? {
         guard !sessions.isEmpty else {
             return nil
@@ -392,7 +464,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    private func menuSessions(from sessions: [LooperRealtimeStateMini]) throws
+    private func menuSessions(from sessions: [ClientStateMini]) throws
         -> [MenuBarSessionMini]
     {
         try sessions
@@ -400,12 +472,12 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             .sorted(by: MenuBarSessionMini.sortForMenu)
     }
 
-    private func decodeSessionMini(from record: LooperRealtimeStateMini) throws -> MenuBarSessionMini {
-        let data = Data(record.payloadJSON.utf8)
+    private func decodeSessionMini(from record: ClientStateMini) throws -> MenuBarSessionMini {
+        let data = Data(record.payloadJson.utf8)
         let payload = try decoder.decode(MenuBarSessionMiniPayload.self, from: data)
-        guard payload.sessionID == record.sessionID else {
+        guard payload.sessionID == record.sessionId else {
             throw MenuBarSessionMiniLocalStoreError.sessionIDMismatch(
-                expected: record.sessionID,
+                expected: record.sessionId,
                 actual: payload.sessionID
             )
         }
@@ -496,20 +568,9 @@ private struct MenuBarSessionMiniMetadata: Decodable {
 }
 
 private extension MenuBarSessionMiniPendingCommand {
-    init(_ command: LooperRealtimePendingCommand) {
+    init(_ command: ClientPendingCommand) {
         self.init(
             kind: command.kind,
-            clientMutationID: command.clientMutationID,
-            threadID: command.threadID,
-            notificationID: command.notificationID,
-            prompt: command.prompt,
-            attemptCount: command.attemptCount
-        )
-    }
-
-    init(_ command: ClientPendingCommand) {
-        self.init(
-            kind: LooperRealtimePendingCommand.Kind(command.kind),
             clientMutationID: command.clientMutationId,
             threadID: command.threadId,
             notificationID: command.notificationId.nilIfBlank,
@@ -519,87 +580,49 @@ private extension MenuBarSessionMiniPendingCommand {
     }
 }
 
-private extension LooperRealtimePendingCommand {
-    init(_ command: ClientPendingCommand) {
-        self.init(
-            kind: LooperRealtimePendingCommand.Kind(command.kind),
-            clientMutationID: command.clientMutationId,
-            threadID: command.threadId,
-            preset: command.preset.nilIfBlank,
-            assistantSurface: command.assistantSurface.nilIfBlank,
-            prompt: command.prompt.nilIfBlank,
-            notificationID: command.notificationId.nilIfBlank,
-            attemptCount: Int(command.attemptCount)
-        )
-    }
-}
-
-private extension LooperRealtimePendingCommand.Kind {
-    init(_ kind: ClientPendingCommandKind) {
-        switch kind {
-        case .setSessionMode:
-            self = .setSessionMode
-        case .sendSessionPrompt:
-            self = .sendSessionPrompt
-        case .submitNotificationReply:
-            self = .submitNotificationReply
-        }
-    }
-}
-
-private extension LooperRealtimeStateMini {
+private extension ClientStateMini {
     init(_ record: MenuBarSessionMiniRecord) {
         self.init(
-            sessionID: record.sessionID,
+            sessionId: record.sessionID,
             assistantSurface: record.assistantSurface,
             seq: record.seq,
             revision: record.revision,
-            payloadJSON: record.payloadJSON
-        )
-    }
-
-    init(_ mini: ClientStateMini) {
-        self.init(
-            sessionID: mini.sessionId,
-            assistantSurface: mini.assistantSurface,
-            seq: mini.seq,
-            revision: mini.revision,
-            payloadJSON: mini.payloadJson
+            payloadJson: record.payloadJSON
         )
     }
 }
 
 extension MenuBarSessionMiniLocalStore {
-    public func currentStateMiniSnapshot() -> LooperRealtimeLocalSnapshot {
+    public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
             return try localSnapshot(from: clientCore.snapshot())
         } catch {
-            return (try? LooperRealtimeLocalSnapshot(store.snapshot()))
-                ?? LooperRealtimeLocalSnapshot(
+            return (try? store.snapshot())
+                ?? ClientLocalStateSnapshot(
                     latestSeq: 0,
                     sessions: [],
                     pendingCommands: [],
-                    serverTime: nil
+                    serverTime: ""
                 )
         }
     }
 
     @discardableResult
-    public func replaceStateMinis(with snapshot: LooperRealtimeStateMiniSnapshot) throws
-        -> LooperRealtimeLocalSnapshot
+    public func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
+        -> ClientLocalStateSnapshot
     {
         let coreSnapshot = try clientCore.replaceStateMinis(
-            snapshot: ClientStateMiniSnapshot(snapshot)
+            snapshot: snapshot
         )
         return try persistValidated(coreSnapshot)
     }
 
     @discardableResult
-    public func applyStateMiniDelta(_ delta: LooperRealtimeStateMiniDelta) throws
-        -> LooperRealtimeLocalSnapshot
+    public func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
+        -> ClientLocalStateSnapshot
     {
         let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: ClientStateMiniDelta(delta)
+            delta: delta
         )
         guard result.didChange else {
             return localSnapshot(from: result.snapshot)
@@ -608,68 +631,12 @@ extension MenuBarSessionMiniLocalStore {
     }
 }
 
-private extension ClientStateMini {
-    init(_ mini: LooperRealtimeStateMini) {
-        self.init(
-            sessionId: mini.sessionID,
-            assistantSurface: mini.assistantSurface,
-            seq: mini.seq,
-            revision: mini.revision,
-            payloadJson: mini.payloadJSON
-        )
-    }
-
-    static let empty = ClientStateMini(
-        sessionId: "",
-        assistantSurface: "",
-        seq: 0,
-        revision: "",
-        payloadJson: ""
-    )
-}
-
 private extension ClientStateMiniSnapshot {
-    init(_ snapshot: LooperRealtimeStateMiniSnapshot) {
-        self.init(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(ClientStateMini.init),
-            serverTime: snapshot.serverTime ?? ""
-        )
-    }
-
     init(_ snapshot: ClientLocalStateSnapshot) {
         self.init(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.sessions,
             serverTime: snapshot.serverTime
-        )
-    }
-}
-
-private extension LooperRealtimeLocalSnapshot {
-    init(_ snapshot: ClientLocalStateSnapshot) {
-        self.init(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(LooperRealtimeStateMini.init),
-            pendingCommands: snapshot.pendingCommands.map(LooperRealtimePendingCommand.init),
-            serverTime: snapshot.serverTime.nilIfBlank
-        )
-    }
-}
-
-private extension ClientStateMiniDelta {
-    init(_ delta: LooperRealtimeStateMiniDelta) {
-        let session = delta.session.map(ClientStateMini.init)
-        self.init(
-            seq: delta.seq,
-            latestSeq: delta.latestSeq,
-            entityId: delta.entityID,
-            kind: delta.kind,
-            revision: delta.revision,
-            serverTime: delta.serverTime ?? "",
-            hasSession: session != nil,
-            session: session ?? .empty,
-            sessions: session == nil ? delta.sessions.map(ClientStateMini.init) : []
         )
     }
 }

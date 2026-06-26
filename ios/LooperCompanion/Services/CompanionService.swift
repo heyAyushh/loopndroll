@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperRealtime
 
 struct ResolvedCompanionServerHealth: Sendable {
@@ -73,7 +74,7 @@ protocol CompanionService: Sendable {
     var supportsModePromptBatch: Bool { get }
     func prepareRealtimeConnection() async
     func makeClientCoreStateMiniStreamTransport() async
-        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+        -> (any LooperClientCoreStateMiniStreamTransport)?
     func loadServerHealth() async throws -> CompanionServerHealth
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth
     func loadSnapshot() async throws -> MobileSnapshot
@@ -134,7 +135,7 @@ extension CompanionService {
     }
 
     func makeClientCoreStateMiniStreamTransport() async
-        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+        -> (any LooperClientCoreStateMiniStreamTransport)?
     {
         nil
     }

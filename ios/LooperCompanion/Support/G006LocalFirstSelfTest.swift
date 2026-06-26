@@ -904,26 +904,25 @@ enum G006LocalFirstSelfTest {
         session: SessionSummary,
         seq: Int64,
         revision: String
-    ) throws -> LooperRealtimeStateMiniDelta {
+    ) throws -> ClientStateMiniDelta {
         let record = try miniRecord(session: session, seq: seq, revision: revision)
-        let mini = LooperRealtimeStateMini(
-            sessionID: record.sessionID,
+        let mini = ClientStateMini(
+            sessionId: record.sessionID,
             assistantSurface: record.assistantSurface,
             seq: record.seq,
             revision: record.revision,
-            payloadJSON: record.payloadJSON
+            payloadJson: record.payloadJSON
         )
-        return LooperRealtimeStateMiniDelta(
+        return ClientStateMiniDelta(
             seq: seq,
             latestSeq: seq,
-            entityID: "session-mini:\(record.assistantSurface):\(record.sessionID)",
+            entityId: "session-mini:\(record.assistantSurface):\(record.sessionID)",
             kind: "session-mini.changed",
             revision: revision,
             serverTime: Constants.timestamp,
+            hasSession: true,
             session: mini,
-            sessionID: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            sessions: [mini]
+            sessions: []
         )
     }
 
@@ -1046,7 +1045,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     private(set) var notificationReplyClientMutationIDs: [String] = []
     private(set) var notificationReplyIDs: [String] = []
     private(set) var mutationOrder: [String] = []
-    var stateMiniStreamTransport: (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+    var stateMiniStreamTransport: (any LooperClientCoreStateMiniStreamTransport)?
     var modeError: Error?
     var promptError: Error?
     var snapshotError: Error?
@@ -1062,7 +1061,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     func prepareRealtimeConnection() async {}
 
     func makeClientCoreStateMiniStreamTransport() async
-        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+        -> (any LooperClientCoreStateMiniStreamTransport)?
     {
         stateMiniStreamTransport
     }
@@ -1252,18 +1251,18 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
 }
 
 private final class G006StateMiniStreamTransport:
-    LooperRealtimeClientCoreStateMiniStreamTransport,
+    LooperClientCoreStateMiniStreamTransport,
     @unchecked Sendable
 {
     enum StreamPlan: Sendable {
-        case deltas([LooperRealtimeStateMiniDelta])
-        case recoveryRequired(snapshot: LooperRealtimeStateMiniSnapshot)
+        case deltas([ClientStateMiniDelta])
+        case recoveryRequired(snapshot: ClientStateMiniSnapshot)
     }
 
     private let lock = NSLock()
     private var streamPlans: [StreamPlan]
     private var afterSeqs: [Int64] = []
-    private var pendingSnapshot: LooperRealtimeStateMiniSnapshot?
+    private var pendingSnapshot: ClientStateMiniSnapshot?
 
     init(streamPlans: [StreamPlan]) {
         self.streamPlans = streamPlans
@@ -1279,7 +1278,7 @@ private final class G006StateMiniStreamTransport:
             self.pendingSnapshot = nil
             return pendingSnapshot
         }
-        return try clientCore.replaceStateMinis(snapshot: Self.clientStateMiniSnapshot(snapshot))
+        return try clientCore.replaceStateMinis(snapshot: snapshot)
     }
 
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
@@ -1324,22 +1323,11 @@ private final class G006StateMiniStreamTransport:
     }
 
     private func apply(
-        delta: LooperRealtimeStateMiniDelta,
+        delta: ClientStateMiniDelta,
         to clientCore: LooperClientCore
     ) throws -> ClientStateMiniStreamUpdate {
-        let session = delta.session.map(Self.clientStateMini)
         let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: ClientStateMiniDelta(
-                seq: delta.seq,
-                latestSeq: delta.latestSeq,
-                entityId: delta.entityID,
-                kind: delta.kind,
-                revision: delta.revision,
-                serverTime: delta.serverTime ?? "",
-                hasSession: session != nil,
-                session: session ?? Self.emptyClientStateMini,
-                sessions: session == nil ? delta.sessions.map(Self.clientStateMini) : []
-            )
+            delta: delta
         )
         return ClientStateMiniStreamUpdate(
             reason: .delta,
@@ -1361,33 +1349,6 @@ private final class G006StateMiniStreamTransport:
         )
     }
 
-    private static func clientStateMini(from mini: LooperRealtimeStateMini) -> ClientStateMini {
-        ClientStateMini(
-            sessionId: mini.sessionID,
-            assistantSurface: mini.assistantSurface,
-            seq: mini.seq,
-            revision: mini.revision,
-            payloadJson: mini.payloadJSON
-        )
-    }
-
-    private static func clientStateMiniSnapshot(
-        _ snapshot: LooperRealtimeStateMiniSnapshot
-    ) -> ClientStateMiniSnapshot {
-        ClientStateMiniSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(Self.clientStateMini),
-            serverTime: snapshot.serverTime ?? ""
-        )
-    }
-
-    private static let emptyClientStateMini = ClientStateMini(
-        sessionId: "",
-        assistantSurface: "",
-        seq: 0,
-        revision: "",
-        payloadJson: ""
-    )
 }
 
 #endif

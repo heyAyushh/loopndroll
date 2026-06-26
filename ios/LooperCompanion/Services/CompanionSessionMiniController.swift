@@ -1,5 +1,5 @@
 import Foundation
-import LooperRealtime
+import LooperClientCore
 
 @MainActor
 protocol CompanionSessionCommandLocalStore: AnyObject {
@@ -29,7 +29,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
     private static let clientCoreStreamRetryDelay: Duration = .milliseconds(500)
 
     typealias SyncUpdateHandler = @MainActor @Sendable (
-        LooperRealtimeStateMiniUpdate,
+        CompanionSessionMiniSyncUpdate,
         Int
     ) -> Void
     typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
@@ -84,7 +84,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
 
     private func runClientCoreStateMiniStream(
         localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperRealtimeClientCoreStateMiniStreamTransport,
+        transport: any LooperClientCoreStateMiniStreamTransport,
         connectionRevision: Int,
         onUpdate: @escaping SyncUpdateHandler
     ) async {
@@ -123,7 +123,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
 
     private func drainClientCoreStateMiniStream(
         localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperRealtimeClientCoreStateMiniStreamTransport,
+        transport: any LooperClientCoreStateMiniStreamTransport,
         connectionRevision: Int,
         onUpdate: @escaping SyncUpdateHandler
     ) async throws {
@@ -157,7 +157,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
 
     private func recoverClientCoreStateMiniStream(
         localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperRealtimeClientCoreStateMiniStreamTransport,
+        transport: any LooperClientCoreStateMiniStreamTransport,
         connectionRevision: Int,
         onUpdate: @escaping SyncUpdateHandler
     ) async {
@@ -166,7 +166,7 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
                 using: transport
             )
             onUpdate(
-                LooperRealtimeStateMiniUpdate(
+                CompanionSessionMiniSyncUpdate(
                     reason: .recovery,
                     snapshot: localSnapshot
                 ),

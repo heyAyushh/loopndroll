@@ -62,7 +62,7 @@ public final class LooperRealtimeClient: Sendable {
 }
 
 extension LooperRealtimeClient: LooperRealtimeSessionCommandSubmitting {}
-extension LooperRealtimeClient: LooperRealtimeClientCoreStateMiniStreamTransport {}
+extension LooperRealtimeClient: LooperClientCoreStateMiniStreamTransport {}
 
 private extension LooperRealtimeEndpoint {
     var clientCoreEndpoint: ClientEndpoint {
