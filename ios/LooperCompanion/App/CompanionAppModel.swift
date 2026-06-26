@@ -83,7 +83,6 @@ final class CompanionAppModel {
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         service = didActivateBundledConnection
             ? CompanionEnvironment.live(
-                commandClientCore: sessionMiniLocalStore?.clientCore,
                 sessionMiniLocalStore: sessionMiniLocalStore
             ).service
             : environment.service
@@ -563,7 +562,6 @@ final class CompanionAppModel {
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
         CompanionEnvironment.live(
-            commandClientCore: sessionMiniController.localStore?.clientCore,
             sessionMiniLocalStore: sessionMiniController.localStore
         )
     }

@@ -46,7 +46,6 @@ struct LooperApp: App {
         _model = State(
             initialValue: CompanionAppModel(
                 environment: Self.environment(
-                    commandClientCore: sessionClientCore,
                     sessionMiniLocalStore: sessionMiniLocalStore
                 ),
                 sessionMiniLocalStore: sessionMiniLocalStore
@@ -105,7 +104,6 @@ struct LooperApp: App {
     }
 
     private static func environment(
-        commandClientCore: LooperClientCore,
         sessionMiniLocalStore: CompanionSessionMiniLocalStore?
     ) -> CompanionEnvironment {
         #if DEBUG
@@ -123,7 +121,6 @@ struct LooperApp: App {
         #endif
 
         return .live(
-            commandClientCore: commandClientCore,
             sessionMiniLocalStore: sessionMiniLocalStore
         )
     }

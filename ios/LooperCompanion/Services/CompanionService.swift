@@ -65,7 +65,6 @@ struct CompanionSessionModeResult: Sendable {
 }
 
 protocol CompanionService: Sendable {
-    var sessionCommandClientCore: LooperClientCore? { get }
     func prepareRealtimeConnection() async
     func loadServerHealth() async throws -> CompanionServerHealth
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth
@@ -107,10 +106,6 @@ protocol CompanionService: Sendable {
 }
 
 extension CompanionService {
-    var sessionCommandClientCore: LooperClientCore? {
-        nil
-    }
-
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth {
         ResolvedCompanionServerHealth(
             health: try await loadServerHealth(),

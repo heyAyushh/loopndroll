@@ -118,6 +118,31 @@ struct LooperClientCoreRealtimeBridgeTests {
     }
 
     @Test
+    func sessionManagerOwnsDurableCommandBoundary() async throws {
+        let core = LooperClientCore()
+        let store = try localStore(named: "session-manager-command-boundary")
+        let manager = LooperClientCoreSessionManager(clientCore: core, localStore: store)
+
+        do {
+            _ = try await manager.sendPrompt(
+                threadID: "thread-main",
+                prompt: "continue",
+                assistantSurface: "codex",
+                clientMutationID: "mutation-manager-prompt"
+            )
+            Issue.record("expected missing runtime config")
+        } catch let error as ClientCoreError {
+            #expect(error == .NoEndpoint)
+        }
+
+        let snapshot = try store.snapshot()
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .sendSessionPrompt)
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-manager-prompt")
+        #expect(try manager.outboxDepth() == 1)
+    }
+
+    @Test
     func duplicateClientMutationReplacesCoreOutboxFrame() throws {
         let core = LooperClientCore()
         _ = try core.sendPrompt(

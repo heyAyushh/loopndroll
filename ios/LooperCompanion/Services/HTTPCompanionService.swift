@@ -74,34 +74,27 @@ struct HTTPCompanionService: CompanionService {
 
     let baseURLs: [URL]
     let bearerToken: String?
-    private let commandClientCore: LooperClientCore
-    private let sessionMiniLocalStore: CompanionSessionMiniLocalStore?
-
-    var sessionCommandClientCore: LooperClientCore? {
-        commandClientCore
-    }
+    private let sessionManager: LooperClientCoreSessionManager?
 
     init(
         baseURL: URL,
-        commandClientCore: LooperClientCore = LooperClientCore(),
+        sessionManager: LooperClientCoreSessionManager? = nil,
         sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
     ) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
-        self.commandClientCore = commandClientCore
-        self.sessionMiniLocalStore = sessionMiniLocalStore
+        self.sessionManager = sessionManager ?? sessionMiniLocalStore?.sessionManager
     }
 
     init(
         baseURLs: [URL],
         bearerToken: String? = nil,
-        commandClientCore: LooperClientCore = LooperClientCore(),
+        sessionManager: LooperClientCoreSessionManager? = nil,
         sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
     ) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
-        self.commandClientCore = commandClientCore
-        self.sessionMiniLocalStore = sessionMiniLocalStore
+        self.sessionManager = sessionManager ?? sessionMiniLocalStore?.sessionManager
     }
 
     func prepareRealtimeConnection() async {
@@ -146,11 +139,10 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitSetModeDurable(
-            localStore: try requiredClientCoreLocalStore(),
-            threadId: id,
+        let envelope = try await requiredSessionManager().setMode(
+            threadID: id,
             preset: preset?.rawValue ?? "",
-            clientMutationId: clientMutationID
+            clientMutationID: clientMutationID
         )
         guard envelope.ack.accepted else {
             CompanionDiagnostics.record("mode:grpc-invalid id=\(id)")
@@ -185,12 +177,11 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitSendPromptDurable(
-            localStore: try requiredClientCoreLocalStore(),
-            threadId: id,
+        let envelope = try await requiredSessionManager().sendPrompt(
+            threadID: id,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationId: clientMutationID
+            clientMutationID: clientMutationID
         )
         guard envelope.ack.accepted else {
             CompanionDiagnostics.record("prompt:grpc-invalid id=\(id)")
@@ -214,13 +205,12 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitNotificationReplyDurable(
-            localStore: try requiredClientCoreLocalStore(),
-            notificationId: notificationID,
-            threadId: sessionID,
+        let envelope = try await requiredSessionManager().submitNotificationReply(
+            notificationID: notificationID,
+            threadID: sessionID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationId: clientMutationID
+            clientMutationID: clientMutationID
         )
         guard envelope.ack.accepted else {
             CompanionDiagnostics.record(
@@ -245,15 +235,15 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    private func requiredClientCoreLocalStore() throws -> LooperClientCoreLocalStore {
-        guard let localStore = sessionMiniLocalStore?.clientCoreLocalStore else {
+    private func requiredSessionManager() throws -> LooperClientCoreSessionManager {
+        guard let sessionManager else {
             throw HTTPCompanionServiceError.localStoreUnavailable
         }
-        return localStore
+        return sessionManager
     }
 
     private func prepareCommandRuntimeIfNeeded() async {
-        guard (try? commandClientCore.snapshot().endpointUrl.isEmpty) != false else {
+        guard (try? sessionManager?.clientCore.snapshot().endpointUrl.isEmpty) != false else {
             return
         }
         do {
@@ -276,7 +266,7 @@ struct HTTPCompanionService: CompanionService {
         guard !endpoints.isEmpty else {
             throw HTTPCompanionServiceError.invalidResponse
         }
-        _ = try commandClientCore.configureSessionRuntime(
+        _ = try requiredSessionManager().configure(
             endpoints: endpoints,
             bearerToken: bearerToken ?? "",
             mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
@@ -307,7 +297,7 @@ struct HTTPCompanionService: CompanionService {
 
     #if DEBUG
     func commandOutboxDepthForSelfTest() throws -> UInt32 {
-        try commandClientCore.snapshot().outboxDepth
+        try requiredSessionManager().outboxDepth()
     }
     #endif
 

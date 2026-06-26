@@ -45,16 +45,22 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 
     let clientCoreLocalStore: LooperClientCoreLocalStore
     let clientCore: LooperClientCore
+    let sessionManager: LooperClientCoreSessionManager
     private let decoder = JSONDecoder()
 
     init(
         fileURL: URL,
         clientCore: LooperClientCore = LooperClientCore()
     ) throws {
-        clientCoreLocalStore = try LooperClientCoreLocalStore(filePath: fileURL.path)
+        let clientCoreLocalStore = try LooperClientCoreLocalStore(filePath: fileURL.path)
+        self.clientCoreLocalStore = clientCoreLocalStore
         self.clientCore = clientCore
+        self.sessionManager = LooperClientCoreSessionManager(
+            clientCore: clientCore,
+            localStore: clientCoreLocalStore
+        )
         do {
-            _ = try clientCore.replaceStateMinis(
+            _ = try sessionManager.replaceStateMinis(
                 snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
             )
         } catch {
@@ -147,14 +153,14 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func startClientCoreStateMiniStream() async throws {
-        _ = try clientCore.replaceStateMinis(
+        _ = try sessionManager.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
         )
-        _ = try clientCore.startConfiguredStateMiniStream()
+        _ = try sessionManager.startConfiguredStateMiniStream()
     }
 
     func nextClientCoreStateMiniStreamResult() async throws -> CompanionClientCoreStateMiniStreamResult {
-        let streamUpdate = try await clientCore.observe()
+        let streamUpdate = try await sessionManager.observe()
         guard
             (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
             streamUpdate.didChange
@@ -179,7 +185,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 
     func stopClientCoreStateMiniStream() {
         do {
-            _ = try clientCore.stopStateMiniStream()
+            _ = try sessionManager.stopStateMiniStream()
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:client-core-stream-stop-failed error=\(error.localizedDescription)"
