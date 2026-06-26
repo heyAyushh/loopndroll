@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import LooperClientCore
 
@@ -10,9 +11,9 @@ struct LooperClientCoreTests {
 
     @Test
     func configureSessionRuntimePrefersLastGoodEndpoint() throws {
-        let core = LooperClientCore()
+        let manager = try temporarySessionManager()
 
-        let snapshot = try core.configureSessionRuntime(
+        let snapshot = try manager.start(
             endpoints: [
                 ClientEndpoint(url: primaryEndpoint, lastGood: false),
                 ClientEndpoint(url: lastGoodEndpoint, lastGood: true),
@@ -28,14 +29,14 @@ struct LooperClientCoreTests {
 
     @Test
     func snapshotReflectsConfiguredRuntime() throws {
-        let core = LooperClientCore()
+        let manager = try temporarySessionManager()
 
-        _ = try core.configureSessionRuntime(
+        _ = try manager.start(
             endpoints: [ClientEndpoint(url: primaryEndpoint, lastGood: true)],
             bearerToken: "token",
             mobileSessionHeader: "mobile-session"
         )
-        let snapshot = try core.snapshot()
+        let snapshot = try manager.stateSnapshot()
 
         #expect(snapshot.phase == .ready)
         #expect(snapshot.endpointUrl == primaryEndpoint)
@@ -44,9 +45,9 @@ struct LooperClientCoreTests {
 
     @Test
     func stateMiniSnapshotReplacesAndNormalizesRecords() throws {
-        let core = LooperClientCore()
+        let manager = try temporarySessionManager()
 
-        let snapshot = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
             latestSeq: 10,
             sessions: [
                 stateMini(sessionID: "thread-2", seq: 7, revision: "rev-7", title: "queued"),
@@ -55,6 +56,7 @@ struct LooperClientCoreTests {
             ],
             serverTime: serverTime
         ))
+        let snapshot = try manager.stateSnapshot()
 
         #expect(snapshot.latestSeq == 10)
         #expect(snapshot.revision == "rev-9")
@@ -65,14 +67,14 @@ struct LooperClientCoreTests {
 
     @Test
     func stateMiniDeltaUpsertsAndIgnoresStaleSequences() throws {
-        let core = LooperClientCore()
-        _ = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+        let manager = try temporarySessionManager()
+        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
             latestSeq: 2,
             sessions: [stateMini(sessionID: threadID, seq: 2, revision: "rev-2", title: "old")],
             serverTime: ""
         ))
 
-        let result = try core.applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta(
+        _ = try manager.applyStateMiniDelta(ClientStateMiniDelta(
             seq: 3,
             latestSeq: 3,
             entityId: threadID,
@@ -83,14 +85,13 @@ struct LooperClientCoreTests {
             session: stateMini(sessionID: threadID, seq: 3, revision: "rev-3", title: "new"),
             sessions: []
         ))
-        let snapshot = result.snapshot
+        let snapshot = try manager.stateSnapshot()
 
-        #expect(result.didChange)
         #expect(snapshot.latestSeq == 3)
         #expect(snapshot.revision == "rev-3")
         #expect(snapshot.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
 
-        let staleResult = try core.applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta(
+        _ = try manager.applyStateMiniDelta(ClientStateMiniDelta(
             seq: 2,
             latestSeq: 2,
             entityId: threadID,
@@ -101,9 +102,8 @@ struct LooperClientCoreTests {
             session: stateMini(sessionID: threadID, seq: 2, revision: "rev-stale", title: "stale"),
             sessions: []
         ))
-        let stale = staleResult.snapshot
+        let stale = try manager.stateSnapshot()
 
-        #expect(!staleResult.didChange)
         #expect(stale.latestSeq == 3)
         #expect(stale.revision == "rev-3")
         #expect(stale.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
@@ -122,6 +122,17 @@ struct LooperClientCoreTests {
             seq: seq,
             revision: revision,
             payloadJson: #"{"title":"\#(title)"}"#
+        )
+    }
+
+    private func temporarySessionManager() throws -> LooperClientCoreSessionManager {
+        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "looper-client-core-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return try LooperClientCoreSessionManager(
+            fileURL: directoryURL.appendingPathComponent("state-minis.json")
         )
     }
 }

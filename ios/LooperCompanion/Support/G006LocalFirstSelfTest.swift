@@ -787,20 +787,22 @@ enum G006LocalFirstSelfTest {
     }
 
     private static func seedMalformedMiniCache(at fileURL: URL) throws {
-        let store = try LooperClientCoreLocalStore(filePath: fileURL.path)
-        _ = try store.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
-            latestSeq: 3,
-            sessions: [
-                ClientStateMini(
-                    sessionId: "bad-cache",
-                    assistantSurface: CompanionAssistantSurface.codex.rawValue,
-                    seq: 3,
-                    revision: "bad-mini",
-                    payloadJson: "{not-json"
-                ),
+        let payload: [String: Any] = [
+            "latestSeq": 3,
+            "sessions": [
+                [
+                    "sessionId": "bad-cache",
+                    "assistantSurface": CompanionAssistantSurface.codex.rawValue,
+                    "seq": 3,
+                    "revision": "bad-mini",
+                    "payloadJson": "{not-json",
+                ],
             ],
-            serverTime: Constants.timestamp
-        ))
+            "pendingCommands": [],
+            "serverTime": Constants.timestamp,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     private static func miniRecord(

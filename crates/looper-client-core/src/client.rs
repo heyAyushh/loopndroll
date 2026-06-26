@@ -61,8 +61,8 @@ struct ClientCoreRuntimeConfig {
     mobile_session_header: String,
 }
 
-#[derive(Debug, uniffi::Object)]
-pub struct LooperClientCore {
+#[derive(Debug)]
+pub(crate) struct LooperClientCore {
     state: Mutex<ClientCoreState>,
     stream: Mutex<Option<ClientCoreStream>>,
     local_updates: Mutex<Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>>,
@@ -79,10 +79,8 @@ struct ClientCoreStream {
     receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
 }
 
-#[uniffi::export]
 impl LooperClientCore {
-    #[uniffi::constructor]
-    pub fn new() -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         let (local_update_sender, local_updates) = mpsc::unbounded_channel();
         Arc::new(Self {
             state: Mutex::new(ClientCoreState {
@@ -99,7 +97,7 @@ impl LooperClientCore {
         })
     }
 
-    pub fn configure_session_runtime(
+    pub(crate) fn configure_session_runtime(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
@@ -122,7 +120,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn start(
+    pub(crate) fn start(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
@@ -136,13 +134,13 @@ impl LooperClientCore {
         self.start_state_mini_stream(endpoints, bearer_token, mobile_session_header)
     }
 
-    pub fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
+    pub(crate) fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
         self.replace_stream_none()?;
         *self.lock_runtime_config()? = None;
         self.disconnect()
     }
 
-    pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
+    pub(crate) async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         self.next_state_mini_stream_update().await
     }
 }
@@ -286,9 +284,8 @@ impl LooperClientCore {
     }
 }
 
-#[uniffi::export]
 impl LooperClientCore {
-    pub fn replace_state_minis(
+    pub(crate) fn replace_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -306,7 +303,7 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    pub fn apply_state_mini_delta_with_result(
+    pub(crate) fn apply_state_mini_delta_with_result(
         &self,
         delta: ClientStateMiniDelta,
     ) -> Result<ClientStateMiniDeltaApplyResult, ClientCoreError> {
@@ -319,7 +316,7 @@ impl LooperClientCore {
         })
     }
 
-    pub fn snapshot(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
+    pub(crate) fn snapshot(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
         let state = self.lock_state()?;
         Ok(state.snapshot())
     }
@@ -398,7 +395,7 @@ impl LooperClientCore {
 }
 
 impl LooperClientCore {
-    pub fn queue_set_mode_durable(
+    pub(crate) fn queue_set_mode_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
         thread_id: String,
@@ -416,7 +413,7 @@ impl LooperClientCore {
         Ok(local_snapshot)
     }
 
-    pub async fn submit_set_mode_durable(
+    pub(crate) async fn submit_set_mode_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
         thread_id: String,
@@ -441,7 +438,7 @@ impl LooperClientCore {
         Ok(envelope)
     }
 
-    pub async fn submit_send_prompt_durable(
+    pub(crate) async fn submit_send_prompt_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
         thread_id: String,
@@ -472,7 +469,7 @@ impl LooperClientCore {
         Ok(envelope)
     }
 
-    pub async fn submit_notification_reply_durable(
+    pub(crate) async fn submit_notification_reply_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
         notification_id: String,
@@ -529,7 +526,7 @@ impl LooperClientCore {
         Ok(envelope)
     }
 
-    pub async fn drain_notification_reply_outbox_durable(
+    pub(crate) async fn drain_notification_reply_outbox_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
@@ -604,20 +601,6 @@ impl LooperClientCore {
     }
 }
 
-#[uniffi::export]
-impl LooperClientCore {
-    pub fn start_configured_state_mini_stream(
-        &self,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let config = self.runtime_config()?;
-        self.start_state_mini_stream(
-            config.endpoints,
-            config.bearer_token,
-            config.mobile_session_header,
-        )
-    }
-}
-
 impl LooperClientCore {
     async fn next_state_mini_stream_update(
         &self,
@@ -674,14 +657,6 @@ impl LooperClientCore {
             NextUpdate::Local(update) => Ok(update),
             NextUpdate::Stream(event) => self.apply_state_mini_stream_event(event),
         }
-    }
-}
-
-#[uniffi::export]
-impl LooperClientCore {
-    pub fn stop_state_mini_stream(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
-        self.replace_stream_none()?;
-        self.disconnect()
     }
 }
 

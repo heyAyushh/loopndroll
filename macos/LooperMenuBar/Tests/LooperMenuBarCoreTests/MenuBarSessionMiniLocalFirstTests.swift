@@ -112,20 +112,7 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("malformed cache falls back and failed ACK stays in outbox")
     func testMalformedMiniCacheFallsBackAndOutboxKeepsFailedCommand() async throws {
         let malformedFileURL = temporaryStoreFileURL()
-        let genericStore = try LooperClientCoreLocalStore(filePath: malformedFileURL.path)
-        _ = try genericStore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
-            latestSeq: 3,
-            sessions: [
-                ClientStateMini(
-                    sessionId: "thread-main",
-                    assistantSurface: "codex",
-                    seq: 3,
-                    revision: "rev-3",
-                    payloadJson: #"{"id":"other-thread","sessionId":"other-thread","title":"bad"}"#
-                )
-            ],
-            serverTime: ""
-        ))
+        try seedMalformedMiniCache(at: malformedFileURL)
         let malformedRuntime = try MenuBarSessionRuntime(fileURL: malformedFileURL)
         let fallbackMiniSnapshot = try? malformedRuntime.cachedSnapshot()
         let fallbackSections = LooperMenuContent.buildThreadSections(from: [
@@ -362,6 +349,30 @@ struct MenuBarSessionMiniLocalFirstTests {
             Issue.record("expected operation to throw")
         } catch {
         }
+    }
+
+    private func seedMalformedMiniCache(at fileURL: URL) throws {
+        let payload: [String: Any] = [
+            "latestSeq": 3,
+            "sessions": [
+                [
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "seq": 3,
+                    "revision": "rev-3",
+                    "payloadJson":
+                        #"{"id":"other-thread","sessionId":"other-thread","title":"bad"}"#,
+                ],
+            ],
+            "pendingCommands": [],
+            "serverTime": "",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: .atomic)
     }
 }
 

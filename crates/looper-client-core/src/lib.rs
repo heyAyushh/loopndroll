@@ -15,13 +15,12 @@ mod snapshot_reducer;
 mod state_mini;
 mod transport;
 
-pub use client::LooperClientCore;
 pub use connection_reducer::{
     ClientConnectionFailureProjection, ClientSnapshotLoadFailureProjection,
     reduce_connection_failure, reduce_snapshot_load_failure,
 };
 pub use error::ClientCoreError;
-pub use local_store::{DEFAULT_LOCAL_STORE_FILE_NAME, LooperClientCoreLocalStore};
+pub use local_store::DEFAULT_LOCAL_STORE_FILE_NAME;
 pub use menu_snapshot::{
     ClientMenuBarHumanStatusProjection, ClientMenuBarSessionMini,
     ClientMenuBarSessionMiniBlockedGoal, ClientMenuBarSessionMiniLocalSnapshot,

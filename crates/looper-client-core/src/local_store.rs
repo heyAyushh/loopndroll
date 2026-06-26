@@ -20,8 +20,8 @@ const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
 const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 
-#[derive(Debug, uniffi::Object)]
-pub struct LooperClientCoreLocalStore {
+#[derive(Debug)]
+pub(crate) struct LooperClientCoreLocalStore {
     file_path: PathBuf,
     state: Mutex<StoredState>,
 }
@@ -57,10 +57,8 @@ struct StoredPendingCommand {
     attempt_count: u32,
 }
 
-#[uniffi::export]
 impl LooperClientCoreLocalStore {
-    #[uniffi::constructor]
-    pub fn new(file_path: String) -> Result<Arc<Self>, ClientCoreError> {
+    pub(crate) fn new(file_path: String) -> Result<Arc<Self>, ClientCoreError> {
         let file_path = require_store_path(file_path)?;
         let state = load_recovering(&file_path)?;
         Ok(Arc::new(Self {
@@ -69,11 +67,11 @@ impl LooperClientCoreLocalStore {
         }))
     }
 
-    pub fn snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+    pub(crate) fn snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         Ok(self.lock_state()?.snapshot())
     }
 
-    pub fn replace_state_minis(
+    pub(crate) fn replace_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
@@ -90,7 +88,7 @@ impl LooperClientCoreLocalStore {
 }
 
 impl LooperClientCoreLocalStore {
-    pub fn enqueue(
+    pub(crate) fn enqueue(
         &self,
         command: ClientPendingCommand,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
@@ -124,7 +122,7 @@ impl LooperClientCoreLocalStore {
         Ok(state.snapshot())
     }
 
-    pub fn enqueue_set_mode_command(
+    pub(crate) fn enqueue_set_mode_command(
         &self,
         thread_id: String,
         preset: String,
@@ -142,7 +140,7 @@ impl LooperClientCoreLocalStore {
         })
     }
 
-    pub fn enqueue_send_prompt_command(
+    pub(crate) fn enqueue_send_prompt_command(
         &self,
         thread_id: String,
         prompt: String,
@@ -163,7 +161,7 @@ impl LooperClientCoreLocalStore {
         })
     }
 
-    pub fn enqueue_notification_reply_command(
+    pub(crate) fn enqueue_notification_reply_command(
         &self,
         notification_id: String,
         thread_id: String,
@@ -186,7 +184,7 @@ impl LooperClientCoreLocalStore {
         })
     }
 
-    pub fn mark_attempted(
+    pub(crate) fn mark_attempted(
         &self,
         client_mutation_id: String,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
@@ -204,7 +202,7 @@ impl LooperClientCoreLocalStore {
         Ok(state.snapshot())
     }
 
-    pub fn mark_delivered(&self, client_mutation_id: String) -> Result<(), ClientCoreError> {
+    pub(crate) fn mark_delivered(&self, client_mutation_id: String) -> Result<(), ClientCoreError> {
         require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
 
         let mut state = self.lock_state()?;
