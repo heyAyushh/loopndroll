@@ -255,7 +255,7 @@ actor MockCompanionStore {
     }
 }
 
-struct MockCompanionService: CompanionService {
+struct MockCompanionService: CompanionService, CompanionSessionCommanding {
     private enum MockCommandIDs {
         static let mode = "mock-mode"
         static let prompt = "mock-prompt"

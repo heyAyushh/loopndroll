@@ -18,20 +18,19 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testAppModelRestoresCachedSessionMinisBeforeNetwork() async throws {
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        let runtime = try Self.temporarySessionRuntime()
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try Self.temporarySessionRuntime(
             latestSeq: 7,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 7, revision: "mini-revision-7"),
             ]
         )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
 
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -70,22 +69,21 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
-        let runtime = try Self.temporarySessionRuntime()
-        let service = SessionMiniLocalFirstServiceSpy(
-            snapshot: Self.networkSnapshot(),
-            sessionRuntime: runtime
-        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try Self.temporarySessionRuntime(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
             ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -116,22 +114,21 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testPromptBehindPendingModeUsesRustCoreCommandsWithoutSnapshotRefresh() async throws {
-        let runtime = try Self.temporarySessionRuntime()
-        let service = SessionMiniLocalFirstServiceSpy(
-            snapshot: Self.networkSnapshot(),
-            sessionRuntime: runtime
-        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try Self.temporarySessionRuntime(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
             ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -165,22 +162,21 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testFailedPromptBehindModeDoesNotFallbackToSnapshotRefresh() async throws {
-        let runtime = try Self.temporarySessionRuntime()
-        let service = SessionMiniLocalFirstServiceSpy(
-            snapshot: Self.networkSnapshot(),
-            sessionRuntime: runtime
-        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
-        try runtime.replace(
+        let runtime = try Self.temporarySessionRuntime(
             latestSeq: 11,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
             ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -208,20 +204,19 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testNotificationReplyUsesDurableAckCommandWithoutSnapshotRefresh() async throws {
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        let runtime = try Self.temporarySessionRuntime()
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .stopped
         )
-        try runtime.replace(
+        let runtime = try Self.temporarySessionRuntime(
             latestSeq: 12,
             records: [
                 Self.miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
             ]
         )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
@@ -335,6 +330,15 @@ struct CompanionSessionMiniLocalFirstTests {
         try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
     }
 
+    private static func temporarySessionRuntime(
+        latestSeq: Int64,
+        records: [SessionMiniFixture]
+    ) throws -> CompanionSessionRuntime {
+        let fileURL = try temporaryStoreFileURL()
+        try seedMiniCache(at: fileURL, latestSeq: latestSeq, records: records)
+        return try CompanionSessionRuntime(fileURL: fileURL)
+    }
+
     private static func temporaryStoreFileURL() throws -> URL {
         let directoryURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -365,13 +369,36 @@ struct CompanionSessionMiniLocalFirstTests {
         try data.write(to: fileURL, options: .atomic)
     }
 
+    private static func seedMiniCache(
+        at fileURL: URL,
+        latestSeq: Int64,
+        records: [SessionMiniFixture]
+    ) throws {
+        let payload: [String: Any] = [
+            "latestSeq": latestSeq,
+            "sessions": records.map { record in
+                [
+                    "sessionId": record.sessionID,
+                    "assistantSurface": record.assistantSurface,
+                    "seq": record.seq,
+                    "revision": record.revision,
+                    "payloadJson": record.payloadJSON,
+                ]
+            },
+            "pendingCommands": [],
+            "serverTime": Constants.timestamp,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try data.write(to: fileURL, options: .atomic)
+    }
+
     private static func miniRecord(
         session: SessionSummary,
         seq: Int64,
         revision: String
-    ) throws -> CompanionSessionMiniRecord {
+    ) throws -> SessionMiniFixture {
         let data = try JSONEncoder().encode(session)
-        return CompanionSessionMiniRecord(
+        return SessionMiniFixture(
             sessionID: session.id,
             assistantSurface: CompanionAssistantSurface.codex.rawValue,
             seq: seq,
@@ -433,7 +460,15 @@ struct CompanionSessionMiniLocalFirstTests {
     }
 }
 
-private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecked Sendable {
+private struct SessionMiniFixture: Equatable, Sendable {
+    let sessionID: String
+    let assistantSurface: String
+    let seq: Int64
+    let revision: String
+    let payloadJSON: String
+}
+
+private final class SessionMiniLocalFirstServiceSpy: CompanionService, CompanionSessionCommanding, @unchecked Sendable {
     enum ServiceError: Error {
         case promptFailed
     }

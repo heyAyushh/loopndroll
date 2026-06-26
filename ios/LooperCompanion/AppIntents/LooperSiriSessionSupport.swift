@@ -336,9 +336,28 @@ struct LooperSessionValueQuery: IntentValueQuery {
 
 struct LooperSiriSessionClient: Sendable {
     private let service: any CompanionService
+    private let sessionCommands: any CompanionSessionCommanding
 
-    init(service: any CompanionService = CompanionEnvironment.live().service) {
+    init(environment: CompanionEnvironment = CompanionEnvironment.live()) {
+        self.service = environment.service
+        self.sessionCommands = environment.sessionCommands
+    }
+
+    init(
+        service: any CompanionService,
+        sessionCommands: any CompanionSessionCommanding
+    ) {
         self.service = service
+        self.sessionCommands = sessionCommands
+    }
+
+    init(service: any CompanionService) {
+        self.init(
+            service: service,
+            sessionCommands: UnconfiguredCompanionSessionCommandClient(
+                error: CompanionConfigurationError.apiBaseURLNotConfigured
+            )
+        )
     }
 
     func entities(for identifiers: [String]) async throws -> [LooperSessionEntity] {
@@ -445,7 +464,7 @@ struct LooperSiriSessionClient: Sendable {
             throw LooperSiriError.noPromptDelivery(entity)
         }
 
-        _ = try await service.sendSessionPrompt(
+        _ = try await sessionCommands.sendSessionPrompt(
             id: entity.sessionID,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
             assistantSurface: entity.assistantSurface ?? .codex

@@ -71,7 +71,6 @@ struct HTTPCompanionService: CompanionService {
     private static let snapshotPath = "/api/mobile/snapshot"
     private static let sessionPathPrefix = "/api/mobile/sessions"
     private static let pathSeparator = "/"
-    private static let modePathSuffix = "mode"
     private static let assistantSurfaceQueryItemName = "assistantSurface"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
     private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
@@ -79,34 +78,20 @@ struct HTTPCompanionService: CompanionService {
 
     let baseURLs: [URL]
     let bearerToken: String?
-    private let sessionRuntime: CompanionSessionRuntime?
 
     init(
-        baseURL: URL,
-        sessionRuntime: CompanionSessionRuntime? = nil
+        baseURL: URL
     ) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
-        self.sessionRuntime = sessionRuntime
     }
 
     init(
         baseURLs: [URL],
-        bearerToken: String? = nil,
-        sessionRuntime: CompanionSessionRuntime? = nil
+        bearerToken: String? = nil
     ) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
-        self.sessionRuntime = sessionRuntime
-    }
-
-    func prepareSessionRuntime() async {
-        do {
-            try await startSessionRuntime()
-            CompanionDiagnostics.record("session-runtime:warm-success")
-        } catch {
-            CompanionDiagnostics.record("session-runtime:warm-failed error=\(error.localizedDescription)")
-        }
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -136,32 +121,6 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        let result = try await requiredSessionRuntime().setMode(
-            threadID: id,
-            preset: preset
-        )
-        return try Self.sessionModeResult(from: result, fallbackMode: preset, sessionID: id)
-    }
-
-    private static func sessionModeResult(
-        from result: ClientSessionModeIntentResult,
-        fallbackMode: SessionMode?,
-        sessionID: String
-    ) throws -> CompanionSessionModeResult {
-        guard result.accepted else {
-            CompanionDiagnostics.record("mode:grpc-invalid id=\(sessionID)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record("mode:grpc-accepted id=\(sessionID)")
-        return .accepted(
-            mode: Self.sessionMode(from: result.preset) ?? fallbackMode
-        )
-    }
-
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
         try await request(
             path: sessionPath(id: id, suffix: "archive"),
@@ -174,166 +133,10 @@ struct HTTPCompanionService: CompanionService {
         try await request(path: sessionPath(id: id), method: HTTPMethod.delete)
     }
 
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        let result = try await requiredSessionRuntime().sendPrompt(
-            threadID: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface
-        )
-        return try Self.promptSendResult(from: result, sessionID: id)
-    }
-
-    private static func promptSendResult(
-        from result: ClientSessionPromptIntentResult,
-        sessionID: String
-    ) throws -> CompanionPromptSendResult {
-        guard result.accepted else {
-            CompanionDiagnostics.record("prompt:grpc-invalid id=\(sessionID)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(sessionID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
-        )
-        return .accepted(
-            promptID: Self.nonEmpty(result.promptId),
-            dispatchKind: Self.dispatchKind(from: result.dispatchKind)
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        let result = try await requiredSessionRuntime().submitNotificationReply(
-            notificationID: notificationID,
-            threadID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface
-        )
-        return try Self.notificationReplyResponse(
-            from: result,
-            fallbackNotificationID: notificationID,
-            sessionID: sessionID
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        let result = try await requiredSessionRuntime().submitNotificationReply(
-            notificationID: notificationID,
-            threadID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: clientMutationID
-        )
-        return try Self.notificationReplyResponse(
-            from: result,
-            fallbackNotificationID: notificationID,
-            sessionID: sessionID
-        )
-    }
-
-    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
-        await prepareCommandRuntimeIfNeeded()
-        let result = try await requiredSessionRuntime().drainNotificationReplyOutbox()
-        let notificationID = result.notificationId
-        let sessionID = result.entityId
-        guard result.accepted else {
-            CompanionDiagnostics.record(
-                "notification-reply:grpc-pending-invalid id=\(sessionID) notificationID=\(notificationID)"
-            )
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record(
-            "notification-reply:grpc-pending-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
-        )
-        return try Self.notificationReplyResponse(
-            from: result,
-            fallbackNotificationID: notificationID,
-            sessionID: sessionID
-        )
-    }
-
-    private func requiredSessionRuntime() throws -> CompanionSessionRuntime {
-        guard let sessionRuntime else {
-            throw HTTPCompanionServiceError.localStoreUnavailable
-        }
-        return sessionRuntime
-    }
-
-    private func prepareCommandRuntimeIfNeeded() async {
-        do {
-            try await startSessionRuntime()
-        } catch {
-            CompanionDiagnostics.record(
-                "session-runtime:configure-failed error=\(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func startSessionRuntime() async throws {
-        _ = try await requiredSessionRuntime().startIfNeeded(
-            bearerToken: bearerToken,
-            mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
-        ) {
-            let responseData = try await responseDataWithConfiguredURLs(
-                path: Self.healthPath,
-                method: .get,
-                includesAuthentication: false
-            )
-            let health = try JSONDecoder().decode(CompanionServerHealth.self, from: responseData.data)
-            return CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
-                ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
-            )
-        }
-    }
-
-    private static func sessionMode(from preset: String) -> SessionMode? {
-        nonEmpty(preset).flatMap(SessionMode.init(rawValue:))
-    }
-
-    private static func dispatchKind(from value: String) -> String {
-        nonEmpty(value) ?? "accepted"
-    }
-
-    private static func notificationReplyResponse(
-        from result: ClientNotificationReplyIntentResult,
-        fallbackNotificationID: String,
-        sessionID: String
-    ) throws -> ClientNotificationReplyIntentResult {
-        guard result.accepted else {
-            CompanionDiagnostics.record(
-                "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(fallbackNotificationID)"
-            )
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record(
-            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
-        )
-        return result
-    }
-
     private static func nonEmpty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
-
-    #if DEBUG
-    func commandOutboxDepthForSelfTest() throws -> UInt32 {
-        try requiredSessionRuntime().outboxDepth()
-    }
-    #endif
 
     func muteSession(id: String) async throws -> MobileSnapshot {
         try await request(
@@ -637,16 +440,7 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func shouldRaceResolvedURLs(path: String, method: HTTPMethod) -> Bool {
-        if method == .get {
-            return true
-        }
-
-        return method == .post && isModeMutationPath(path)
-    }
-
-    private func isModeMutationPath(_ path: String) -> Bool {
-        path.hasPrefix(Self.sessionPathPrefix + Self.pathSeparator) &&
-            path.hasSuffix(Self.pathSeparator + Self.modePathSuffix)
+        method == .get
     }
 
     private func sessionPath(id: String, suffix: String? = nil) throws -> String {

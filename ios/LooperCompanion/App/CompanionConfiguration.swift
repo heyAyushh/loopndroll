@@ -1,6 +1,5 @@
 import Foundation
 import CryptoKit
-import LooperClientCore
 import LooperCompanionCore
 import Security
 
@@ -20,6 +19,12 @@ struct CompanionConnection: Sendable {
 enum CompanionMobileSessionStoragePolicy {
     case reset
     case preserveIfBearerTokenUnchanged
+}
+
+enum CompanionBaseURLFiltering {
+    static func uniqueAttemptableBaseURLs(_ urls: [URL]) -> [URL] {
+        CompanionConfiguration.uniqueAttemptableBaseURLs(urls)
+    }
 }
 
 enum CompanionConfiguration {
@@ -109,6 +114,10 @@ enum CompanionConfiguration {
 
         let connection = resolvedConnection()
         return !connection.baseURLs.isEmpty && connection.bearerToken != nil
+    }
+
+    static func uniqueAttemptableBaseURLs(_ urls: [URL]) -> [URL] {
+        uniqueURLs(urls)
     }
 
     private static func resolvedBundledConnection() -> CompanionConnection {
@@ -623,51 +632,16 @@ struct UnconfiguredCompanionService: CompanionService {
         self.error = error
     }
 
-    func prepareSessionRuntime() async {}
-
     func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
     func loadSessionDetail(
         id _: String,
         surface _: CompanionAssistantSurface?
     ) async throws -> SessionDetail { throw error }
-    func setSessionMode(
-        id _: String,
-        preset _: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        throw error
-    }
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
         throw error
     }
     func deleteSession(id _: String) async throws -> MobileSnapshot { throw error }
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        throw error
-    }
-    func submitNotificationReply(
-        notificationID _: String,
-        sessionID _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        throw error
-    }
-    func submitNotificationReply(
-        notificationID _: String,
-        sessionID _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID _: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        throw error
-    }
-    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
-        throw error
-    }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot { throw error }
     func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot { throw error }

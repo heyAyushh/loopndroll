@@ -42,6 +42,7 @@ final class CompanionAppModel {
     var pendingSettingsTarget: SettingsSearchTarget?
 
     @ObservationIgnored private var service: any CompanionService
+    @ObservationIgnored private var sessionCommands: any CompanionSessionCommanding
     @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
@@ -71,11 +72,13 @@ final class CompanionAppModel {
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
-        service = didActivateBundledConnection
+        let activeEnvironment = didActivateBundledConnection
             ? CompanionEnvironment.live(
                 sessionRuntime: sessionRuntime
-            ).service
-            : environment.service
+            )
+            : environment
+        service = activeEnvironment.service
+        sessionCommands = activeEnvironment.sessionCommands
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
@@ -222,7 +225,7 @@ final class CompanionAppModel {
 
     func startSessionRuntimeSyncIfNeeded() {
         sessionMiniController.startSyncIfNeeded(
-            service: service,
+            sessionCommands: sessionCommands,
             connectionRevision: connectionRevision
         ) { [weak self] update, connectionRevision in
             self?.applySessionMiniSyncUpdate(
@@ -250,9 +253,9 @@ final class CompanionAppModel {
     }
 
     private func prepareSessionRuntimeInBackground() {
-        let service = service
+        let sessionCommands = sessionCommands
         Task.detached(priority: .userInitiated) {
-            await service.prepareSessionRuntime()
+            await sessionCommands.prepareSessionRuntime()
         }
     }
 
@@ -319,7 +322,7 @@ final class CompanionAppModel {
 
         if reloadsServiceFromStoredConnection {
             configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-            service = liveEnvironmentFromSessionCore().service
+            applyLiveEnvironmentFromSessionCore()
             activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
             resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
         } else {
@@ -505,7 +508,7 @@ final class CompanionAppModel {
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        service = liveEnvironmentFromSessionCore().service
+        applyLiveEnvironmentFromSessionCore()
         prepareSessionRuntimeInBackground()
         restartSessionRuntimeSyncIfActive()
         CompanionDiagnostics.record(
@@ -531,6 +534,12 @@ final class CompanionAppModel {
         CompanionEnvironment.live(
             sessionRuntime: sessionMiniController.sessionRuntime
         )
+    }
+
+    private func applyLiveEnvironmentFromSessionCore() {
+        let environment = liveEnvironmentFromSessionCore()
+        service = environment.service
+        sessionCommands = environment.sessionCommands
     }
 
     private func clearConnectionRouteStateIfNeeded(for state: ConnectivityState) {
@@ -834,11 +843,11 @@ final class CompanionAppModel {
     }
 
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
-        let targetService = service
+        let targetCommands = sessionCommands
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetService.setSessionMode(
+            let result = try await targetCommands.setSessionMode(
                 id: sessionID,
                 preset: preset
             )
@@ -882,11 +891,11 @@ final class CompanionAppModel {
             return false
         }
 
-        let targetService = service
+        let targetCommands = sessionCommands
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetService.sendSessionPrompt(
+            let result = try await targetCommands.sendSessionPrompt(
                 id: sessionID,
                 prompt: trimmedPrompt,
                 assistantSurface: targetSurface
@@ -968,7 +977,7 @@ final class CompanionAppModel {
         targetSurface: CompanionAssistantSurface
     ) async -> Bool {
         do {
-            let response = try await service.submitNotificationReply(
+            let response = try await sessionCommands.submitNotificationReply(
                 notificationID: notificationID,
                 sessionID: sessionID,
                 prompt: prompt,
@@ -995,7 +1004,7 @@ final class CompanionAppModel {
     @discardableResult
     private func submitPendingNotificationReply() async -> Bool {
         do {
-            let response = try await service.submitPendingNotificationReply()
+            let response = try await sessionCommands.submitPendingNotificationReply()
             guard let acceptedSessionID = Self.nonEmptyText(response.entityId),
                   let acceptedNotificationID = Self.nonEmptyText(response.notificationId)
             else {

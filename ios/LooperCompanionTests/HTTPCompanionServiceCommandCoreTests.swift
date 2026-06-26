@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Looper
 
-@Suite("HTTPCompanionService command core")
-struct HTTPCompanionServiceCommandCoreTests {
+@Suite("CompanionSessionCommandClient command core")
+struct CompanionSessionCommandClientCommandCoreTests {
     @Test
     func sessionRuntimeStartIfNeededOwnsEndpointMapping() async throws {
         let runtime = try Self.temporarySessionRuntime()
@@ -35,31 +35,27 @@ struct HTTPCompanionServiceCommandCoreTests {
     @Test
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let service = HTTPCompanionService(
-            baseURLs: [],
-            bearerToken: nil,
-            sessionRuntime: runtime
-        )
+        let commandClient = Self.commandClient(runtime: runtime)
 
         await #expect(throws: Error.self) {
-            _ = try await service.setSessionMode(
+            _ = try await commandClient.setSessionMode(
                 id: "thread-1",
                 preset: .maxTurns2
             )
         }
-        #expect(try service.commandOutboxDepthForSelfTest() == 1)
+        #expect(try runtime.outboxDepth() == 1)
         #expect(runtime.pendingCommands().count == 1)
         #expect(runtime.pendingCommands().first?.attemptCount == 1)
 
         await #expect(throws: Error.self) {
-            _ = try await service.sendSessionPrompt(
+            _ = try await commandClient.sendSessionPrompt(
                 id: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
             )
         }
 
-        #expect(try service.commandOutboxDepthForSelfTest() == 2)
+        #expect(try runtime.outboxDepth() == 2)
         #expect(runtime.pendingCommands().count == 2)
         #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
         #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
@@ -68,20 +64,16 @@ struct HTTPCompanionServiceCommandCoreTests {
     @Test
     func generatedCommandMutationsComeFromRustCore() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let service = HTTPCompanionService(
-            baseURLs: [],
-            bearerToken: nil,
-            sessionRuntime: runtime
-        )
+        let commandClient = Self.commandClient(runtime: runtime)
 
         await #expect(throws: Error.self) {
-            _ = try await service.setSessionMode(
+            _ = try await commandClient.setSessionMode(
                 id: "thread-1",
                 preset: .maxTurns2
             )
         }
         await #expect(throws: Error.self) {
-            _ = try await service.sendSessionPrompt(
+            _ = try await commandClient.sendSessionPrompt(
                 id: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
@@ -91,6 +83,17 @@ struct HTTPCompanionServiceCommandCoreTests {
         #expect(runtime.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
         #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
         #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
+    }
+
+    private static func commandClient(
+        runtime: CompanionSessionRuntime
+    ) -> CompanionSessionCommandClient {
+        CompanionSessionCommandClient(sessionRuntime: runtime) {
+            CompanionSessionRuntimeEndpointResolution(
+                bearerToken: nil,
+                realtimeEndpointURLs: []
+            )
+        }
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {

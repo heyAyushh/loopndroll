@@ -984,7 +984,7 @@ private extension ClientStateMini {
     }
 }
 
-private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Sendable {
+private final class G006LocalFirstServiceSpy: CompanionService, CompanionSessionCommanding, @unchecked Sendable {
     enum ServiceError: Error {
         case promptFailed
     }

@@ -451,8 +451,6 @@ private enum SnapshotOnlyCompanionServiceError: Error {
 private struct SnapshotOnlyCompanionService: CompanionService {
     let snapshot: MobileSnapshot
 
-    func prepareSessionRuntime() async {}
-
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
             ok: true,
@@ -473,49 +471,11 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
-    func setSessionMode(
-        id _: String,
-        preset _: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
     func deleteSession(id _: String) async throws -> MobileSnapshot {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func submitNotificationReply(
-        notificationID _: String,
-        sessionID _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func submitNotificationReply(
-        notificationID _: String,
-        sessionID _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID _: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
