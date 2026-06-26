@@ -44,19 +44,15 @@ final class CompanionAppModel {
     @ObservationIgnored private var service: any CompanionService
     @ObservationIgnored private let reloadsServiceFromStoredConnection: Bool
     @ObservationIgnored private let notificationManager: LocalNotificationManager
-    @ObservationIgnored private let spotlightIndexer: SessionSpotlightIndexer
+    @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
-    @ObservationIgnored private var spotlightRecordsBySessionID: [String: SessionSpotlightRecord] = [:]
     @ObservationIgnored private var loadingSessionDetailIDs: Set<String> = []
-    @ObservationIgnored private var hasRebuiltSpotlightIndexThisLaunch = false
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
-    @ObservationIgnored private let spotlightSyncWorker = SpotlightIndexSyncWorker()
-    @ObservationIgnored private var didClearSpotlightIndexForCachedSnapshotThisLaunch = false
 
     init(
         environment: CompanionEnvironment,
@@ -67,7 +63,7 @@ final class CompanionAppModel {
     ) {
         reloadsServiceFromStoredConnection = environment.reloadsServiceFromStoredConnection
         self.notificationManager = notificationManager
-        self.spotlightIndexer = spotlightIndexer
+        self.spotlightCoordinator = CompanionSpotlightCoordinator(indexer: spotlightIndexer)
         self.sessionMiniController = CompanionSessionMiniController(localStore: sessionMiniLocalStore)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
@@ -1496,7 +1492,7 @@ final class CompanionAppModel {
             preferredSurface: cachedSnapshot.globalSettings.assistantSurface
         )
         lastUpdatedAt = Date()
-        clearSpotlightIndexForCachedSnapshot()
+        spotlightCoordinator.clearForCachedSnapshotIfNeeded()
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1508,7 +1504,7 @@ final class CompanionAppModel {
         connectionState = .connected
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
-        syncSpotlightIndex(with: snapshotState.allSessions)
+        spotlightCoordinator.sync(with: snapshotState.allSessions)
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
@@ -1620,59 +1616,6 @@ final class CompanionAppModel {
                 "siri-donation:\(event)-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
             )
             return false
-        }
-    }
-
-    private func syncSpotlightIndex(with sessions: [SessionSummary]) {
-        let indexableSessions = SessionSpotlightIndexingPolicy.indexableSessions(from: sessions)
-        let nextRecords = Dictionary(uniqueKeysWithValues: indexableSessions.map { session in
-            (session.id, SessionSpotlightRecord(session: session))
-        })
-        let removedIDs = Set(spotlightRecordsBySessionID.keys).subtracting(nextRecords.keys)
-        let removedSearchableIDs = removedIDs.flatMap { sessionID in
-            spotlightRecordsBySessionID[sessionID]?.searchableIdentifiers ?? [sessionID]
-        }
-        let changedSessions = indexableSessions.filter { session in
-            nextRecords[session.id] != spotlightRecordsBySessionID[session.id]
-        }
-        let shouldRebuildIndex = !hasRebuiltSpotlightIndexThisLaunch
-
-        guard shouldRebuildIndex || !removedIDs.isEmpty || !changedSessions.isEmpty else {
-            return
-        }
-
-        spotlightRecordsBySessionID = nextRecords
-        hasRebuiltSpotlightIndexThisLaunch = true
-        let spotlightIndexer = spotlightIndexer
-        let spotlightSyncWorker = spotlightSyncWorker
-
-        Task { @MainActor in
-            await spotlightSyncWorker.syncSessions(
-                indexer: spotlightIndexer,
-                rebuildsIndex: shouldRebuildIndex,
-                removedSearchableIDs: removedSearchableIDs,
-                changedSessions: changedSessions,
-                indexableSessions: indexableSessions
-            )
-        }
-    }
-
-    private func clearSpotlightIndexForCachedSnapshot() {
-        guard !didClearSpotlightIndexForCachedSnapshotThisLaunch ||
-            hasRebuiltSpotlightIndexThisLaunch ||
-            !spotlightRecordsBySessionID.isEmpty
-        else {
-            return
-        }
-
-        didClearSpotlightIndexForCachedSnapshotThisLaunch = true
-        spotlightRecordsBySessionID = [:]
-        hasRebuiltSpotlightIndexThisLaunch = false
-        let spotlightIndexer = spotlightIndexer
-        let spotlightSyncWorker = spotlightSyncWorker
-
-        Task { @MainActor in
-            await spotlightSyncWorker.clearSessions(indexer: spotlightIndexer)
         }
     }
 
