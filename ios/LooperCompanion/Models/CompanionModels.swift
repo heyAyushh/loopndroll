@@ -2301,7 +2301,7 @@ struct SessionIndex: Equatable, Sendable {
     let identity: String
 
     init(snapshot: MobileSnapshot) {
-        let projection = SessionIndexReducerCodec.projectSessionIndex(snapshot)
+        let projection = SessionIndexProjectionCodec.projectSessionIndex(snapshot)
         let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
         let allSessions = indexedSessions.map(\.session)
         let sessionsByID = Dictionary(
@@ -2344,13 +2344,13 @@ struct SessionIndex: Equatable, Sendable {
     ) -> [(surface: CompanionAssistantSurface, session: SessionSummary)] {
         projection.entries.map { entry in
             guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
-                fatalError("Session index reducer returned unknown surface: \(entry.surface)")
+                fatalError("Session index projection returned unknown surface: \(entry.surface)")
             }
 
             let sessions = snapshot.sessions(for: surface)
             let sessionIndex = Int(entry.sessionIndex)
             guard sessions.indices.contains(sessionIndex) else {
-                fatalError("Session index reducer returned invalid index \(sessionIndex) for \(surface.rawValue)")
+                fatalError("Session index projection returned invalid index \(sessionIndex) for \(surface.rawValue)")
             }
 
             return (surface, sessions[sessionIndex])
@@ -2358,7 +2358,7 @@ struct SessionIndex: Equatable, Sendable {
     }
 }
 
-private enum SessionIndexReducerCodec {
+private enum SessionIndexProjectionCodec {
     static func projectSessionIndex(_ snapshot: MobileSnapshot) -> ClientSessionIndexProjection {
         do {
             return try reduceSessionIndex(
@@ -2366,7 +2366,7 @@ private enum SessionIndexReducerCodec {
                 assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
             )
         } catch {
-            fatalError("Session index reducer failed: \(error)")
+            fatalError("Session index projection failed: \(error)")
         }
     }
 
@@ -2399,7 +2399,7 @@ struct SessionSections: Sendable {
     let archived: [SessionSummary]
 
     init(sessions: [SessionSummary]) {
-        let projection = SessionSectionsReducerCodec.projectSessionSections(sessions)
+        let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions)
         active = Self.sessions(at: projection.activeIndexes, in: sessions)
         running = Self.sessions(at: projection.runningIndexes, in: sessions)
         waiting = Self.sessions(at: projection.waitingIndexes, in: sessions)
@@ -2426,7 +2426,7 @@ struct SessionSections: Sendable {
     }
 }
 
-private enum SessionSectionsReducerCodec {
+private enum SessionSectionsProjectionCodec {
     static func projectSessionSections(_ sessions: [SessionSummary])
         -> ClientSessionSectionsProjection
     {
@@ -2435,7 +2435,7 @@ private enum SessionSectionsReducerCodec {
                 sessionsJson: encode(sessions)
             )
         } catch {
-            fatalError("Session sections reducer failed: \(error)")
+            fatalError("Session sections projection failed: \(error)")
         }
     }
 

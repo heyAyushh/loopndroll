@@ -13,6 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 CLIENT_CORE_MANIFEST = ROOT_DIR / "crates" / "looper-client-core" / "Cargo.toml"
 CLIENT_CORE_ROOT = Path("crates/looper-client-core")
 RUNTIME_ROOTS = ("crates", "ios", "macos", "swift")
+CLIENT_RUNTIME_ROOTS = ("ios", "macos", "swift")
 
 FORBIDDEN_DEPENDENCIES = {
     "agent-control-plane",
@@ -62,6 +63,13 @@ STRICT_RUNTIME_PATTERNS = (
             r"SetSessionModeResponse|SendSessionPromptResponse|"
             r"SubmitNotificationReplyResponse|mobile_event_sse_name"
         ),
+    ),
+)
+
+CLIENT_RUNTIME_PATTERNS = (
+    (
+        "client-side reducer ownership",
+        re.compile(r"\b[A-Za-z0-9_]*Reducer[A-Za-z0-9_]*\b|\breducer\b"),
     ),
 )
 
@@ -126,6 +134,13 @@ def main() -> int:
             scan_files(
                 roots=tuple(Path(root) for root in RUNTIME_ROOTS),
                 patterns=STRICT_RUNTIME_PATTERNS,
+                include_markdown=False,
+            )
+        )
+        findings.extend(
+            scan_files(
+                roots=tuple(Path(root) for root in CLIENT_RUNTIME_ROOTS),
+                patterns=CLIENT_RUNTIME_PATTERNS,
                 include_markdown=False,
             )
         )

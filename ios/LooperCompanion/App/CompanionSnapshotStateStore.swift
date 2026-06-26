@@ -56,14 +56,14 @@ final class CompanionSnapshotStateStore {
         _ nextSnapshot: MobileSnapshot,
         preferredSurface: CompanionAssistantSurface? = nil
     ) -> MobileSnapshot {
-        let projection = SnapshotReducerCodec.reduceSnapshotProjection(
+        let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
             snapshot: nextSnapshot,
             preferredSurface: preferredSurface,
             hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
             currentSelectedAssistantSurface: selectedAssistantSurface
         )
-        let surface = SnapshotReducerCodec.assistantSurface(from: projection.selectedAssistantSurface)
-        let visibleSnapshot = SnapshotReducerCodec.decodeSnapshot(projection.visibleSnapshotJson)
+        let surface = SnapshotProjectionCodec.assistantSurface(from: projection.selectedAssistantSurface)
+        let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
         selectedAssistantSurface = surface
         applyReducedVisibleSnapshot(visibleSnapshot)
         syncDetailCache(withVisibleSnapshotJSON: projection.visibleSnapshotJson)
@@ -84,7 +84,7 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Bool {
-        let selection = SnapshotReducerCodec.projectAssistantSurfaceSelection(
+        let selection = SnapshotProjectionCodec.projectAssistantSurfaceSelection(
             currentSelectedSurface: selectedAssistantSurface,
             requestedSurface: surface,
             hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface
@@ -93,12 +93,12 @@ final class CompanionSnapshotStateStore {
             return false
         }
 
-        let selectedSurface = SnapshotReducerCodec.assistantSurface(
+        let selectedSurface = SnapshotProjectionCodec.assistantSurface(
             from: selection.selectedAssistantSurface
         )
         hasUserSelectedAssistantSurface = selection.hasUserSelectedAssistantSurface
         pendingAssistantSurfaceSave = selection.hasPendingAssistantSurfaceSave
-            ? SnapshotReducerCodec.assistantSurface(from: selection.pendingAssistantSurface)
+            ? SnapshotProjectionCodec.assistantSurface(from: selection.pendingAssistantSurface)
             : nil
         applyVisibleAssistantSurface(selectedSurface)
         return true
@@ -195,10 +195,10 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applyOptimisticMode(_ preset: SessionMode?, to sessionID: String) -> Bool {
-        let detailJSON = SnapshotReducerCodec.encodeDetail(detailBySessionID[sessionID])
+        let detailJSON = SnapshotProjectionCodec.encodeDetail(detailBySessionID[sessionID])
 
         guard let snapshot else {
-            let projection = SnapshotReducerCodec.reduceDetailOptimisticMode(
+            let projection = SnapshotProjectionCodec.reduceDetailOptimisticMode(
                 detailJSON: detailJSON,
                 preset: preset
             )
@@ -206,7 +206,7 @@ final class CompanionSnapshotStateStore {
             return projection.didUpdate
         }
 
-        let projection = SnapshotReducerCodec.reduceSnapshotOptimisticMode(
+        let projection = SnapshotProjectionCodec.reduceSnapshotOptimisticMode(
             snapshot: snapshot,
             detailJSON: detailJSON,
             sessionID: sessionID,
@@ -214,10 +214,10 @@ final class CompanionSnapshotStateStore {
             selectedAssistantSurface: selectedAssistantSurface
         )
         applyReducedVisibleSnapshot(
-            SnapshotReducerCodec.decodeSnapshot(projection.visibleSnapshotJson)
+            SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
         )
         if projection.hasDetail {
-            detailBySessionID[sessionID] = SnapshotReducerCodec.decodeDetail(
+            detailBySessionID[sessionID] = SnapshotProjectionCodec.decodeDetail(
                 projection.visibleDetailJson
             )
         }
@@ -244,11 +244,11 @@ final class CompanionSnapshotStateStore {
     }
 
     private func syncDetailCache(withVisibleSnapshotJSON visibleSnapshotJSON: String) {
-        let projection = SnapshotReducerCodec.reduceDetailCache(
+        let projection = SnapshotProjectionCodec.reduceDetailCache(
             visibleSnapshotJSON: visibleSnapshotJSON,
             detailBySessionID: detailBySessionID
         )
-        detailBySessionID = SnapshotReducerCodec.decodeDetailMap(
+        detailBySessionID = SnapshotProjectionCodec.decodeDetailMap(
             projection.detailBySessionIdJson
         )
     }
@@ -261,11 +261,11 @@ final class CompanionSnapshotStateStore {
             return
         }
 
-        detailBySessionID[sessionID] = SnapshotReducerCodec.decodeDetail(projection.detailJson)
+        detailBySessionID[sessionID] = SnapshotProjectionCodec.decodeDetail(projection.detailJson)
     }
 }
 
-private enum SnapshotReducerCodec {
+private enum SnapshotProjectionCodec {
     static func reduceSnapshotProjection(
         snapshot: MobileSnapshot,
         preferredSurface: CompanionAssistantSurface?,
@@ -280,7 +280,7 @@ private enum SnapshotReducerCodec {
                 currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue
             )
         } catch {
-            invariantFailure("Snapshot projection reducer failed", error: error)
+            invariantFailure("Snapshot projection failed", error: error)
         }
     }
 
@@ -300,7 +300,7 @@ private enum SnapshotReducerCodec {
                 selectedAssistantSurface: selectedAssistantSurface.rawValue
             )
         } catch {
-            invariantFailure("Snapshot optimistic mode reducer failed", error: error)
+            invariantFailure("Snapshot optimistic mode projection failed", error: error)
         }
     }
 
@@ -314,7 +314,7 @@ private enum SnapshotReducerCodec {
                 detailBySessionIdJson: encode(detailBySessionID)
             )
         } catch {
-            invariantFailure("Detail cache reducer failed", error: error)
+            invariantFailure("Detail cache projection failed", error: error)
         }
     }
 
@@ -328,7 +328,7 @@ private enum SnapshotReducerCodec {
                 preset: preset?.rawValue ?? ""
             )
         } catch {
-            invariantFailure("Detail optimistic mode reducer failed", error: error)
+            invariantFailure("Detail optimistic mode projection failed", error: error)
         }
     }
 
@@ -346,7 +346,7 @@ private enum SnapshotReducerCodec {
 
     static func assistantSurface(from rawValue: String) -> CompanionAssistantSurface {
         guard let surface = CompanionAssistantSurface(rawValue: rawValue) else {
-            fatalError("Snapshot reducer returned unknown assistant surface: \(rawValue)")
+            fatalError("Snapshot projection returned unknown assistant surface: \(rawValue)")
         }
 
         return surface
@@ -376,12 +376,12 @@ private enum SnapshotReducerCodec {
         do {
             let data = try JSONEncoder().encode(value)
             guard let json = String(data: data, encoding: .utf8) else {
-                fatalError("Client reducer payload was not valid UTF-8")
+                fatalError("Client projection payload was not valid UTF-8")
             }
 
             return json
         } catch {
-            invariantFailure("Client reducer payload encoding failed", error: error)
+            invariantFailure("Client projection payload encoding failed", error: error)
         }
     }
 
@@ -389,7 +389,7 @@ private enum SnapshotReducerCodec {
         do {
             return try JSONDecoder().decode(type, from: Data(json.utf8))
         } catch {
-            invariantFailure("Client reducer payload decoding failed", error: error)
+            invariantFailure("Client projection payload decoding failed", error: error)
         }
     }
 

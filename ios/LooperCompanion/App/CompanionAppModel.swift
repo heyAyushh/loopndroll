@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
 import LooperRealtime
 import Observation
@@ -477,16 +478,14 @@ final class CompanionAppModel {
                 didRestoreCachedSnapshot = false
             }
             let hasUsableSnapshot = snapshot != nil
-            let failureProjection = CompanionConnectionStateReducer.snapshotLoadFailure(
+            let failureProjection = reduceSnapshotLoadFailureOrCrash(
                 mappedErrorState: connectionState(for: error),
                 currentState: connectionState,
                 hasUsableSnapshot: hasUsableSnapshot,
                 hasServerHealth: serverHealth != nil,
                 hasReachedBaseURL: reachedBaseURL != nil
             )
-            let nextConnectionState = CompanionConnectionStateReducer.connectionState(
-                from: failureProjection
-            )
+            let nextConnectionState = connectionState(rawValue: failureProjection.connectionState)
             if failureProjection.preservedConnectedState {
                 CompanionDiagnostics.record(
                     "snapshot:load-failed-preserve-connected error=\(error.localizedDescription)"
@@ -1233,14 +1232,57 @@ final class CompanionAppModel {
         _ error: Error,
         suppressErrorWhenSnapshotUsable: Bool
     ) {
-        let projection = CompanionConnectionStateReducer.connectionFailure(
+        let projection = reduceConnectionFailureOrCrash(
             mappedErrorState: connectionState(for: error),
             hasUsableSnapshot: snapshot != nil,
             suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
         )
-        connectionState = CompanionConnectionStateReducer.connectionState(from: projection)
+        connectionState = connectionState(rawValue: projection.connectionState)
         clearConnectionRouteStateIfNeeded(shouldClear: projection.shouldClearRouteState)
         errorMessage = projection.shouldSuppressError ? nil : error.localizedDescription
+    }
+
+    private func reduceSnapshotLoadFailureOrCrash(
+        mappedErrorState: ConnectivityState,
+        currentState: ConnectivityState,
+        hasUsableSnapshot: Bool,
+        hasServerHealth: Bool,
+        hasReachedBaseURL: Bool
+    ) -> ClientSnapshotLoadFailureProjection {
+        do {
+            return try reduceSnapshotLoadFailure(
+                mappedErrorState: mappedErrorState.rawValue,
+                currentConnectionState: currentState.rawValue,
+                hasUsableSnapshot: hasUsableSnapshot,
+                hasServerHealth: hasServerHealth,
+                hasReachedBaseUrl: hasReachedBaseURL
+            )
+        } catch {
+            fatalError("Connection state projection failed: \(error)")
+        }
+    }
+
+    private func reduceConnectionFailureOrCrash(
+        mappedErrorState: ConnectivityState,
+        hasUsableSnapshot: Bool,
+        suppressErrorWhenSnapshotUsable: Bool
+    ) -> ClientConnectionFailureProjection {
+        do {
+            return try reduceConnectionFailure(
+                mappedErrorState: mappedErrorState.rawValue,
+                hasUsableSnapshot: hasUsableSnapshot,
+                suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
+            )
+        } catch {
+            fatalError("Connection failure projection failed: \(error)")
+        }
+    }
+
+    private func connectionState(rawValue: String) -> ConnectivityState {
+        guard let state = ConnectivityState(rawValue: rawValue) else {
+            fatalError("Connection projection returned unknown state: \(rawValue)")
+        }
+        return state
     }
 
     private func isCancellationError(_ error: Error) -> Bool {

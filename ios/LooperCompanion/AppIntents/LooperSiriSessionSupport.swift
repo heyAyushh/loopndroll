@@ -466,20 +466,20 @@ struct LooperSiriSessionClient: Sendable {
     private func sessionEntities(for surface: CompanionAssistantSurface? = nil) async throws -> [LooperSessionEntity] {
         let snapshot = try await service.loadSnapshot()
         let surfaces = surface.map { [$0] } ?? CompanionAssistantSurface.allCases
-        let projection = LooperSiriSessionEntityReducerCodec.projectSessionEntities(
+        let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
             snapshot,
             surfaces: surfaces
         )
 
         return projection.entries.map { entry in
             guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
-                fatalError("Siri session entity reducer returned unknown surface: \(entry.surface)")
+                fatalError("Siri session entity projection returned unknown surface: \(entry.surface)")
             }
 
             let sessions = snapshot.sessions(for: surface)
             let sessionIndex = Int(entry.sessionIndex)
             guard sessions.indices.contains(sessionIndex) else {
-                fatalError("Siri session entity reducer returned invalid index \(sessionIndex) for \(surface.rawValue)")
+                fatalError("Siri session entity projection returned invalid index \(sessionIndex) for \(surface.rawValue)")
             }
 
             return LooperSessionEntity(
@@ -518,7 +518,7 @@ struct LooperSiriSessionClient: Sendable {
 
 }
 
-private enum LooperSiriSessionEntityReducerCodec {
+private enum LooperSiriSessionEntityProjectionCodec {
     static func projectSessionEntities(
         _ snapshot: MobileSnapshot,
         surfaces: [CompanionAssistantSurface]
@@ -529,7 +529,7 @@ private enum LooperSiriSessionEntityReducerCodec {
                 assistantSurfaceOrder: surfaces.map(\.rawValue)
             )
         } catch {
-            fatalError("Siri session entity reducer failed: \(error)")
+            fatalError("Siri session entity projection failed: \(error)")
         }
     }
 
