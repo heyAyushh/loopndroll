@@ -209,7 +209,7 @@ struct HTTPCompanionService: CompanionService {
         sessionID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         let result = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
@@ -229,7 +229,7 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         let result = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
@@ -244,7 +244,7 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         await prepareCommandRuntimeIfNeeded()
         let result = try await requiredSessionRuntime().drainNotificationReplyOutbox()
         let notificationID = result.notificationId
@@ -311,7 +311,7 @@ struct HTTPCompanionService: CompanionService {
         from result: ClientNotificationReplyIntentResult,
         fallbackNotificationID: String,
         sessionID: String
-    ) throws -> LooperRealtimeNotificationReplyResponse {
+    ) throws -> ClientNotificationReplyIntentResult {
         guard result.accepted else {
             CompanionDiagnostics.record(
                 "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(fallbackNotificationID)"
@@ -321,18 +321,7 @@ struct HTTPCompanionService: CompanionService {
         CompanionDiagnostics.record(
             "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
         )
-        return LooperRealtimeNotificationReplyResponse(
-            accepted: result.accepted,
-            dispatchKind: dispatchKind(from: result.dispatchKind),
-            promptID: nonEmpty(result.promptId),
-            serverTime: result.serverTime,
-            clientMutationID: result.clientMutationId,
-            ackSeq: result.ackSeq,
-            entityID: result.entityId,
-            revision: result.revision,
-            idempotentReplay: result.idempotentReplay,
-            notificationID: nonEmpty(result.notificationId) ?? fallbackNotificationID
-        )
+        return result
     }
 
     private static func nonEmpty(_ value: String) -> String? {

@@ -501,7 +501,7 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         sessionID _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
@@ -511,11 +511,11 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID _: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 

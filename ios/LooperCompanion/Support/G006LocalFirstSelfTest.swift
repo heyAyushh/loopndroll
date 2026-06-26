@@ -1047,7 +1047,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         sessionID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await submitNotificationReply(
             notificationID: notificationID,
             sessionID: sessionID,
@@ -1063,28 +1063,28 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         if let promptError {
             throw promptError
         }
 
         try await delayResponseIfNeeded()
         appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "resume",
-            promptID: "prompt-1",
-            serverTime: nil,
-            clientMutationID: clientMutationID,
+            promptId: "prompt-1",
+            serverTime: "",
+            clientMutationId: clientMutationID,
             ackSeq: 0,
-            entityID: sessionID,
+            entityId: sessionID,
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         if let promptError {
             throw promptError
         }
@@ -1093,17 +1093,17 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         let notificationID = "pending-notification"
         let clientMutationID = "pending-mutation"
         appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "resume",
-            promptID: "prompt-1",
-            serverTime: nil,
-            clientMutationID: clientMutationID,
+            promptId: "prompt-1",
+            serverTime: "",
+            clientMutationId: clientMutationID,
             ackSeq: 0,
-            entityID: "thread-main",
+            entityId: "thread-main",
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 

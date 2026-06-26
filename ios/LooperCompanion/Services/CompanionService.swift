@@ -55,8 +55,8 @@ protocol CompanionService: Sendable {
         sessionID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse
+    ) async throws -> ClientNotificationReplyIntentResult
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult
     func muteSession(id: String) async throws -> MobileSnapshot
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot
     func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot

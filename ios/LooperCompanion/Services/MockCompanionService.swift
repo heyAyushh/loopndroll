@@ -324,19 +324,19 @@ struct MockCompanionService: CompanionService {
         sessionID: String,
         prompt: String,
         assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         _ = await store.sendPrompt(id: sessionID, prompt: prompt)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "mock",
-            promptID: nil,
+            promptId: "",
             serverTime: Date().ISO8601Format(),
-            clientMutationID: MockCommandIDs.notificationReply,
+            clientMutationId: MockCommandIDs.notificationReply,
             ackSeq: 0,
-            entityID: sessionID,
+            entityId: sessionID,
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 
@@ -346,34 +346,34 @@ struct MockCompanionService: CompanionService {
         prompt: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         _ = await store.sendPrompt(id: sessionID, prompt: prompt)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "mock",
-            promptID: nil,
+            promptId: "",
             serverTime: Date().ISO8601Format(),
-            clientMutationID: clientMutationID,
+            clientMutationId: clientMutationID,
             ackSeq: 0,
-            entityID: sessionID,
+            entityId: sessionID,
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
-        LooperRealtimeNotificationReplyResponse(
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
+        ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "mock",
-            promptID: nil,
+            promptId: "",
             serverTime: Date().ISO8601Format(),
-            clientMutationID: MockCommandIDs.pendingNotificationReply,
+            clientMutationId: MockCommandIDs.pendingNotificationReply,
             ackSeq: 0,
-            entityID: "",
+            entityId: "",
             revision: "",
             idempotentReplay: false,
-            notificationID: ""
+            notificationId: ""
         )
     }
 

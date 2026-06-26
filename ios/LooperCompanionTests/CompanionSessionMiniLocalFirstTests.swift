@@ -485,13 +485,13 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     ) async throws -> CompanionSessionModeResult {
         if let sessionRuntime {
             do {
-                let envelope = try await sessionRuntime.setMode(
+                let result = try await sessionRuntime.setMode(
                     threadID: id,
                     preset: preset
                 )
-                appendModeClientMutationID(envelope.ack.clientMutationId)
+                appendPendingRuntimeCommandID(kind: .setSessionMode)
                 return .accepted(
-                    mode: preset
+                    mode: SessionMode(rawValue: result.preset) ?? preset
                 )
             } catch {
                 appendPendingRuntimeCommandID(kind: .setSessionMode)
@@ -523,15 +523,15 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     ) async throws -> CompanionPromptSendResult {
         if let sessionRuntime {
             do {
-                let envelope = try await sessionRuntime.sendPrompt(
+                let result = try await sessionRuntime.sendPrompt(
                     threadID: id,
                     prompt: prompt,
                     assistantSurface: assistantSurface
                 )
-                appendPromptClientMutationID(envelope.ack.clientMutationId)
+                appendPendingRuntimeCommandID(kind: .sendSessionPrompt)
                 return .accepted(
-                    promptID: envelope.promptId.isEmpty ? nil : envelope.promptId,
-                    dispatchKind: envelope.dispatchKind.isEmpty ? nil : envelope.dispatchKind
+                    promptID: result.promptId.isEmpty ? nil : result.promptId,
+                    dispatchKind: result.dispatchKind.isEmpty ? nil : result.dispatchKind
                 )
             } catch {
                 appendPendingRuntimeCommandID(kind: .sendSessionPrompt)
@@ -556,7 +556,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         sessionID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await submitNotificationReply(
             notificationID: notificationID,
             sessionID: sessionID,
@@ -572,27 +572,27 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         if let promptError {
             throw promptError
         }
 
         appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "resume",
-            promptID: "prompt-1",
-            serverTime: nil,
-            clientMutationID: clientMutationID,
+            promptId: "prompt-1",
+            serverTime: "",
+            clientMutationId: clientMutationID,
             ackSeq: 0,
-            entityID: sessionID,
+            entityId: sessionID,
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         if let promptError {
             throw promptError
         }
@@ -600,17 +600,17 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         let notificationID = "pending-notification"
         let clientMutationID = "pending-mutation"
         appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
-        return LooperRealtimeNotificationReplyResponse(
+        return ClientNotificationReplyIntentResult(
             accepted: true,
             dispatchKind: "resume",
-            promptID: "prompt-1",
-            serverTime: nil,
-            clientMutationID: clientMutationID,
+            promptId: "prompt-1",
+            serverTime: "",
+            clientMutationId: clientMutationID,
             ackSeq: 0,
-            entityID: "thread-main",
+            entityId: "thread-main",
             revision: "",
             idempotentReplay: false,
-            notificationID: notificationID
+            notificationId: notificationID
         )
     }
 

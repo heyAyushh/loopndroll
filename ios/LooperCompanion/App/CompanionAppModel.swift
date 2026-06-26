@@ -996,8 +996,8 @@ final class CompanionAppModel {
     private func submitPendingNotificationReply() async -> Bool {
         do {
             let response = try await service.submitPendingNotificationReply()
-            guard let acceptedSessionID = Self.nonEmptyText(response.entityID),
-                  let acceptedNotificationID = Self.nonEmptyText(response.notificationID)
+            guard let acceptedSessionID = Self.nonEmptyText(response.entityId),
+                  let acceptedNotificationID = Self.nonEmptyText(response.notificationId)
             else {
                 CompanionDiagnostics.record(
                     "notification-reply:pending-drain-missing-ack-target"
@@ -1028,7 +1028,7 @@ final class CompanionAppModel {
     }
 
     private func applyNotificationReplyAccepted(
-        _ response: LooperRealtimeNotificationReplyResponse,
+        _ response: ClientNotificationReplyIntentResult,
         sessionID: String,
         notificationID: String,
         targetSurface: CompanionAssistantSurface

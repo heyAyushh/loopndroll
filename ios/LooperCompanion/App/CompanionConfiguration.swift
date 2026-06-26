@@ -653,7 +653,7 @@ struct UnconfiguredCompanionService: CompanionService {
         sessionID _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         throw error
     }
     func submitNotificationReply(
@@ -662,10 +662,10 @@ struct UnconfiguredCompanionService: CompanionService {
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?,
         clientMutationID _: String
-    ) async throws -> LooperRealtimeNotificationReplyResponse {
+    ) async throws -> ClientNotificationReplyIntentResult {
         throw error
     }
-    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         throw error
     }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }

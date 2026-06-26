@@ -2,35 +2,7 @@ import Foundation
 import Testing
 @testable import LooperClientCore
 
-struct LooperClientCoreRealtimeBridgeTests {
-    @Test
-    func notificationReplyResponseExposesAckFields() {
-        let response = LooperRealtimeNotificationReplyResponse(
-            accepted: true,
-            dispatchKind: "queued",
-            promptID: "prompt-1",
-            serverTime: "2026-06-24T00:00:00Z",
-            clientMutationID: "mutation-1",
-            ackSeq: 42,
-            entityID: "thread-main",
-            revision: "revision-1",
-            idempotentReplay: true,
-            notificationID: "notification-1"
-        )
-        let expectedAck = LooperRealtimeCommandAck(
-            accepted: true,
-            clientMutationID: "mutation-1",
-            ackSeq: 42,
-            entityID: "thread-main",
-            revision: "revision-1",
-            serverTime: "2026-06-24T00:00:00Z",
-            idempotentReplay: true
-        )
-
-        #expect(response.ack == expectedAck)
-        #expect(response.notificationID == "notification-1")
-    }
-
+struct LooperClientCoreSessionManagerTests {
     @Test
     func durableModeCommandPersistsBeforeTransport() async throws {
         let manager = try LooperClientCoreSessionManager(
