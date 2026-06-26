@@ -15,6 +15,10 @@ CLIENT_CORE_ROOT = Path("crates/looper-client-core")
 RUNTIME_ROOTS = ("crates", "ios", "macos", "swift")
 CLIENT_RUNTIME_ROOTS = ("ios", "macos", "swift")
 RETIRED_RUNTIME_ROOTS = (Path("swift/LooperRealtime"),)
+RAW_CLIENT_CORE_BOUNDARY_FILES = (
+    CLIENT_CORE_ROOT / "src" / "client.rs",
+    CLIENT_CORE_ROOT / "src" / "local_store.rs",
+)
 
 FORBIDDEN_DEPENDENCIES = {
     "agent-control-plane",
@@ -72,6 +76,15 @@ CLIENT_RUNTIME_PATTERNS = (
     (
         "client-side reducer ownership",
         re.compile(r"\b[A-Za-z0-9_]*Reducer[A-Za-z0-9_]*\b|\breducer\b"),
+    ),
+    (
+        "raw client-core foreign object",
+        re.compile(
+            r"\bpublic\s+protocol\s+LooperClientCoreProtocol\b|"
+            r"\bopen\s+class\s+LooperClientCore\b|"
+            r"\bLooperClientCoreLocalStore\b|"
+            r"\bLooperClientCore\s*\("
+        ),
     ),
     (
         "retired LooperRealtime production bridge",
@@ -159,6 +172,7 @@ def main() -> int:
 
     findings: list[Finding] = []
     findings.extend(check_client_core_dependencies())
+    findings.extend(check_raw_client_core_uniffi_exports())
     findings.extend(
         scan_files(
             roots=(CLIENT_CORE_ROOT,),
@@ -256,6 +270,39 @@ def check_client_core_dependencies() -> list[Finding]:
             )
         )
 
+    return findings
+
+
+def check_raw_client_core_uniffi_exports() -> list[Finding]:
+    findings: list[Finding] = []
+    forbidden_markers = ("uniffi::Object", "#[uniffi::export]", "#[uniffi::constructor]")
+    for path in RAW_CLIENT_CORE_BOUNDARY_FILES:
+        absolute_path = ROOT_DIR / path
+        if not absolute_path.exists():
+            findings.append(
+                Finding(
+                    path=path,
+                    line=1,
+                    rule="missing raw client-core boundary file",
+                    text=f"expected {path}",
+                )
+            )
+            continue
+
+        text = absolute_path.read_text(encoding="utf-8", errors="replace")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if any(marker in line for marker in forbidden_markers):
+                findings.append(
+                    Finding(
+                        path=path,
+                        line=line_number,
+                        rule="raw client-core UniFFI export",
+                        text=(
+                            "raw client/store types must stay Rust-internal; "
+                            "export only LooperClientCoreSessionRuntime"
+                        ),
+                    )
+                )
     return findings
 
 
