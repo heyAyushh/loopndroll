@@ -2055,6 +2055,114 @@ public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMu
 }
 
 
+public struct ClientSessionIndexEntry: Equatable, Hashable {
+    public var surface: String
+    public var sessionIndex: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(surface: String, sessionIndex: UInt32) {
+        self.surface = surface
+        self.sessionIndex = sessionIndex
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionIndexEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionIndexEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionIndexEntry {
+        return
+            try ClientSessionIndexEntry(
+                surface: FfiConverterString.read(from: &buf),
+                sessionIndex: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionIndexEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.surface, into: &buf)
+        FfiConverterUInt32.write(value.sessionIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionIndexEntry_lift(_ buf: RustBuffer) throws -> ClientSessionIndexEntry {
+    return try FfiConverterTypeClientSessionIndexEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionIndexEntry_lower(_ value: ClientSessionIndexEntry) -> RustBuffer {
+    return FfiConverterTypeClientSessionIndexEntry.lower(value)
+}
+
+
+public struct ClientSessionIndexProjection: Equatable, Hashable {
+    public var entries: [ClientSessionIndexEntry]
+    public var identity: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entries: [ClientSessionIndexEntry], identity: String) {
+        self.entries = entries
+        self.identity = identity
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionIndexProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionIndexProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionIndexProjection {
+        return
+            try ClientSessionIndexProjection(
+                entries: FfiConverterSequenceTypeClientSessionIndexEntry.read(from: &buf),
+                identity: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionIndexProjection, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeClientSessionIndexEntry.write(value.entries, into: &buf)
+        FfiConverterString.write(value.identity, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionIndexProjection_lift(_ buf: RustBuffer) throws -> ClientSessionIndexProjection {
+    return try FfiConverterTypeClientSessionIndexProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionIndexProjection_lower(_ value: ClientSessionIndexProjection) -> RustBuffer {
+    return FfiConverterTypeClientSessionIndexProjection.lower(value)
+}
+
+
 public struct ClientSessionSectionsProjection: Equatable, Hashable {
     public var activeIndexes: [UInt32]
     public var runningIndexes: [UInt32]
@@ -3305,6 +3413,31 @@ fileprivate struct FfiConverterSequenceTypeClientPendingMutation: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientSessionIndexEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientSessionIndexEntry]
+
+    public static func write(_ value: [ClientSessionIndexEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientSessionIndexEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientSessionIndexEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientSessionIndexEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientSessionIndexEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientStateMini: FfiConverterRustBuffer {
     typealias SwiftType = [ClientStateMini]
 
@@ -3443,6 +3576,14 @@ public func reduceSessionDetailOptimisticMode(detailJson: String, preset: String
     )
 })
 }
+public func reduceSessionIndex(snapshotJson: String, assistantSurfaceOrder: [String])throws  -> ClientSessionIndexProjection  {
+    return try  FfiConverterTypeClientSessionIndexProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_session_index(
+        FfiConverterString.lower(snapshotJson),
+        FfiConverterSequenceString.lower(assistantSurfaceOrder),$0
+    )
+})
+}
 public func reduceSessionSections(sessionsJson: String)throws  -> ClientSessionSectionsProjection  {
     return try  FfiConverterTypeClientSessionSectionsProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_session_sections(
@@ -3494,6 +3635,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_session_index() != 6913) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_sections() != 8605) {

@@ -55,8 +55,22 @@ pub struct ClientSessionSectionsProjection {
     pub archived_indexes: Vec<u32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionIndexEntry {
+    pub surface: String,
+    pub session_index: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionIndexProjection {
+    pub entries: Vec<ClientSessionIndexEntry>,
+    pub identity: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SnapshotDocument {
+    #[serde(default)]
+    revision: Option<String>,
     #[serde(rename = "globalSettings")]
     global_settings: GlobalSettingsDocument,
     #[serde(default)]
@@ -100,13 +114,25 @@ struct SessionDocument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct GoalDocument {
     #[serde(default)]
+    id: String,
+    #[serde(default)]
     status: String,
     #[serde(default)]
+    lifecycle: String,
+    #[serde(default)]
     running: bool,
+    #[serde(rename = "updatedAtMs", default)]
+    updated_at_ms: Option<i64>,
 }
 
 struct SortableSession {
     original_index: u32,
+    session: SessionDocument,
+}
+
+struct SortableSessionIndexEntry {
+    surface: String,
+    surface_index: u32,
     session: SessionDocument,
 }
 
@@ -302,6 +328,60 @@ pub fn reduce_session_sections(
     Ok(projection)
 }
 
+#[uniffi::export]
+pub fn reduce_session_index(
+    snapshot_json: String,
+    assistant_surface_order: Vec<String>,
+) -> Result<ClientSessionIndexProjection, ClientCoreError> {
+    let snapshot = parse_snapshot(&snapshot_json)?;
+    let mut entries_by_id = BTreeMap::<String, SortableSessionIndexEntry>::new();
+
+    for surface in assistant_surface_order {
+        for (surface_index, session) in sessions_for_surface(&snapshot, &surface)
+            .into_iter()
+            .enumerate()
+        {
+            match entries_by_id.get(&session.id) {
+                Some(existing) if !is_newer_or_lower_ref(&session, &existing.session) => {}
+                _ => {
+                    entries_by_id.insert(
+                        session.id.clone(),
+                        SortableSessionIndexEntry {
+                            surface: surface.clone(),
+                            surface_index: surface_index as u32,
+                            session,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let mut sortable_entries = entries_by_id.into_values().collect::<Vec<_>>();
+    sortable_entries.sort_by(|left, right| {
+        if is_newer_or_lower_ref(&left.session, &right.session) {
+            std::cmp::Ordering::Less
+        } else if is_newer_or_lower_ref(&right.session, &left.session) {
+            std::cmp::Ordering::Greater
+        } else {
+            left.surface
+                .cmp(&right.surface)
+                .then(left.surface_index.cmp(&right.surface_index))
+        }
+    });
+
+    let identity = session_index_identity(&snapshot, &sortable_entries);
+    let entries = sortable_entries
+        .into_iter()
+        .map(|entry| ClientSessionIndexEntry {
+            surface: entry.surface,
+            session_index: entry.surface_index,
+        })
+        .collect();
+
+    Ok(ClientSessionIndexProjection { entries, identity })
+}
+
 impl SessionDocument {
     fn has_blocked_goal(&self) -> bool {
         self.goal
@@ -312,6 +392,51 @@ impl SessionDocument {
     fn has_running_goal(&self) -> bool {
         self.goal.as_ref().is_some_and(|goal| goal.running)
     }
+}
+
+fn session_index_identity(
+    snapshot: &SnapshotDocument,
+    entries: &[SortableSessionIndexEntry],
+) -> String {
+    let revision = snapshot
+        .revision
+        .as_deref()
+        .map(str::trim)
+        .filter(|revision| !revision.is_empty())
+        .unwrap_or("no-revision");
+    let mut parts = vec![revision.to_owned(), entries.len().to_string()];
+    parts.extend(entries.iter().map(|entry| {
+        let session = &entry.session;
+        let goal = session.goal.as_ref();
+        [
+            session.id.clone(),
+            session.status.clone(),
+            session.last_activity_at.clone(),
+            session_extra_string(session, "lastMessageAt").to_owned(),
+            goal.map(|goal| goal.id.clone()).unwrap_or_default(),
+            goal.map(|goal| goal.status.clone()).unwrap_or_default(),
+            goal.map(|goal| goal.lifecycle.clone()).unwrap_or_default(),
+            if goal.is_some_and(|goal| goal.running) {
+                "goal-running".to_owned()
+            } else {
+                "goal-idle".to_owned()
+            },
+            goal.and_then(|goal| goal.updated_at_ms)
+                .unwrap_or_default()
+                .to_string(),
+            if session.is_archived {
+                "archived".to_owned()
+            } else {
+                "visible".to_owned()
+            },
+        ]
+        .join(":")
+    }));
+    parts.join("|")
+}
+
+fn session_extra_string<'a>(session: &'a SessionDocument, key: &str) -> &'a str {
+    session.extra.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
 fn sort_sessions_by_freshness(sessions: &mut [SortableSession]) {
@@ -739,6 +864,60 @@ mod tests {
     }
 
     #[test]
+    fn session_index_dedupes_sorts_and_reports_best_surface() {
+        let projection = reduce_session_index(
+            session_index_json(),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project session index");
+
+        assert_eq!(
+            projection.entries,
+            vec![
+                ClientSessionIndexEntry {
+                    surface: DEVIN.to_owned(),
+                    session_index: 0,
+                },
+                ClientSessionIndexEntry {
+                    surface: CODEX.to_owned(),
+                    session_index: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            projection.identity,
+            "revision-index|2|thread-main:waiting:2026-06-16T08:02:00.321Z:2026-06-16T08:01:00Z:goal-main:blocked:blocked:goal-idle:1781596920321:visible|codex-thread:active:2026-06-16T08:00:00Z:2026-06-16T07:59:00Z::::goal-idle:0:visible"
+        );
+    }
+
+    #[test]
+    fn session_index_uses_global_sessions_as_surface_fallback() {
+        let projection = reduce_session_index(
+            snapshot_json(CODEX),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project session index");
+
+        assert_eq!(
+            projection.entries,
+            vec![
+                ClientSessionIndexEntry {
+                    surface: DEVIN.to_owned(),
+                    session_index: 0,
+                },
+                ClientSessionIndexEntry {
+                    surface: CODEX.to_owned(),
+                    session_index: 0,
+                },
+            ]
+        );
+        assert_eq!(
+            projection.identity.split('|').take(2).collect::<Vec<_>>(),
+            vec!["rev-1", "2"]
+        );
+    }
+
+    #[test]
     fn optimistic_mode_updates_visible_snapshot_and_detail() {
         let projection = reduce_mobile_snapshot_optimistic_mode(
             snapshot_json(DEVIN),
@@ -935,6 +1114,55 @@ mod tests {
                 "goal":{"status":"pursuing","running":true}
             }
         ]"#
+        .to_owned()
+    }
+
+    fn session_index_json() -> String {
+        r#"{
+            "revision":"revision-index",
+            "globalSettings":{"assistantSurface":"codex"},
+            "sessions":[],
+            "surfaceSessions":{
+                "codex":[
+                    {
+                        "id":"thread-main",
+                        "ref":"S1",
+                        "status":"active",
+                        "lastActivityAtMs":1781596920123,
+                        "lastActivityAt":"2026-06-16T08:00:00.123Z",
+                        "lastMessageAt":"2026-06-16T07:58:00Z",
+                        "isArchived":false
+                    },
+                    {
+                        "id":"codex-thread",
+                        "ref":"C1",
+                        "status":"active",
+                        "lastActivityAtMs":1781596920000,
+                        "lastActivityAt":"2026-06-16T08:00:00Z",
+                        "lastMessageAt":"2026-06-16T07:59:00Z",
+                        "isArchived":false
+                    }
+                ],
+                "devin":[
+                    {
+                        "id":"thread-main",
+                        "ref":"S2",
+                        "status":"waiting",
+                        "lastActivityAtMs":1781596920321,
+                        "lastActivityAt":"2026-06-16T08:02:00.321Z",
+                        "lastMessageAt":"2026-06-16T08:01:00Z",
+                        "isArchived":false,
+                        "goal":{
+                            "id":"goal-main",
+                            "status":"blocked",
+                            "lifecycle":"blocked",
+                            "running":false,
+                            "updatedAtMs":1781596920321
+                        }
+                    }
+                ]
+            }
+        }"#
         .to_owned()
     }
 }

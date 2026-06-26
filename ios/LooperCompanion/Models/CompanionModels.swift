@@ -2275,37 +2275,15 @@ struct MobileSnapshot: Codable, Sendable {
     }
 
     var sessionsAcrossSurfaces: [SessionSummary] {
-        var sessionsByID: [String: SessionSummary] = [:]
-        for surface in CompanionAssistantSurface.allCases {
-            for session in sessions(for: surface) {
-                if let existingSession = sessionsByID[session.id],
-                   !SessionSummary.isNewerOrLowerRef(
-                       leftSession: session,
-                       rightSession: existingSession
-                   )
-                {
-                    continue
-                }
-
-                sessionsByID[session.id] = session
-            }
-        }
-        return sessionsByID.values
-            .sorted(by: SessionSummary.isNewerOrLowerRef)
+        SessionIndex(snapshot: self).allSessions
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
-        sessionsAcrossSurfaces.first { session in
-            session.id == sessionID
-        }
+        SessionIndex(snapshot: self).session(withID: sessionID)
     }
 
     func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
-        CompanionAssistantSurface.allCases.first { surface in
-            sessions(for: surface).contains { session in
-                session.id == sessionID
-            }
-        }
+        SessionIndex(snapshot: self).assistantSurface(containingSessionID: sessionID)
     }
 }
 
@@ -2323,32 +2301,20 @@ struct SessionIndex: Equatable, Sendable {
     let identity: String
 
     init(snapshot: MobileSnapshot) {
-        var sessionsByID: [String: SessionSummary] = [:]
-        var surfaceBySessionID: [String: CompanionAssistantSurface] = [:]
-
-        for surface in CompanionAssistantSurface.allCases {
-            for session in snapshot.sessions(for: surface) {
-                if let existingSession = sessionsByID[session.id],
-                   !SessionSummary.isNewerOrLowerRef(
-                       leftSession: session,
-                       rightSession: existingSession
-                   )
-                {
-                    continue
-                }
-
-                sessionsByID[session.id] = session
-                surfaceBySessionID[session.id] = surface
-            }
-        }
-
-        let allSessions = sessionsByID.values
-            .sorted(by: SessionSummary.isNewerOrLowerRef)
+        let projection = SessionIndexReducerCodec.projectSessionIndex(snapshot)
+        let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
+        let allSessions = indexedSessions.map(\.session)
+        let sessionsByID = Dictionary(
+            uniqueKeysWithValues: indexedSessions.map { ($0.session.id, $0.session) }
+        )
+        let surfaceBySessionID = Dictionary(
+            uniqueKeysWithValues: indexedSessions.map { ($0.session.id, $0.surface) }
+        )
         self.init(
             allSessions: allSessions,
             sessionsByID: sessionsByID,
             surfaceBySessionID: surfaceBySessionID,
-            identity: Self.identity(snapshot: snapshot, sessions: allSessions)
+            identity: projection.identity
         )
     }
 
@@ -2372,25 +2338,49 @@ struct SessionIndex: Equatable, Sendable {
         surfaceBySessionID[sessionID]
     }
 
-    private static func identity(snapshot: MobileSnapshot, sessions: [SessionSummary]) -> String {
-        let revision = snapshot.revision?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty ?? "no-revision"
-        let sessionFingerprints = sessions.map { session in
-            [
-                session.id,
-                session.status.rawValue,
-                session.lastActivityAt,
-                session.lastMessageAt ?? "",
-                session.goal?.id ?? "",
-                session.goal?.status ?? "",
-                session.goal?.lifecycle ?? "",
-                session.goal?.running == true ? "goal-running" : "goal-idle",
-                String(session.goal?.updatedAtMs ?? 0),
-                session.isArchived ? "archived" : "visible",
-            ].joined(separator: ":")
+    private static func sessions(
+        from projection: ClientSessionIndexProjection,
+        snapshot: MobileSnapshot
+    ) -> [(surface: CompanionAssistantSurface, session: SessionSummary)] {
+        projection.entries.map { entry in
+            guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
+                fatalError("Session index reducer returned unknown surface: \(entry.surface)")
+            }
+
+            let sessions = snapshot.sessions(for: surface)
+            let sessionIndex = Int(entry.sessionIndex)
+            guard sessions.indices.contains(sessionIndex) else {
+                fatalError("Session index reducer returned invalid index \(sessionIndex) for \(surface.rawValue)")
+            }
+
+            return (surface, sessions[sessionIndex])
         }
-        return ([revision, String(sessions.count)] + sessionFingerprints).joined(separator: "|")
+    }
+}
+
+private enum SessionIndexReducerCodec {
+    static func projectSessionIndex(_ snapshot: MobileSnapshot) -> ClientSessionIndexProjection {
+        do {
+            return try reduceSessionIndex(
+                snapshotJson: encode(snapshot),
+                assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
+            )
+        } catch {
+            fatalError("Session index reducer failed: \(error)")
+        }
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) -> String {
+        do {
+            let data = try JSONEncoder().encode(value)
+            guard let json = String(data: data, encoding: .utf8) else {
+                fatalError("Session index payload was not valid UTF-8")
+            }
+
+            return json
+        } catch {
+            fatalError("Session index payload encoding failed: \(error)")
+        }
     }
 }
 

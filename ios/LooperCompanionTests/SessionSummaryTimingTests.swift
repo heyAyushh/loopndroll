@@ -102,8 +102,14 @@ struct SessionSummaryTimingTests {
 
         #expect(snapshot.sessionsAcrossSurfaces.map(\.ref) == ["S2"])
         #expect(snapshot.session(withID: "thread-main")?.ref == "S2")
+        #expect(snapshot.assistantSurface(containingSessionID: "thread-main") == .devin)
         #expect(index.allSessions.map(\.ref) == ["S2"])
         #expect(index.session(withID: "thread-main")?.ref == "S2")
+        #expect(index.assistantSurface(containingSessionID: "thread-main") == .devin)
+        #expect(
+            index.identity
+                == "revision-1|1|thread-main:active:2026-06-16T08:02:00Z:2026-06-16T08:01:00Z::::goal-idle:0:visible"
+        )
     }
 
     @Test("Mobile snapshot decodes Codex work status")
