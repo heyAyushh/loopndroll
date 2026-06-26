@@ -186,57 +186,6 @@ final class CompanionSnapshotStateStore {
         detailBySessionID[sessionID] = nil
     }
 
-    func rollbackState(for sessionID: String) -> ModeRollbackState {
-        ModeRollbackState(
-            snapshot: snapshot,
-            detail: detailBySessionID[sessionID]
-        )
-    }
-
-    @discardableResult
-    func applyOptimisticMode(_ preset: SessionMode?, to sessionID: String) -> Bool {
-        let detailJSON = SnapshotProjectionCodec.encodeDetail(detailBySessionID[sessionID])
-
-        guard let snapshot else {
-            let projection = SnapshotProjectionCodec.reduceDetailOptimisticMode(
-                detailJSON: detailJSON,
-                preset: preset
-            )
-            applyDetailModeProjection(projection, to: sessionID)
-            return projection.didUpdate
-        }
-
-        let projection = SnapshotProjectionCodec.reduceSnapshotOptimisticMode(
-            snapshot: snapshot,
-            detailJSON: detailJSON,
-            sessionID: sessionID,
-            preset: preset,
-            selectedAssistantSurface: selectedAssistantSurface
-        )
-        applyReducedVisibleSnapshot(
-            SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
-        )
-        if projection.hasDetail {
-            detailBySessionID[sessionID] = SnapshotProjectionCodec.decodeDetail(
-                projection.visibleDetailJson
-            )
-        }
-
-        return projection.didUpdate
-    }
-
-    func restoreOptimisticModeSnapshot(
-        _ previousSnapshot: MobileSnapshot?,
-        previousDetail: SessionDetail?,
-        sessionID: String
-    ) {
-        if let previousSnapshot {
-            applySnapshot(previousSnapshot, preferredSurface: selectedAssistantSurface)
-        }
-
-        detailBySessionID[sessionID] = previousDetail
-    }
-
     private func applyReducedVisibleSnapshot(_ visibleSnapshot: MobileSnapshot) {
         snapshot = visibleSnapshot
         sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
@@ -253,16 +202,6 @@ final class CompanionSnapshotStateStore {
         )
     }
 
-    private func applyDetailModeProjection(
-        _ projection: ClientDetailModeProjection,
-        to sessionID: String
-    ) {
-        guard projection.hasDetail else {
-            return
-        }
-
-        detailBySessionID[sessionID] = SnapshotProjectionCodec.decodeDetail(projection.detailJson)
-    }
 }
 
 private enum SnapshotProjectionCodec {
@@ -284,26 +223,6 @@ private enum SnapshotProjectionCodec {
         }
     }
 
-    static func reduceSnapshotOptimisticMode(
-        snapshot: MobileSnapshot,
-        detailJSON: String,
-        sessionID: String,
-        preset: SessionMode?,
-        selectedAssistantSurface: CompanionAssistantSurface
-    ) -> ClientOptimisticModeProjection {
-        do {
-            return try reduceMobileSnapshotOptimisticMode(
-                snapshotJson: encode(snapshot),
-                detailJson: detailJSON,
-                sessionId: sessionID,
-                preset: preset?.rawValue ?? "",
-                selectedAssistantSurface: selectedAssistantSurface.rawValue
-            )
-        } catch {
-            invariantFailure("Snapshot optimistic mode projection failed", error: error)
-        }
-    }
-
     static func reduceDetailCache(
         visibleSnapshotJSON: String,
         detailBySessionID: [String: SessionDetail]
@@ -315,20 +234,6 @@ private enum SnapshotProjectionCodec {
             )
         } catch {
             invariantFailure("Detail cache projection failed", error: error)
-        }
-    }
-
-    static func reduceDetailOptimisticMode(
-        detailJSON: String,
-        preset: SessionMode?
-    ) -> ClientDetailModeProjection {
-        do {
-            return try reduceSessionDetailOptimisticMode(
-                detailJson: detailJSON,
-                preset: preset?.rawValue ?? ""
-            )
-        } catch {
-            invariantFailure("Detail optimistic mode projection failed", error: error)
         }
     }
 
@@ -352,20 +257,8 @@ private enum SnapshotProjectionCodec {
         return surface
     }
 
-    static func encodeDetail(_ detail: SessionDetail?) -> String {
-        guard let detail else {
-            return ""
-        }
-
-        return encode(detail)
-    }
-
     static func decodeSnapshot(_ json: String) -> MobileSnapshot {
         decode(MobileSnapshot.self, from: json)
-    }
-
-    static func decodeDetail(_ json: String) -> SessionDetail {
-        decode(SessionDetail.self, from: json)
     }
 
     static func decodeDetailMap(_ json: String) -> [String: SessionDetail] {

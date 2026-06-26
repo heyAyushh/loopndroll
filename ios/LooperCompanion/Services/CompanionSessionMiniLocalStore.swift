@@ -91,6 +91,20 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
+    func queueSetMode(
+        threadID: String,
+        preset: SessionMode?,
+        clientMutationID: String
+    ) throws -> MobileSnapshot? {
+        let localSnapshot = try sessionManager.queueSetMode(
+            threadID: threadID,
+            preset: preset?.rawValue ?? "",
+            clientMutationID: clientMutationID
+        )
+        return try mobileSnapshot(from: localSnapshot)
+    }
+
+    @discardableResult
     func replace(
         latestSeq: Int64,
         records: [CompanionSessionMiniRecord],
@@ -228,6 +242,14 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
 
         return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+    }
+
+    private func mobileSnapshot(from snapshot: ClientLocalStateSnapshot) throws -> MobileSnapshot? {
+        try mobileSnapshot(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions,
+            serverTime: snapshot.serverTime
+        )
     }
 
     private func drainClientCoreStateMiniSync(

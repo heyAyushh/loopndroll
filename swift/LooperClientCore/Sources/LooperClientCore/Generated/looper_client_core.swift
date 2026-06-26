@@ -547,6 +547,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func observe() async throws  -> ClientStateMiniStreamUpdate
 
+    func queueSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
+
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
 
     func snapshot() throws  -> ClientStateSnapshot
@@ -678,6 +680,18 @@ open func observe()async throws  -> ClientStateMiniStreamUpdate  {
             liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
+}
+
+open func queueSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_queue_set_mode_durable(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),
+        FfiConverterString.lower(threadId),
+        FfiConverterString.lower(preset),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
 }
 
 open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientStateSnapshot  {
@@ -1056,6 +1070,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
 
+    func queueSetMode(threadId: String, preset: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
+
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
@@ -1199,6 +1215,17 @@ open func persistNotificationReply(notificationId: String, threadId: String, pro
         FfiConverterString.lower(threadId),
         FfiConverterString.lower(prompt),
         FfiConverterString.lower(assistantSurface),
+        FfiConverterString.lower(clientMutationId),$0
+    )
+})
+}
+
+open func queueSetMode(threadId: String, preset: String, clientMutationId: String)throws  -> ClientLocalStateSnapshot  {
+    return try  FfiConverterTypeClientLocalStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_queue_set_mode(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(threadId),
+        FfiConverterString.lower(preset),
         FfiConverterString.lower(clientMutationId),$0
     )
 })
@@ -4631,6 +4658,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_observe() != 61493) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_queue_set_mode_durable() != 4717) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_replace_state_minis() != 24521) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4698,6 +4728,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply() != 12302) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_queue_set_mode() != 211) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_replace_state_minis() != 26981) {

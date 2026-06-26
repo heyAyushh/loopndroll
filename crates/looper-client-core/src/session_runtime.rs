@@ -94,6 +94,20 @@ impl LooperClientCoreSessionRuntime {
             .await
     }
 
+    pub fn queue_set_mode(
+        &self,
+        thread_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.client_core.queue_set_mode_durable(
+            self.local_store.clone(),
+            thread_id,
+            preset,
+            client_mutation_id,
+        )
+    }
+
     pub async fn send_prompt(
         &self,
         thread_id: String,
@@ -247,6 +261,65 @@ mod tests {
         );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
         assert_eq!(runtime.outbox_depth().expect("outbox depth"), 1);
+        drop(runtime);
+        drop(test_runtime);
+    }
+
+    #[test]
+    fn runtime_paints_mode_before_transport() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("mode-paint")).expect("runtime");
+        runtime
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 7,
+                sessions: vec![ClientStateMini {
+                    session_id: "thread-main".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 7,
+                    revision: "rev-7".to_owned(),
+                    payload_json: r#"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#.to_owned(),
+                }],
+                server_time: "2026-06-25T00:00:00Z".to_owned(),
+            })
+            .expect("seed minis");
+
+        let optimistic = runtime
+            .queue_set_mode(
+                "thread-main".to_owned(),
+                "max-turns-2".to_owned(),
+                "mutation-mode".to_owned(),
+            )
+            .expect("queue mode");
+
+        assert_eq!(optimistic.pending_commands.len(), 1);
+        assert_eq!(
+            optimistic.pending_commands[0].kind,
+            ClientPendingCommandKind::SetSessionMode
+        );
+        assert!(
+            optimistic.sessions[0]
+                .payload_json
+                .contains(r#""effectiveMode":"max-turns-2""#)
+        );
+
+        let error = test_runtime
+            .block_on(runtime.set_mode(
+                "thread-main".to_owned(),
+                "max-turns-2".to_owned(),
+                "mutation-mode".to_owned(),
+            ))
+            .expect_err("missing runtime config should fail transport");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let snapshot = runtime.local_snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
+        assert!(
+            snapshot.sessions[0]
+                .payload_json
+                .contains(r#""effectiveMode":"max-turns-2""#)
+        );
         drop(runtime);
         drop(test_runtime);
     }

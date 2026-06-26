@@ -143,6 +143,38 @@ struct LooperClientCoreRealtimeBridgeTests {
     }
 
     @Test
+    func sessionManagerQueuesModeIntoLocalProjectionBeforeTransport() throws {
+        let manager = try LooperClientCoreSessionManager(
+            filePath: localStorePath(named: "session-manager-mode-local")
+        )
+        _ = try manager.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
+            latestSeq: 5,
+            sessions: [
+                ClientStateMini(
+                    sessionId: "thread-main",
+                    assistantSurface: "codex",
+                    seq: 5,
+                    revision: "revision-5",
+                    payloadJson: #"{"sessionId":"thread-main","assistantSurface":"codex","effectiveMode":"await-reply"}"#
+                ),
+            ],
+            serverTime: "2026-06-25T00:00:00Z"
+        ))
+
+        let snapshot = try manager.queueSetMode(
+            threadID: "thread-main",
+            preset: "max-turns-2",
+            clientMutationID: "mutation-local-mode"
+        )
+
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .setSessionMode)
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-local-mode")
+        #expect(snapshot.sessions.first?.payloadJson.contains(#""effectiveMode":"max-turns-2""#) == true)
+        #expect(try manager.outboxDepth() == 1)
+    }
+
+    @Test
     func duplicateDurablePromptMutationDedupesPendingCommand() async throws {
         let core = LooperClientCore()
         let store = try localStore(named: "durable-prompt-dedupe")

@@ -69,6 +69,19 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func queueSetMode(
+        threadID: String,
+        preset: String,
+        clientMutationID: String
+    ) throws -> ClientLocalStateSnapshot {
+        try runtime.queueSetMode(
+            threadId: threadID,
+            preset: preset,
+            clientMutationId: clientMutationID
+        )
+    }
+
+    @discardableResult
     public func sendPrompt(
         threadID: String,
         prompt: String,

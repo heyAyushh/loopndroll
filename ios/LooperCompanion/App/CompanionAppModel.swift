@@ -22,11 +22,6 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
-struct ModeRollbackState: Sendable {
-    let snapshot: MobileSnapshot?
-    let detail: SessionDetail?
-}
-
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -905,12 +900,15 @@ final class CompanionAppModel {
     }
 
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
-        let rollbackState = snapshotState.rollbackState(for: sessionID)
         let clientMutationID = makeClientMutationID()
         let targetService = service
         let targetRevision = connectionRevision
 
-        applyOptimisticMode(preset, to: sessionID)
+        applyQueuedModeSnapshot(
+            preset,
+            to: sessionID,
+            clientMutationID: clientMutationID
+        )
 
         do {
             let result = try await targetService.setSessionMode(
@@ -931,11 +929,6 @@ final class CompanionAppModel {
                 )
                 return false
             }
-            restoreOptimisticModeSnapshot(
-                rollbackState.snapshot,
-                previousDetail: rollbackState.detail,
-                sessionID: sessionID
-            )
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
             Haptics.error()
             return false
@@ -1206,22 +1199,32 @@ final class CompanionAppModel {
         return await mutateSnapshot(operation)
     }
 
-    private func applyOptimisticMode(_ preset: SessionMode?, to sessionID: String) {
-        if snapshotState.applyOptimisticMode(preset, to: sessionID) {
-            lastUpdatedAt = Date()
-        }
-    }
-
-    private func restoreOptimisticModeSnapshot(
-        _ previousSnapshot: MobileSnapshot?,
-        previousDetail: SessionDetail?,
-        sessionID: String
+    private func applyQueuedModeSnapshot(
+        _ preset: SessionMode?,
+        to sessionID: String,
+        clientMutationID: String
     ) {
-        snapshotState.restoreOptimisticModeSnapshot(
-            previousSnapshot,
-            previousDetail: previousDetail,
-            sessionID: sessionID
-        )
+        guard let localStore = sessionMiniController.localStore else {
+            return
+        }
+        do {
+            guard let localSnapshot = try localStore.queueSetMode(
+                threadID: sessionID,
+                preset: preset,
+                clientMutationID: clientMutationID
+            ) else {
+                return
+            }
+            snapshotState.applySnapshot(
+                localSnapshot,
+                preferredSurface: snapshotState.selectedAssistantSurface
+            )
+            lastUpdatedAt = Date()
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:local-queue-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+        }
     }
 
     private func applyPromptSendResult(

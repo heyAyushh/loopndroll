@@ -5,6 +5,8 @@ use tokio::{
     time::{Duration, sleep},
 };
 
+use serde_json::Value;
+
 use crate::command_batch::reduce_expected_command_ack;
 use crate::error::ClientCoreError;
 use crate::local_store::LooperClientCoreLocalStore;
@@ -12,10 +14,10 @@ use crate::local_store::LooperClientCoreLocalStore;
 use crate::model::ClientStateDelta;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientPendingMutation, ClientStateMini, ClientStateMiniDelta,
-    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
-    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
-    OutboundSessionFrameKind,
+    ClientEndpoint, ClientLocalStateSnapshot, ClientPendingMutation, ClientStateMini,
+    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
+    ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 #[cfg(test)]
 use crate::session_transport::fetch_state_mini_snapshot;
@@ -40,8 +42,16 @@ struct ClientCoreState {
     server_time: String,
     state_minis: Vec<ClientStateMini>,
     pending_mutations: Vec<ClientPendingMutation>,
+    mode_rollbacks: Vec<ClientModeRollback>,
     outbox: Vec<OutboundSessionFrame>,
     last_error: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClientModeRollback {
+    client_mutation_id: String,
+    thread_id: String,
+    sessions: Vec<ClientStateMini>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -182,14 +192,15 @@ impl LooperClientCore {
         state.queue_command(OutboundSessionFrame {
             frame_kind: OutboundSessionFrameKind::Command,
             command_kind: ClientCommandKind::SetSessionMode,
-            thread_id,
-            preset,
+            thread_id: thread_id.clone(),
+            preset: preset.clone(),
             prompt: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
-            client_mutation_id,
+            client_mutation_id: client_mutation_id.clone(),
             after_seq: EMPTY_SEQUENCE,
         });
+        state.apply_optimistic_mode(&thread_id, &preset, &client_mutation_id);
         Ok(state.snapshot())
     }
 
@@ -398,6 +409,22 @@ impl LooperClientCore {
 
 #[uniffi::export]
 impl LooperClientCore {
+    pub fn queue_set_mode_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        let snapshot = self.set_mode(
+            thread_id.clone(),
+            preset.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id)?;
+        persist_state_minis_to_local_store(&local_store, snapshot)
+    }
+
     pub async fn submit_set_mode_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
@@ -406,17 +433,18 @@ impl LooperClientCore {
         client_mutation_id: String,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
         let _flush = self.command_flush.lock().await;
-        self.set_mode(
-            thread_id.clone(),
-            preset.clone(),
+        self.queue_set_mode_durable(
+            local_store.clone(),
+            thread_id,
+            preset,
             client_mutation_id.clone(),
         )?;
-        local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id.clone())?;
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
             .await?;
-        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        self.mark_durable_command_final(&local_store, &envelope)?;
+        persist_state_minis_to_local_store(&local_store, self.snapshot()?)?;
         Ok(envelope)
     }
 
@@ -445,7 +473,7 @@ impl LooperClientCore {
         let envelope = self
             .submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
             .await?;
-        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        self.mark_durable_command_final(&local_store, &envelope)?;
         Ok(envelope)
     }
 
@@ -480,7 +508,7 @@ impl LooperClientCore {
                 client_mutation_id,
             )
             .await?;
-        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        self.mark_durable_command_final(&local_store, &envelope)?;
         Ok(envelope)
     }
 
@@ -662,15 +690,12 @@ impl LooperClientCore {
         reduce_expected_command_ack(response, command_kind, client_mutation_id)
     }
 
-    fn mark_durable_command_delivered(
+    fn mark_durable_command_final(
         &self,
         local_store: &LooperClientCoreLocalStore,
         envelope: &ClientCommandAckEnvelope,
     ) -> Result<(), ClientCoreError> {
-        if envelope.ack.accepted {
-            local_store.mark_delivered(envelope.ack.client_mutation_id.clone())?;
-        }
-        Ok(())
+        local_store.mark_delivered(envelope.ack.client_mutation_id.clone())
     }
 
     fn replace_stream(&self, stream: ClientCoreStream) -> Result<(), ClientCoreError> {
@@ -860,12 +885,22 @@ impl ClientCoreState {
         } else {
             reject_message(&ack)
         };
+        let command_kind = self
+            .pending_mutations
+            .iter()
+            .find(|mutation| mutation.client_mutation_id == ack.client_mutation_id)
+            .map(|mutation| mutation.command_kind);
         self.latest_seq = self.latest_seq.max(ack.ack_seq);
         if !ack.revision.is_empty() {
             self.revision = ack.revision;
         }
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
+        if command_kind == Some(ClientCommandKind::SetSessionMode) && !ack.accepted {
+            self.restore_mode_rollback(&ack.client_mutation_id);
+        } else {
+            self.discard_mode_rollback(&ack.client_mutation_id);
+        }
 
         if ack.accepted {
             self.last_error.clear();
@@ -885,6 +920,68 @@ impl ClientCoreState {
             self.state_minis.push(session);
         }
         sort_state_minis(&mut self.state_minis);
+    }
+
+    fn apply_optimistic_mode(&mut self, thread_id: &str, preset: &str, client_mutation_id: &str) {
+        self.remember_mode_rollback(thread_id, client_mutation_id);
+        let mut did_update = false;
+        for session in self
+            .state_minis
+            .iter_mut()
+            .filter(|session| session.session_id == thread_id)
+        {
+            if let Some(payload_json) = optimistic_mode_payload_json(&session.payload_json, preset)
+            {
+                session.payload_json = payload_json;
+                did_update = true;
+            }
+        }
+        if did_update {
+            self.last_error.clear();
+        }
+    }
+
+    fn remember_mode_rollback(&mut self, thread_id: &str, client_mutation_id: &str) {
+        if self
+            .mode_rollbacks
+            .iter()
+            .any(|rollback| rollback.client_mutation_id == client_mutation_id)
+        {
+            return;
+        }
+
+        self.mode_rollbacks.push(ClientModeRollback {
+            client_mutation_id: client_mutation_id.to_owned(),
+            thread_id: thread_id.to_owned(),
+            sessions: self
+                .state_minis
+                .iter()
+                .filter(|session| session.session_id == thread_id)
+                .cloned()
+                .collect(),
+        });
+    }
+
+    fn restore_mode_rollback(&mut self, client_mutation_id: &str) {
+        let Some(index) = self
+            .mode_rollbacks
+            .iter()
+            .position(|rollback| rollback.client_mutation_id == client_mutation_id)
+        else {
+            return;
+        };
+        let rollback = self.mode_rollbacks.remove(index);
+        self.state_minis
+            .retain(|session| session.session_id != rollback.thread_id);
+        for session in rollback.sessions {
+            self.upsert_state_mini(session);
+        }
+        sort_state_minis(&mut self.state_minis);
+    }
+
+    fn discard_mode_rollback(&mut self, client_mutation_id: &str) {
+        self.mode_rollbacks
+            .retain(|rollback| rollback.client_mutation_id != client_mutation_id);
     }
 
     fn apply_state_mini_delta(&mut self, delta: ClientStateMiniDelta) -> bool {
@@ -928,6 +1025,33 @@ fn reject_message(ack: &ClientCommandAck) -> String {
         (true, false) => ack.reject_reason.clone(),
         (true, true) => "command rejected".to_owned(),
     }
+}
+
+fn optimistic_mode_payload_json(payload_json: &str, preset: &str) -> Option<String> {
+    let mut payload = serde_json::from_str::<Value>(payload_json).ok()?;
+    let payload_object = payload.as_object_mut()?;
+    payload_object.insert("effectiveMode".to_owned(), optimistic_mode_value(preset));
+    serde_json::to_string(&payload).ok()
+}
+
+fn optimistic_mode_value(preset: &str) -> Value {
+    let trimmed = preset.trim();
+    if trimmed.is_empty() {
+        Value::Null
+    } else {
+        Value::from(trimmed)
+    }
+}
+
+fn persist_state_minis_to_local_store(
+    local_store: &LooperClientCoreLocalStore,
+    snapshot: ClientStateSnapshot,
+) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+    local_store.replace_state_minis(ClientStateMiniSnapshot {
+        latest_seq: snapshot.latest_seq,
+        sessions: snapshot.state_minis,
+        server_time: snapshot.server_time,
+    })
 }
 
 fn should_retry_notification_reply_drain(error: &ClientCoreError) -> bool {
@@ -1455,6 +1579,59 @@ mod tests {
             snapshot.last_error,
             "illegal_transition: WAIT_REPLY required"
         );
+    }
+
+    #[test]
+    fn rejected_mode_ack_restores_optimistic_state_mini() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 7,
+            sessions: vec![ClientStateMini {
+                session_id: "thread-1".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                seq: 7,
+                revision: "rev-7".to_owned(),
+                payload_json: r#"{"sessionId":"thread-1","assistantSurface":"codex","effectiveMode":"await-reply"}"#.to_owned(),
+            }],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed mini");
+
+        let optimistic = core
+            .set_mode(
+                "thread-1".to_owned(),
+                "max-turns-2".to_owned(),
+                "cmid-mode".to_owned(),
+            )
+            .expect("queue mode");
+        assert!(
+            optimistic.state_minis[0]
+                .payload_json
+                .contains(r#""effectiveMode":"max-turns-2""#)
+        );
+
+        let rejected = core
+            .apply_command_ack(ClientCommandAck {
+                accepted: false,
+                client_mutation_id: "cmid-mode".to_owned(),
+                ack_seq: 8,
+                entity_id: "thread-1".to_owned(),
+                revision: "rev-8".to_owned(),
+                server_time: "2026-06-25T00:00:01Z".to_owned(),
+                idempotent_replay: false,
+                error_code: "illegal_transition".to_owned(),
+                reject_reason: "mode rejected".to_owned(),
+                current_state: "done".to_owned(),
+            })
+            .expect("ack");
+
+        assert!(
+            rejected.state_minis[0]
+                .payload_json
+                .contains(r#""effectiveMode":"await-reply""#)
+        );
+        assert!(rejected.pending_mutations.is_empty());
+        assert_eq!(rejected.last_error, "illegal_transition: mode rejected");
     }
 
     #[test]

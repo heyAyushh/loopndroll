@@ -9,6 +9,7 @@ struct CompanionSessionMiniLocalFirstTests {
         static let cachedThreadID = "cached-thread"
         static let fallbackThreadID = "fallback-thread"
         static let timestamp = "2026-06-24T00:00:00Z"
+        static let preAckLocalPaintProbeNanoseconds: UInt64 = 20_000_000
         static let delayedModeDrainProbeNanoseconds: UInt64 = 300_000_000
         static let slowQuickActionHandlerNanoseconds: UInt64 = 250_000_000
         static let quickActionSubmitBudgetNanoseconds: UInt64 = 100_000_000
@@ -100,7 +101,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.promptClientMutationIDs.first?.isEmpty == false)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().isEmpty)
+        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
     }
 
     @MainActor
@@ -127,6 +128,10 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
+        try await Task.sleep(nanoseconds: Constants.preAckLocalPaintProbeNanoseconds)
+        #expect(service.modeClientMutationIDs.isEmpty)
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2)
+
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
         let didSendPrompt = await promptTask.value
         let didApplyMode = await modeTask.value
@@ -137,7 +142,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().isEmpty)
+        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
 
         try await Task.sleep(nanoseconds: Constants.delayedModeDrainProbeNanoseconds)
         #expect(service.modeClientMutationIDs.count == 1)
@@ -177,7 +182,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(store.pendingCommands().isEmpty)
+        #expect(store.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
     }
 
     @MainActor

@@ -369,16 +369,6 @@ struct SessionSummaryTimingTests {
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Devin ready")
 
-        let rollback = store.rollbackState(for: "thread-main")
-        #expect(store.applyOptimisticMode(.infinite, to: "thread-main"))
-        #expect(store.session(withID: "thread-main")?.effectiveMode == .infinite)
-        #expect(store.detail(for: "thread-main")?.effectiveMode == .infinite)
-
-        store.restoreOptimisticModeSnapshot(
-            rollback.snapshot,
-            previousDetail: rollback.detail,
-            sessionID: "thread-main"
-        )
         #expect(store.session(withID: "thread-main")?.effectiveMode == .awaitReply)
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
     }
