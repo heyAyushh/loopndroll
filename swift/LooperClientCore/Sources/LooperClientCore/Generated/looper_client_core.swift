@@ -1117,7 +1117,11 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
+    func sendPromptWithGeneratedMutation(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
+
     func setMode(threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
+    func setModeWithGeneratedMutation(threadId: String, preset: String) async throws  -> ClientCommandAckEnvelope
 
     func start(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
@@ -1126,6 +1130,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
     func stop() throws  -> ClientStateSnapshot
 
     func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
+    func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
 
 }
 open class LooperClientCoreSessionRuntime: LooperClientCoreSessionRuntimeProtocol, @unchecked Sendable {
@@ -1349,6 +1355,23 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
         )
 }
 
+open func sendPromptWithGeneratedMutation(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_send_prompt_with_generated_mutation(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func setMode(threadId: String, preset: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
     return
         try  await uniffiRustCallAsync(
@@ -1356,6 +1379,23 @@ open func setMode(threadId: String, preset: String, clientMutationId: String)asy
                 uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_mode(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(threadId),FfiConverterString.lower(preset),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func setModeWithGeneratedMutation(threadId: String, preset: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_mode_with_generated_mutation(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId),FfiConverterString.lower(preset)
                 )
             },
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
@@ -1400,6 +1440,23 @@ open func submitNotificationReply(notificationId: String, threadId: String, prom
                 uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_submit_notification_reply(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_submit_notification_reply_with_generated_mutation(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface)
                 )
             },
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
@@ -5247,7 +5304,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33463) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt_with_generated_mutation() != 42328) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 6329) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode_with_generated_mutation() != 8005) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_start() != 53576) {
@@ -5260,6 +5323,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply() != 8880) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply_with_generated_mutation() != 43581) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_constructor_looperclientcore_new() != 12582) {

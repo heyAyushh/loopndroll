@@ -41,6 +41,34 @@ struct HTTPCompanionServiceCommandCoreTests {
         ])
     }
 
+    @Test
+    func generatedCommandMutationsComeFromRustCore() async throws {
+        let store = try Self.temporaryMiniStore()
+        let service = HTTPCompanionService(
+            baseURLs: [],
+            bearerToken: nil,
+            sessionMiniLocalStore: store
+        )
+
+        await #expect(throws: Error.self) {
+            _ = try await service.setSessionMode(
+                id: "thread-1",
+                preset: .maxTurns2
+            )
+        }
+        await #expect(throws: Error.self) {
+            _ = try await service.sendSessionPrompt(
+                id: "thread-1",
+                prompt: "continue",
+                assistantSurface: .codex
+            )
+        }
+
+        #expect(store.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
+        #expect(store.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
+        #expect(store.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
+    }
+
     private static func temporaryMiniStore() throws -> CompanionSessionMiniLocalStore {
         let directoryURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

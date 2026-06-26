@@ -19,6 +19,9 @@ use crate::{
 
 const MOBILE_SYNC_REASON_DELTA: &str = "delta";
 const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
+const MODE_MUTATION_PREFIX: &str = "mode";
+const PROMPT_MUTATION_PREFIX: &str = "prompt";
+const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
 
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreSessionRuntime {
@@ -143,6 +146,19 @@ impl LooperClientCoreSessionRuntime {
             .await
     }
 
+    pub async fn set_mode_with_generated_mutation(
+        &self,
+        thread_id: String,
+        preset: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.set_mode(
+            thread_id,
+            preset,
+            generated_client_mutation_id(MODE_MUTATION_PREFIX),
+        )
+        .await
+    }
+
     pub fn queue_set_mode(
         &self,
         thread_id: String,
@@ -175,6 +191,21 @@ impl LooperClientCoreSessionRuntime {
             .await
     }
 
+    pub async fn send_prompt_with_generated_mutation(
+        &self,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.send_prompt(
+            thread_id,
+            prompt,
+            assistant_surface,
+            generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
+        )
+        .await
+    }
+
     pub async fn submit_notification_reply(
         &self,
         notification_id: String,
@@ -193,6 +224,23 @@ impl LooperClientCoreSessionRuntime {
                 client_mutation_id,
             )
             .await
+    }
+
+    pub async fn submit_notification_reply_with_generated_mutation(
+        &self,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.submit_notification_reply(
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            generated_client_mutation_id(NOTIFICATION_REPLY_MUTATION_PREFIX),
+        )
+        .await
     }
 
     pub async fn drain_notification_reply_outbox(
@@ -338,6 +386,10 @@ impl LooperClientCoreSessionRuntime {
     }
 }
 
+fn generated_client_mutation_id(prefix: &str) -> String {
+    format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
 fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
     match reason {
         ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
@@ -428,6 +480,63 @@ mod tests {
         assert_eq!(runtime.outbox_depth().expect("outbox depth"), 1);
         drop(runtime);
         drop(test_runtime);
+    }
+
+    #[test]
+    fn runtime_generates_mode_mutation_id_before_transport() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("generated-mode"))
+            .expect("runtime");
+
+        let error = test_runtime
+            .block_on(runtime.set_mode_with_generated_mutation(
+                "thread-main".to_owned(),
+                "max-turns-2".to_owned(),
+            ))
+            .expect_err("missing runtime config should fail transport");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let snapshot = runtime.local_snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetSessionMode
+        );
+        assert!(
+            snapshot.pending_commands[0]
+                .client_mutation_id
+                .starts_with("mode-")
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
+    }
+
+    #[test]
+    fn runtime_generates_prompt_mutation_id_before_transport() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("generated-prompt"))
+            .expect("runtime");
+
+        let error = test_runtime
+            .block_on(runtime.send_prompt_with_generated_mutation(
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+            ))
+            .expect_err("missing runtime config should fail transport");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let snapshot = runtime.local_snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SendSessionPrompt
+        );
+        assert!(
+            snapshot.pending_commands[0]
+                .client_mutation_id
+                .starts_with("prompt-")
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
     }
 
     #[test]

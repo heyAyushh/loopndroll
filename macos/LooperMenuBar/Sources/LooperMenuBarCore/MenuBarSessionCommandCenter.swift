@@ -42,14 +42,24 @@ public actor MenuBarSessionCommandCenter {
     public func setSessionMode(
         threadID: String,
         preset: String?,
-        clientMutationID: String = UUID().uuidString
+        clientMutationID: String? = nil
     ) async throws -> MenuBarSessionModeCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
-        let envelope = try await requiredSessionManager().setMode(
-            threadID: normalizedThreadID,
-            preset: preset?.nilIfBlank ?? "",
-            clientMutationID: clientMutationID
-        )
+        let sessionManager = try requiredSessionManager()
+        let normalizedPreset = preset?.nilIfBlank ?? ""
+        let envelope: ClientCommandAckEnvelope
+        if let clientMutationID {
+            envelope = try await sessionManager.setMode(
+                threadID: normalizedThreadID,
+                preset: normalizedPreset,
+                clientMutationID: clientMutationID
+            )
+        } else {
+            envelope = try await sessionManager.setMode(
+                threadID: normalizedThreadID,
+                preset: normalizedPreset
+            )
+        }
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionModeCommandResult(
             clientMutationID: acknowledgedMutationID,
@@ -63,16 +73,27 @@ public actor MenuBarSessionCommandCenter {
         threadID: String,
         prompt: String,
         assistantSurface: String?,
-        clientMutationID: String = UUID().uuidString
+        clientMutationID: String? = nil
     ) async throws -> MenuBarSessionPromptCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        let envelope = try await requiredSessionManager().sendPrompt(
-            threadID: normalizedThreadID,
-            prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank ?? "",
-            clientMutationID: clientMutationID
-        )
+        let sessionManager = try requiredSessionManager()
+        let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
+        let envelope: ClientCommandAckEnvelope
+        if let clientMutationID {
+            envelope = try await sessionManager.sendPrompt(
+                threadID: normalizedThreadID,
+                prompt: normalizedPrompt,
+                assistantSurface: normalizedAssistantSurface,
+                clientMutationID: clientMutationID
+            )
+        } else {
+            envelope = try await sessionManager.sendPrompt(
+                threadID: normalizedThreadID,
+                prompt: normalizedPrompt,
+                assistantSurface: normalizedAssistantSurface
+            )
+        }
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionPromptCommandResult(
             clientMutationID: acknowledgedMutationID,
@@ -88,7 +109,7 @@ public actor MenuBarSessionCommandCenter {
         threadID: String,
         prompt: String,
         assistantSurface: String?,
-        clientMutationID: String = UUID().uuidString
+        clientMutationID: String? = nil
     ) async throws -> MenuBarNotificationReplyCommandResult {
         let normalizedNotificationID = try normalizedRequired(
             notificationID,
@@ -96,13 +117,25 @@ public actor MenuBarSessionCommandCenter {
         )
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        let envelope = try await requiredSessionManager().submitNotificationReply(
-            notificationID: normalizedNotificationID,
-            threadID: normalizedThreadID,
-            prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank ?? "",
-            clientMutationID: clientMutationID
-        )
+        let sessionManager = try requiredSessionManager()
+        let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
+        let envelope: ClientCommandAckEnvelope
+        if let clientMutationID {
+            envelope = try await sessionManager.submitNotificationReply(
+                notificationID: normalizedNotificationID,
+                threadID: normalizedThreadID,
+                prompt: normalizedPrompt,
+                assistantSurface: normalizedAssistantSurface,
+                clientMutationID: clientMutationID
+            )
+        } else {
+            envelope = try await sessionManager.submitNotificationReplyWithGeneratedMutation(
+                notificationID: normalizedNotificationID,
+                threadID: normalizedThreadID,
+                prompt: normalizedPrompt,
+                assistantSurface: normalizedAssistantSurface
+            )
+        }
         let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarNotificationReplyCommandResult(
             notificationID: envelope.notificationId.nilIfBlank ?? normalizedNotificationID,

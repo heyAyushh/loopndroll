@@ -887,7 +887,6 @@ final class CompanionAppModel {
             return false
         }
 
-        let clientMutationID = makeClientMutationID()
         let targetService = service
         let targetRevision = connectionRevision
 
@@ -895,8 +894,7 @@ final class CompanionAppModel {
             let result = try await targetService.sendSessionPrompt(
                 id: sessionID,
                 prompt: trimmedPrompt,
-                assistantSurface: targetSurface,
-                clientMutationID: clientMutationID
+                assistantSurface: targetSurface
             )
             guard targetRevision == connectionRevision else {
                 CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(sessionID)")

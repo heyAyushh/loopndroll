@@ -448,8 +448,7 @@ struct LooperSiriSessionClient: Sendable {
         _ = try await service.sendSessionPrompt(
             id: entity.sessionID,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            assistantSurface: entity.assistantSurface ?? .codex,
-            clientMutationID: UUID().uuidString
+            assistantSurface: entity.assistantSurface ?? .codex
         )
     }
 

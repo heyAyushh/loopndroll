@@ -192,6 +192,31 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.map(\.attemptCount) == [1, 1])
     }
 
+    @Test("menu actions can use Rust-core generated mutation IDs")
+    func testMenuActionsUseRustCoreGeneratedMutationIDs() async throws {
+        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
+        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
+
+        await expectThrows {
+            _ = try await commandCenter.setSessionMode(
+                threadID: "thread-main",
+                preset: "await-reply"
+            )
+        }
+        await expectThrows {
+            _ = try await commandCenter.sendPrompt(
+                threadID: "thread-main",
+                prompt: "ship it",
+                assistantSurface: "codex"
+            )
+        }
+
+        let pendingCommands = store.pendingCommands()
+        #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
+        #expect(pendingCommands[0].clientMutationID.hasPrefix("mode-"))
+        #expect(pendingCommands[1].clientMutationID.hasPrefix("prompt-"))
+    }
+
     @Test("notification replies enter durable Rust-core outbox before transport")
     func testNotificationRepliesEnterDurableRustCoreOutboxBeforeTransport() async throws {
         let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())

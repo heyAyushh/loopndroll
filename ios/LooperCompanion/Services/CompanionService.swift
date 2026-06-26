@@ -65,11 +65,20 @@ protocol CompanionService: Sendable {
     func loadSessionDetail(id: String, surface: CompanionAssistantSurface?) async throws -> SessionDetail
     func setSessionMode(
         id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult
+    func setSessionMode(
+        id: String,
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot
     func deleteSession(id: String) async throws -> MobileSnapshot
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult
     func sendSessionPrompt(
         id: String,
         prompt: String,
@@ -104,6 +113,30 @@ extension CompanionService {
         ResolvedCompanionServerHealth(
             health: try await loadServerHealth(),
             reachedBaseURL: nil
+        )
+    }
+
+    func setSessionMode(
+        id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        try await setSessionMode(
+            id: id,
+            preset: preset,
+            clientMutationID: UUID().uuidString
+        )
+    }
+
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        try await sendSessionPrompt(
+            id: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: UUID().uuidString
         )
     }
 

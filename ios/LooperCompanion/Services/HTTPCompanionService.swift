@@ -140,6 +140,17 @@ struct HTTPCompanionService: CompanionService {
 
     func setSessionMode(
         id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        let envelope = try await requiredSessionManager().setMode(
+            threadID: id,
+            preset: preset?.rawValue ?? ""
+        )
+        return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
+    }
+
+    func setSessionMode(
+        id: String,
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
@@ -148,15 +159,23 @@ struct HTTPCompanionService: CompanionService {
             preset: preset?.rawValue ?? "",
             clientMutationID: clientMutationID
         )
+        return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
+    }
+
+    private static func sessionModeResult(
+        from envelope: ClientCommandAckEnvelope,
+        fallbackMode: SessionMode?,
+        sessionID: String
+    ) throws -> CompanionSessionModeResult {
         guard envelope.ack.accepted else {
-            CompanionDiagnostics.record("mode:grpc-invalid id=\(id)")
+            CompanionDiagnostics.record("mode:grpc-invalid id=\(sessionID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "mode:grpc-accepted id=\(id) ackSeq=\(envelope.ack.ackSeq)"
+            "mode:grpc-accepted id=\(sessionID) ackSeq=\(envelope.ack.ackSeq)"
         )
         return .accepted(
-            mode: Self.sessionMode(from: envelope.preset) ?? preset,
+            mode: Self.sessionMode(from: envelope.preset) ?? fallbackMode,
             serverTime: envelope.ack.serverTime,
             clientMutationID: envelope.ack.clientMutationId,
             ackSeq: envelope.ack.ackSeq,
@@ -179,6 +198,19 @@ struct HTTPCompanionService: CompanionService {
     func sendSessionPrompt(
         id: String,
         prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        let envelope = try await requiredSessionManager().sendPrompt(
+            threadID: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        return try Self.promptSendResult(from: envelope, sessionID: id)
+    }
+
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
@@ -188,12 +220,19 @@ struct HTTPCompanionService: CompanionService {
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationID: clientMutationID
         )
+        return try Self.promptSendResult(from: envelope, sessionID: id)
+    }
+
+    private static func promptSendResult(
+        from envelope: ClientCommandAckEnvelope,
+        sessionID: String
+    ) throws -> CompanionPromptSendResult {
         guard envelope.ack.accepted else {
-            CompanionDiagnostics.record("prompt:grpc-invalid id=\(id)")
+            CompanionDiagnostics.record("prompt:grpc-invalid id=\(sessionID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(id) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
+            "prompt:grpc-accepted id=\(sessionID) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
         )
         return .accepted(
             promptID: Self.nonEmpty(envelope.promptId),

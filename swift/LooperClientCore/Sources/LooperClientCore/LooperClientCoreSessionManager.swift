@@ -81,6 +81,17 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func setMode(
+        threadID: String,
+        preset: String
+    ) async throws -> ClientCommandAckEnvelope {
+        try await runtime.setModeWithGeneratedMutation(
+            threadId: threadID,
+            preset: preset
+        )
+    }
+
+    @discardableResult
     public func queueSetMode(
         threadID: String,
         preset: String,
@@ -109,6 +120,19 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func sendPrompt(
+        threadID: String,
+        prompt: String,
+        assistantSurface: String
+    ) async throws -> ClientCommandAckEnvelope {
+        try await runtime.sendPromptWithGeneratedMutation(
+            threadId: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    @discardableResult
     public func submitNotificationReply(
         notificationID: String,
         threadID: String,
@@ -122,6 +146,21 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
             prompt: prompt,
             assistantSurface: assistantSurface,
             clientMutationId: clientMutationID
+        )
+    }
+
+    @discardableResult
+    public func submitNotificationReplyWithGeneratedMutation(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String
+    ) async throws -> ClientCommandAckEnvelope {
+        try await runtime.submitNotificationReplyWithGeneratedMutation(
+            notificationId: notificationID,
+            threadId: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
         )
     }
 
