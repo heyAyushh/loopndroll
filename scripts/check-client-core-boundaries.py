@@ -84,6 +84,27 @@ CLIENT_RUNTIME_PATTERNS = (
     ),
 )
 
+CLIENT_APP_OWNERSHIP_PATTERNS = (
+    (
+        "app-owned raw session observe",
+        re.compile(r"\bsessionManager\.observe\("),
+    ),
+    (
+        "retired Swift reply-drain ownership",
+        re.compile(
+            r"notificationReplyMakeClientMutationID|notificationReplyOutboxDrainID|"
+            r"stale-drain-finish-skip"
+        ),
+    ),
+    (
+        "retired Swift session command owner",
+        re.compile(
+            r"CompanionSessionMutationCoordinator|RealtimeCompanionClientFactory|"
+            r"LooperRealtimeStateMiniSynchronizer"
+        ),
+    ),
+)
+
 SCAN_SUFFIXES = {
     ".c",
     ".cc",
@@ -153,6 +174,13 @@ def main() -> int:
             scan_files(
                 roots=tuple(Path(root) for root in CLIENT_RUNTIME_ROOTS),
                 patterns=CLIENT_RUNTIME_PATTERNS,
+                include_markdown=False,
+            )
+        )
+        findings.extend(
+            scan_files(
+                roots=(Path("ios/LooperCompanion"), Path("macos/LooperMenuBar")),
+                patterns=CLIENT_APP_OWNERSHIP_PATTERNS,
                 include_markdown=False,
             )
         )
