@@ -1018,8 +1018,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, CompanionSession
         self.responseDelayNanoseconds = responseDelayNanoseconds
     }
 
-    func prepareSessionRuntime() async {}
-
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
             ok: true,

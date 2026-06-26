@@ -225,7 +225,6 @@ final class CompanionAppModel {
 
     func startSessionRuntimeSyncIfNeeded() {
         sessionMiniController.startSyncIfNeeded(
-            sessionCommands: sessionCommands,
             connectionRevision: connectionRevision
         ) { [weak self] update, connectionRevision in
             self?.applySessionMiniSyncUpdate(
@@ -253,9 +252,9 @@ final class CompanionAppModel {
     }
 
     private func prepareSessionRuntimeInBackground() {
-        let sessionCommands = sessionCommands
+        let sessionRuntime = sessionMiniController.sessionRuntime
         Task.detached(priority: .userInitiated) {
-            await sessionCommands.prepareSessionRuntime()
+            await sessionRuntime?.prepareSessionRuntime()
         }
     }
 

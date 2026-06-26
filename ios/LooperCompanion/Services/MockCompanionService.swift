@@ -265,8 +265,6 @@ struct MockCompanionService: CompanionService, CompanionSessionCommanding {
 
     private let store = MockCompanionStore()
 
-    func prepareSessionRuntime() async {}
-
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
             ok: true,

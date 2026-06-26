@@ -496,8 +496,6 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, Companion
         self.sessionRuntime = sessionRuntime
     }
 
-    func prepareSessionRuntime() async {}
-
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(
             ok: true,

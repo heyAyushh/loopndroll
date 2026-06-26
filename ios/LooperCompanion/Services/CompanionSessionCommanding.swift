@@ -29,7 +29,6 @@ struct CompanionSessionModeResult: Sendable {
 }
 
 protocol CompanionSessionCommanding: Sendable {
-    func prepareSessionRuntime() async
     func setSessionMode(
         id: String,
         preset: SessionMode?
@@ -57,8 +56,6 @@ protocol CompanionSessionCommanding: Sendable {
 
 struct UnconfiguredCompanionSessionCommands: CompanionSessionCommanding {
     let error: Error
-
-    func prepareSessionRuntime() async {}
 
     func setSessionMode(
         id _: String,

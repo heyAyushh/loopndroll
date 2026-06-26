@@ -23,7 +23,6 @@ final class CompanionSessionMiniController {
     }
 
     func startSyncIfNeeded(
-        sessionCommands: any CompanionSessionCommanding,
         connectionRevision: Int,
         onUpdate: @escaping SyncUpdateHandler
     ) {
@@ -32,7 +31,7 @@ final class CompanionSessionMiniController {
         }
 
         syncTask = Task { @MainActor in
-            await sessionCommands.prepareSessionRuntime()
+            await sessionRuntime.prepareSessionRuntime()
             await sessionRuntime.runStateMiniSync(
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)
