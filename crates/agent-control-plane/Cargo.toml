@@ -28,6 +28,7 @@ base64 = "0.22.1"
 crossterm = "0.28.1"
 futures-core = "0.3.32"
 futures-util = "0.3.32"
+looper-session-core = { path = "../looper-session-core" }
 orb-code = { path = "../orb-code" }
 p256 = { version = "0.13.2", features = ["ecdsa"] }
 prost = "0.14.1"

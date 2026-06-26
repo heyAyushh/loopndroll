@@ -610,6 +610,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "looper-session-core",
  "prost",
  "protoc-bin-vendored",
  "serde",
@@ -622,6 +623,13 @@ dependencies = [
  "tonic-prost-build",
  "uniffi",
  "uuid",
+]
+
+[[package]]
+name = "looper-session-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

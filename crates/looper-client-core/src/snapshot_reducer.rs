@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::ClientCoreError;
+use looper_session_core::ACTIVE_STATUS;
 
 const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 
@@ -845,7 +846,7 @@ fn default_assistant_surface() -> String {
 }
 
 fn default_session_status() -> String {
-    "active".to_owned()
+    ACTIVE_STATUS.to_owned()
 }
 
 #[cfg(test)]

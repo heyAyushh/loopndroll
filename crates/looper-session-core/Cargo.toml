@@ -1,0 +1,8 @@
+[package]
+name = "looper-session-core"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }

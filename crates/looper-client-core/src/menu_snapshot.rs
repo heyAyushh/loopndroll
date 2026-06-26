@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+use looper_session_core::SessionMode;
 use serde_json::Value;
 
 use crate::error::ClientCoreError;
@@ -337,17 +338,22 @@ fn session_subtitle(input: SessionSubtitleInput<'_>) -> String {
 fn mode_text(mode: &str) -> Option<String> {
     let mode = nonblank_string(mode)?;
     Some(
-        match mode.as_str() {
-            "infinite" => "Infinite",
-            "await-reply" => "Await Reply",
-            "completion-checks" => "Completion Checks",
-            "max-turns-1" => "Max Turns 1",
-            "max-turns-2" => "Max Turns 2",
-            "max-turns-3" => "Max Turns 3",
-            _ => mode.as_str(),
-        }
-        .to_owned(),
+        SessionMode::parse(&mode)
+            .map(session_mode_title)
+            .unwrap_or_else(|_| mode),
     )
+}
+
+fn session_mode_title(mode: SessionMode) -> String {
+    match mode {
+        SessionMode::Infinite => "Infinite",
+        SessionMode::AwaitReply => "Await Reply",
+        SessionMode::CompletionChecks => "Completion Checks",
+        SessionMode::MaxTurns1 => "Max Turns 1",
+        SessionMode::MaxTurns2 => "Max Turns 2",
+        SessionMode::MaxTurns3 => "Max Turns 3",
+    }
+    .to_owned()
 }
 
 fn blocked_goal_text(goal: &ClientMenuBarSessionMiniBlockedGoal) -> Option<String> {
