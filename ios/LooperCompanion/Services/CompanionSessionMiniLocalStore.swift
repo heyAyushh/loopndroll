@@ -34,6 +34,12 @@ struct CompanionSessionMiniSyncUpdate: Equatable, Sendable {
     let snapshot: ClientLocalStateSnapshot
 }
 
+typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
+    CompanionSessionMiniSyncUpdate
+) -> Void
+
+typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -> Void
+
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
@@ -233,6 +239,43 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
     }
 
+    func runClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        retryDelay: Duration,
+        onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
+        onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
+    ) async {
+        defer {
+            stopClientCoreStateMiniStream(using: transport)
+        }
+
+        while !Task.isCancelled {
+            do {
+                try await startClientCoreStateMiniStream(using: transport)
+                try await drainClientCoreStateMiniSync(
+                    using: transport,
+                    onUpdate: onUpdate,
+                    onDebugMessage: onDebugMessage
+                )
+            } catch {
+                await onDebugMessage(
+                    "session-mini:client-core-stream-failed error=\(error.localizedDescription)"
+                )
+                await recoverClientCoreStateMiniSync(
+                    using: transport,
+                    onUpdate: onUpdate,
+                    onDebugMessage: onDebugMessage
+                )
+            }
+
+            do {
+                try await Task.sleep(for: retryDelay)
+            } catch {
+                return
+            }
+        }
+    }
+
     private static func defaultFileURL() throws -> URL {
         try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -287,6 +330,56 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
 
         return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+    }
+
+    private func drainClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
+        onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
+    ) async throws {
+        while !Task.isCancelled {
+            let result = try await nextClientCoreStateMiniStreamResult(using: transport)
+            switch result.reason {
+            case .delta:
+                if let update = result.update {
+                    await onUpdate(update)
+                }
+            case .heartbeat, .reconnecting:
+                continue
+            case .recoveryRequired:
+                await onDebugMessage(
+                    "session-mini:client-core-stream-recovery-required error=\(result.errorDescription)"
+                )
+                await recoverClientCoreStateMiniSync(
+                    using: transport,
+                    onUpdate: onUpdate,
+                    onDebugMessage: onDebugMessage
+                )
+                return
+            case .stopped:
+                return
+            }
+        }
+    }
+
+    private func recoverClientCoreStateMiniSync(
+        using transport: any LooperClientCoreStateMiniStreamTransport,
+        onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
+        onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
+    ) async {
+        do {
+            let localSnapshot = try await recoverClientCoreStateMiniStream(using: transport)
+            await onUpdate(
+                CompanionSessionMiniSyncUpdate(
+                    reason: .recovery,
+                    snapshot: localSnapshot
+                )
+            )
+        } catch {
+            await onDebugMessage(
+                "session-mini:client-core-stream-recovery-failed error=\(error.localizedDescription)"
+            )
+        }
     }
 }
 

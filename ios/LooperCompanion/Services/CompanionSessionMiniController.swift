@@ -1,5 +1,4 @@
 import Foundation
-import LooperClientCore
 
 @MainActor
 protocol CompanionSessionCommandLocalStore: AnyObject {
@@ -68,11 +67,15 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
                 CompanionDiagnostics.record("session-mini:client-core-stream-unavailable")
                 return
             }
-            await runClientCoreStateMiniStream(
-                localStore: localStore,
-                transport: transport,
-                connectionRevision: connectionRevision,
-                onUpdate: onUpdate
+            await localStore.runClientCoreStateMiniSync(
+                using: transport,
+                retryDelay: Self.clientCoreStreamRetryDelay,
+                onUpdate: { update in
+                    onUpdate(update, connectionRevision)
+                },
+                onDebugMessage: { message in
+                    CompanionDiagnostics.record(message)
+                }
             )
         }
     }
@@ -80,103 +83,6 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
     func stopSync() {
         syncTask?.cancel()
         syncTask = nil
-    }
-
-    private func runClientCoreStateMiniStream(
-        localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperClientCoreStateMiniStreamTransport,
-        connectionRevision: Int,
-        onUpdate: @escaping SyncUpdateHandler
-    ) async {
-        defer {
-            localStore.stopClientCoreStateMiniStream(using: transport)
-        }
-
-        while !Task.isCancelled {
-            do {
-                try await localStore.startClientCoreStateMiniStream(using: transport)
-                try await drainClientCoreStateMiniStream(
-                    localStore: localStore,
-                    transport: transport,
-                    connectionRevision: connectionRevision,
-                    onUpdate: onUpdate
-                )
-            } catch {
-                CompanionDiagnostics.record(
-                    "session-mini:client-core-stream-failed error=\(error.localizedDescription)"
-                )
-                await recoverClientCoreStateMiniStream(
-                    localStore: localStore,
-                    transport: transport,
-                    connectionRevision: connectionRevision,
-                    onUpdate: onUpdate
-                )
-            }
-
-            do {
-                try await Task.sleep(for: Self.clientCoreStreamRetryDelay)
-            } catch {
-                return
-            }
-        }
-    }
-
-    private func drainClientCoreStateMiniStream(
-        localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperClientCoreStateMiniStreamTransport,
-        connectionRevision: Int,
-        onUpdate: @escaping SyncUpdateHandler
-    ) async throws {
-        while !Task.isCancelled {
-            let result = try await localStore.nextClientCoreStateMiniStreamResult(
-                using: transport
-            )
-            switch result.reason {
-            case .delta:
-                if let update = result.update {
-                    onUpdate(update, connectionRevision)
-                }
-            case .heartbeat, .reconnecting:
-                continue
-            case .recoveryRequired:
-                CompanionDiagnostics.record(
-                    "session-mini:client-core-stream-recovery-required error=\(result.errorDescription)"
-                )
-                await recoverClientCoreStateMiniStream(
-                    localStore: localStore,
-                    transport: transport,
-                    connectionRevision: connectionRevision,
-                    onUpdate: onUpdate
-                )
-                return
-            case .stopped:
-                return
-            }
-        }
-    }
-
-    private func recoverClientCoreStateMiniStream(
-        localStore: CompanionSessionMiniLocalStore,
-        transport: any LooperClientCoreStateMiniStreamTransport,
-        connectionRevision: Int,
-        onUpdate: @escaping SyncUpdateHandler
-    ) async {
-        do {
-            let localSnapshot = try await localStore.recoverClientCoreStateMiniStream(
-                using: transport
-            )
-            onUpdate(
-                CompanionSessionMiniSyncUpdate(
-                    reason: .recovery,
-                    snapshot: localSnapshot
-                ),
-                connectionRevision
-            )
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:client-core-stream-recovery-failed error=\(error.localizedDescription)"
-            )
-        }
     }
 
     @discardableResult
