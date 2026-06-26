@@ -1,33 +1,6 @@
 import Foundation
 import LooperClientCore
 
-struct CompanionPromptSendResult: Sendable {
-    let promptID: String?
-    let dispatchKind: String?
-
-    static func accepted(
-        promptID: String?,
-        dispatchKind: String?
-    ) -> Self {
-        Self(
-            promptID: promptID,
-            dispatchKind: dispatchKind
-        )
-    }
-}
-
-struct CompanionSessionModeResult: Sendable {
-    let acceptedMode: SessionMode?
-
-    static func accepted(
-        mode: SessionMode?
-    ) -> Self {
-        Self(
-            acceptedMode: mode
-        )
-    }
-}
-
 struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let kind: ClientPendingCommandKind
     let clientMutationID: String
@@ -310,10 +283,16 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         threadID: String,
         preset: SessionMode?
     ) async throws -> ClientSessionModeIntentResult {
-        try await sessionManager.setMode(
+        let result = try await sessionManager.setMode(
             threadID: threadID,
             preset: preset?.rawValue ?? ""
         )
+        guard result.accepted else {
+            CompanionDiagnostics.record("mode:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("mode:grpc-accepted id=\(threadID)")
+        return result
     }
 
     @discardableResult
@@ -322,11 +301,19 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> ClientSessionPromptIntentResult {
-        try await sessionManager.sendPrompt(
+        let result = try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? ""
         )
+        guard result.accepted else {
+            CompanionDiagnostics.record("prompt:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "prompt:grpc-accepted id=\(threadID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
+        )
+        return result
     }
 
     @discardableResult
@@ -336,11 +323,16 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> ClientNotificationReplyIntentResult {
-        try await sessionManager.submitNotificationReplyWithGeneratedMutation(
+        let result = try await sessionManager.submitNotificationReplyWithGeneratedMutation(
             notificationID: notificationID,
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        return try Self.notificationReplyResponse(
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: threadID
         )
     }
 
@@ -352,12 +344,17 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> ClientNotificationReplyIntentResult {
-        try await sessionManager.submitNotificationReply(
+        let result = try await sessionManager.submitNotificationReply(
             notificationID: notificationID,
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationID: clientMutationID
+        )
+        return try Self.notificationReplyResponse(
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: threadID
         )
     }
 
@@ -368,70 +365,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     func outboxDepth() throws -> UInt32 {
         try sessionManager.outboxDepth()
-    }
-
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        let result = try await setMode(
-            threadID: id,
-            preset: preset
-        )
-        return try Self.sessionModeResult(from: result, fallbackMode: preset, sessionID: id)
-    }
-
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        let result = try await sendPrompt(
-            threadID: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface
-        )
-        return try Self.promptSendResult(from: result, sessionID: id)
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> ClientNotificationReplyIntentResult {
-        let result = try await submitNotificationReply(
-            notificationID: notificationID,
-            threadID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface
-        )
-        return try Self.notificationReplyResponse(
-            from: result,
-            fallbackNotificationID: notificationID,
-            sessionID: sessionID
-        )
-    }
-
-    func submitNotificationReply(
-        notificationID: String,
-        sessionID: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> ClientNotificationReplyIntentResult {
-        let result = try await submitNotificationReply(
-            notificationID: notificationID,
-            threadID: sessionID,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: clientMutationID
-        )
-        return try Self.notificationReplyResponse(
-            from: result,
-            fallbackNotificationID: notificationID,
-            sessionID: sessionID
-        )
     }
 
     func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
@@ -491,38 +424,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         return startConfiguration
     }
 
-    private static func sessionModeResult(
-        from result: ClientSessionModeIntentResult,
-        fallbackMode: SessionMode?,
-        sessionID: String
-    ) throws -> CompanionSessionModeResult {
-        guard result.accepted else {
-            CompanionDiagnostics.record("mode:grpc-invalid id=\(sessionID)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record("mode:grpc-accepted id=\(sessionID)")
-        return .accepted(
-            mode: sessionMode(from: result.preset) ?? fallbackMode
-        )
-    }
-
-    private static func promptSendResult(
-        from result: ClientSessionPromptIntentResult,
-        sessionID: String
-    ) throws -> CompanionPromptSendResult {
-        guard result.accepted else {
-            CompanionDiagnostics.record("prompt:grpc-invalid id=\(sessionID)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(sessionID) kind=\(dispatchKind(from: result.dispatchKind))"
-        )
-        return .accepted(
-            promptID: nonEmpty(result.promptId),
-            dispatchKind: dispatchKind(from: result.dispatchKind)
-        )
-    }
-
     private static func notificationReplyResponse(
         from result: ClientNotificationReplyIntentResult,
         fallbackNotificationID: String,
@@ -538,10 +439,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
         )
         return result
-    }
-
-    private static func sessionMode(from preset: String) -> SessionMode? {
-        nonEmpty(preset).flatMap(SessionMode.init(rawValue:))
     }
 
     private static func dispatchKind(from value: String) -> String {

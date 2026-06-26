@@ -36,8 +36,8 @@ struct CompanionSessionRuntimeCommandCoreTests {
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
         let runtime = try Self.temporarySessionRuntime()
         await #expect(throws: Error.self) {
-            _ = try await runtime.setSessionMode(
-                id: "thread-1",
+            _ = try await runtime.setMode(
+                threadID: "thread-1",
                 preset: .maxTurns2
             )
         }
@@ -46,8 +46,8 @@ struct CompanionSessionRuntimeCommandCoreTests {
         #expect(runtime.pendingCommands().first?.attemptCount == 1)
 
         await #expect(throws: Error.self) {
-            _ = try await runtime.sendSessionPrompt(
-                id: "thread-1",
+            _ = try await runtime.sendPrompt(
+                threadID: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
             )
@@ -64,14 +64,14 @@ struct CompanionSessionRuntimeCommandCoreTests {
         let runtime = try Self.temporarySessionRuntime()
 
         await #expect(throws: Error.self) {
-            _ = try await runtime.setSessionMode(
-                id: "thread-1",
+            _ = try await runtime.setMode(
+                threadID: "thread-1",
                 preset: .maxTurns2
             )
         }
         await #expect(throws: Error.self) {
-            _ = try await runtime.sendSessionPrompt(
-                id: "thread-1",
+            _ = try await runtime.sendPrompt(
+                threadID: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
             )

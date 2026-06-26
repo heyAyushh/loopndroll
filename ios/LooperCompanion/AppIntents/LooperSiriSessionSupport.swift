@@ -474,8 +474,8 @@ struct LooperSiriSessionClient: Sendable {
             throw HTTPCompanionServiceError.localStoreUnavailable
         }
 
-        _ = try await sessionRuntime.sendSessionPrompt(
-            id: entity.sessionID,
+        _ = try await sessionRuntime.sendPrompt(
+            threadID: entity.sessionID,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
             assistantSurface: entity.assistantSurface ?? .codex
         )

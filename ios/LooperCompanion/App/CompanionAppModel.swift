@@ -847,8 +847,8 @@ final class CompanionAppModel {
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetRuntime.setSessionMode(
-                id: sessionID,
+            let result = try await targetRuntime.setMode(
+                threadID: sessionID,
                 preset: preset
             )
             guard targetRevision == connectionRevision else {
@@ -871,14 +871,15 @@ final class CompanionAppModel {
     }
 
     private func applyModeResult(
-        _ result: CompanionSessionModeResult,
+        _ result: ClientSessionModeIntentResult,
         sessionID: String
     ) async {
         connectionState = .connected
         errorMessage = nil
         lastUpdatedAt = Date()
+        let acceptedMode = result.preset.trimmingCharacters(in: .whitespacesAndNewlines)
         CompanionDiagnostics.record(
-            "mode:accepted sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
+            "mode:accepted sessionID=\(sessionID) mode=\(acceptedMode.isEmpty ? "unset" : acceptedMode)"
         )
     }
 
@@ -899,8 +900,8 @@ final class CompanionAppModel {
         let targetRevision = connectionRevision
 
         do {
-            let result = try await targetRuntime.sendSessionPrompt(
-                id: sessionID,
+            let result = try await targetRuntime.sendPrompt(
+                threadID: sessionID,
                 prompt: trimmedPrompt,
                 assistantSurface: targetSurface
             )
@@ -993,7 +994,7 @@ final class CompanionAppModel {
         do {
             let response = try await sessionRuntime.submitNotificationReply(
                 notificationID: notificationID,
-                sessionID: sessionID,
+                threadID: sessionID,
                 prompt: prompt,
                 assistantSurface: nil
             )
@@ -1255,7 +1256,7 @@ final class CompanionAppModel {
     }
 
     private func applyPromptSendResult(
-        _ result: CompanionPromptSendResult,
+        _ result: ClientSessionPromptIntentResult,
         sessionID: String,
         assistantSurface: CompanionAssistantSurface
     ) async {
@@ -1263,7 +1264,7 @@ final class CompanionAppModel {
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
-            "prompt:accepted sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown")"
+            "prompt:accepted sessionID=\(sessionID) kind=\(Self.nonEmptyText(result.dispatchKind) ?? "unknown")"
         )
         if snapshotState.hasDetail(for: sessionID) {
             await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)
