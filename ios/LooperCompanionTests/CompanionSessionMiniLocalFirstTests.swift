@@ -70,8 +70,11 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let runtime = try Self.temporarySessionRuntime()
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
+        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -88,12 +91,15 @@ struct CompanionSessionMiniLocalFirstTests {
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.startSessionRuntimeSyncIfNeeded()
 
-        await model.applyMode(.maxTurns2, to: Constants.cachedThreadID)
+        let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         let didSend = await model.sendSessionPrompt("ship it", to: Constants.cachedThreadID)
+        let didApplyMode = await modeTask.value
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(didSend)
+        #expect(!didApplyMode)
+        #expect(!didSend)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2)
         #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.count == 1)
@@ -101,15 +107,20 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.promptClientMutationIDs.first?.isEmpty == false)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(Set(runtime.pendingCommands().map(\.kind)) == [
+            ClientPendingCommandKind.setSessionMode,
+            ClientPendingCommandKind.sendSessionPrompt,
+        ])
     }
 
     @MainActor
     @Test
     func testPromptBehindPendingModeUsesRustCoreCommandsWithoutSnapshotRefresh() async throws {
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        service.modeResponseDelayNanoseconds = 200_000_000
         let runtime = try Self.temporarySessionRuntime()
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
+        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -126,23 +137,26 @@ struct CompanionSessionMiniLocalFirstTests {
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.startSessionRuntimeSyncIfNeeded()
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         try await Task.sleep(nanoseconds: Constants.preAckLocalPaintProbeNanoseconds)
-        #expect(service.modeClientMutationIDs.isEmpty)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2)
 
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
         let didSendPrompt = await promptTask.value
         let didApplyMode = await modeTask.value
 
-        #expect(didSendPrompt)
-        #expect(didApplyMode)
+        #expect(!didSendPrompt)
+        #expect(!didApplyMode)
         #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.modeClientMutationIDs.first != service.promptClientMutationIDs.first)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(runtime.pendingCommands().map(\.kind) == [
+            ClientPendingCommandKind.setSessionMode,
+            ClientPendingCommandKind.sendSessionPrompt,
+        ])
 
         try await Task.sleep(nanoseconds: Constants.delayedModeDrainProbeNanoseconds)
         #expect(service.modeClientMutationIDs.count == 1)
@@ -151,10 +165,11 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testFailedPromptBehindModeDoesNotFallbackToSnapshotRefresh() async throws {
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
-        service.promptError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
-        service.modeResponseDelayNanoseconds = 200_000_000
         let runtime = try Self.temporarySessionRuntime()
+        let service = SessionMiniLocalFirstServiceSpy(
+            snapshot: Self.networkSnapshot(),
+            sessionRuntime: runtime
+        )
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -171,6 +186,7 @@ struct CompanionSessionMiniLocalFirstTests {
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.startSessionRuntimeSyncIfNeeded()
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
@@ -178,11 +194,14 @@ struct CompanionSessionMiniLocalFirstTests {
         let didApplyMode = await modeTask.value
 
         #expect(!didSendPrompt)
-        #expect(didApplyMode)
+        #expect(!didApplyMode)
         #expect(service.modeClientMutationIDs.count == 1)
         #expect(service.promptClientMutationIDs.count == 1)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(runtime.pendingCommands().map(\.kind) == [ClientPendingCommandKind.setSessionMode])
+        #expect(runtime.pendingCommands().map(\.kind) == [
+            ClientPendingCommandKind.setSessionMode,
+            ClientPendingCommandKind.sendSessionPrompt,
+        ])
     }
 
     @MainActor
@@ -422,6 +441,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     private let lock = NSLock()
     private let snapshot: MobileSnapshot
+    private let sessionRuntime: CompanionSessionRuntime?
     private(set) var loadSnapshotCallCount = 0
     private(set) var modeClientMutationIDs: [String] = []
     private(set) var promptClientMutationIDs: [String] = []
@@ -430,8 +450,12 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     var modeResponseDelayNanoseconds: UInt64 = 0
     var promptError: Error?
 
-    init(snapshot: MobileSnapshot) {
+    init(
+        snapshot: MobileSnapshot,
+        sessionRuntime: CompanionSessionRuntime? = nil
+    ) {
         self.snapshot = snapshot
+        self.sessionRuntime = sessionRuntime
     }
 
     func prepareSessionRuntime() async {}
@@ -458,22 +482,31 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         id: String,
         preset: SessionMode?
     ) async throws -> CompanionSessionModeResult {
-        try await setSessionMode(
-            id: id,
-            preset: preset,
-            clientMutationID: nextGeneratedMutationID(prefix: "mode")
-        )
-    }
+        if let sessionRuntime {
+            do {
+                let envelope = try await sessionRuntime.setMode(
+                    threadID: id,
+                    preset: preset
+                )
+                appendModeClientMutationID(envelope.ack.clientMutationId)
+                return .accepted(
+                    mode: preset,
+                    serverTime: envelope.ack.serverTime,
+                    clientMutationID: envelope.ack.clientMutationId,
+                    ackSeq: envelope.ack.ackSeq,
+                    revision: envelope.ack.revision
+                )
+            } catch {
+                appendPendingRuntimeCommandID(kind: .setSessionMode)
+                throw error
+            }
+        }
 
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) async throws -> CompanionSessionModeResult {
         if modeResponseDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: modeResponseDelayNanoseconds)
         }
         try Task.checkCancellation()
+        let clientMutationID = nextGeneratedMutationID(prefix: "mode")
         appendModeClientMutationID(clientMutationID)
         return .accepted(mode: preset, serverTime: nil, clientMutationID: clientMutationID)
     }
@@ -491,20 +524,29 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> CompanionPromptSendResult {
-        try await sendSessionPrompt(
-            id: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: nextGeneratedMutationID(prefix: "prompt")
-        )
-    }
+        if let sessionRuntime {
+            do {
+                let envelope = try await sessionRuntime.sendPrompt(
+                    threadID: id,
+                    prompt: prompt,
+                    assistantSurface: assistantSurface
+                )
+                appendPromptClientMutationID(envelope.ack.clientMutationId)
+                return .accepted(
+                    promptID: envelope.promptId.isEmpty ? nil : envelope.promptId,
+                    dispatchKind: envelope.dispatchKind.isEmpty ? nil : envelope.dispatchKind,
+                    serverTime: envelope.ack.serverTime,
+                    clientMutationID: envelope.ack.clientMutationId,
+                    ackSeq: envelope.ack.ackSeq,
+                    revision: envelope.ack.revision
+                )
+            } catch {
+                appendPendingRuntimeCommandID(kind: .sendSessionPrompt)
+                throw error
+            }
+        }
 
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> CompanionPromptSendResult {
+        let clientMutationID = nextGeneratedMutationID(prefix: "prompt")
         appendPromptClientMutationID(clientMutationID)
         if let promptError {
             throw promptError
@@ -603,6 +645,23 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         defer { lock.unlock() }
         notificationReplyIDs.append(notificationID)
         notificationReplyClientMutationIDs.append(clientMutationID)
+    }
+
+    private func appendPendingRuntimeCommandID(kind: ClientPendingCommandKind) {
+        guard let command = sessionRuntime?.pendingCommands().last(where: { $0.kind == kind }) else {
+            return
+        }
+        switch kind {
+        case .setSessionMode:
+            appendModeClientMutationID(command.clientMutationID)
+        case .sendSessionPrompt:
+            appendPromptClientMutationID(command.clientMutationID)
+        case .submitNotificationReply:
+            appendNotificationReply(
+                notificationID: command.notificationID ?? "",
+                clientMutationID: command.clientMutationID
+            )
+        }
     }
 
     private func nextGeneratedMutationID(prefix: String) -> String {

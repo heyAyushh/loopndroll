@@ -637,13 +637,6 @@ struct UnconfiguredCompanionService: CompanionService {
     ) async throws -> CompanionSessionModeResult {
         throw error
     }
-    func setSessionMode(
-        id _: String,
-        preset _: SessionMode?,
-        clientMutationID _: String
-    ) async throws -> CompanionSessionModeResult {
-        throw error
-    }
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
         throw error
     }
@@ -652,14 +645,6 @@ struct UnconfiguredCompanionService: CompanionService {
         id _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        throw error
-    }
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID _: String
     ) async throws -> CompanionPromptSendResult {
         throw error
     }

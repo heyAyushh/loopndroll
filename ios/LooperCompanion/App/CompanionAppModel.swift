@@ -836,25 +836,12 @@ final class CompanionAppModel {
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
         let targetService = service
         let targetRevision = connectionRevision
-        let queuedClientMutationID = applyQueuedModeSnapshot(
-            preset,
-            to: sessionID
-        )
 
         do {
-            let result: CompanionSessionModeResult
-            if let queuedClientMutationID {
-                result = try await targetService.setSessionMode(
-                    id: sessionID,
-                    preset: preset,
-                    clientMutationID: queuedClientMutationID
-                )
-            } else {
-                result = try await targetService.setSessionMode(
-                    id: sessionID,
-                    preset: preset
-                )
-            }
+            let result = try await targetService.setSessionMode(
+                id: sessionID,
+                preset: preset
+            )
             guard targetRevision == connectionRevision else {
                 CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(sessionID)")
                 return false
@@ -1237,34 +1224,6 @@ final class CompanionAppModel {
         _ operation: () async throws -> MobileSnapshot
     ) async -> Bool {
         return await mutateSnapshot(operation)
-    }
-
-    private func applyQueuedModeSnapshot(
-        _ preset: SessionMode?,
-        to sessionID: String
-    ) -> String? {
-        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
-            return nil
-        }
-        do {
-            guard let queuedSnapshot = try sessionRuntime.queueSetModeWithGeneratedMutation(
-                threadID: sessionID,
-                preset: preset
-            ) else {
-                return nil
-            }
-            snapshotState.applySnapshot(
-                queuedSnapshot.snapshot,
-                preferredSurface: snapshotState.selectedAssistantSurface
-            )
-            lastUpdatedAt = Date()
-            return queuedSnapshot.clientMutationID
-        } catch {
-            CompanionDiagnostics.record(
-                "mode:local-queue-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-            return nil
-        }
     }
 
     private func applyPromptSendResult(

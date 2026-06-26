@@ -257,6 +257,8 @@ actor MockCompanionStore {
 
 struct MockCompanionService: CompanionService {
     private enum MockCommandIDs {
+        static let mode = "mock-mode"
+        static let prompt = "mock-prompt"
         static let notificationReply = "mock"
         static let pendingNotificationReply = ""
     }
@@ -295,22 +297,7 @@ struct MockCompanionService: CompanionService {
         return .accepted(
             mode: preset,
             serverTime: Date().ISO8601Format(),
-            clientMutationID: nil,
-            ackSeq: 0,
-            revision: "mock"
-        )
-    }
-
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) async throws -> CompanionSessionModeResult {
-        _ = await store.setMode(id: id, preset: preset)
-        return .accepted(
-            mode: preset,
-            serverTime: Date().ISO8601Format(),
-            clientMutationID: clientMutationID,
+            clientMutationID: MockCommandIDs.mode,
             ackSeq: 0,
             revision: "mock"
         )
@@ -334,24 +321,7 @@ struct MockCompanionService: CompanionService {
             promptID: nil,
             dispatchKind: "mock",
             serverTime: Date().ISO8601Format(),
-            clientMutationID: nil,
-            ackSeq: 0,
-            revision: "mock"
-        )
-    }
-
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> CompanionPromptSendResult {
-        _ = await store.sendPrompt(id: id, prompt: prompt)
-        return .accepted(
-            promptID: nil,
-            dispatchKind: "mock",
-            serverTime: Date().ISO8601Format(),
-            clientMutationID: clientMutationID,
+            clientMutationID: MockCommandIDs.prompt,
             ackSeq: 0,
             revision: "mock"
         )

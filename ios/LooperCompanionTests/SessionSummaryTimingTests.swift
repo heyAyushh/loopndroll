@@ -480,14 +480,6 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
-    func setSessionMode(
-        id _: String,
-        preset _: SessionMode?,
-        clientMutationID _: String
-    ) async throws -> CompanionSessionModeResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
@@ -500,15 +492,6 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         id _: String,
         prompt _: String,
         assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func sendSessionPrompt(
-        id _: String,
-        prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID _: String
     ) async throws -> CompanionPromptSendResult {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }

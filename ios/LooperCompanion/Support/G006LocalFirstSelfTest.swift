@@ -1003,23 +1003,12 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 
     func setSessionMode(
-        id: String,
-        preset: SessionMode?
-    ) async throws -> CompanionSessionModeResult {
-        try await setSessionMode(
-            id: id,
-            preset: preset,
-            clientMutationID: nextGeneratedMutationID(prefix: Self.mutationOrderPrefixMode)
-        )
-    }
-
-    func setSessionMode(
         id _: String,
-        preset: SessionMode?,
-        clientMutationID: String
+        preset: SessionMode?
     ) async throws -> CompanionSessionModeResult {
         try await delayResponseIfNeeded()
         try await delayModeResponseIfNeeded()
+        let clientMutationID = nextGeneratedMutationID(prefix: Self.mutationOrderPrefixMode)
         appendModeClientMutationID(clientMutationID)
         if let modeError {
             throw modeError
@@ -1036,24 +1025,11 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     }
 
     func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult {
-        try await sendSessionPrompt(
-            id: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: nextGeneratedMutationID(prefix: Self.mutationOrderPrefixPrompt)
-        )
-    }
-
-    func sendSessionPrompt(
         id _: String,
         prompt _: String,
-        assistantSurface _: CompanionAssistantSurface?,
-        clientMutationID: String
+        assistantSurface _: CompanionAssistantSurface?
     ) async throws -> CompanionPromptSendResult {
+        let clientMutationID = nextGeneratedMutationID(prefix: Self.mutationOrderPrefixPrompt)
         appendPromptClientMutationID(clientMutationID)
         if let promptError {
             throw promptError

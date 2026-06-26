@@ -65,6 +65,8 @@ struct ClientCoreRuntimeConfig {
 pub struct LooperClientCore {
     state: Mutex<ClientCoreState>,
     stream: Mutex<Option<ClientCoreStream>>,
+    local_updates: Mutex<Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>>,
+    local_update_sender: mpsc::UnboundedSender<ClientStateMiniStreamUpdate>,
     runtime_config: Mutex<Option<ClientCoreRuntimeConfig>>,
     command_flush: tokio::sync::Mutex<()>,
     notification_reply_drain: tokio::sync::Mutex<()>,
@@ -81,12 +83,15 @@ struct ClientCoreStream {
 impl LooperClientCore {
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
+        let (local_update_sender, local_updates) = mpsc::unbounded_channel();
         Arc::new(Self {
             state: Mutex::new(ClientCoreState {
                 latest_seq: INITIAL_SEQUENCE,
                 ..ClientCoreState::default()
             }),
             stream: Mutex::new(None),
+            local_updates: Mutex::new(Some(local_updates)),
+            local_update_sender,
             runtime_config: Mutex::new(None),
             command_flush: tokio::sync::Mutex::new(()),
             notification_reply_drain: tokio::sync::Mutex::new(()),
@@ -424,7 +429,9 @@ impl LooperClientCore {
             client_mutation_id.clone(),
         )?;
         local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id)?;
-        persist_state_minis_to_local_store(&local_store, snapshot)
+        let local_snapshot = persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+        self.emit_local_state_update(snapshot);
+        Ok(local_snapshot)
     }
 
     pub async fn submit_set_mode_durable(
@@ -446,7 +453,9 @@ impl LooperClientCore {
             .submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
             .await?;
         self.mark_durable_command_final(&local_store, &envelope)?;
-        persist_state_minis_to_local_store(&local_store, self.snapshot()?)?;
+        let snapshot = self.snapshot()?;
+        persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+        self.emit_local_state_update(snapshot);
         Ok(envelope)
     }
 
@@ -471,11 +480,13 @@ impl LooperClientCore {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
+        self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
             .await?;
         self.mark_durable_command_final(&local_store, &envelope)?;
+        self.emit_local_state_update(self.snapshot()?);
         Ok(envelope)
     }
 
@@ -523,6 +534,7 @@ impl LooperClientCore {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
+        self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(
@@ -531,6 +543,7 @@ impl LooperClientCore {
             )
             .await?;
         self.mark_durable_command_final(&local_store, &envelope)?;
+        self.emit_local_state_update(self.snapshot()?);
         Ok(envelope)
     }
 
@@ -627,24 +640,58 @@ impl LooperClientCore {
     async fn next_state_mini_stream_update(
         &self,
     ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
-        let mut receiver = {
+        if let Some(update) = self.try_recv_local_update()? {
+            return Ok(update);
+        }
+
+        let mut local_receiver = self.take_local_update_receiver()?;
+        let maybe_stream_receiver = {
             let mut stream = self.lock_stream()?;
-            stream
-                .as_mut()
-                .and_then(|stream| stream.receiver.take())
-                .ok_or(ClientCoreError::StateMiniStreamNotRunning)?
+            stream.as_mut().and_then(|stream| stream.receiver.take())
         };
-        let event = receiver
-            .recv()
-            .await
-            .ok_or(ClientCoreError::StateMiniStreamNotRunning);
+
+        enum NextUpdate {
+            Local(ClientStateMiniStreamUpdate),
+            Stream(StateMiniStreamEvent),
+        }
+
+        let (next, maybe_stream_receiver) = match maybe_stream_receiver {
+            Some(mut stream_receiver) => {
+                let next = tokio::select! {
+                    local = local_receiver.recv() => {
+                        local.map(NextUpdate::Local)
+                            .ok_or(ClientCoreError::StateMiniStreamNotRunning)
+                    }
+                    stream = stream_receiver.recv() => {
+                        stream.map(NextUpdate::Stream)
+                            .ok_or(ClientCoreError::StateMiniStreamNotRunning)
+                    }
+                };
+                (next, Some(stream_receiver))
+            }
+            None => {
+                let next = local_receiver
+                    .recv()
+                    .await
+                    .map(NextUpdate::Local)
+                    .ok_or(ClientCoreError::StateMiniStreamNotRunning);
+                (next, None)
+            }
+        };
+
+        self.restore_local_update_receiver(local_receiver)?;
         {
             let mut stream = self.lock_stream()?;
-            if let Some(stream) = stream.as_mut() {
-                stream.receiver = Some(receiver);
+            if let (Some(stream), Some(stream_receiver)) = (stream.as_mut(), maybe_stream_receiver)
+            {
+                stream.receiver = Some(stream_receiver);
             }
         }
-        self.apply_state_mini_stream_event(event?)
+
+        match next? {
+            NextUpdate::Local(update) => Ok(update),
+            NextUpdate::Stream(event) => self.apply_state_mini_stream_event(event),
+        }
     }
 }
 
@@ -667,6 +714,58 @@ impl LooperClientCore {
         self.stream
             .lock()
             .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn lock_local_updates(
+        &self,
+    ) -> Result<
+        MutexGuard<'_, Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>>,
+        ClientCoreError,
+    > {
+        self.local_updates
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn take_local_update_receiver(
+        &self,
+    ) -> Result<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>, ClientCoreError> {
+        self.lock_local_updates()?
+            .take()
+            .ok_or(ClientCoreError::StateMiniStreamNotRunning)
+    }
+
+    fn restore_local_update_receiver(
+        &self,
+        receiver: mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>,
+    ) -> Result<(), ClientCoreError> {
+        *self.lock_local_updates()? = Some(receiver);
+        Ok(())
+    }
+
+    fn try_recv_local_update(
+        &self,
+    ) -> Result<Option<ClientStateMiniStreamUpdate>, ClientCoreError> {
+        let mut receiver = self.take_local_update_receiver()?;
+        let result = match receiver.try_recv() {
+            Ok(update) => Ok(Some(update)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                Err(ClientCoreError::StateMiniStreamNotRunning)
+            }
+        };
+        self.restore_local_update_receiver(receiver)?;
+        result
+    }
+
+    fn emit_local_state_update(&self, snapshot: ClientStateSnapshot) {
+        let _ = self.local_update_sender.send(ClientStateMiniStreamUpdate {
+            reason: ClientStateMiniStreamUpdateReason::Delta,
+            did_change: true,
+            latest_seq: snapshot.latest_seq,
+            error_description: String::new(),
+            snapshot,
+        });
     }
 
     fn lock_runtime_config(
@@ -1407,6 +1506,107 @@ mod tests {
         let local_snapshot = store.snapshot().expect("store snapshot");
         assert_eq!(local_snapshot.pending_commands.len(), 1);
         assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
+    }
+
+    #[test]
+    fn durable_mode_command_emits_local_state_update_before_transport() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-mode-local-update");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 11,
+            sessions: vec![state_mini("thread-1", "codex", 11, "rev-11", "await-reply")],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let error = runtime
+            .block_on(core.submit_set_mode_durable(
+                store,
+                "thread-1".to_owned(),
+                "max-turns-2".to_owned(),
+                "cmid-mode".to_owned(),
+            ))
+            .expect_err("missing runtime rejects");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let update = runtime
+            .block_on(core.observe())
+            .expect("local update before transport ack");
+        assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.outbox_depth, 1);
+        let updated_payload: Value =
+            serde_json::from_str(&update.snapshot.state_minis[0].payload_json)
+                .expect("payload json");
+        assert_eq!(updated_payload["effectiveMode"], "max-turns-2");
+    }
+
+    #[test]
+    fn durable_prompt_command_emits_local_outbox_update_before_transport() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-prompt-local-update");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let error = runtime
+            .block_on(core.submit_send_prompt_durable(
+                store,
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "cmid-prompt".to_owned(),
+            ))
+            .expect_err("missing runtime rejects");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let update = runtime
+            .block_on(core.observe())
+            .expect("local update before transport ack");
+        assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.outbox_depth, 1);
+        assert_eq!(update.snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            update.snapshot.pending_mutations[0].command_kind,
+            ClientCommandKind::SendSessionPrompt
+        );
+    }
+
+    #[test]
+    fn durable_notification_reply_emits_local_outbox_update_before_transport() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-reply-local-update");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let error = runtime
+            .block_on(core.submit_notification_reply_durable(
+                store,
+                "notification-1".to_owned(),
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "cmid-reply".to_owned(),
+            ))
+            .expect_err("missing runtime rejects");
+        assert_eq!(error, ClientCoreError::NoEndpoint);
+
+        let update = runtime
+            .block_on(core.observe())
+            .expect("local update before transport ack");
+        assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.outbox_depth, 1);
+        assert_eq!(update.snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            update.snapshot.pending_mutations[0].command_kind,
+            ClientCommandKind::SubmitNotificationReply
+        );
     }
 
     #[test]

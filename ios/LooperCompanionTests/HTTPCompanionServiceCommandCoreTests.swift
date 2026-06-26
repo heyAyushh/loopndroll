@@ -44,8 +44,7 @@ struct HTTPCompanionServiceCommandCoreTests {
         await #expect(throws: Error.self) {
             _ = try await service.setSessionMode(
                 id: "thread-1",
-                preset: .maxTurns2,
-                clientMutationID: "mutation-mode"
+                preset: .maxTurns2
             )
         }
         #expect(try service.commandOutboxDepthForSelfTest() == 1)
@@ -56,17 +55,14 @@ struct HTTPCompanionServiceCommandCoreTests {
             _ = try await service.sendSessionPrompt(
                 id: "thread-1",
                 prompt: "continue",
-                assistantSurface: .codex,
-                clientMutationID: "mutation-prompt"
+                assistantSurface: .codex
             )
         }
 
         #expect(try service.commandOutboxDepthForSelfTest() == 2)
         #expect(runtime.pendingCommands().count == 2)
-        #expect(runtime.pendingCommands().map(\.clientMutationID) == [
-            "mutation-mode",
-            "mutation-prompt",
-        ])
+        #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
+        #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
     }
 
     @Test

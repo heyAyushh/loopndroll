@@ -147,19 +147,6 @@ struct HTTPCompanionService: CompanionService {
         return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
     }
 
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) async throws -> CompanionSessionModeResult {
-        let envelope = try await requiredSessionRuntime().setMode(
-            threadID: id,
-            preset: preset,
-            clientMutationID: clientMutationID
-        )
-        return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
-    }
-
     private static func sessionModeResult(
         from envelope: ClientCommandAckEnvelope,
         fallbackMode: SessionMode?,
@@ -202,21 +189,6 @@ struct HTTPCompanionService: CompanionService {
             threadID: id,
             prompt: prompt,
             assistantSurface: assistantSurface
-        )
-        return try Self.promptSendResult(from: envelope, sessionID: id)
-    }
-
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
-    ) async throws -> CompanionPromptSendResult {
-        let envelope = try await requiredSessionRuntime().sendPrompt(
-            threadID: id,
-            prompt: prompt,
-            assistantSurface: assistantSurface,
-            clientMutationID: clientMutationID
         )
         return try Self.promptSendResult(from: envelope, sessionID: id)
     }

@@ -67,23 +67,12 @@ protocol CompanionService: Sendable {
         id: String,
         preset: SessionMode?
     ) async throws -> CompanionSessionModeResult
-    func setSessionMode(
-        id: String,
-        preset: SessionMode?,
-        clientMutationID: String
-    ) async throws -> CompanionSessionModeResult
     func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot
     func deleteSession(id: String) async throws -> MobileSnapshot
     func sendSessionPrompt(
         id: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> CompanionPromptSendResult
-    func sendSessionPrompt(
-        id: String,
-        prompt: String,
-        assistantSurface: CompanionAssistantSurface?,
-        clientMutationID: String
     ) async throws -> CompanionPromptSendResult
     func submitNotificationReply(
         notificationID: String,
