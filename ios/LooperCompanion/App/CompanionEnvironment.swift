@@ -17,7 +17,7 @@ struct CompanionEnvironment {
         } else if let serviceCommands = service as? any CompanionSessionCommanding {
             self.sessionCommands = serviceCommands
         } else {
-            self.sessionCommands = UnconfiguredCompanionSessionCommandClient(
+            self.sessionCommands = UnconfiguredCompanionSessionCommands(
                 error: CompanionConfigurationError.apiBaseURLNotConfigured
             )
         }
@@ -32,27 +32,35 @@ struct CompanionEnvironment {
         let baseURLs = connection.baseURLs
 
         if !baseURLs.isEmpty {
-            let runtime = sessionRuntime ?? CompanionSessionRuntime.liveDefault()
             let service = HTTPCompanionService(
                 baseURLs: baseURLs,
                 bearerToken: connection.bearerToken
             )
-            let sessionCommands = CompanionSessionCommandClient(
-                sessionRuntime: runtime,
-                endpointResolver: {
-                    let resolvedHealth = try await service.resolveServerHealth()
-                    let health = resolvedHealth.health
-                    return CompanionSessionRuntimeEndpointResolution(
-                        bearerToken: connection.bearerToken,
-                        realtimeEndpointURLs: CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
+            guard let runtime = sessionRuntime ?? CompanionSessionRuntime.liveDefault() else {
+                return CompanionEnvironment(
+                    service: service,
+                    sessionCommands: UnconfiguredCompanionSessionCommands(
+                        error: HTTPCompanionServiceError.localStoreUnavailable
+                    ),
+                    sessionRuntime: nil,
+                    reloadsServiceFromStoredConnection: true
+                )
+            }
+            runtime.configureStart(
+                CompanionSessionRuntimeStartConfiguration(
+                    bearerToken: connection.bearerToken,
+                    endpointResolver: {
+                        let resolvedHealth = try await service.resolveServerHealth()
+                        let health = resolvedHealth.health
+                        return CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
                             ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
                         )
-                    )
-                }
+                    }
+                )
             )
             return CompanionEnvironment(
                 service: service,
-                sessionCommands: sessionCommands,
+                sessionCommands: runtime,
                 sessionRuntime: runtime,
                 reloadsServiceFromStoredConnection: true
             )
@@ -63,7 +71,7 @@ struct CompanionEnvironment {
             trimmedBaseURL.isEmpty ? .apiBaseURLNotConfigured : .invalidAPIBaseURL
         return CompanionEnvironment(
             service: UnconfiguredCompanionService(error: error),
-            sessionCommands: UnconfiguredCompanionSessionCommandClient(error: error),
+            sessionCommands: UnconfiguredCompanionSessionCommands(error: error),
             sessionRuntime: sessionRuntime,
             reloadsServiceFromStoredConnection: true
         )

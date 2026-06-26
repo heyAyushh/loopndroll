@@ -354,7 +354,7 @@ struct LooperSiriSessionClient: Sendable {
     init(service: any CompanionService) {
         self.init(
             service: service,
-            sessionCommands: UnconfiguredCompanionSessionCommandClient(
+            sessionCommands: UnconfiguredCompanionSessionCommands(
                 error: CompanionConfigurationError.apiBaseURLNotConfigured
             )
         )

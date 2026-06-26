@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Looper
 
-@Suite("CompanionSessionCommandClient command core")
-struct CompanionSessionCommandClientCommandCoreTests {
+@Suite("CompanionSessionRuntime command core")
+struct CompanionSessionRuntimeCommandCoreTests {
     @Test
     func sessionRuntimeStartIfNeededOwnsEndpointMapping() async throws {
         let runtime = try Self.temporarySessionRuntime()
@@ -35,10 +35,8 @@ struct CompanionSessionCommandClientCommandCoreTests {
     @Test
     func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let commandClient = Self.commandClient(runtime: runtime)
-
         await #expect(throws: Error.self) {
-            _ = try await commandClient.setSessionMode(
+            _ = try await runtime.setSessionMode(
                 id: "thread-1",
                 preset: .maxTurns2
             )
@@ -48,7 +46,7 @@ struct CompanionSessionCommandClientCommandCoreTests {
         #expect(runtime.pendingCommands().first?.attemptCount == 1)
 
         await #expect(throws: Error.self) {
-            _ = try await commandClient.sendSessionPrompt(
+            _ = try await runtime.sendSessionPrompt(
                 id: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
@@ -64,16 +62,15 @@ struct CompanionSessionCommandClientCommandCoreTests {
     @Test
     func generatedCommandMutationsComeFromRustCore() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let commandClient = Self.commandClient(runtime: runtime)
 
         await #expect(throws: Error.self) {
-            _ = try await commandClient.setSessionMode(
+            _ = try await runtime.setSessionMode(
                 id: "thread-1",
                 preset: .maxTurns2
             )
         }
         await #expect(throws: Error.self) {
-            _ = try await commandClient.sendSessionPrompt(
+            _ = try await runtime.sendSessionPrompt(
                 id: "thread-1",
                 prompt: "continue",
                 assistantSurface: .codex
@@ -85,22 +82,11 @@ struct CompanionSessionCommandClientCommandCoreTests {
         #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
     }
 
-    private static func commandClient(
-        runtime: CompanionSessionRuntime
-    ) -> CompanionSessionCommandClient {
-        CompanionSessionCommandClient(sessionRuntime: runtime) {
-            CompanionSessionRuntimeEndpointResolution(
-                bearerToken: nil,
-                realtimeEndpointURLs: []
-            )
-        }
-    }
-
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
         let directoryURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .appendingPathComponent(
-                ".test-artifacts/http-command-core/\(UUID().uuidString)",
+                ".test-artifacts/session-runtime-command-core/\(UUID().uuidString)",
                 isDirectory: true
             )
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)

@@ -28,6 +28,13 @@ typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
 
 typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -> Void
 
+struct CompanionSessionRuntimeStartConfiguration: Sendable {
+    typealias EndpointResolver = @Sendable () async throws -> [URL]
+
+    let bearerToken: String?
+    let endpointResolver: EndpointResolver
+}
+
 private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
@@ -88,12 +95,14 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 
 }
 
-final class CompanionSessionRuntime: @unchecked Sendable {
+final class CompanionSessionRuntime: CompanionSessionCommanding, @unchecked Sendable {
     static let defaultFileName = CompanionSessionMiniLocalStore.defaultFileName
 
     private let localStore: CompanionSessionMiniLocalStore
     private let decoder = JSONDecoder()
     private let sessionManager: LooperClientCoreSessionManager
+    private let startConfigurationLock = NSLock()
+    private var startConfiguration: CompanionSessionRuntimeStartConfiguration?
 
     init(fileURL: URL) throws {
         let sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
@@ -108,6 +117,12 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("session-runtime:unavailable error=\(error.localizedDescription)")
             return nil
         }
+    }
+
+    func configureStart(_ configuration: CompanionSessionRuntimeStartConfiguration) {
+        startConfigurationLock.lock()
+        startConfiguration = configuration
+        startConfigurationLock.unlock()
     }
 
     @discardableResult
@@ -143,6 +158,15 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             bearerToken: bearerToken,
             mobileSessionHeader: mobileSessionHeader
         )
+    }
+
+    func prepareSessionRuntime() async {
+        do {
+            try await startSessionRuntime()
+            CompanionDiagnostics.record("session-runtime:warm-success")
+        } catch {
+            CompanionDiagnostics.record("session-runtime:warm-failed error=\(error.localizedDescription)")
+        }
     }
 
     @discardableResult
@@ -319,6 +343,91 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         try sessionManager.outboxDepth()
     }
 
+    func setSessionMode(
+        id: String,
+        preset: SessionMode?
+    ) async throws -> CompanionSessionModeResult {
+        let result = try await setMode(
+            threadID: id,
+            preset: preset
+        )
+        return try Self.sessionModeResult(from: result, fallbackMode: preset, sessionID: id)
+    }
+
+    func sendSessionPrompt(
+        id: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> CompanionPromptSendResult {
+        let result = try await sendPrompt(
+            threadID: id,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+        return try Self.promptSendResult(from: result, sessionID: id)
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> ClientNotificationReplyIntentResult {
+        let result = try await submitNotificationReply(
+            notificationID: notificationID,
+            threadID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+        return try Self.notificationReplyResponse(
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
+        )
+    }
+
+    func submitNotificationReply(
+        notificationID: String,
+        sessionID: String,
+        prompt: String,
+        assistantSurface: CompanionAssistantSurface?,
+        clientMutationID: String
+    ) async throws -> ClientNotificationReplyIntentResult {
+        let result = try await submitNotificationReply(
+            notificationID: notificationID,
+            threadID: sessionID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationID: clientMutationID
+        )
+        return try Self.notificationReplyResponse(
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
+        )
+    }
+
+    func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
+        await prepareSessionRuntime()
+        let result = try await drainNotificationReplyOutbox()
+        let notificationID = result.notificationId
+        let sessionID = result.entityId
+        guard result.accepted else {
+            CompanionDiagnostics.record(
+                "notification-reply:grpc-pending-invalid id=\(sessionID) notificationID=\(notificationID)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "notification-reply:grpc-pending-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
+        )
+        return try Self.notificationReplyResponse(
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
+        )
+    }
+
     private func drainStateMiniSync(
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
@@ -336,15 +445,98 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             }
         }
     }
+
+    private func startSessionRuntime() async throws {
+        guard let startConfiguration = currentStartConfiguration() else {
+            throw CompanionSessionRuntimeError.notConfigured
+        }
+        _ = try await startIfNeeded(
+            bearerToken: startConfiguration.bearerToken,
+            mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
+        ) {
+            try await startConfiguration.endpointResolver()
+        }
+    }
+
+    private func currentStartConfiguration() -> CompanionSessionRuntimeStartConfiguration? {
+        startConfigurationLock.lock()
+        defer { startConfigurationLock.unlock() }
+        return startConfiguration
+    }
+
+    private static func sessionModeResult(
+        from result: ClientSessionModeIntentResult,
+        fallbackMode: SessionMode?,
+        sessionID: String
+    ) throws -> CompanionSessionModeResult {
+        guard result.accepted else {
+            CompanionDiagnostics.record("mode:grpc-invalid id=\(sessionID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("mode:grpc-accepted id=\(sessionID)")
+        return .accepted(
+            mode: sessionMode(from: result.preset) ?? fallbackMode
+        )
+    }
+
+    private static func promptSendResult(
+        from result: ClientSessionPromptIntentResult,
+        sessionID: String
+    ) throws -> CompanionPromptSendResult {
+        guard result.accepted else {
+            CompanionDiagnostics.record("prompt:grpc-invalid id=\(sessionID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "prompt:grpc-accepted id=\(sessionID) kind=\(dispatchKind(from: result.dispatchKind))"
+        )
+        return .accepted(
+            promptID: nonEmpty(result.promptId),
+            dispatchKind: dispatchKind(from: result.dispatchKind)
+        )
+    }
+
+    private static func notificationReplyResponse(
+        from result: ClientNotificationReplyIntentResult,
+        fallbackNotificationID: String,
+        sessionID: String
+    ) throws -> ClientNotificationReplyIntentResult {
+        guard result.accepted else {
+            CompanionDiagnostics.record(
+                "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(fallbackNotificationID)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
+        )
+        return result
+    }
+
+    private static func sessionMode(from preset: String) -> SessionMode? {
+        nonEmpty(preset).flatMap(SessionMode.init(rawValue:))
+    }
+
+    private static func dispatchKind(from value: String) -> String {
+        nonEmpty(value) ?? "accepted"
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 enum CompanionSessionRuntimeError: LocalizedError {
     case noRealtimeEndpoint
+    case notConfigured
 
     var errorDescription: String? {
         switch self {
         case .noRealtimeEndpoint:
             "No realtime endpoint available"
+        case .notConfigured:
+            "Session runtime has no configured endpoints"
         }
     }
 }
