@@ -138,7 +138,6 @@ struct HTTPCompanionService: CompanionService {
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
-        await prepareCommandRuntimeIfNeeded()
         let envelope = try await requiredSessionManager().setMode(
             threadID: id,
             preset: preset?.rawValue ?? "",
@@ -176,7 +175,6 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
-        await prepareCommandRuntimeIfNeeded()
         let envelope = try await requiredSessionManager().sendPrompt(
             threadID: id,
             prompt: prompt,
@@ -204,7 +202,6 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        await prepareCommandRuntimeIfNeeded()
         let envelope = try await requiredSessionManager().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
