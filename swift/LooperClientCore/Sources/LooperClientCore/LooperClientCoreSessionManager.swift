@@ -71,7 +71,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     public func setMode(
         threadID: String,
         preset: String
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientSessionModeIntentResult {
         try await runtime.setMode(
             threadId: threadID,
             preset: preset
@@ -83,7 +83,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: String
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientSessionPromptIntentResult {
         try await runtime.sendPrompt(
             threadId: threadID,
             prompt: prompt,
@@ -98,7 +98,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         prompt: String,
         assistantSurface: String,
         clientMutationID: String
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await runtime.submitNotificationReply(
             notificationId: notificationID,
             threadId: threadID,
@@ -114,7 +114,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: String
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await runtime.submitNotificationReplyWithGeneratedMutation(
             notificationId: notificationID,
             threadId: threadID,
@@ -124,7 +124,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
-    public func drainNotificationReplyOutbox() async throws -> ClientCommandAckEnvelope {
+    public func drainNotificationReplyOutbox() async throws -> ClientNotificationReplyIntentResult {
         try await runtime.drainNotificationReplyOutbox()
     }
 
@@ -151,7 +151,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: String
-    ) throws -> ClientQueuedCommandSnapshot {
+    ) throws -> ClientNotificationReplyPersistResult {
         try runtime.persistNotificationReplyWithGeneratedMutation(
             notificationId: notificationID,
             threadId: threadID,

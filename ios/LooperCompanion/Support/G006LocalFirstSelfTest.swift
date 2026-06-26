@@ -1013,7 +1013,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         if let modeError {
             throw modeError
         }
-        return .accepted(mode: preset, serverTime: nil, clientMutationID: clientMutationID)
+        return .accepted(mode: preset)
     }
 
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
@@ -1038,8 +1038,7 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         try await delayResponseIfNeeded()
         return .accepted(
             promptID: "prompt-1",
-            dispatchKind: "resume",
-            clientMutationID: clientMutationID
+            dispatchKind: "resume"
         )
     }
 

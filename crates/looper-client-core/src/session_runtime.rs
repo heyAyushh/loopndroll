@@ -12,8 +12,10 @@ use crate::{
     model::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
-        ClientQueuedCommandSnapshot, ClientStateMiniDelta, ClientStateMiniSnapshot,
-        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
+        ClientNotificationReplyIntentResult, ClientNotificationReplyPersistResult,
+        ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateMiniDelta,
+        ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
+        ClientStateSnapshot,
     },
 };
 
@@ -134,15 +136,12 @@ impl LooperClientCoreSessionRuntime {
         &self,
         thread_id: String,
         preset: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_set_mode_durable(
-                self.local_store.clone(),
-                thread_id,
-                preset,
-                generated_client_mutation_id(MODE_MUTATION_PREFIX),
-            )
-            .await
+    ) -> Result<ClientSessionModeIntentResult, ClientCoreError> {
+        let envelope = self.submit_set_mode_envelope(thread_id, preset).await?;
+        Ok(ClientSessionModeIntentResult {
+            accepted: envelope.ack.accepted,
+            preset: envelope.preset,
+        })
     }
 
     pub async fn send_prompt(
@@ -150,16 +149,15 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_send_prompt_durable(
-                self.local_store.clone(),
-                thread_id,
-                prompt,
-                assistant_surface,
-                generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
-            )
-            .await
+    ) -> Result<ClientSessionPromptIntentResult, ClientCoreError> {
+        let envelope = self
+            .submit_send_prompt_envelope(thread_id, prompt, assistant_surface)
+            .await?;
+        Ok(ClientSessionPromptIntentResult {
+            accepted: envelope.ack.accepted,
+            dispatch_kind: envelope.dispatch_kind,
+            prompt_id: envelope.prompt_id,
+        })
     }
 
     pub async fn submit_notification_reply(
@@ -169,17 +167,17 @@ impl LooperClientCoreSessionRuntime {
         prompt: String,
         assistant_surface: String,
         client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_notification_reply_durable(
-                self.local_store.clone(),
+    ) -> Result<ClientNotificationReplyIntentResult, ClientCoreError> {
+        let envelope = self
+            .submit_notification_reply_envelope(
                 notification_id,
                 thread_id,
                 prompt,
                 assistant_surface,
                 client_mutation_id,
             )
-            .await
+            .await?;
+        Ok(ClientNotificationReplyIntentResult::from(envelope))
     }
 
     pub async fn submit_notification_reply_with_generated_mutation(
@@ -188,7 +186,7 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+    ) -> Result<ClientNotificationReplyIntentResult, ClientCoreError> {
         let notification_id = notification_id.trim().to_owned();
         let client_mutation_id = notification_reply_client_mutation_id(&notification_id);
         self.submit_notification_reply(
@@ -203,10 +201,9 @@ impl LooperClientCoreSessionRuntime {
 
     pub async fn drain_notification_reply_outbox(
         &self,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .drain_notification_reply_outbox_durable(self.local_store.clone())
-            .await
+    ) -> Result<ClientNotificationReplyIntentResult, ClientCoreError> {
+        let envelope = self.drain_notification_reply_outbox_envelope().await?;
+        Ok(ClientNotificationReplyIntentResult::from(envelope))
     }
 
     pub fn persist_notification_reply(
@@ -232,7 +229,7 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
-    ) -> Result<ClientQueuedCommandSnapshot, ClientCoreError> {
+    ) -> Result<ClientNotificationReplyPersistResult, ClientCoreError> {
         let notification_id = notification_id.trim().to_owned();
         let client_mutation_id = notification_reply_client_mutation_id(&notification_id);
         let snapshot = self.persist_notification_reply(
@@ -242,7 +239,7 @@ impl LooperClientCoreSessionRuntime {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
-        Ok(ClientQueuedCommandSnapshot {
+        Ok(ClientNotificationReplyPersistResult {
             client_mutation_id,
             snapshot,
         })
@@ -254,6 +251,66 @@ impl LooperClientCoreSessionRuntime {
 }
 
 impl LooperClientCoreSessionRuntime {
+    async fn submit_set_mode_envelope(
+        &self,
+        thread_id: String,
+        preset: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.client_core
+            .submit_set_mode_durable(
+                self.local_store.clone(),
+                thread_id,
+                preset,
+                generated_client_mutation_id(MODE_MUTATION_PREFIX),
+            )
+            .await
+    }
+
+    async fn submit_send_prompt_envelope(
+        &self,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.client_core
+            .submit_send_prompt_durable(
+                self.local_store.clone(),
+                thread_id,
+                prompt,
+                assistant_surface,
+                generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
+            )
+            .await
+    }
+
+    async fn submit_notification_reply_envelope(
+        &self,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.client_core
+            .submit_notification_reply_durable(
+                self.local_store.clone(),
+                notification_id,
+                thread_id,
+                prompt,
+                assistant_surface,
+                client_mutation_id,
+            )
+            .await
+    }
+
+    async fn drain_notification_reply_outbox_envelope(
+        &self,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        self.client_core
+            .drain_notification_reply_outbox_durable(self.local_store.clone())
+            .await
+    }
+
     fn seed_core_from_local_store(&self) -> Result<(), ClientCoreError> {
         let snapshot = self.local_store.snapshot()?;
         self.client_core
@@ -417,6 +474,23 @@ impl From<ClientLocalStateSnapshot> for ClientStateMiniSnapshot {
             latest_seq: snapshot.latest_seq,
             sessions: snapshot.sessions,
             server_time: snapshot.server_time,
+        }
+    }
+}
+
+impl From<ClientCommandAckEnvelope> for ClientNotificationReplyIntentResult {
+    fn from(envelope: ClientCommandAckEnvelope) -> Self {
+        Self {
+            accepted: envelope.ack.accepted,
+            dispatch_kind: envelope.dispatch_kind,
+            prompt_id: envelope.prompt_id,
+            server_time: envelope.ack.server_time,
+            client_mutation_id: envelope.ack.client_mutation_id,
+            ack_seq: envelope.ack.ack_seq,
+            entity_id: envelope.ack.entity_id,
+            revision: envelope.ack.revision,
+            idempotent_replay: envelope.ack.idempotent_replay,
+            notification_id: envelope.notification_id,
         }
     }
 }

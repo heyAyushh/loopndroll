@@ -2,13 +2,11 @@ import Foundation
 import LooperClientCore
 
 public struct MenuBarSessionModeCommandResult: Equatable, Sendable {
-    public let clientMutationID: String
     public let accepted: Bool
     public let delivered: Bool
 }
 
 public struct MenuBarSessionPromptCommandResult: Equatable, Sendable {
-    public let clientMutationID: String
     public let accepted: Bool
     public let delivered: Bool
     public let dispatchKind: String
@@ -46,15 +44,13 @@ public actor MenuBarSessionCommandCenter {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedPreset = preset?.nilIfBlank ?? ""
-        let envelope = try await sessionRuntime.setSessionMode(
+        let result = try await sessionRuntime.setSessionMode(
             threadID: normalizedThreadID,
             preset: normalizedPreset
         )
-        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionModeCommandResult(
-            clientMutationID: acknowledgedMutationID,
-            accepted: envelope.ack.accepted,
-            delivered: envelope.ack.accepted
+            accepted: result.accepted,
+            delivered: result.accepted
         )
     }
 
@@ -68,17 +64,15 @@ public actor MenuBarSessionCommandCenter {
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let envelope = try await sessionRuntime.sendPrompt(
+        let result = try await sessionRuntime.sendPrompt(
             threadID: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: normalizedAssistantSurface
         )
-        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionPromptCommandResult(
-            clientMutationID: acknowledgedMutationID,
-            accepted: envelope.ack.accepted,
-            delivered: envelope.ack.accepted,
-            dispatchKind: envelope.dispatchKind.nilIfBlank ?? "accepted"
+            accepted: result.accepted,
+            delivered: result.accepted,
+            dispatchKind: result.dispatchKind.nilIfBlank ?? "accepted"
         )
     }
 
@@ -98,20 +92,19 @@ public actor MenuBarSessionCommandCenter {
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let envelope = try await sessionRuntime.submitNotificationReply(
+        let result = try await sessionRuntime.submitNotificationReply(
             notificationID: normalizedNotificationID,
             threadID: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: normalizedAssistantSurface,
             clientMutationID: clientMutationID
         )
-        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarNotificationReplyCommandResult(
-            notificationID: envelope.notificationId.nilIfBlank ?? normalizedNotificationID,
-            clientMutationID: acknowledgedMutationID,
-            accepted: envelope.ack.accepted,
-            delivered: envelope.ack.accepted,
-            dispatchKind: envelope.dispatchKind.nilIfBlank ?? "accepted"
+            notificationID: result.notificationId.nilIfBlank ?? normalizedNotificationID,
+            clientMutationID: result.clientMutationId,
+            accepted: result.accepted,
+            delivered: result.accepted,
+            dispatchKind: result.dispatchKind.nilIfBlank ?? "accepted"
         )
     }
 

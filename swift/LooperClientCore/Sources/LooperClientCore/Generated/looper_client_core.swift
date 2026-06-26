@@ -912,7 +912,7 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func applyStateMiniDelta(delta: ClientStateMiniDelta) throws  -> ClientLocalStateSnapshot
 
-    func drainNotificationReplyOutbox() async throws  -> ClientCommandAckEnvelope
+    func drainNotificationReplyOutbox() async throws  -> ClientNotificationReplyIntentResult
 
     func localSnapshot() throws  -> ClientLocalStateSnapshot
 
@@ -928,13 +928,13 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) throws  -> ClientLocalStateSnapshot
 
-    func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientQueuedCommandSnapshot
+    func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientNotificationReplyPersistResult
 
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientLocalStateSnapshot
 
-    func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
+    func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientSessionPromptIntentResult
 
-    func setMode(threadId: String, preset: String) async throws  -> ClientCommandAckEnvelope
+    func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
 
     func start(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
@@ -942,9 +942,9 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func stop() throws  -> ClientStateSnapshot
 
-    func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+    func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientNotificationReplyIntentResult
 
-    func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientCommandAckEnvelope
+    func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientNotificationReplyIntentResult
 
 }
 open class LooperClientCoreSessionRuntime: LooperClientCoreSessionRuntimeProtocol, @unchecked Sendable {
@@ -1017,7 +1017,7 @@ open func applyStateMiniDelta(delta: ClientStateMiniDelta)throws  -> ClientLocal
 })
 }
 
-open func drainNotificationReplyOutbox()async throws  -> ClientCommandAckEnvelope  {
+open func drainNotificationReplyOutbox()async throws  -> ClientNotificationReplyIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1029,7 +1029,7 @@ open func drainNotificationReplyOutbox()async throws  -> ClientCommandAckEnvelop
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            liftFunc: FfiConverterTypeClientNotificationReplyIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -1131,8 +1131,8 @@ open func persistNotificationReply(notificationId: String, threadId: String, pro
 })
 }
 
-open func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)throws  -> ClientQueuedCommandSnapshot  {
-    return try  FfiConverterTypeClientQueuedCommandSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+open func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)throws  -> ClientNotificationReplyPersistResult  {
+    return try  FfiConverterTypeClientNotificationReplyPersistResult_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(notificationId),
@@ -1152,7 +1152,7 @@ open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientL
 })
 }
 
-open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
+open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientSessionPromptIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1164,12 +1164,12 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            liftFunc: FfiConverterTypeClientSessionPromptIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
 
-open func setMode(threadId: String, preset: String)async throws  -> ClientCommandAckEnvelope  {
+open func setMode(threadId: String, preset: String)async throws  -> ClientSessionModeIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1181,7 +1181,7 @@ open func setMode(threadId: String, preset: String)async throws  -> ClientComman
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            liftFunc: FfiConverterTypeClientSessionModeIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -1213,7 +1213,7 @@ open func stop()throws  -> ClientStateSnapshot  {
 })
 }
 
-open func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+open func submitNotificationReply(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientNotificationReplyIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1225,12 +1225,12 @@ open func submitNotificationReply(notificationId: String, threadId: String, prom
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            liftFunc: FfiConverterTypeClientNotificationReplyIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
 
-open func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientCommandAckEnvelope  {
+open func submitNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientNotificationReplyIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1242,7 +1242,7 @@ open func submitNotificationReplyWithGeneratedMutation(notificationId: String, t
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            liftFunc: FfiConverterTypeClientNotificationReplyIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -1412,282 +1412,6 @@ public func FfiConverterTypeClientBaseUrlRaceCandidate_lift(_ buf: RustBuffer) t
 #endif
 public func FfiConverterTypeClientBaseUrlRaceCandidate_lower(_ value: ClientBaseUrlRaceCandidate) -> RustBuffer {
     return FfiConverterTypeClientBaseUrlRaceCandidate.lower(value)
-}
-
-
-public struct ClientCommandAck: Equatable, Hashable {
-    public var accepted: Bool
-    public var clientMutationId: String
-    public var ackSeq: Int64
-    public var entityId: String
-    public var revision: String
-    public var serverTime: String
-    public var idempotentReplay: Bool
-    public var errorCode: String
-    public var rejectReason: String
-    public var currentState: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(accepted: Bool, clientMutationId: String, ackSeq: Int64, entityId: String, revision: String, serverTime: String, idempotentReplay: Bool, errorCode: String, rejectReason: String, currentState: String) {
-        self.accepted = accepted
-        self.clientMutationId = clientMutationId
-        self.ackSeq = ackSeq
-        self.entityId = entityId
-        self.revision = revision
-        self.serverTime = serverTime
-        self.idempotentReplay = idempotentReplay
-        self.errorCode = errorCode
-        self.rejectReason = rejectReason
-        self.currentState = currentState
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ClientCommandAck: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeClientCommandAck: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandAck {
-        return
-            try ClientCommandAck(
-                accepted: FfiConverterBool.read(from: &buf),
-                clientMutationId: FfiConverterString.read(from: &buf),
-                ackSeq: FfiConverterInt64.read(from: &buf),
-                entityId: FfiConverterString.read(from: &buf),
-                revision: FfiConverterString.read(from: &buf),
-                serverTime: FfiConverterString.read(from: &buf),
-                idempotentReplay: FfiConverterBool.read(from: &buf),
-                errorCode: FfiConverterString.read(from: &buf),
-                rejectReason: FfiConverterString.read(from: &buf),
-                currentState: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ClientCommandAck, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.accepted, into: &buf)
-        FfiConverterString.write(value.clientMutationId, into: &buf)
-        FfiConverterInt64.write(value.ackSeq, into: &buf)
-        FfiConverterString.write(value.entityId, into: &buf)
-        FfiConverterString.write(value.revision, into: &buf)
-        FfiConverterString.write(value.serverTime, into: &buf)
-        FfiConverterBool.write(value.idempotentReplay, into: &buf)
-        FfiConverterString.write(value.errorCode, into: &buf)
-        FfiConverterString.write(value.rejectReason, into: &buf)
-        FfiConverterString.write(value.currentState, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandAck_lift(_ buf: RustBuffer) throws -> ClientCommandAck {
-    return try FfiConverterTypeClientCommandAck.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandAck_lower(_ value: ClientCommandAck) -> RustBuffer {
-    return FfiConverterTypeClientCommandAck.lower(value)
-}
-
-
-public struct ClientCommandAckEnvelope: Equatable, Hashable {
-    public var commandKind: ClientCommandKind
-    public var ack: ClientCommandAck
-    public var preset: String
-    public var dispatchKind: String
-    public var promptId: String
-    public var notificationId: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(commandKind: ClientCommandKind, ack: ClientCommandAck, preset: String, dispatchKind: String, promptId: String, notificationId: String) {
-        self.commandKind = commandKind
-        self.ack = ack
-        self.preset = preset
-        self.dispatchKind = dispatchKind
-        self.promptId = promptId
-        self.notificationId = notificationId
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ClientCommandAckEnvelope: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeClientCommandAckEnvelope: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandAckEnvelope {
-        return
-            try ClientCommandAckEnvelope(
-                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
-                ack: FfiConverterTypeClientCommandAck.read(from: &buf),
-                preset: FfiConverterString.read(from: &buf),
-                dispatchKind: FfiConverterString.read(from: &buf),
-                promptId: FfiConverterString.read(from: &buf),
-                notificationId: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ClientCommandAckEnvelope, into buf: inout [UInt8]) {
-        FfiConverterTypeClientCommandKind.write(value.commandKind, into: &buf)
-        FfiConverterTypeClientCommandAck.write(value.ack, into: &buf)
-        FfiConverterString.write(value.preset, into: &buf)
-        FfiConverterString.write(value.dispatchKind, into: &buf)
-        FfiConverterString.write(value.promptId, into: &buf)
-        FfiConverterString.write(value.notificationId, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandAckEnvelope_lift(_ buf: RustBuffer) throws -> ClientCommandAckEnvelope {
-    return try FfiConverterTypeClientCommandAckEnvelope.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandAckEnvelope_lower(_ value: ClientCommandAckEnvelope) -> RustBuffer {
-    return FfiConverterTypeClientCommandAckEnvelope.lower(value)
-}
-
-
-public struct ClientCommandBatchResponse: Equatable, Hashable {
-    public var accepted: Bool
-    public var commandAcks: [ClientCommandAckEnvelope]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(accepted: Bool, commandAcks: [ClientCommandAckEnvelope]) {
-        self.accepted = accepted
-        self.commandAcks = commandAcks
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ClientCommandBatchResponse: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeClientCommandBatchResponse: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandBatchResponse {
-        return
-            try ClientCommandBatchResponse(
-                accepted: FfiConverterBool.read(from: &buf),
-                commandAcks: FfiConverterSequenceTypeClientCommandAckEnvelope.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ClientCommandBatchResponse, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.accepted, into: &buf)
-        FfiConverterSequenceTypeClientCommandAckEnvelope.write(value.commandAcks, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandBatchResponse_lift(_ buf: RustBuffer) throws -> ClientCommandBatchResponse {
-    return try FfiConverterTypeClientCommandBatchResponse.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandBatchResponse_lower(_ value: ClientCommandBatchResponse) -> RustBuffer {
-    return FfiConverterTypeClientCommandBatchResponse.lower(value)
-}
-
-
-public struct ClientCommandMetadata: Equatable, Hashable {
-    public var commandKind: ClientCommandKind
-    public var clientMutationId: String
-    public var preset: String
-    public var dispatchKind: String
-    public var notificationId: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(commandKind: ClientCommandKind, clientMutationId: String, preset: String, dispatchKind: String, notificationId: String) {
-        self.commandKind = commandKind
-        self.clientMutationId = clientMutationId
-        self.preset = preset
-        self.dispatchKind = dispatchKind
-        self.notificationId = notificationId
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ClientCommandMetadata: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeClientCommandMetadata: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandMetadata {
-        return
-            try ClientCommandMetadata(
-                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
-                clientMutationId: FfiConverterString.read(from: &buf),
-                preset: FfiConverterString.read(from: &buf),
-                dispatchKind: FfiConverterString.read(from: &buf),
-                notificationId: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ClientCommandMetadata, into buf: inout [UInt8]) {
-        FfiConverterTypeClientCommandKind.write(value.commandKind, into: &buf)
-        FfiConverterString.write(value.clientMutationId, into: &buf)
-        FfiConverterString.write(value.preset, into: &buf)
-        FfiConverterString.write(value.dispatchKind, into: &buf)
-        FfiConverterString.write(value.notificationId, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandMetadata_lift(_ buf: RustBuffer) throws -> ClientCommandMetadata {
-    return try FfiConverterTypeClientCommandMetadata.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientCommandMetadata_lower(_ value: ClientCommandMetadata) -> RustBuffer {
-    return FfiConverterTypeClientCommandMetadata.lower(value)
 }
 
 
@@ -2733,6 +2457,146 @@ public func FfiConverterTypeClientMobileSnapshotStreamUpdate_lower(_ value: Clie
 }
 
 
+public struct ClientNotificationReplyIntentResult: Equatable, Hashable {
+    public var accepted: Bool
+    public var dispatchKind: String
+    public var promptId: String
+    public var serverTime: String
+    public var clientMutationId: String
+    public var ackSeq: Int64
+    public var entityId: String
+    public var revision: String
+    public var idempotentReplay: Bool
+    public var notificationId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, dispatchKind: String, promptId: String, serverTime: String, clientMutationId: String, ackSeq: Int64, entityId: String, revision: String, idempotentReplay: Bool, notificationId: String) {
+        self.accepted = accepted
+        self.dispatchKind = dispatchKind
+        self.promptId = promptId
+        self.serverTime = serverTime
+        self.clientMutationId = clientMutationId
+        self.ackSeq = ackSeq
+        self.entityId = entityId
+        self.revision = revision
+        self.idempotentReplay = idempotentReplay
+        self.notificationId = notificationId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientNotificationReplyIntentResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientNotificationReplyIntentResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientNotificationReplyIntentResult {
+        return
+            try ClientNotificationReplyIntentResult(
+                accepted: FfiConverterBool.read(from: &buf),
+                dispatchKind: FfiConverterString.read(from: &buf),
+                promptId: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                ackSeq: FfiConverterInt64.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                idempotentReplay: FfiConverterBool.read(from: &buf),
+                notificationId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientNotificationReplyIntentResult, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterString.write(value.dispatchKind, into: &buf)
+        FfiConverterString.write(value.promptId, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterInt64.write(value.ackSeq, into: &buf)
+        FfiConverterString.write(value.entityId, into: &buf)
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterBool.write(value.idempotentReplay, into: &buf)
+        FfiConverterString.write(value.notificationId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientNotificationReplyIntentResult_lift(_ buf: RustBuffer) throws -> ClientNotificationReplyIntentResult {
+    return try FfiConverterTypeClientNotificationReplyIntentResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientNotificationReplyIntentResult_lower(_ value: ClientNotificationReplyIntentResult) -> RustBuffer {
+    return FfiConverterTypeClientNotificationReplyIntentResult.lower(value)
+}
+
+
+public struct ClientNotificationReplyPersistResult: Equatable, Hashable {
+    public var clientMutationId: String
+    public var snapshot: ClientLocalStateSnapshot
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(clientMutationId: String, snapshot: ClientLocalStateSnapshot) {
+        self.clientMutationId = clientMutationId
+        self.snapshot = snapshot
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientNotificationReplyPersistResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientNotificationReplyPersistResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientNotificationReplyPersistResult {
+        return
+            try ClientNotificationReplyPersistResult(
+                clientMutationId: FfiConverterString.read(from: &buf),
+                snapshot: FfiConverterTypeClientLocalStateSnapshot.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientNotificationReplyPersistResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterTypeClientLocalStateSnapshot.write(value.snapshot, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientNotificationReplyPersistResult_lift(_ buf: RustBuffer) throws -> ClientNotificationReplyPersistResult {
+    return try FfiConverterTypeClientNotificationReplyPersistResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientNotificationReplyPersistResult_lower(_ value: ClientNotificationReplyPersistResult) -> RustBuffer {
+    return FfiConverterTypeClientNotificationReplyPersistResult.lower(value)
+}
+
+
 public struct ClientOptimisticModeProjection: Equatable, Hashable {
     public var didUpdate: Bool
     public var visibleSnapshotJson: String
@@ -2935,60 +2799,6 @@ public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMu
 }
 
 
-public struct ClientQueuedCommandSnapshot: Equatable, Hashable {
-    public var clientMutationId: String
-    public var snapshot: ClientLocalStateSnapshot
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(clientMutationId: String, snapshot: ClientLocalStateSnapshot) {
-        self.clientMutationId = clientMutationId
-        self.snapshot = snapshot
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ClientQueuedCommandSnapshot: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeClientQueuedCommandSnapshot: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientQueuedCommandSnapshot {
-        return
-            try ClientQueuedCommandSnapshot(
-                clientMutationId: FfiConverterString.read(from: &buf),
-                snapshot: FfiConverterTypeClientLocalStateSnapshot.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ClientQueuedCommandSnapshot, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.clientMutationId, into: &buf)
-        FfiConverterTypeClientLocalStateSnapshot.write(value.snapshot, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientQueuedCommandSnapshot_lift(_ buf: RustBuffer) throws -> ClientQueuedCommandSnapshot {
-    return try FfiConverterTypeClientQueuedCommandSnapshot.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeClientQueuedCommandSnapshot_lower(_ value: ClientQueuedCommandSnapshot) -> RustBuffer {
-    return FfiConverterTypeClientQueuedCommandSnapshot.lower(value)
-}
-
-
 public struct ClientSessionIndexEntry: Equatable, Hashable {
     public var surface: String
     public var sessionIndex: UInt32
@@ -3094,6 +2904,118 @@ public func FfiConverterTypeClientSessionIndexProjection_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeClientSessionIndexProjection_lower(_ value: ClientSessionIndexProjection) -> RustBuffer {
     return FfiConverterTypeClientSessionIndexProjection.lower(value)
+}
+
+
+public struct ClientSessionModeIntentResult: Equatable, Hashable {
+    public var accepted: Bool
+    public var preset: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, preset: String) {
+        self.accepted = accepted
+        self.preset = preset
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionModeIntentResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionModeIntentResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionModeIntentResult {
+        return
+            try ClientSessionModeIntentResult(
+                accepted: FfiConverterBool.read(from: &buf),
+                preset: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionModeIntentResult, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterString.write(value.preset, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionModeIntentResult_lift(_ buf: RustBuffer) throws -> ClientSessionModeIntentResult {
+    return try FfiConverterTypeClientSessionModeIntentResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionModeIntentResult_lower(_ value: ClientSessionModeIntentResult) -> RustBuffer {
+    return FfiConverterTypeClientSessionModeIntentResult.lower(value)
+}
+
+
+public struct ClientSessionPromptIntentResult: Equatable, Hashable {
+    public var accepted: Bool
+    public var dispatchKind: String
+    public var promptId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, dispatchKind: String, promptId: String) {
+        self.accepted = accepted
+        self.dispatchKind = dispatchKind
+        self.promptId = promptId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionPromptIntentResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionPromptIntentResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionPromptIntentResult {
+        return
+            try ClientSessionPromptIntentResult(
+                accepted: FfiConverterBool.read(from: &buf),
+                dispatchKind: FfiConverterString.read(from: &buf),
+                promptId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionPromptIntentResult, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterString.write(value.dispatchKind, into: &buf)
+        FfiConverterString.write(value.promptId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionPromptIntentResult_lift(_ buf: RustBuffer) throws -> ClientSessionPromptIntentResult {
+    return try FfiConverterTypeClientSessionPromptIntentResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionPromptIntentResult_lower(_ value: ClientSessionPromptIntentResult) -> RustBuffer {
+    return FfiConverterTypeClientSessionPromptIntentResult.lower(value)
 }
 
 
@@ -3822,88 +3744,6 @@ public func FfiConverterTypeClientStateSnapshot_lower(_ value: ClientStateSnapsh
     return FfiConverterTypeClientStateSnapshot.lower(value)
 }
 
-
-public struct OutboundSessionFrame: Equatable, Hashable {
-    public var frameKind: OutboundSessionFrameKind
-    public var commandKind: ClientCommandKind
-    public var threadId: String
-    public var preset: String
-    public var prompt: String
-    public var assistantSurface: String
-    public var notificationId: String
-    public var clientMutationId: String
-    public var afterSeq: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(frameKind: OutboundSessionFrameKind, commandKind: ClientCommandKind, threadId: String, preset: String, prompt: String, assistantSurface: String, notificationId: String, clientMutationId: String, afterSeq: Int64) {
-        self.frameKind = frameKind
-        self.commandKind = commandKind
-        self.threadId = threadId
-        self.preset = preset
-        self.prompt = prompt
-        self.assistantSurface = assistantSurface
-        self.notificationId = notificationId
-        self.clientMutationId = clientMutationId
-        self.afterSeq = afterSeq
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension OutboundSessionFrame: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOutboundSessionFrame: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OutboundSessionFrame {
-        return
-            try OutboundSessionFrame(
-                frameKind: FfiConverterTypeOutboundSessionFrameKind.read(from: &buf),
-                commandKind: FfiConverterTypeClientCommandKind.read(from: &buf),
-                threadId: FfiConverterString.read(from: &buf),
-                preset: FfiConverterString.read(from: &buf),
-                prompt: FfiConverterString.read(from: &buf),
-                assistantSurface: FfiConverterString.read(from: &buf),
-                notificationId: FfiConverterString.read(from: &buf),
-                clientMutationId: FfiConverterString.read(from: &buf),
-                afterSeq: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: OutboundSessionFrame, into buf: inout [UInt8]) {
-        FfiConverterTypeOutboundSessionFrameKind.write(value.frameKind, into: &buf)
-        FfiConverterTypeClientCommandKind.write(value.commandKind, into: &buf)
-        FfiConverterString.write(value.threadId, into: &buf)
-        FfiConverterString.write(value.preset, into: &buf)
-        FfiConverterString.write(value.prompt, into: &buf)
-        FfiConverterString.write(value.assistantSurface, into: &buf)
-        FfiConverterString.write(value.notificationId, into: &buf)
-        FfiConverterString.write(value.clientMutationId, into: &buf)
-        FfiConverterInt64.write(value.afterSeq, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOutboundSessionFrame_lift(_ buf: RustBuffer) throws -> OutboundSessionFrame {
-    return try FfiConverterTypeOutboundSessionFrame.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOutboundSessionFrame_lower(_ value: OutboundSessionFrame) -> RustBuffer {
-    return FfiConverterTypeOutboundSessionFrame.lower(value)
-}
-
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -3912,7 +3752,6 @@ public enum ClientCommandKind: Equatable, Hashable {
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
-    case resume
 
 
 
@@ -3940,8 +3779,6 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case 3: return .submitNotificationReply
 
-        case 4: return .resume
-
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3960,10 +3797,6 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case .submitNotificationReply:
             writeInt(&buf, Int32(3))
-
-
-        case .resume:
-            writeInt(&buf, Int32(4))
 
         }
     }
@@ -4454,73 +4287,6 @@ public func FfiConverterTypeConnectionPhase_lower(_ value: ConnectionPhase) -> R
 }
 
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
-public enum OutboundSessionFrameKind: Equatable, Hashable {
-
-    case command
-    case resume
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension OutboundSessionFrameKind: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOutboundSessionFrameKind: FfiConverterRustBuffer {
-    typealias SwiftType = OutboundSessionFrameKind
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OutboundSessionFrameKind {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .command
-
-        case 2: return .resume
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: OutboundSessionFrameKind, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .command:
-            writeInt(&buf, Int32(1))
-
-
-        case .resume:
-            writeInt(&buf, Int32(2))
-
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOutboundSessionFrameKind_lift(_ buf: RustBuffer) throws -> OutboundSessionFrameKind {
-    return try FfiConverterTypeOutboundSessionFrameKind.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOutboundSessionFrameKind_lower(_ value: OutboundSessionFrameKind) -> RustBuffer {
-    return FfiConverterTypeOutboundSessionFrameKind.lower(value)
-}
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -4591,31 +4357,6 @@ fileprivate struct FfiConverterSequenceTypeClientBaseUrlRaceCandidate: FfiConver
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeClientBaseUrlRaceCandidate.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeClientCommandAckEnvelope: FfiConverterRustBuffer {
-    typealias SwiftType = [ClientCommandAckEnvelope]
-
-    public static func write(_ value: [ClientCommandAckEnvelope], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeClientCommandAckEnvelope.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientCommandAckEnvelope] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [ClientCommandAckEnvelope]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeClientCommandAckEnvelope.read(from: &buf))
         }
         return seq
     }
@@ -5069,7 +4810,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_apply_state_mini_delta() != 48374) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_drain_notification_reply_outbox() != 3794) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_drain_notification_reply_outbox() != 43759) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_local_snapshot() != 4228) {
@@ -5093,16 +4834,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply() != 12302) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 219) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 47870) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_replace_state_minis() != 26981) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 48509) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 63085) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 61477) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 14470) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_start() != 53576) {
@@ -5114,10 +4855,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_stop() != 56594) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply() != 8880) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply() != 12720) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply_with_generated_mutation() != 43581) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_submit_notification_reply_with_generated_mutation() != 55598) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_constructor_looperclientcore_new() != 12582) {

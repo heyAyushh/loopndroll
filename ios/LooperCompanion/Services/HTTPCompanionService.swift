@@ -140,31 +140,25 @@ struct HTTPCompanionService: CompanionService {
         id: String,
         preset: SessionMode?
     ) async throws -> CompanionSessionModeResult {
-        let envelope = try await requiredSessionRuntime().setMode(
+        let result = try await requiredSessionRuntime().setMode(
             threadID: id,
             preset: preset
         )
-        return try Self.sessionModeResult(from: envelope, fallbackMode: preset, sessionID: id)
+        return try Self.sessionModeResult(from: result, fallbackMode: preset, sessionID: id)
     }
 
     private static func sessionModeResult(
-        from envelope: ClientCommandAckEnvelope,
+        from result: ClientSessionModeIntentResult,
         fallbackMode: SessionMode?,
         sessionID: String
     ) throws -> CompanionSessionModeResult {
-        guard envelope.ack.accepted else {
+        guard result.accepted else {
             CompanionDiagnostics.record("mode:grpc-invalid id=\(sessionID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record(
-            "mode:grpc-accepted id=\(sessionID) ackSeq=\(envelope.ack.ackSeq)"
-        )
+        CompanionDiagnostics.record("mode:grpc-accepted id=\(sessionID)")
         return .accepted(
-            mode: Self.sessionMode(from: envelope.preset) ?? fallbackMode,
-            serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationId,
-            ackSeq: envelope.ack.ackSeq,
-            revision: envelope.ack.revision
+            mode: Self.sessionMode(from: result.preset) ?? fallbackMode
         )
     }
 
@@ -185,32 +179,28 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> CompanionPromptSendResult {
-        let envelope = try await requiredSessionRuntime().sendPrompt(
+        let result = try await requiredSessionRuntime().sendPrompt(
             threadID: id,
             prompt: prompt,
             assistantSurface: assistantSurface
         )
-        return try Self.promptSendResult(from: envelope, sessionID: id)
+        return try Self.promptSendResult(from: result, sessionID: id)
     }
 
     private static func promptSendResult(
-        from envelope: ClientCommandAckEnvelope,
+        from result: ClientSessionPromptIntentResult,
         sessionID: String
     ) throws -> CompanionPromptSendResult {
-        guard envelope.ack.accepted else {
+        guard result.accepted else {
             CompanionDiagnostics.record("prompt:grpc-invalid id=\(sessionID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(sessionID) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
+            "prompt:grpc-accepted id=\(sessionID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
         )
         return .accepted(
-            promptID: Self.nonEmpty(envelope.promptId),
-            dispatchKind: Self.dispatchKind(from: envelope.dispatchKind),
-            serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationId,
-            ackSeq: envelope.ack.ackSeq,
-            revision: envelope.ack.revision
+            promptID: Self.nonEmpty(result.promptId),
+            dispatchKind: Self.dispatchKind(from: result.dispatchKind)
         )
     }
 
@@ -220,14 +210,14 @@ struct HTTPCompanionService: CompanionService {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let envelope = try await requiredSessionRuntime().submitNotificationReply(
+        let result = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
             prompt: prompt,
             assistantSurface: assistantSurface
         )
         return try Self.notificationReplyResponse(
-            from: envelope,
+            from: result,
             fallbackNotificationID: notificationID,
             sessionID: sessionID
         )
@@ -240,7 +230,7 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let envelope = try await requiredSessionRuntime().submitNotificationReply(
+        let result = try await requiredSessionRuntime().submitNotificationReply(
             notificationID: notificationID,
             threadID: sessionID,
             prompt: prompt,
@@ -248,7 +238,7 @@ struct HTTPCompanionService: CompanionService {
             clientMutationID: clientMutationID
         )
         return try Self.notificationReplyResponse(
-            from: envelope,
+            from: result,
             fallbackNotificationID: notificationID,
             sessionID: sessionID
         )
@@ -256,20 +246,22 @@ struct HTTPCompanionService: CompanionService {
 
     func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await requiredSessionRuntime().drainNotificationReplyOutbox()
-        guard envelope.ack.accepted else {
+        let result = try await requiredSessionRuntime().drainNotificationReplyOutbox()
+        let notificationID = result.notificationId
+        let sessionID = result.entityId
+        guard result.accepted else {
             CompanionDiagnostics.record(
-                "notification-reply:grpc-pending-invalid id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId)"
+                "notification-reply:grpc-pending-invalid id=\(sessionID) notificationID=\(notificationID)"
             )
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "notification-reply:grpc-pending-accepted id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
+            "notification-reply:grpc-pending-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
         )
         return try Self.notificationReplyResponse(
-            from: envelope,
-            fallbackNotificationID: envelope.notificationId,
-            sessionID: envelope.ack.entityId
+            from: result,
+            fallbackNotificationID: notificationID,
+            sessionID: sessionID
         )
     }
 
@@ -316,30 +308,30 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private static func notificationReplyResponse(
-        from envelope: ClientCommandAckEnvelope,
+        from result: ClientNotificationReplyIntentResult,
         fallbackNotificationID: String,
         sessionID: String
     ) throws -> LooperRealtimeNotificationReplyResponse {
-        guard envelope.ack.accepted else {
+        guard result.accepted else {
             CompanionDiagnostics.record(
                 "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(fallbackNotificationID)"
             )
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: envelope.dispatchKind))"
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
         )
         return LooperRealtimeNotificationReplyResponse(
-            accepted: envelope.ack.accepted,
-            dispatchKind: dispatchKind(from: envelope.dispatchKind),
-            promptID: nonEmpty(envelope.promptId),
-            serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationId,
-            ackSeq: envelope.ack.ackSeq,
-            entityID: envelope.ack.entityId,
-            revision: envelope.ack.revision,
-            idempotentReplay: envelope.ack.idempotentReplay,
-            notificationID: nonEmpty(envelope.notificationId) ?? fallbackNotificationID
+            accepted: result.accepted,
+            dispatchKind: dispatchKind(from: result.dispatchKind),
+            promptID: nonEmpty(result.promptId),
+            serverTime: result.serverTime,
+            clientMutationID: result.clientMutationId,
+            ackSeq: result.ackSeq,
+            entityID: result.entityId,
+            revision: result.revision,
+            idempotentReplay: result.idempotentReplay,
+            notificationID: nonEmpty(result.notificationId) ?? fallbackNotificationID
         )
     }
 

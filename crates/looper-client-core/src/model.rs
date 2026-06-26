@@ -19,13 +19,11 @@ pub enum ClientCommandKind {
     SetSessionMode,
     SendSessionPrompt,
     SubmitNotificationReply,
-    Resume,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboundSessionFrameKind {
     Command,
-    Resume,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -87,7 +85,7 @@ pub(crate) struct ClientNotificationReplyRetryPlan {
     pub(crate) delay_nanoseconds: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundSessionFrame {
     pub frame_kind: OutboundSessionFrameKind,
     pub command_kind: ClientCommandKind,
@@ -100,7 +98,7 @@ pub struct OutboundSessionFrame {
     pub after_seq: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientCommandAck {
     pub accepted: bool,
     pub client_mutation_id: String,
@@ -114,7 +112,7 @@ pub struct ClientCommandAck {
     pub current_state: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientCommandMetadata {
     pub command_kind: ClientCommandKind,
     pub client_mutation_id: String,
@@ -123,7 +121,7 @@ pub struct ClientCommandMetadata {
     pub notification_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientCommandAckEnvelope {
     pub command_kind: ClientCommandKind,
     pub ack: ClientCommandAck,
@@ -133,14 +131,41 @@ pub struct ClientCommandAckEnvelope {
     pub notification_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientCommandBatchResponse {
     pub accepted: bool,
     pub command_acks: Vec<ClientCommandAckEnvelope>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct ClientQueuedCommandSnapshot {
+pub struct ClientSessionModeIntentResult {
+    pub accepted: bool,
+    pub preset: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionPromptIntentResult {
+    pub accepted: bool,
+    pub dispatch_kind: String,
+    pub prompt_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientNotificationReplyIntentResult {
+    pub accepted: bool,
+    pub dispatch_kind: String,
+    pub prompt_id: String,
+    pub server_time: String,
+    pub client_mutation_id: String,
+    pub ack_seq: i64,
+    pub entity_id: String,
+    pub revision: String,
+    pub idempotent_replay: bool,
+    pub notification_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientNotificationReplyPersistResult {
     pub client_mutation_id: String,
     pub snapshot: ClientLocalStateSnapshot,
 }

@@ -31,12 +31,12 @@ pub use menu_snapshot::{
 };
 pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
 pub use model::{
-    ClientBaseUrlRaceCandidate, ClientCommandAck, ClientCommandAckEnvelope,
-    ClientCommandBatchResponse, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
-    ClientLocalStateSnapshot, ClientMobileSnapshotStreamUpdate, ClientPendingCommand,
-    ClientPendingCommandKind, ClientPendingMutation, ClientStateDelta, ClientStateMini,
-    ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
-    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientBaseUrlRaceCandidate, ClientCommandKind, ClientEndpoint, ClientLocalStateSnapshot,
+    ClientMobileSnapshotStreamUpdate, ClientNotificationReplyIntentResult,
+    ClientNotificationReplyPersistResult, ClientPendingCommand, ClientPendingCommandKind,
+    ClientPendingMutation, ClientSessionModeIntentResult, ClientSessionPromptIntentResult,
+    ClientStateDelta, ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
+    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
 };
 pub use race_plan::{
     default_base_url_race_fallback_delay_nanoseconds, plan_base_url_race_candidates,

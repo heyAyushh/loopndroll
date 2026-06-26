@@ -869,7 +869,7 @@ final class CompanionAppModel {
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
-            "mode:accepted sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset") mutationID=\(result.clientMutationID ?? "unknown") ackSeq=\(result.ackSeq) revision=\(result.revision ?? "unknown")"
+            "mode:accepted sessionID=\(sessionID) mode=\(result.acceptedMode?.rawValue ?? "unset")"
         )
     }
 
@@ -1235,7 +1235,7 @@ final class CompanionAppModel {
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
-            "prompt:accepted sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown") mutationID=\(result.clientMutationID ?? "unknown") ackSeq=\(result.ackSeq) revision=\(result.revision ?? "unknown")"
+            "prompt:accepted sessionID=\(sessionID) kind=\(result.dispatchKind ?? "unknown")"
         )
         if snapshotState.hasDetail(for: sessionID) {
             await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)

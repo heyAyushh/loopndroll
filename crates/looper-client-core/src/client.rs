@@ -169,23 +169,6 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    #[cfg(test)]
-    fn resume_after(&self, after_seq: i64) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let mut state = self.lock_state()?;
-        state.outbox.push(OutboundSessionFrame {
-            frame_kind: OutboundSessionFrameKind::Resume,
-            command_kind: ClientCommandKind::Resume,
-            thread_id: String::new(),
-            preset: String::new(),
-            prompt: String::new(),
-            assistant_surface: String::new(),
-            notification_id: String::new(),
-            client_mutation_id: String::new(),
-            after_seq,
-        });
-        Ok(state.snapshot())
-    }
-
     fn set_mode(
         &self,
         thread_id: String,
@@ -2076,19 +2059,6 @@ mod tests {
             .expect_err("empty session id");
 
         assert_eq!(error, ClientCoreError::EmptySessionId);
-    }
-
-    #[test]
-    fn resume_after_queues_resume_frame() {
-        let core = LooperClientCore::new();
-
-        let snapshot = core.resume_after(44).expect("queue resume");
-        assert_eq!(snapshot.outbox_depth, 1);
-
-        let outbox = core.take_outbox().expect("take outbox");
-        assert_eq!(outbox[0].frame_kind, OutboundSessionFrameKind::Resume);
-        assert_eq!(outbox[0].command_kind, ClientCommandKind::Resume);
-        assert_eq!(outbox[0].after_seq, 44);
     }
 
     #[test]

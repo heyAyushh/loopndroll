@@ -189,6 +189,7 @@ struct CompanionSessionMiniLocalFirstTests {
         model.startSessionRuntimeSyncIfNeeded()
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
+        try await Task.sleep(nanoseconds: Constants.preAckLocalPaintProbeNanoseconds)
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
         let didSendPrompt = await promptTask.value
         let didApplyMode = await modeTask.value
@@ -490,11 +491,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
                 )
                 appendModeClientMutationID(envelope.ack.clientMutationId)
                 return .accepted(
-                    mode: preset,
-                    serverTime: envelope.ack.serverTime,
-                    clientMutationID: envelope.ack.clientMutationId,
-                    ackSeq: envelope.ack.ackSeq,
-                    revision: envelope.ack.revision
+                    mode: preset
                 )
             } catch {
                 appendPendingRuntimeCommandID(kind: .setSessionMode)
@@ -508,7 +505,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         try Task.checkCancellation()
         let clientMutationID = nextGeneratedMutationID(prefix: "mode")
         appendModeClientMutationID(clientMutationID)
-        return .accepted(mode: preset, serverTime: nil, clientMutationID: clientMutationID)
+        return .accepted(mode: preset)
     }
 
     func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
@@ -534,11 +531,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
                 appendPromptClientMutationID(envelope.ack.clientMutationId)
                 return .accepted(
                     promptID: envelope.promptId.isEmpty ? nil : envelope.promptId,
-                    dispatchKind: envelope.dispatchKind.isEmpty ? nil : envelope.dispatchKind,
-                    serverTime: envelope.ack.serverTime,
-                    clientMutationID: envelope.ack.clientMutationId,
-                    ackSeq: envelope.ack.ackSeq,
-                    revision: envelope.ack.revision
+                    dispatchKind: envelope.dispatchKind.isEmpty ? nil : envelope.dispatchKind
                 )
             } catch {
                 appendPendingRuntimeCommandID(kind: .sendSessionPrompt)
@@ -554,8 +547,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
         return .accepted(
             promptID: "prompt-1",
-            dispatchKind: "resume",
-            clientMutationID: clientMutationID
+            dispatchKind: "resume"
         )
     }
 

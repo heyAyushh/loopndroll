@@ -295,11 +295,7 @@ struct MockCompanionService: CompanionService {
     ) async throws -> CompanionSessionModeResult {
         _ = await store.setMode(id: id, preset: preset)
         return .accepted(
-            mode: preset,
-            serverTime: Date().ISO8601Format(),
-            clientMutationID: MockCommandIDs.mode,
-            ackSeq: 0,
-            revision: "mock"
+            mode: preset
         )
     }
 
@@ -319,11 +315,7 @@ struct MockCompanionService: CompanionService {
         _ = await store.sendPrompt(id: id, prompt: prompt)
         return .accepted(
             promptID: nil,
-            dispatchKind: "mock",
-            serverTime: Date().ISO8601Format(),
-            clientMutationID: MockCommandIDs.prompt,
-            ackSeq: 0,
-            revision: "mock"
+            dispatchKind: "mock"
         )
     }
 

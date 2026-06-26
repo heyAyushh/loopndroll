@@ -343,7 +343,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     func setMode(
         threadID: String,
         preset: SessionMode?
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientSessionModeIntentResult {
         try await sessionManager.setMode(
             threadID: threadID,
             preset: preset?.rawValue ?? ""
@@ -355,7 +355,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientSessionPromptIntentResult {
         try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
@@ -369,7 +369,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await sessionManager.submitNotificationReplyWithGeneratedMutation(
             notificationID: notificationID,
             threadID: threadID,
@@ -385,7 +385,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         prompt: String,
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
-    ) async throws -> ClientCommandAckEnvelope {
+    ) async throws -> ClientNotificationReplyIntentResult {
         try await sessionManager.submitNotificationReply(
             notificationID: notificationID,
             threadID: threadID,
@@ -396,7 +396,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
-    func drainNotificationReplyOutbox() async throws -> ClientCommandAckEnvelope {
+    func drainNotificationReplyOutbox() async throws -> ClientNotificationReplyIntentResult {
         try await sessionManager.drainNotificationReplyOutbox()
     }
 

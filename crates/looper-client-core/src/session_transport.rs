@@ -421,11 +421,6 @@ fn client_frame(frame: OutboundSessionFrame) -> Result<proto::ClientFrame, Clien
                 command: Some(command(frame)?),
             })),
         }),
-        OutboundSessionFrameKind::Resume => Ok(proto::ClientFrame {
-            frame: Some(proto::client_frame::Frame::Resume(proto::Resume {
-                after_seq: frame.after_seq,
-            })),
-        }),
     }
 }
 
@@ -465,16 +460,13 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 },
             ))
         }
-        ClientCommandKind::Resume => Err(ClientCoreError::UnexpectedOutboxMutations),
     }
 }
 
 fn command_metadata(
     frame: &OutboundSessionFrame,
 ) -> Result<ClientCommandMetadata, ClientCoreError> {
-    if frame.frame_kind != OutboundSessionFrameKind::Command
-        || frame.command_kind == ClientCommandKind::Resume
-    {
+    if frame.frame_kind != OutboundSessionFrameKind::Command {
         return Err(ClientCoreError::UnexpectedOutboxMutations);
     }
 
@@ -492,7 +484,7 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
         ClientCommandKind::SendSessionPrompt | ClientCommandKind::SubmitNotificationReply => {
             "accepted"
         }
-        ClientCommandKind::SetSessionMode | ClientCommandKind::Resume => "",
+        ClientCommandKind::SetSessionMode => "",
     }
 }
 
