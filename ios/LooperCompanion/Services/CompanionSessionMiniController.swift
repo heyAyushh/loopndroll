@@ -25,8 +25,6 @@ protocol CompanionSessionCommandLocalStore: AnyObject {
 
 @MainActor
 final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
-    private static let clientCoreStreamRetryDelay: Duration = .milliseconds(500)
-
     typealias SyncUpdateHandler = @MainActor @Sendable (
         CompanionSessionMiniSyncUpdate,
         Int
@@ -69,7 +67,6 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
             }
             await localStore.runClientCoreStateMiniSync(
                 using: transport,
-                retryDelay: Self.clientCoreStreamRetryDelay,
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)
                 },

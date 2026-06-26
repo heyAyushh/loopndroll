@@ -1261,23 +1261,9 @@ private final class G006StateMiniStreamTransport:
     private let lock = NSLock()
     private var streamPlans: [StreamPlan]
     private var afterSeqs: [Int64] = []
-    private var pendingSnapshot: ClientStateMiniSnapshot?
 
     init(streamPlans: [StreamPlan]) {
         self.streamPlans = streamPlans
-    }
-
-    func recoverClientCoreStateMiniSnapshot(
-        clientCore: LooperClientCore
-    ) async throws -> ClientStateSnapshot {
-        let snapshot = try lock.withLock {
-            guard let pendingSnapshot else {
-                throw LooperRealtimeError.unavailable
-            }
-            self.pendingSnapshot = nil
-            return pendingSnapshot
-        }
-        return try clientCore.replaceStateMinis(snapshot: snapshot)
     }
 
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
@@ -1301,14 +1287,11 @@ private final class G006StateMiniStreamTransport:
             }
             return try latestUpdate ?? stoppedUpdate(clientCore: clientCore)
         case let .recoveryRequired(snapshot):
-            lock.withLock {
-                pendingSnapshot = snapshot
-            }
-            let coreSnapshot = try clientCore.snapshot()
+            let coreSnapshot = try clientCore.replaceStateMinis(snapshot: snapshot)
             return ClientStateMiniStreamUpdate(
                 reason: .recoveryRequired,
                 snapshot: coreSnapshot,
-                didChange: false,
+                didChange: true,
                 latestSeq: coreSnapshot.latestSeq,
                 errorDescription: "state mini recovery required"
             )

@@ -31,16 +31,6 @@ public final class LooperRealtimeClient: Sendable {
         return LooperRealtimeSessionCommandBatchResponse(response)
     }
 
-    public func recoverClientCoreStateMiniSnapshot(
-        clientCore: LooperClientCore
-    ) async throws -> ClientStateSnapshot {
-        try await clientCore.recoverStateMiniSnapshot(
-            endpoints: endpoints.map(\.clientCoreEndpoint),
-            bearerToken: credentials.bearerToken ?? "",
-            mobileSessionHeader: credentials.mobileSessionHeader ?? ""
-        )
-    }
-
     public func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
         _ = try clientCore.startStateMiniStream(
             endpoints: endpoints.map(\.clientCoreEndpoint),

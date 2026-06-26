@@ -454,6 +454,27 @@ impl LooperClientCore {
                     String::new(),
                 )
             }
+            StateMiniStreamEvent::RecoveredSnapshot {
+                snapshot,
+                error_description,
+            } => {
+                require_valid_sequence(snapshot.latest_seq)?;
+                validate_state_minis(&snapshot.sessions)?;
+                state.latest_seq = snapshot.latest_seq;
+                state.server_time = snapshot.server_time;
+                state.state_minis = normalize_state_minis(snapshot.sessions);
+                if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
+                    state.revision = revision;
+                }
+                state.phase = ConnectionPhase::Ready;
+                state.last_error.clear();
+                (
+                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                    true,
+                    state.latest_seq,
+                    error_description,
+                )
+            }
             StateMiniStreamEvent::Reconnecting {
                 latest_seq,
                 error_description,
@@ -480,12 +501,6 @@ impl LooperClientCore {
                     error_description,
                 )
             }
-            StateMiniStreamEvent::Stopped { latest_seq } => (
-                ClientStateMiniStreamUpdateReason::Stopped,
-                false,
-                latest_seq,
-                String::new(),
-            ),
         };
         Ok(ClientStateMiniStreamUpdate {
             reason,
@@ -875,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_stream_recovery_event_marks_reconnecting() {
+    fn state_mini_stream_recovery_event_marks_reconnecting_when_snapshot_recovery_fails() {
         let core = LooperClientCore::new();
 
         let update = core
@@ -892,6 +907,42 @@ mod tests {
         assert!(!update.did_change);
         assert_eq!(update.snapshot.phase, ConnectionPhase::Reconnecting);
         assert_eq!(update.snapshot.last_error, "seq_gap");
+    }
+
+    #[test]
+    fn state_mini_stream_recovery_snapshot_replaces_state_in_rust_core() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 3,
+            sessions: vec![state_mini("thread-1", "codex", 3, "rev-3", "old")],
+            server_time: "2026-06-25T00:00:01Z".to_owned(),
+        })
+        .expect("seed state mini");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
+                snapshot: ClientStateMiniSnapshot {
+                    latest_seq: 9,
+                    sessions: vec![state_mini("thread-1", "codex", 9, "rev-9", "recovered")],
+                    server_time: SERVER_TIME.to_owned(),
+                },
+                error_description: "seq_gap".to_owned(),
+            })
+            .expect("stream recovery snapshot");
+
+        assert_eq!(
+            update.reason,
+            ClientStateMiniStreamUpdateReason::RecoveryRequired
+        );
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(update.snapshot.latest_seq, 9);
+        assert_eq!(update.snapshot.revision, "rev-9");
+        assert!(update.snapshot.last_error.is_empty());
+        assert_eq!(
+            update.snapshot.state_minis[0].payload_json,
+            r#"{"title":"recovered"}"#
+        );
     }
 
     #[test]

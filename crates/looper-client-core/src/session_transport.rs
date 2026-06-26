@@ -29,6 +29,7 @@ const CONNECTION_WARMUP_TIMEOUT: Duration = Duration::from_millis(1_500);
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
+const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
 const AUTHORIZATION_HEADER: &str = "authorization";
 const MOBILE_SESSION_HEADER: &str = "x-looper-mobile-session";
 const BEARER_PREFIX: &str = "Bearer ";
@@ -36,6 +37,10 @@ const BEARER_PREFIX: &str = "Bearer ";
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
     Delta(ClientStateMiniDelta),
+    RecoveredSnapshot {
+        snapshot: ClientStateMiniSnapshot,
+        error_description: String,
+    },
     Heartbeat {
         latest_seq: i64,
         server_time: String,
@@ -47,9 +52,6 @@ pub(crate) enum StateMiniStreamEvent {
     RecoveryRequired {
         latest_seq: i64,
         error_description: String,
-    },
-    Stopped {
-        latest_seq: i64,
     },
 }
 
@@ -212,23 +214,45 @@ pub(crate) async fn run_state_mini_stream(
         .await
         {
             Ok(latest_seq) => {
+                next_after_seq = next_after_seq.max(latest_seq);
                 let _ = events
-                    .send(StateMiniStreamEvent::Stopped { latest_seq })
+                    .send(state_mini_stream_ended_event(next_after_seq))
                     .await;
-                return;
+                tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
             }
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
-                let _ = events
-                    .send(StateMiniStreamEvent::RecoveryRequired {
-                        latest_seq: next_after_seq,
-                        error_description,
-                    })
-                    .await;
-                return;
+                match fetch_state_mini_snapshot(
+                    endpoints.clone(),
+                    bearer_token.clone(),
+                    mobile_session_header.clone(),
+                )
+                .await
+                {
+                    Ok(snapshot) => {
+                        next_after_seq = next_after_seq.max(snapshot.latest_seq);
+                        let _ = events
+                            .send(StateMiniStreamEvent::RecoveredSnapshot {
+                                snapshot,
+                                error_description,
+                            })
+                            .await;
+                    }
+                    Err(error) => {
+                        let _ = events
+                            .send(StateMiniStreamEvent::RecoveryRequired {
+                                latest_seq: next_after_seq,
+                                error_description: format!(
+                                    "{error_description}; snapshot recovery failed: {error}"
+                                ),
+                            })
+                            .await;
+                        tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
+                    }
+                }
             }
             Err(StateMiniTransportError::Transport {
                 latest_seq,
@@ -355,6 +379,13 @@ async fn run_state_mini_stream_session(
     }
 
     Ok(latest_seq)
+}
+
+fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
+    StateMiniStreamEvent::Reconnecting {
+        latest_seq,
+        error_description: STATE_MINI_STREAM_ENDED.to_owned(),
+    }
 }
 
 fn select_transport_endpoint(endpoints: &[ClientEndpoint]) -> Result<Endpoint, ClientCoreError> {
@@ -644,5 +675,21 @@ mod tests {
             url.to_string(),
             "http://127.0.0.1:8766/base/api/mobile/session-minis/snapshot"
         );
+    }
+
+    #[test]
+    fn clean_state_mini_stream_end_is_reconnectable() {
+        let event = state_mini_stream_ended_event(42);
+
+        match event {
+            StateMiniStreamEvent::Reconnecting {
+                latest_seq,
+                error_description,
+            } => {
+                assert_eq!(latest_seq, 42);
+                assert_eq!(error_description, STATE_MINI_STREAM_ENDED);
+            }
+            other => panic!("expected reconnecting event, got {other:?}"),
+        }
     }
 }

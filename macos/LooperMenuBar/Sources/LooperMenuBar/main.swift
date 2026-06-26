@@ -22,7 +22,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let threadMenuTitleCharacterLimit = 38
     static let detachServerOnQuitKey = "detachServerOnQuit"
     static let continuationRefreshInterval: Duration = .seconds(20)
-    static let sessionMiniStreamRetryDelay: Duration = .milliseconds(500)
     static let activationPolicy: NSApplication.ActivationPolicy = .accessory
     static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
     static let handoffHotkeySubMenuTitle = "Handoff Hotkey"
@@ -557,11 +556,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     let transport = MenuBarStateMiniStreamTransport(client: client)
-    let retryDelay = Layout.sessionMiniStreamRetryDelay
     sessionMiniSyncTask = Task { [weak self] in
       await sessionMiniLocalStore.runClientCoreStateMiniSync(
         using: transport,
-        retryDelay: retryDelay,
         onSnapshot: { [weak self] snapshot in
           self?.applySessionMiniSnapshot(snapshot)
         },
@@ -1830,13 +1827,6 @@ extension LooperHandoffHotkeyOption {
 
 private struct MenuBarStateMiniStreamTransport: LooperClientCoreStateMiniStreamTransport {
   let client: any ControlPlaneClient
-
-  func recoverClientCoreStateMiniSnapshot(
-    clientCore: LooperClientCore
-  ) async throws -> ClientStateSnapshot {
-    let realtimeClient = try await makeRealtimeClient()
-    return try await realtimeClient.recoverClientCoreStateMiniSnapshot(clientCore: clientCore)
-  }
 
   func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
     let realtimeClient = try await makeRealtimeClient()

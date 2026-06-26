@@ -284,7 +284,10 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
             clientCore: clientCore
         )
-        guard streamUpdate.reason == .delta, streamUpdate.didChange else {
+        guard
+            (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
+            streamUpdate.didChange
+        else {
             return MenuBarClientCoreStateMiniStreamResult(
                 reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
                 snapshot: nil,
@@ -302,16 +305,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    public func recoverClientCoreStateMiniStream(
-        using transport: any LooperClientCoreStateMiniStreamTransport
-    ) async throws -> MenuBarSessionMiniLocalSnapshot? {
-        let snapshot = try await transport.recoverClientCoreStateMiniSnapshot(
-            clientCore: clientCore
-        )
-        let localSnapshot = try persistValidated(snapshot)
-        return try menuSnapshot(from: localSnapshot)
-    }
-
     public func stopClientCoreStateMiniStream(
         using transport: any LooperClientCoreStateMiniStreamTransport
     ) {
@@ -320,7 +313,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
 
     public func runClientCoreStateMiniSync(
         using transport: any LooperClientCoreStateMiniStreamTransport,
-        retryDelay: Duration,
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async {
@@ -328,28 +320,15 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             stopClientCoreStateMiniStream(using: transport)
         }
 
-        while !Task.isCancelled {
-            do {
-                try await startClientCoreStateMiniStream(using: transport)
-                try await drainClientCoreStateMiniSync(
-                    using: transport,
-                    onSnapshot: onSnapshot,
-                    onDebugMessage: onDebugMessage
-                )
-            } catch {
-                await recoverClientCoreStateMiniSync(
-                    using: transport,
-                    errorDescription: error.localizedDescription,
-                    onSnapshot: onSnapshot,
-                    onDebugMessage: onDebugMessage
-                )
-            }
-
-            do {
-                try await Task.sleep(for: retryDelay)
-            } catch {
-                return
-            }
+        do {
+            try await startClientCoreStateMiniStream(using: transport)
+            try await drainClientCoreStateMiniSync(
+                using: transport,
+                onSnapshot: onSnapshot,
+                onDebugMessage: onDebugMessage
+            )
+        } catch {
+            await onDebugMessage("session mini stream failed: \(error.localizedDescription)")
         }
     }
 
@@ -379,37 +358,16 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             case .heartbeat, .reconnecting:
                 continue
             case .recoveryRequired:
-                await recoverClientCoreStateMiniSync(
-                    using: transport,
-                    errorDescription: result.errorDescription,
-                    onSnapshot: onSnapshot,
-                    onDebugMessage: onDebugMessage
-                )
-                return
+                if let snapshot = result.snapshot {
+                    await onSnapshot(snapshot)
+                } else if !result.errorDescription.isEmpty {
+                    await onDebugMessage(
+                        "session mini stream recovery waiting: \(result.errorDescription)"
+                    )
+                }
             case .stopped:
                 return
             }
-        }
-    }
-
-    private func recoverClientCoreStateMiniSync(
-        using transport: any LooperClientCoreStateMiniStreamTransport,
-        errorDescription: String,
-        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
-        onDebugMessage: @escaping @MainActor (String) -> Void
-    ) async {
-        if !errorDescription.isEmpty {
-            await onDebugMessage("session mini stream recovery: \(errorDescription)")
-        }
-
-        do {
-            if let snapshot = try await recoverClientCoreStateMiniStream(using: transport) {
-                await onSnapshot(snapshot)
-            }
-        } catch {
-            await onDebugMessage(
-                "session mini stream recovery failed: \(error.localizedDescription)"
-            )
         }
     }
 
