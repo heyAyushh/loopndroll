@@ -65,7 +65,7 @@ final class CompanionSnapshotStateStore {
         let surface = SnapshotProjectionCodec.assistantSurface(from: projection.selectedAssistantSurface)
         let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
         selectedAssistantSurface = surface
-        applyReducedVisibleSnapshot(visibleSnapshot)
+        applyReducedVisibleSnapshot(visibleSnapshot, projection: projection)
         syncDetailCache(withVisibleSnapshotJSON: projection.visibleSnapshotJson)
         return visibleSnapshot
     }
@@ -186,10 +186,19 @@ final class CompanionSnapshotStateStore {
         detailBySessionID[sessionID] = nil
     }
 
-    private func applyReducedVisibleSnapshot(_ visibleSnapshot: MobileSnapshot) {
+    private func applyReducedVisibleSnapshot(
+        _ visibleSnapshot: MobileSnapshot,
+        projection: ClientSnapshotProjection
+    ) {
         snapshot = visibleSnapshot
-        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
-        sessionIndex = SessionIndex(snapshot: visibleSnapshot)
+        sessionSections = SessionSections(
+            projection: projection.sessionSections,
+            sessions: visibleSnapshot.sessions
+        )
+        sessionIndex = SessionIndex(
+            projection: projection.sessionIndex,
+            snapshot: visibleSnapshot
+        )
     }
 
     private func syncDetailCache(withVisibleSnapshotJSON visibleSnapshotJSON: String) {
@@ -216,7 +225,8 @@ private enum SnapshotProjectionCodec {
                 snapshotJson: encode(snapshot),
                 preferredAssistantSurface: preferredSurface?.rawValue ?? "",
                 hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
-                currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue
+                currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue,
+                assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
             )
         } catch {
             invariantFailure("Snapshot projection failed", error: error)

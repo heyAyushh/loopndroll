@@ -2302,6 +2302,10 @@ struct SessionIndex: Equatable, Sendable {
 
     init(snapshot: MobileSnapshot) {
         let projection = SessionIndexProjectionCodec.projectSessionIndex(snapshot)
+        self.init(projection: projection, snapshot: snapshot)
+    }
+
+    init(projection: ClientSessionIndexProjection, snapshot: MobileSnapshot) {
         let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
         let allSessions = indexedSessions.map(\.session)
         let sessionsByID = Dictionary(
@@ -2400,6 +2404,10 @@ struct SessionSections: Sendable {
 
     init(sessions: [SessionSummary]) {
         let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions)
+        self.init(projection: projection, sessions: sessions)
+    }
+
+    init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {
         active = Self.sessions(at: projection.activeIndexes, in: sessions)
         running = Self.sessions(at: projection.runningIndexes, in: sessions)
         waiting = Self.sessions(at: projection.waitingIndexes, in: sessions)

@@ -3392,13 +3392,17 @@ public struct ClientSnapshotProjection: Equatable, Hashable {
     public var selectedAssistantSurface: String
     public var visibleSnapshotJson: String
     public var visibleSessionIds: [String]
+    public var sessionSections: ClientSessionSectionsProjection
+    public var sessionIndex: ClientSessionIndexProjection
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(selectedAssistantSurface: String, visibleSnapshotJson: String, visibleSessionIds: [String]) {
+    public init(selectedAssistantSurface: String, visibleSnapshotJson: String, visibleSessionIds: [String], sessionSections: ClientSessionSectionsProjection, sessionIndex: ClientSessionIndexProjection) {
         self.selectedAssistantSurface = selectedAssistantSurface
         self.visibleSnapshotJson = visibleSnapshotJson
         self.visibleSessionIds = visibleSessionIds
+        self.sessionSections = sessionSections
+        self.sessionIndex = sessionIndex
     }
 
 
@@ -3419,7 +3423,9 @@ public struct FfiConverterTypeClientSnapshotProjection: FfiConverterRustBuffer {
             try ClientSnapshotProjection(
                 selectedAssistantSurface: FfiConverterString.read(from: &buf),
                 visibleSnapshotJson: FfiConverterString.read(from: &buf),
-                visibleSessionIds: FfiConverterSequenceString.read(from: &buf)
+                visibleSessionIds: FfiConverterSequenceString.read(from: &buf),
+                sessionSections: FfiConverterTypeClientSessionSectionsProjection.read(from: &buf),
+                sessionIndex: FfiConverterTypeClientSessionIndexProjection.read(from: &buf)
         )
     }
 
@@ -3427,6 +3433,8 @@ public struct FfiConverterTypeClientSnapshotProjection: FfiConverterRustBuffer {
         FfiConverterString.write(value.selectedAssistantSurface, into: &buf)
         FfiConverterString.write(value.visibleSnapshotJson, into: &buf)
         FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
+        FfiConverterTypeClientSessionSectionsProjection.write(value.sessionSections, into: &buf)
+        FfiConverterTypeClientSessionIndexProjection.write(value.sessionIndex, into: &buf)
     }
 }
 
@@ -5031,13 +5039,14 @@ public func reduceMobileSnapshotOptimisticMode(snapshotJson: String, detailJson:
     )
 })
 }
-public func reduceMobileSnapshotProjection(snapshotJson: String, preferredAssistantSurface: String, hasUserSelectedAssistantSurface: Bool, currentSelectedAssistantSurface: String)throws  -> ClientSnapshotProjection  {
+public func reduceMobileSnapshotProjection(snapshotJson: String, preferredAssistantSurface: String, hasUserSelectedAssistantSurface: Bool, currentSelectedAssistantSurface: String, assistantSurfaceOrder: [String])throws  -> ClientSnapshotProjection  {
     return try  FfiConverterTypeClientSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_projection(
         FfiConverterString.lower(snapshotJson),
         FfiConverterString.lower(preferredAssistantSurface),
         FfiConverterBool.lower(hasUserSelectedAssistantSurface),
-        FfiConverterString.lower(currentSelectedAssistantSurface),$0
+        FfiConverterString.lower(currentSelectedAssistantSurface),
+        FfiConverterSequenceString.lower(assistantSurfaceOrder),$0
     )
 })
 }
@@ -5118,7 +5127,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_optimistic_mode() != 25243) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_projection() != 16296) {
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_projection() != 54026) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {

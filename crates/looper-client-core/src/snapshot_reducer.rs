@@ -12,6 +12,8 @@ pub struct ClientSnapshotProjection {
     pub selected_assistant_surface: String,
     pub visible_snapshot_json: String,
     pub visible_session_ids: Vec<String>,
+    pub session_sections: ClientSessionSectionsProjection,
+    pub session_index: ClientSessionIndexProjection,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -164,6 +166,7 @@ pub fn reduce_mobile_snapshot_projection(
     preferred_assistant_surface: String,
     has_user_selected_assistant_surface: bool,
     current_selected_assistant_surface: String,
+    assistant_surface_order: Vec<String>,
 ) -> Result<ClientSnapshotProjection, ClientCoreError> {
     let snapshot = parse_snapshot(&snapshot_json)?;
     let selected_assistant_surface = selected_assistant_surface(
@@ -172,7 +175,11 @@ pub fn reduce_mobile_snapshot_projection(
         has_user_selected_assistant_surface,
         &current_selected_assistant_surface,
     );
-    project_snapshot(snapshot, selected_assistant_surface)
+    project_snapshot(
+        snapshot,
+        selected_assistant_surface,
+        assistant_surface_order,
+    )
 }
 
 #[uniffi::export]
@@ -202,7 +209,11 @@ pub fn reduce_mobile_snapshot_optimistic_mode(
     }
 
     let (visible_detail_json, has_detail) = reduce_detail_mode(detail_json, &preset)?;
-    let projection = project_snapshot(snapshot, selected_assistant_surface)?;
+    let projection = project_snapshot(
+        snapshot,
+        selected_assistant_surface,
+        default_assistant_surface_order(),
+    )?;
 
     Ok(ClientOptimisticModeProjection {
         did_update: did_update || has_detail,
@@ -293,52 +304,7 @@ pub fn reduce_session_sections(
 ) -> Result<ClientSessionSectionsProjection, ClientCoreError> {
     let sessions: Vec<SessionDocument> =
         serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
-    let mut sortable_sessions = sessions
-        .into_iter()
-        .enumerate()
-        .map(|(index, session)| SortableSession {
-            original_index: index as u32,
-            session,
-        })
-        .collect::<Vec<_>>();
-    sort_sessions_by_freshness(&mut sortable_sessions);
-
-    let mut projection = ClientSessionSectionsProjection::default();
-    for sortable_session in sortable_sessions {
-        let index = sortable_session.original_index;
-        let session = sortable_session.session;
-
-        if session.is_archived {
-            projection.archived_indexes.push(index);
-            continue;
-        }
-
-        projection.active_indexes.push(index);
-
-        if session.has_blocked_goal() {
-            projection.needs_attention_indexes.push(index);
-            continue;
-        }
-
-        match normalized_status(&session.status).as_str() {
-            "active" => projection.running_indexes.push(index),
-            "waiting" => {
-                projection.waiting_indexes.push(index);
-                projection.needs_attention_indexes.push(index);
-            }
-            "stopped" => {
-                if session.has_running_goal() {
-                    projection.running_indexes.push(index);
-                } else {
-                    projection.stopped_indexes.push(index);
-                }
-            }
-            "archived" => projection.archived_indexes.push(index),
-            _ => projection.stopped_indexes.push(index),
-        }
-    }
-
-    Ok(projection)
+    Ok(project_session_sections(sessions))
 }
 
 #[uniffi::export]
@@ -347,42 +313,7 @@ pub fn reduce_session_index(
     assistant_surface_order: Vec<String>,
 ) -> Result<ClientSessionIndexProjection, ClientCoreError> {
     let snapshot = parse_snapshot(&snapshot_json)?;
-    let mut entries_by_id = BTreeMap::<String, SortableSessionIndexEntry>::new();
-
-    for surface in assistant_surface_order {
-        for (surface_index, session) in sessions_for_surface(&snapshot, &surface)
-            .into_iter()
-            .enumerate()
-        {
-            match entries_by_id.get(&session.id) {
-                Some(existing) if !is_newer_or_lower_ref(&session, &existing.session) => {}
-                _ => {
-                    entries_by_id.insert(
-                        session.id.clone(),
-                        SortableSessionIndexEntry {
-                            surface: surface.clone(),
-                            surface_index: surface_index as u32,
-                            session,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
-    let mut sortable_entries = entries_by_id.into_values().collect::<Vec<_>>();
-    sort_session_index_entries(&mut sortable_entries);
-
-    let identity = session_index_identity(&snapshot, &sortable_entries);
-    let entries = sortable_entries
-        .into_iter()
-        .map(|entry| ClientSessionIndexEntry {
-            surface: entry.surface,
-            session_index: entry.surface_index,
-        })
-        .collect();
-
-    Ok(ClientSessionIndexProjection { entries, identity })
+    Ok(project_session_index(&snapshot, assistant_surface_order))
 }
 
 #[uniffi::export]
@@ -672,6 +603,7 @@ fn selected_assistant_surface(
 fn project_snapshot(
     mut snapshot: SnapshotDocument,
     selected_assistant_surface: String,
+    assistant_surface_order: Vec<String>,
 ) -> Result<ClientSnapshotProjection, ClientCoreError> {
     let visible_sessions = sessions_for_surface(&snapshot, &selected_assistant_surface);
     let visible_session_ids = visible_sessions
@@ -681,12 +613,122 @@ fn project_snapshot(
 
     snapshot.global_settings.assistant_surface = selected_assistant_surface.clone();
     snapshot.sessions = visible_sessions;
+    let session_sections = project_session_sections(snapshot.sessions.clone());
+    let session_index = project_session_index(&snapshot, assistant_surface_order);
 
     Ok(ClientSnapshotProjection {
         selected_assistant_surface,
         visible_snapshot_json: serialize_snapshot(&snapshot)?,
         visible_session_ids,
+        session_sections,
+        session_index,
     })
+}
+
+fn project_session_sections(sessions: Vec<SessionDocument>) -> ClientSessionSectionsProjection {
+    let mut sortable_sessions = sessions
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| SortableSession {
+            original_index: index as u32,
+            session,
+        })
+        .collect::<Vec<_>>();
+    sort_sessions_by_freshness(&mut sortable_sessions);
+
+    let mut projection = ClientSessionSectionsProjection::default();
+    for sortable_session in sortable_sessions {
+        let index = sortable_session.original_index;
+        let session = sortable_session.session;
+
+        if session.is_archived {
+            projection.archived_indexes.push(index);
+            continue;
+        }
+
+        projection.active_indexes.push(index);
+
+        if session.has_blocked_goal() {
+            projection.needs_attention_indexes.push(index);
+            continue;
+        }
+
+        match normalized_status(&session.status).as_str() {
+            "active" => projection.running_indexes.push(index),
+            "waiting" => {
+                projection.waiting_indexes.push(index);
+                projection.needs_attention_indexes.push(index);
+            }
+            "stopped" => {
+                if session.has_running_goal() {
+                    projection.running_indexes.push(index);
+                } else {
+                    projection.stopped_indexes.push(index);
+                }
+            }
+            "archived" => projection.archived_indexes.push(index),
+            _ => projection.stopped_indexes.push(index),
+        }
+    }
+
+    projection
+}
+
+fn project_session_index(
+    snapshot: &SnapshotDocument,
+    assistant_surface_order: Vec<String>,
+) -> ClientSessionIndexProjection {
+    let surface_order = if assistant_surface_order.is_empty() {
+        default_assistant_surface_order()
+    } else {
+        assistant_surface_order
+    };
+    let mut entries_by_id = BTreeMap::<String, SortableSessionIndexEntry>::new();
+
+    for surface in surface_order {
+        for (surface_index, session) in sessions_for_surface(snapshot, &surface)
+            .into_iter()
+            .enumerate()
+        {
+            match entries_by_id.get(&session.id) {
+                Some(existing) if !is_newer_or_lower_ref(&session, &existing.session) => {}
+                _ => {
+                    entries_by_id.insert(
+                        session.id.clone(),
+                        SortableSessionIndexEntry {
+                            surface: surface.clone(),
+                            surface_index: surface_index as u32,
+                            session,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let mut sortable_entries = entries_by_id.into_values().collect::<Vec<_>>();
+    sort_session_index_entries(&mut sortable_entries);
+
+    let identity = session_index_identity(snapshot, &sortable_entries);
+    let entries = sortable_entries
+        .into_iter()
+        .map(|entry| ClientSessionIndexEntry {
+            surface: entry.surface,
+            session_index: entry.surface_index,
+        })
+        .collect();
+
+    ClientSessionIndexProjection { entries, identity }
+}
+
+fn default_assistant_surface_order() -> Vec<String> {
+    vec![
+        DEFAULT_ASSISTANT_SURFACE.to_owned(),
+        "claudeCode".to_owned(),
+        "devin".to_owned(),
+        "grokBuild".to_owned(),
+        "zed".to_owned(),
+    ]
 }
 
 fn sessions_for_surface(
@@ -814,6 +856,10 @@ mod tests {
     const DEVIN: &str = "devin";
     const THREAD_ID: &str = "thread-main";
 
+    fn test_surface_order() -> Vec<String> {
+        vec![CODEX.to_owned(), DEVIN.to_owned()]
+    }
+
     #[test]
     fn snapshot_projection_uses_global_surface_until_user_selects() {
         let projection = reduce_mobile_snapshot_projection(
@@ -821,12 +867,22 @@ mod tests {
             String::new(),
             false,
             DEVIN.to_owned(),
+            test_surface_order(),
         )
         .expect("project snapshot");
         let visible = parse_snapshot(&projection.visible_snapshot_json).expect("visible snapshot");
 
         assert_eq!(projection.selected_assistant_surface, CODEX);
         assert_eq!(projection.visible_session_ids, vec!["codex-thread"]);
+        assert_eq!(projection.session_sections.active_indexes, vec![0]);
+        assert!(
+            projection
+                .session_index
+                .entries
+                .iter()
+                .any(|entry| entry.surface == CODEX)
+        );
+        assert!(!projection.session_index.identity.is_empty());
         assert_eq!(visible.global_settings.assistant_surface, CODEX);
         assert_eq!(visible.sessions[0].id, "codex-thread");
     }
@@ -838,6 +894,7 @@ mod tests {
             DEVIN.to_owned(),
             true,
             CODEX.to_owned(),
+            test_surface_order(),
         )
         .expect("project snapshot");
         let visible_value: Value =
@@ -845,6 +902,8 @@ mod tests {
 
         assert_eq!(projection.selected_assistant_surface, DEVIN);
         assert_eq!(projection.visible_session_ids, vec![THREAD_ID]);
+        assert_eq!(projection.session_sections.active_indexes, vec![0]);
+        assert_eq!(projection.session_index.entries[0].surface, DEVIN);
         assert_eq!(visible_value["host"]["name"], "Looper");
         assert_eq!(visible_value["sessions"][0]["ref"], "D1");
         assert_eq!(visible_value["globalSettings"]["defaultPrompt"], "Continue");
@@ -1152,6 +1211,7 @@ mod tests {
             DEVIN.to_owned(),
             true,
             CODEX.to_owned(),
+            test_surface_order(),
         )
         .expect("project snapshot");
         let detail_cache = format!(
