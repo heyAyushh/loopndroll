@@ -74,6 +74,7 @@ struct HTTPCompanionService: CompanionService {
 
     let baseURLs: [URL]
     let bearerToken: String?
+    private let commandClientCore: LooperClientCore
 
     var supportsModePromptBatch: Bool {
         true
@@ -81,18 +82,21 @@ struct HTTPCompanionService: CompanionService {
 
     init(baseURL: URL) {
         self.baseURLs = [baseURL]
-        bearerToken = nil
+        self.bearerToken = nil
+        self.commandClientCore = LooperClientCore()
     }
 
     init(baseURLs: [URL], bearerToken: String? = nil) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
+        self.commandClientCore = LooperClientCore()
     }
 
     func prepareRealtimeConnection() async {
         await RealtimeCompanionClientFactory.prepareClient(
             baseURLs: baseURLs,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            clientCore: commandClientCore
         )
     }
 
@@ -137,14 +141,12 @@ struct HTTPCompanionService: CompanionService {
         preset: SessionMode?,
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
-        let clientCore = LooperClientCore()
-        _ = try clientCore.setMode(
+        _ = try commandClientCore.setMode(
             threadId: id,
             preset: preset?.rawValue ?? "",
             clientMutationId: clientMutationID
         )
         let envelope = try await submitSessionCommand(
-            clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
             expectedCommandKind: .setSessionMode,
             unavailableDiagnostic: "mode:grpc-unavailable id=\(id)",
@@ -178,15 +180,13 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
-        let clientCore = LooperClientCore()
-        _ = try clientCore.sendPrompt(
+        _ = try commandClientCore.sendPrompt(
             threadId: id,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationId: clientMutationID
         )
         let envelope = try await submitSessionCommand(
-            clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
             expectedCommandKind: .sendSessionPrompt,
             unavailableDiagnostic: "prompt:grpc-unavailable id=\(id)",
@@ -219,21 +219,21 @@ struct HTTPCompanionService: CompanionService {
             )
             throw HTTPCompanionServiceError.invalidResponse
         }
-        let clientCore = LooperClientCore()
-        _ = try clientCore.setMode(
+        _ = try commandClientCore.setMode(
             threadId: id,
             preset: modePreset?.rawValue ?? "",
             clientMutationId: modeClientMutationID
         )
-        _ = try clientCore.sendPrompt(
+        _ = try commandClientCore.sendPrompt(
             threadId: id,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
             clientMutationId: promptClientMutationID
         )
+        let expectedClientMutationIDs = try pendingCommandMutationIDs()
         let response = try await realtimeClient.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: [modeClientMutationID, promptClientMutationID]
+            clientCore: commandClientCore,
+            expectedClientMutationIDs: expectedClientMutationIDs
         )
         let modeAck = try response.expectedAcknowledgement(
             commandKind: .setSessionMode,
@@ -272,8 +272,7 @@ struct HTTPCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
-        let clientCore = LooperClientCore()
-        _ = try clientCore.submitNotificationReply(
+        _ = try commandClientCore.submitNotificationReply(
             notificationId: notificationID,
             threadId: sessionID,
             prompt: prompt,
@@ -281,7 +280,6 @@ struct HTTPCompanionService: CompanionService {
             clientMutationId: clientMutationID
         )
         let envelope = try await submitSessionCommand(
-            clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
             expectedCommandKind: .submitNotificationReply,
             unavailableDiagnostic: "notification-reply:grpc-unavailable id=\(sessionID) notificationID=\(notificationID)",
@@ -305,7 +303,6 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func submitSessionCommand(
-        clientCore: LooperClientCore,
         expectedClientMutationID: String,
         expectedCommandKind: ClientCommandKind,
         unavailableDiagnostic: String,
@@ -320,8 +317,8 @@ struct HTTPCompanionService: CompanionService {
         }
 
         let response = try await realtimeClient.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: [expectedClientMutationID]
+            clientCore: commandClientCore,
+            expectedClientMutationIDs: pendingCommandMutationIDs()
         )
         let envelope = try response.expectedAcknowledgement(
             commandKind: expectedCommandKind,
@@ -333,6 +330,16 @@ struct HTTPCompanionService: CompanionService {
         }
         return envelope
     }
+
+    private func pendingCommandMutationIDs() throws -> [String] {
+        try commandClientCore.pendingOutboxClientMutationIds()
+    }
+
+    #if DEBUG
+    func commandOutboxDepthForSelfTest() throws -> UInt32 {
+        try commandClientCore.snapshot().outboxDepth
+    }
+    #endif
 
     func muteSession(id: String) async throws -> MobileSnapshot {
         try await request(

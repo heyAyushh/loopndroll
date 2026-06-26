@@ -9,8 +9,7 @@ public final class LooperRealtimeClient: Sendable {
         self.credentials = credentials
     }
 
-    public func warmConnections() async throws {
-        let clientCore = LooperClientCore()
+    public func warmConnections(clientCore: LooperClientCore) async throws {
         _ = try await clientCore.warmConnection(
             endpoints: endpoints.map(\.clientCoreEndpoint),
             bearerToken: credentials.bearerToken ?? "",

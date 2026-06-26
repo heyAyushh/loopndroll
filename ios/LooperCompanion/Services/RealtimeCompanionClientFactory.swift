@@ -8,13 +8,17 @@ enum RealtimeCompanionClientFactory {
     fileprivate static let resourceTimeout: TimeInterval = 2
     private static let connectionManager = RealtimeCompanionConnectionManager()
 
-    static func prepareClient(baseURLs: [URL], bearerToken: String?) async {
+    static func prepareClient(
+        baseURLs: [URL],
+        bearerToken: String?,
+        clientCore: LooperClientCore
+    ) async {
         guard let client = await makeClient(baseURLs: baseURLs, bearerToken: bearerToken) else {
             return
         }
 
         do {
-            try await client.warmConnections()
+            try await client.warmConnections(clientCore: clientCore)
             CompanionDiagnostics.record("realtime:warm-success")
         } catch {
             CompanionDiagnostics.record("realtime:warm-failed error=\(error.localizedDescription)")

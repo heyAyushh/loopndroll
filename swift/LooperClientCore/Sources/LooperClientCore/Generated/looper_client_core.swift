@@ -761,6 +761,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func nextStateMiniStreamUpdate() async throws  -> ClientStateMiniStreamUpdate
 
+    func pendingOutboxClientMutationIds() throws  -> [String]
+
     func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) async throws  -> ClientStateSnapshot
 
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
@@ -933,6 +935,14 @@ open func nextStateMiniStreamUpdate()async throws  -> ClientStateMiniStreamUpdat
             liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
+}
+
+open func pendingOutboxClientMutationIds()throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_pending_outbox_client_mutation_ids(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
 
 open func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)async throws  -> ClientStateSnapshot  {
@@ -5002,6 +5012,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_next_state_mini_stream_update() != 34576) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_pending_outbox_client_mutation_ids() != 37219) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_recover_state_mini_snapshot() != 17190) {

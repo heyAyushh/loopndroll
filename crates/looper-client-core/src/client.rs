@@ -260,6 +260,11 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
+    pub fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
+        let state = self.lock_state()?;
+        Ok(state.pending_outbox_client_mutation_ids())
+    }
+
     pub fn take_outbox(&self) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
         let mut state = self.lock_state()?;
         Ok(std::mem::take(&mut state.outbox))
@@ -537,6 +542,13 @@ impl ClientCoreState {
         self.last_error.clear();
     }
 
+    fn pending_outbox_client_mutation_ids(&self) -> Vec<String> {
+        self.outbox
+            .iter()
+            .map(|frame| frame.client_mutation_id.clone())
+            .collect()
+    }
+
     fn expected_outbox(
         &self,
         expected_client_mutation_ids: &[String],
@@ -741,6 +753,31 @@ mod tests {
         assert_eq!(outbox[0].client_mutation_id, "cmid-mode");
         assert_eq!(outbox[1].client_mutation_id, "cmid-prompt");
         assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
+    }
+
+    #[test]
+    fn pending_outbox_client_mutation_ids_preserve_order() {
+        let core = LooperClientCore::new();
+        core.set_mode(
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("queue mode");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        assert_eq!(
+            core.pending_outbox_client_mutation_ids()
+                .expect("pending ids"),
+            vec!["cmid-mode".to_owned(), "cmid-prompt".to_owned()]
+        );
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 2);
     }
 
     #[test]
