@@ -126,8 +126,8 @@ public struct MenuBarSessionMiniNotificationStatus: Equatable, Sendable {
     }
 }
 
-public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
-    public static let defaultFileName = "looper-realtime-state-minis.json"
+private final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
+    static let defaultFileName = "looper-realtime-state-minis.json"
 
     private enum Defaults {
         static let applicationSupportDirectoryName = "looper"
@@ -135,29 +135,15 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
 
     private let sessionManager: LooperClientCoreSessionManager
 
-    public init(fileURL: URL) throws {
+    init(fileURL: URL) throws {
         self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
     }
 
-    fileprivate init(sessionManager: LooperClientCoreSessionManager) {
+    init(sessionManager: LooperClientCoreSessionManager) {
         self.sessionManager = sessionManager
     }
 
-    public static func liveDefault() -> MenuBarSessionMiniLocalStore? {
-        do {
-            return try MenuBarSessionMiniLocalStore(
-                fileURL: defaultFileURL()
-            )
-        } catch {
-            return nil
-        }
-    }
-
-    public static func available(fileURL: URL) -> MenuBarSessionMiniLocalStore? {
-        try? MenuBarSessionMiniLocalStore(fileURL: fileURL)
-    }
-
-    public func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
+    func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
         let snapshot = currentStateMiniSnapshot()
         guard !snapshot.sessions.isEmpty else {
             return nil
@@ -166,7 +152,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func replace(with snapshot: ClientStateMiniSnapshot) throws
+    func replace(with snapshot: ClientStateMiniSnapshot) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
         let localSnapshot = try replaceStateMinis(with: snapshot)
@@ -174,7 +160,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func apply(_ delta: ClientStateMiniDelta) throws
+    func apply(_ delta: ClientStateMiniDelta) throws
         -> MenuBarSessionMiniLocalSnapshot?
     {
         let localSnapshot = try applyStateMiniDelta(delta)
@@ -182,7 +168,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func replace(
+    func replace(
         latestSeq: Int64,
         records: [MenuBarSessionMiniRecord],
         serverTime: String? = nil
@@ -196,11 +182,11 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
-    public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
+    func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
         (try? sessionManager.localSnapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
-    fileprivate static func defaultFileURL() throws -> URL {
+    static func defaultFileURL() throws -> URL {
         try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -223,8 +209,9 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
 }
 
 public final class MenuBarSessionRuntime: @unchecked Sendable {
-    public let localStore: MenuBarSessionMiniLocalStore
+    public static let defaultFileName = MenuBarSessionMiniLocalStore.defaultFileName
 
+    private let localStore: MenuBarSessionMiniLocalStore
     private let sessionManager: LooperClientCoreSessionManager
 
     public init(fileURL: URL) throws {
@@ -243,6 +230,41 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
 
     public static func available(fileURL: URL) -> MenuBarSessionRuntime? {
         try? MenuBarSessionRuntime(fileURL: fileURL)
+    }
+
+    public func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
+        try localStore.cachedSnapshot()
+    }
+
+    @discardableResult
+    public func replace(with snapshot: ClientStateMiniSnapshot) throws
+        -> MenuBarSessionMiniLocalSnapshot?
+    {
+        try localStore.replace(with: snapshot)
+    }
+
+    @discardableResult
+    public func replace(
+        latestSeq: Int64,
+        records: [MenuBarSessionMiniRecord],
+        serverTime: String? = nil
+    ) throws -> MenuBarSessionMiniLocalSnapshot? {
+        try localStore.replace(latestSeq: latestSeq, records: records, serverTime: serverTime)
+    }
+
+    @discardableResult
+    public func apply(_ delta: ClientStateMiniDelta) throws
+        -> MenuBarSessionMiniLocalSnapshot?
+    {
+        try localStore.apply(delta)
+    }
+
+    public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
+        localStore.currentStateMiniSnapshot()
+    }
+
+    public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
+        localStore.pendingCommands()
     }
 
     private func isConfigured() -> Bool {
@@ -468,8 +490,8 @@ private extension ClientStateMini {
     }
 }
 
-extension MenuBarSessionMiniLocalStore {
-    public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
+private extension MenuBarSessionMiniLocalStore {
+    func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
             return try sessionManager.localSnapshot()
         } catch {
@@ -483,7 +505,7 @@ extension MenuBarSessionMiniLocalStore {
     }
 
     @discardableResult
-    public func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
+    func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
         -> ClientLocalStateSnapshot
     {
         try sessionManager.replaceStateMinis(
@@ -492,7 +514,7 @@ extension MenuBarSessionMiniLocalStore {
     }
 
     @discardableResult
-    public func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
+    func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
         -> ClientLocalStateSnapshot
     {
         try sessionManager.applyStateMiniDelta(delta)

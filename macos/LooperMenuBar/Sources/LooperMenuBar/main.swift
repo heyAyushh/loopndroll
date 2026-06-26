@@ -45,9 +45,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
   private let sessionRuntime: MenuBarSessionRuntime?
-  private var sessionMiniLocalStore: MenuBarSessionMiniLocalStore? {
-    sessionRuntime?.localStore
-  }
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
   private lazy var sessionCommandCenter = MenuBarSessionCommandCenter(
     sessionRuntime: sessionRuntime
@@ -675,7 +672,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func restoreCachedSessionMiniSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
-    guard let snapshot = try? sessionMiniLocalStore?.cachedSnapshot() else {
+    guard let snapshot = try? sessionRuntime?.cachedSnapshot() else {
       return nil
     }
     cachedSessionMiniSnapshot = snapshot

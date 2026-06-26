@@ -278,8 +278,8 @@ struct LooperContinuationActivityTests {
 
     @Test
     func usesNewestSessionMiniAsContinuationTarget() throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        try store.replace(latestSeq: 9, records: [
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        try runtime.replace(latestSeq: 9, records: [
             miniRecord(id: "old-mini", title: "Old Mini", archived: false, updatedAtMs: 1),
             miniRecord(id: "archived-mini", title: "Archived Mini", archived: true, updatedAtMs: 9),
             miniRecord(
@@ -290,7 +290,7 @@ struct LooperContinuationActivityTests {
                 updatedAtMs: 4
             ),
         ])
-        let snapshot = try #require(try store.cachedSnapshot())
+        let snapshot = try #require(try runtime.cachedSnapshot())
 
         let descriptor = LooperContinuationActivityBuilder.descriptor(
             from: snapshot,
@@ -502,7 +502,7 @@ struct LooperContinuationActivityTests {
     private func temporaryStoreFileURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("LooperContinuationTests-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent(MenuBarSessionMiniLocalStore.defaultFileName)
+            .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
     }
 
     private func miniRecord(

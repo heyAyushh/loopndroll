@@ -8,8 +8,8 @@ import Testing
 struct MenuBarSessionMiniLocalFirstTests {
     @Test("restores cached SessionMini rows before network")
     func testRestoresCachedSessionMinisBeforeNetwork() throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        try store.replace(latestSeq: 200, records: [
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        try runtime.replace(latestSeq: 200, records: [
             miniRecord(
                 id: "thread-active",
                 title: "Ship local-first menu",
@@ -31,7 +31,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         ])
         let noNetworkClient = NoNetworkControlPlaneClient()
 
-        let snapshot = try #require(try store.cachedSnapshot())
+        let snapshot = try #require(try runtime.cachedSnapshot())
         let sections = LooperMenuContent.buildThreadSections(from: snapshot.sessions)
 
         #expect(noNetworkClient.snapshotCalls == 0)
@@ -52,8 +52,8 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("SessionMini status drives menu bar human status")
     func testSessionMiniStatusDrivesHumanStatus() throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        try store.replace(latestSeq: 201, records: [
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        try runtime.replace(latestSeq: 201, records: [
             miniRecord(
                 id: "thread-blocked",
                 title: "Blocked task",
@@ -64,7 +64,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             ),
         ])
 
-        let snapshot = try #require(try store.cachedSnapshot())
+        let snapshot = try #require(try runtime.cachedSnapshot())
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
             mobileHealth: nil,
@@ -80,8 +80,8 @@ struct MenuBarSessionMiniLocalFirstTests {
 
     @Test("SessionMini status reports realtime when unblocked")
     func testSessionMiniStatusReportsRealtimeWhenUnblocked() throws {
-        let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        try store.replace(latestSeq: 202, records: [
+        let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
+        try runtime.replace(latestSeq: 202, records: [
             miniRecord(
                 id: "thread-ready",
                 title: "Ready task",
@@ -91,7 +91,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             ),
         ])
 
-        let snapshot = try #require(try store.cachedSnapshot())
+        let snapshot = try #require(try runtime.cachedSnapshot())
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
             mobileHealth: MobileHealthResponse(
@@ -126,8 +126,8 @@ struct MenuBarSessionMiniLocalFirstTests {
             ],
             serverTime: ""
         ))
-        let malformedStore = try MenuBarSessionMiniLocalStore(fileURL: malformedFileURL)
-        let fallbackMiniSnapshot = try? malformedStore.cachedSnapshot()
+        let malformedRuntime = try MenuBarSessionRuntime(fileURL: malformedFileURL)
+        let fallbackMiniSnapshot = try? malformedRuntime.cachedSnapshot()
         let fallbackSections = LooperMenuContent.buildThreadSections(from: [
             desktopThread(id: "thread-main", title: "Fallback snapshot")
         ])
@@ -136,7 +136,6 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(fallbackSections.first?.rows.first?.threadId == "thread-main")
 
         let outboxRuntime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        let outboxStore = outboxRuntime.localStore
         let commandCenter = MenuBarSessionCommandCenter(
             sessionRuntime: outboxRuntime
         )
@@ -158,7 +157,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             )
         }
 
-        let pendingCommands = outboxStore.pendingCommands()
+        let pendingCommands = outboxRuntime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.clientMutationID == "mutation-offline")
         #expect(pendingCommands.first?.threadID == "thread-main")
@@ -168,7 +167,6 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("menu actions enqueue durable Rust-core commands before transport")
     func testMenuActionsEnqueueDurableRustCoreCommandsBeforeTransport() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        let store = runtime.localStore
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
@@ -187,7 +185,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             )
         }
 
-        let pendingCommands = store.pendingCommands()
+        let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
         #expect(pendingCommands.map(\.clientMutationID) == ["mutation-mode", "mutation-prompt"])
         #expect(pendingCommands.map(\.threadID) == ["thread-main", "thread-main"])
@@ -197,7 +195,6 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("menu actions can use Rust-core generated mutation IDs")
     func testMenuActionsUseRustCoreGeneratedMutationIDs() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        let store = runtime.localStore
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
@@ -214,7 +211,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             )
         }
 
-        let pendingCommands = store.pendingCommands()
+        let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
         #expect(pendingCommands[0].clientMutationID.hasPrefix("mode-"))
         #expect(pendingCommands[1].clientMutationID.hasPrefix("prompt-"))
@@ -223,7 +220,6 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("notification replies enter durable Rust-core outbox before transport")
     func testNotificationRepliesEnterDurableRustCoreOutboxBeforeTransport() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        let store = runtime.localStore
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         await expectThrows {
@@ -236,7 +232,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             )
         }
 
-        let pendingCommands = store.pendingCommands()
+        let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.notificationID == "notif-main")
@@ -247,7 +243,6 @@ struct MenuBarSessionMiniLocalFirstTests {
     @Test("failed notification reply stays durable and dedupes retry")
     func testFailedNotificationReplyStaysDurableAndDedupesRetry() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
-        let store = runtime.localStore
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         for _ in 0..<2 {
@@ -262,7 +257,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             }
         }
 
-        let pendingCommands = store.pendingCommands()
+        let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
         #expect(pendingCommands.first?.clientMutationID == "notification-reply:notif-offline")
@@ -275,7 +270,7 @@ struct MenuBarSessionMiniLocalFirstTests {
     private func temporaryStoreFileURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("LooperMenuBarTests-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent(MenuBarSessionMiniLocalStore.defaultFileName)
+            .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
     }
 
     private func miniRecord(
