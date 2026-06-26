@@ -181,6 +181,72 @@ struct LooperRealtimeModelsTests {
     }
 
     @Test
+    func commandBatchResponseSelectsExpectedAcknowledgementInClientCore() throws {
+        let response = LooperRealtimeSessionCommandBatchResponse(
+            accepted: true,
+            commandAcks: [
+                LooperRealtimeCommandAckEnvelope(
+                    commandKind: "SetSessionMode",
+                    ack: LooperRealtimeCommandAck(
+                        accepted: true,
+                        clientMutationID: "mutation-mode",
+                        ackSeq: 41,
+                        entityID: "thread-main",
+                        revision: "revision-41",
+                        serverTime: "2026-06-24T00:00:00Z",
+                        idempotentReplay: false
+                    ),
+                    preset: "await-reply",
+                    dispatchKind: nil,
+                    promptID: nil,
+                    notificationID: nil
+                ),
+                LooperRealtimeCommandAckEnvelope(
+                    commandKind: "SendSessionPrompt",
+                    ack: LooperRealtimeCommandAck(
+                        accepted: true,
+                        clientMutationID: "mutation-prompt",
+                        ackSeq: 42,
+                        entityID: "thread-main",
+                        revision: "revision-42",
+                        serverTime: "2026-06-24T00:00:00Z",
+                        idempotentReplay: false
+                    ),
+                    preset: nil,
+                    dispatchKind: "accepted",
+                    promptID: "prompt-1",
+                    notificationID: nil
+                ),
+            ]
+        )
+
+        let envelope = try response.expectedAcknowledgement(
+            commandKind: .sendSessionPrompt,
+            clientMutationID: "mutation-prompt"
+        )
+
+        #expect(envelope.commandKind == "SendSessionPrompt")
+        #expect(envelope.ack.clientMutationID == "mutation-prompt")
+        #expect(envelope.dispatchKind == "accepted")
+        #expect(envelope.promptID == "prompt-1")
+    }
+
+    @Test
+    func commandBatchResponseUsesClientCoreForMissingAcknowledgement() {
+        let response = LooperRealtimeSessionCommandBatchResponse(
+            accepted: true,
+            commandAcks: []
+        )
+
+        #expect(throws: ClientCoreError.MissingCommandAcknowledgement) {
+            _ = try response.expectedAcknowledgement(
+                commandKind: .sendSessionPrompt,
+                clientMutationID: "mutation-prompt"
+            )
+        }
+    }
+
+    @Test
     func commandBatchResponseRejectsUnknownCommandKind() {
         let response = LooperRealtimeSessionCommandBatchResponse(
             accepted: true,

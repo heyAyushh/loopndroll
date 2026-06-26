@@ -179,6 +179,19 @@ public struct LooperRealtimeSessionCommandBatchResponse: Equatable, Sendable {
             commandAcks: try commandAcks.map { try $0.clientCoreEnvelope }
         )
     }
+
+    public func expectedAcknowledgement(
+        commandKind: ClientCommandKind,
+        clientMutationID: String
+    ) throws -> LooperRealtimeCommandAckEnvelope {
+        try LooperRealtimeCommandAckEnvelope(
+            reduceExpectedCommandAck(
+                response: clientCoreResponse(),
+                commandKind: commandKind,
+                expectedClientMutationId: clientMutationID
+            )
+        )
+    }
 }
 
 extension LooperRealtimeSessionCommand {

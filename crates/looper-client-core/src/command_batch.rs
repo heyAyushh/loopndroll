@@ -1,6 +1,7 @@
 use crate::error::ClientCoreError;
 use crate::model::{
-    ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandMetadata,
+    ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
+    ClientCommandMetadata,
 };
 
 const REJECTED_DISPATCH_KIND: &str = "rejected";
@@ -61,6 +62,26 @@ pub fn build_command_batch_response(
     })
 }
 
+#[uniffi::export]
+pub fn reduce_expected_command_ack(
+    response: ClientCommandBatchResponse,
+    command_kind: ClientCommandKind,
+    expected_client_mutation_id: String,
+) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+    require_mutation_id(&expected_client_mutation_id)?;
+
+    let envelope = response
+        .command_acks
+        .into_iter()
+        .find(|envelope| {
+            envelope.command_kind == command_kind
+                && envelope.ack.client_mutation_id == expected_client_mutation_id
+        })
+        .ok_or(ClientCoreError::MissingCommandAcknowledgement)?;
+
+    Ok(envelope)
+}
+
 fn validate_command_metadata(commands: &[ClientCommandMetadata]) -> Result<(), ClientCoreError> {
     for command in commands {
         require_mutation_id(&command.client_mutation_id)?;
@@ -87,7 +108,6 @@ fn command_dispatch_kind(command: &ClientCommandMetadata, ack: &ClientCommandAck
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ClientCommandKind;
 
     const MUTATION_MODE: &str = "mutation-mode";
     const MUTATION_PROMPT: &str = "mutation-prompt";
@@ -200,6 +220,64 @@ mod tests {
 
         assert!(!response.accepted);
         assert!(response.command_acks.is_empty());
+    }
+
+    #[test]
+    fn expected_command_ack_returns_matching_envelope() {
+        let response = ClientCommandBatchResponse {
+            accepted: true,
+            command_acks: vec![
+                ClientCommandAckEnvelope {
+                    command_kind: ClientCommandKind::SetSessionMode,
+                    ack: ack(MUTATION_MODE, true, 41),
+                    preset: "await-reply".to_owned(),
+                    dispatch_kind: String::new(),
+                    prompt_id: String::new(),
+                    notification_id: String::new(),
+                },
+                ClientCommandAckEnvelope {
+                    command_kind: ClientCommandKind::SendSessionPrompt,
+                    ack: ack(MUTATION_PROMPT, true, 42),
+                    preset: String::new(),
+                    dispatch_kind: "accepted".to_owned(),
+                    prompt_id: "prompt-1".to_owned(),
+                    notification_id: String::new(),
+                },
+            ],
+        };
+
+        let envelope = reduce_expected_command_ack(
+            response,
+            ClientCommandKind::SendSessionPrompt,
+            MUTATION_PROMPT.to_owned(),
+        )
+        .expect("expected ack");
+
+        assert_eq!(envelope.command_kind, ClientCommandKind::SendSessionPrompt);
+        assert_eq!(envelope.ack.client_mutation_id, MUTATION_PROMPT);
+        assert_eq!(envelope.dispatch_kind, "accepted");
+    }
+
+    #[test]
+    fn expected_command_ack_rejects_missing_ack() {
+        let error = reduce_expected_command_ack(
+            ClientCommandBatchResponse {
+                accepted: false,
+                command_acks: vec![ClientCommandAckEnvelope {
+                    command_kind: ClientCommandKind::SetSessionMode,
+                    ack: ack(MUTATION_MODE, true, 41),
+                    preset: String::new(),
+                    dispatch_kind: String::new(),
+                    prompt_id: String::new(),
+                    notification_id: String::new(),
+                }],
+            },
+            ClientCommandKind::SendSessionPrompt,
+            MUTATION_PROMPT.to_owned(),
+        )
+        .expect_err("missing ack");
+
+        assert_eq!(error, ClientCoreError::MissingCommandAcknowledgement);
     }
 
     fn command_metadata(

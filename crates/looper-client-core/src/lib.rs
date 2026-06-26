@@ -11,7 +11,7 @@ mod snapshot_reducer;
 mod transport;
 
 pub use client::LooperClientCore;
-pub use command_batch::build_command_batch_response;
+pub use command_batch::{build_command_batch_response, reduce_expected_command_ack};
 pub use connection_reducer::{
     ClientConnectionFailureProjection, ClientSnapshotLoadFailureProjection,
     reduce_connection_failure, reduce_snapshot_load_failure,

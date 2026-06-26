@@ -28,6 +28,8 @@ pub enum ClientCoreError {
     InvalidConnectionState,
     #[error("outbox client mutation IDs did not match the expected order")]
     UnexpectedOutboxMutations,
+    #[error("expected command acknowledgement was missing")]
+    MissingCommandAcknowledgement,
     #[error("client core state lock is poisoned")]
     StateLockPoisoned,
 }

@@ -68,17 +68,9 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyThreadID
     case emptyNotificationID
     case emptyPrompt
-    case missingAcknowledgement(clientMutationID: String)
-    case acknowledgedDifferentMutation(expected: String, actual: String)
 }
 
 public actor MenuBarSessionCommandCenter {
-    private enum CommandKind {
-        static let setSessionMode = "SetSessionMode"
-        static let sendSessionPrompt = "SendSessionPrompt"
-        static let submitNotificationReply = "SubmitNotificationReply"
-    }
-
     private let client: any MenuBarSessionCommandClient
     private let clientCore: LooperClientCore
     private let localStore: MenuBarSessionMiniLocalStore?
@@ -116,10 +108,9 @@ public actor MenuBarSessionCommandCenter {
             clientCore: clientCore,
             expectedClientMutationIDs: [clientMutationID]
         )
-        let envelope = try acknowledgement(
-            from: response,
-            commandKind: CommandKind.setSessionMode,
-            expected: clientMutationID
+        let envelope = try response.expectedAcknowledgement(
+            commandKind: .setSessionMode,
+            clientMutationID: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
         if envelope.ack.accepted {
@@ -159,10 +150,9 @@ public actor MenuBarSessionCommandCenter {
             clientCore: clientCore,
             expectedClientMutationIDs: [clientMutationID]
         )
-        let envelope = try acknowledgement(
-            from: response,
-            commandKind: CommandKind.sendSessionPrompt,
-            expected: clientMutationID
+        let envelope = try response.expectedAcknowledgement(
+            commandKind: .sendSessionPrompt,
+            clientMutationID: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
         if envelope.ack.accepted {
@@ -210,10 +200,9 @@ public actor MenuBarSessionCommandCenter {
             clientCore: clientCore,
             expectedClientMutationIDs: [clientMutationID]
         )
-        let envelope = try acknowledgement(
-            from: response,
-            commandKind: CommandKind.submitNotificationReply,
-            expected: clientMutationID
+        let envelope = try response.expectedAcknowledgement(
+            commandKind: .submitNotificationReply,
+            clientMutationID: clientMutationID
         )
         let acknowledgedMutationID = envelope.ack.clientMutationID
         if envelope.ack.accepted {
@@ -237,26 +226,6 @@ public actor MenuBarSessionCommandCenter {
             throw error
         }
         return trimmed
-    }
-
-    private func acknowledgement(
-        from response: LooperRealtimeSessionCommandBatchResponse,
-        commandKind: String,
-        expected: String
-    ) throws -> LooperRealtimeCommandAckEnvelope {
-        guard let envelope = response.commandAcks.first(where: {
-            $0.commandKind == commandKind && $0.ack.clientMutationID == expected
-        }) else {
-            throw MenuBarSessionCommandError.missingAcknowledgement(clientMutationID: expected)
-        }
-        let acknowledged = envelope.ack.clientMutationID.nilIfBlank ?? expected
-        guard acknowledged == expected else {
-            throw MenuBarSessionCommandError.acknowledgedDifferentMutation(
-                expected: expected,
-                actual: acknowledged
-            )
-        }
-        return envelope
     }
 }
 

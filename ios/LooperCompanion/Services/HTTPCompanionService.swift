@@ -69,9 +69,6 @@ struct HTTPCompanionService: CompanionService {
     private static let pathSeparator = "/"
     private static let modePathSuffix = "mode"
     private static let assistantSurfaceQueryItemName = "assistantSurface"
-    private static let setSessionModeCommandKind = "SetSessionMode"
-    private static let sendSessionPromptCommandKind = "SendSessionPrompt"
-    private static let submitNotificationReplyCommandKind = "SubmitNotificationReply"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
     private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
         .subtracting(pathSegmentReservedCharacters)
@@ -159,7 +156,7 @@ struct HTTPCompanionService: CompanionService {
         let envelope = try await submitSessionCommand(
             clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
-            expectedCommandKind: Self.setSessionModeCommandKind,
+            expectedCommandKind: .setSessionMode,
             unavailableDiagnostic: "mode:grpc-unavailable id=\(id)",
             invalidDiagnostic: "mode:grpc-invalid id=\(id)"
         )
@@ -201,7 +198,7 @@ struct HTTPCompanionService: CompanionService {
         let envelope = try await submitSessionCommand(
             clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
-            expectedCommandKind: Self.sendSessionPromptCommandKind,
+            expectedCommandKind: .sendSessionPrompt,
             unavailableDiagnostic: "prompt:grpc-unavailable id=\(id)",
             invalidDiagnostic: "prompt:grpc-invalid id=\(id)"
         )
@@ -248,14 +245,15 @@ struct HTTPCompanionService: CompanionService {
             clientCore: clientCore,
             expectedClientMutationIDs: [modeClientMutationID, promptClientMutationID]
         )
-        guard response.accepted,
-              let modeAck = response.commandAcks.first(where: {
-                  $0.commandKind == Self.setSessionModeCommandKind
-              }),
-              let promptAck = response.commandAcks.first(where: {
-                  $0.commandKind == Self.sendSessionPromptCommandKind
-              })
-        else {
+        let modeAck = try response.expectedAcknowledgement(
+            commandKind: .setSessionMode,
+            clientMutationID: modeClientMutationID
+        )
+        let promptAck = try response.expectedAcknowledgement(
+            commandKind: .sendSessionPrompt,
+            clientMutationID: promptClientMutationID
+        )
+        guard response.accepted, modeAck.ack.accepted, promptAck.ack.accepted else {
             CompanionDiagnostics.record("prompt:grpc-batch-invalid id=\(id)")
             throw HTTPCompanionServiceError.invalidResponse
         }
@@ -295,7 +293,7 @@ struct HTTPCompanionService: CompanionService {
         let envelope = try await submitSessionCommand(
             clientCore: clientCore,
             expectedClientMutationID: clientMutationID,
-            expectedCommandKind: Self.submitNotificationReplyCommandKind,
+            expectedCommandKind: .submitNotificationReply,
             unavailableDiagnostic: "notification-reply:grpc-unavailable id=\(sessionID) notificationID=\(notificationID)",
             invalidDiagnostic: "notification-reply:grpc-invalid id=\(sessionID) notificationID=\(notificationID)"
         )
@@ -319,7 +317,7 @@ struct HTTPCompanionService: CompanionService {
     private func submitSessionCommand(
         clientCore: LooperClientCore,
         expectedClientMutationID: String,
-        expectedCommandKind: String,
+        expectedCommandKind: ClientCommandKind,
         unavailableDiagnostic: String,
         invalidDiagnostic: String
     ) async throws -> LooperRealtimeCommandAckEnvelope {
@@ -335,13 +333,11 @@ struct HTTPCompanionService: CompanionService {
             clientCore: clientCore,
             expectedClientMutationIDs: [expectedClientMutationID]
         )
-        guard response.accepted,
-              let envelope = response.commandAcks.first(where: {
-                  $0.commandKind == expectedCommandKind
-                      && $0.ack.clientMutationID == expectedClientMutationID
-              }),
-              envelope.ack.accepted
-        else {
+        let envelope = try response.expectedAcknowledgement(
+            commandKind: expectedCommandKind,
+            clientMutationID: expectedClientMutationID
+        )
+        guard response.accepted, envelope.ack.accepted else {
             CompanionDiagnostics.record(invalidDiagnostic)
             throw HTTPCompanionServiceError.invalidResponse
         }

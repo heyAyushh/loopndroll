@@ -2637,6 +2637,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case StateMiniSessionIdMismatch
     case InvalidConnectionState
     case UnexpectedOutboxMutations
+    case MissingCommandAcknowledgement
     case StateLockPoisoned
 
 
@@ -2681,7 +2682,8 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 12: return .StateMiniSessionIdMismatch
         case 13: return .InvalidConnectionState
         case 14: return .UnexpectedOutboxMutations
-        case 15: return .StateLockPoisoned
+        case 15: return .MissingCommandAcknowledgement
+        case 16: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2750,8 +2752,12 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(14))
 
 
-        case .StateLockPoisoned:
+        case .MissingCommandAcknowledgement:
             writeInt(&buf, Int32(15))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(16))
 
         }
     }
@@ -3127,6 +3133,15 @@ public func buildCommandBatchResponse(commands: [ClientCommandMetadata], acks: [
     )
 })
 }
+public func reduceExpectedCommandAck(response: ClientCommandBatchResponse, commandKind: ClientCommandKind, expectedClientMutationId: String)throws  -> ClientCommandAckEnvelope  {
+    return try  FfiConverterTypeClientCommandAckEnvelope_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_expected_command_ack(
+        FfiConverterTypeClientCommandBatchResponse_lower(response),
+        FfiConverterTypeClientCommandKind_lower(commandKind),
+        FfiConverterString.lower(expectedClientMutationId),$0
+    )
+})
+}
 public func reduceConnectionFailure(mappedErrorState: String, hasUsableSnapshot: Bool, suppressErrorWhenSnapshotUsable: Bool)throws  -> ClientConnectionFailureProjection  {
     return try  FfiConverterTypeClientConnectionFailureProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_connection_failure(
@@ -3210,6 +3225,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_looper_client_core_checksum_func_build_command_batch_response() != 49176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_expected_command_ack() != 1537) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_connection_failure() != 21774) {
