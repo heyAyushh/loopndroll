@@ -118,6 +118,68 @@ impl LooperClientCoreLocalStore {
         Ok(state.snapshot())
     }
 
+    pub fn enqueue_set_mode_command(
+        &self,
+        thread_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetSessionMode,
+            client_mutation_id,
+            thread_id,
+            preset,
+            assistant_surface: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            attempt_count: 0,
+        })
+    }
+
+    pub fn enqueue_send_prompt_command(
+        &self,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SendSessionPrompt,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt,
+            notification_id: String::new(),
+            attempt_count: 0,
+        })
+    }
+
+    pub fn enqueue_notification_reply_command(
+        &self,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_present(&notification_id, ClientCoreError::EmptyNotificationId)?;
+        require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SubmitNotificationReply,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt,
+            notification_id,
+            attempt_count: 0,
+        })
+    }
+
     pub fn mark_attempted(
         &self,
         client_mutation_id: String,
@@ -402,6 +464,58 @@ mod tests {
             reopened_snapshot.pending_commands[0].client_mutation_id,
             "mutation-pending"
         );
+    }
+
+    #[test]
+    fn typed_notification_reply_enqueue_dedupes_and_validates_payload() {
+        let path = temp_store_path("typed-notification-reply");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_notification_reply_command(
+                "notification-1".to_owned(),
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "mutation-reply".to_owned(),
+            )
+            .expect("enqueue reply");
+        let snapshot = store
+            .enqueue_notification_reply_command(
+                "notification-1".to_owned(),
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "mutation-reply".to_owned(),
+            )
+            .expect("dedupe reply");
+
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SubmitNotificationReply
+        );
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-reply"
+        );
+        assert_eq!(
+            snapshot.pending_commands[0].notification_id,
+            "notification-1"
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 0);
+
+        let error = store
+            .enqueue_notification_reply_command(
+                String::new(),
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "mutation-invalid".to_owned(),
+            )
+            .expect_err("notification id required");
+        assert_eq!(error, ClientCoreError::EmptyNotificationId);
     }
 
     #[test]

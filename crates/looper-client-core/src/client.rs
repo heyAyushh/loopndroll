@@ -7,10 +7,10 @@ use crate::error::ClientCoreError;
 use crate::local_store::LooperClientCoreLocalStore;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientPendingCommand, ClientPendingCommandKind, ClientPendingMutation,
-    ClientStateDelta, ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
-    ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
-    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientEndpoint, ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
+    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
+    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind,
 };
 use crate::mutation_queue::{
     ClientModeMutationBatchFinish, ClientModeMutationDrainFinish, ClientModeMutationEnqueueResult,
@@ -456,18 +456,6 @@ impl LooperClientCore {
         .await
     }
 
-    pub async fn submit_set_mode(
-        &self,
-        thread_id: String,
-        preset: String,
-        client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
-        self.set_mode(thread_id, preset, client_mutation_id.clone())?;
-        self.submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
-            .await
-    }
-
     pub async fn submit_set_mode_durable(
         &self,
         local_store: Arc<LooperClientCoreLocalStore>,
@@ -481,40 +469,13 @@ impl LooperClientCore {
             preset.clone(),
             client_mutation_id.clone(),
         )?;
-        local_store.enqueue(ClientPendingCommand {
-            kind: ClientPendingCommandKind::SetSessionMode,
-            client_mutation_id: client_mutation_id.clone(),
-            thread_id,
-            preset,
-            assistant_surface: String::new(),
-            prompt: String::new(),
-            notification_id: String::new(),
-            attempt_count: 0,
-        })?;
+        local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id.clone())?;
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
             .await?;
         self.mark_durable_command_delivered(&local_store, &envelope)?;
         Ok(envelope)
-    }
-
-    pub async fn submit_send_prompt(
-        &self,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
-        self.send_prompt(
-            thread_id,
-            prompt,
-            assistant_surface,
-            client_mutation_id.clone(),
-        )?;
-        self.submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
-            .await
     }
 
     pub async fn submit_send_prompt_durable(
@@ -532,46 +493,18 @@ impl LooperClientCore {
             assistant_surface.clone(),
             client_mutation_id.clone(),
         )?;
-        local_store.enqueue(ClientPendingCommand {
-            kind: ClientPendingCommandKind::SendSessionPrompt,
-            client_mutation_id: client_mutation_id.clone(),
+        local_store.enqueue_send_prompt_command(
             thread_id,
-            preset: String::new(),
-            assistant_surface,
             prompt,
-            notification_id: String::new(),
-            attempt_count: 0,
-        })?;
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
             .await?;
         self.mark_durable_command_delivered(&local_store, &envelope)?;
         Ok(envelope)
-    }
-
-    pub async fn submit_notification_reply_command(
-        &self,
-        notification_id: String,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
-        self.submit_notification_reply(
-            notification_id,
-            thread_id,
-            prompt,
-            assistant_surface,
-            client_mutation_id.clone(),
-        )?;
-        reduce_expected_command_ack(
-            self.submit_pending_outbox(self.pending_outbox_client_mutation_ids()?)
-                .await?,
-            ClientCommandKind::SubmitNotificationReply,
-            client_mutation_id,
-        )
     }
 
     pub async fn submit_notification_reply_durable(
@@ -591,16 +524,13 @@ impl LooperClientCore {
             assistant_surface.clone(),
             client_mutation_id.clone(),
         )?;
-        local_store.enqueue(ClientPendingCommand {
-            kind: ClientPendingCommandKind::SubmitNotificationReply,
-            client_mutation_id: client_mutation_id.clone(),
-            thread_id,
-            preset: String::new(),
-            assistant_surface,
-            prompt,
+        local_store.enqueue_notification_reply_command(
             notification_id,
-            attempt_count: 0,
-        })?;
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
         local_store.mark_attempted(client_mutation_id.clone())?;
         let envelope = self
             .submit_pending_command_ack(
@@ -1296,10 +1226,14 @@ mod tests {
     #[test]
     fn submit_intent_queues_before_missing_runtime_error() {
         let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-mode-missing-runtime");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
         let error = runtime
-            .block_on(core.submit_set_mode(
+            .block_on(core.submit_set_mode_durable(
+                store.clone(),
                 "thread-1".to_owned(),
                 "await-reply".to_owned(),
                 "cmid-mode".to_owned(),
@@ -1314,6 +1248,9 @@ mod tests {
             snapshot.pending_mutations[0].command_kind,
             ClientCommandKind::SetSessionMode
         );
+        let local_snapshot = store.snapshot().expect("store snapshot");
+        assert_eq!(local_snapshot.pending_commands.len(), 1);
+        assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
     }
 
     #[test]

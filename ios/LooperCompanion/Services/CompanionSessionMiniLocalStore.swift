@@ -43,16 +43,19 @@ typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
-    private let store: LooperClientCoreLocalStore
-    private let clientCore: LooperClientCore
+    let clientCoreLocalStore: LooperClientCoreLocalStore
+    let clientCore: LooperClientCore
     private let decoder = JSONDecoder()
 
-    init(fileURL: URL) throws {
-        store = try LooperClientCoreLocalStore(filePath: fileURL.path)
-        clientCore = LooperClientCore()
+    init(
+        fileURL: URL,
+        clientCore: LooperClientCore = LooperClientCore()
+    ) throws {
+        clientCoreLocalStore = try LooperClientCoreLocalStore(filePath: fileURL.path)
+        self.clientCore = clientCore
         do {
             _ = try clientCore.replaceStateMinis(
-                snapshot: ClientStateMiniSnapshot(store.snapshot())
+                snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
             )
         } catch {
             CompanionDiagnostics.record(
@@ -61,9 +64,14 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
     }
 
-    static func liveDefault() -> CompanionSessionMiniLocalStore? {
+    static func liveDefault(
+        clientCore: LooperClientCore = LooperClientCore()
+    ) -> CompanionSessionMiniLocalStore? {
         do {
-            return try CompanionSessionMiniLocalStore(fileURL: defaultFileURL())
+            return try CompanionSessionMiniLocalStore(
+                fileURL: defaultFileURL(),
+                clientCore: clientCore
+            )
         } catch {
             CompanionDiagnostics.record("session-mini:store-unavailable error=\(error.localizedDescription)")
             return nil
@@ -121,36 +129,29 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .submitNotificationReply,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: "",
-                assistantSurface: assistantSurface?.rawValue ?? "",
-                prompt: prompt,
-                notificationId: notificationID,
-                attemptCount: 0
-            )
+        _ = try clientCoreLocalStore.enqueueNotificationReplyCommand(
+            notificationId: notificationID,
+            threadId: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface?.rawValue ?? "",
+            clientMutationId: clientMutationID
         )
     }
 
-    func markAttempted(clientMutationID: String) throws {
-        _ = try store.markAttempted(clientMutationId: clientMutationID)
-    }
-
     func markDelivered(clientMutationID: String) throws {
-        try store.markDelivered(clientMutationId: clientMutationID)
+        try clientCoreLocalStore.markDelivered(clientMutationId: clientMutationID)
     }
 
     func pendingCommands() -> [CompanionSessionMiniPendingCommand] {
-        (try? store.snapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
+        (try? clientCoreLocalStore.snapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
     func startClientCoreStateMiniStream(
         using transport: any LooperClientCoreStateMiniStreamTransport
     ) async throws {
-        _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
+        _ = try clientCore.replaceStateMinis(
+            snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
+        )
         try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
     }
 
@@ -228,7 +229,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func localSnapshot(from snapshot: ClientStateSnapshot) -> ClientLocalStateSnapshot {
-        let durableSnapshot = try? store.snapshot()
+        let durableSnapshot = try? clientCoreLocalStore.snapshot()
         return ClientLocalStateSnapshot(
             latestSeq: snapshot.latestSeq,
             sessions: snapshot.stateMinis,
@@ -247,7 +248,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             sessions: sessions,
             serverTime: snapshot.serverTime.nilIfEmpty
         )
-        return try store.replaceStateMinis(
+        return try clientCoreLocalStore.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(
                 latestSeq: snapshot.latestSeq,
                 sessions: sessions,
@@ -335,7 +336,7 @@ extension CompanionSessionMiniLocalStore {
             CompanionDiagnostics.record(
                 "session-mini:client-core-snapshot-failed error=\(error.localizedDescription)"
             )
-            return (try? store.snapshot())
+            return (try? clientCoreLocalStore.snapshot())
                 ?? ClientLocalStateSnapshot(
                     latestSeq: 0,
                     sessions: [],

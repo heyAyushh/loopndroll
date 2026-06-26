@@ -8,7 +8,6 @@ protocol CompanionSessionCommandLocalStore: AnyObject {
         prompt: String,
         clientMutationID: String
     )
-    func markCommandAttempted(_ clientMutationID: String)
     func markCommandDelivered(_ clientMutationID: String?)
 }
 
@@ -198,20 +197,9 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
                 assistantSurface: nil,
                 clientMutationID: clientMutationID
             )
-            markCommandAttempted(clientMutationID)
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:notification-reply-outbox-failed sessionID=\(sessionID) notificationID=\(notificationID) error=\(error.localizedDescription)"
-            )
-        }
-    }
-
-    func markCommandAttempted(_ clientMutationID: String) {
-        do {
-            try localStore?.markAttempted(clientMutationID: clientMutationID)
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:outbox-attempt-mark-failed id=\(clientMutationID) error=\(error.localizedDescription)"
             )
         }
     }

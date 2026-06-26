@@ -165,7 +165,6 @@ final class CompanionNotificationReplyCoordinator {
             return true
         }
 
-        sessionMiniController.markCommandAttempted(command.clientMutationID)
         let targetSurface = delegate?.notificationReplyAssistantSurface(for: sessionID)
             ?? delegate?.notificationReplySelectedAssistantSurface
             ?? .defaultSurface

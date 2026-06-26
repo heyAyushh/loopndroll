@@ -1,5 +1,6 @@
 import AppIntents
 import CoreSpotlight
+import LooperClientCore
 import SwiftUI
 import UserNotifications
 
@@ -37,13 +38,18 @@ struct LooperApp: App {
         }
 
         Self.prepareUITestStateIfNeeded()
+        let sessionClientCore = LooperClientCore()
+        let sessionMiniLocalStore = (isRunningUnitTests || isRunningG006SelfTest)
+            ? nil
+            : CompanionSessionMiniLocalStore.liveDefault(clientCore: sessionClientCore)
         _authenticator = State(initialValue: CompanionAppAuthenticator())
         _model = State(
             initialValue: CompanionAppModel(
-                environment: Self.environment(),
-                sessionMiniLocalStore: (isRunningUnitTests || isRunningG006SelfTest)
-                    ? nil
-                    : CompanionSessionMiniLocalStore.liveDefault()
+                environment: Self.environment(
+                    commandClientCore: sessionClientCore,
+                    sessionMiniLocalStore: sessionMiniLocalStore
+                ),
+                sessionMiniLocalStore: sessionMiniLocalStore
             )
         )
 
@@ -98,7 +104,10 @@ struct LooperApp: App {
         "\(scenePhase)-\(authenticator.isUnlocked)"
     }
 
-    private static func environment() -> CompanionEnvironment {
+    private static func environment(
+        commandClientCore: LooperClientCore,
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore?
+    ) -> CompanionEnvironment {
         #if DEBUG
         if G006LocalFirstSelfTest.requestedCase != nil {
             return CompanionEnvironment(service: MockCompanionService())
@@ -113,7 +122,10 @@ struct LooperApp: App {
         }
         #endif
 
-        return .live()
+        return .live(
+            commandClientCore: commandClientCore,
+            sessionMiniLocalStore: sessionMiniLocalStore
+        )
     }
 
     private static func prepareUITestStateIfNeeded() {

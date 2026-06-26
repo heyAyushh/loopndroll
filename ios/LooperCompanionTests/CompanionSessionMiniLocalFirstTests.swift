@@ -266,7 +266,7 @@ struct CompanionSessionMiniLocalFirstTests {
         pendingCommands = store.pendingCommands()
         #expect(pendingCommands.count == 1)
         #expect(pendingCommands.first?.kind == .submitNotificationReply)
-        #expect(pendingCommands.first?.attemptCount == 1)
+        #expect(pendingCommands.first?.attemptCount == 0)
         #expect(service.notificationReplyClientMutationIDs.isEmpty)
         try store.enqueueNotificationReplyCommand(
             notificationID: notificationID,

@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 
 struct CompanionEnvironment {
     let service: any CompanionService
@@ -9,15 +10,23 @@ struct CompanionEnvironment {
         self.reloadsServiceFromStoredConnection = reloadsServiceFromStoredConnection
     }
 
-    static func live() -> CompanionEnvironment {
+    static func live(
+        commandClientCore: LooperClientCore? = nil,
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+    ) -> CompanionEnvironment {
         let connection = CompanionConfiguration.resolvedConnection()
         let baseURLs = connection.baseURLs
 
         if !baseURLs.isEmpty {
+            let clientCore = commandClientCore ?? sessionMiniLocalStore?.clientCore ?? LooperClientCore()
+            let localStore = sessionMiniLocalStore
+                ?? CompanionSessionMiniLocalStore.liveDefault(clientCore: clientCore)
             return CompanionEnvironment(
                 service: HTTPCompanionService(
                     baseURLs: baseURLs,
-                    bearerToken: connection.bearerToken
+                    bearerToken: connection.bearerToken,
+                    commandClientCore: clientCore,
+                    sessionMiniLocalStore: localStore
                 ),
                 reloadsServiceFromStoredConnection: true
             )

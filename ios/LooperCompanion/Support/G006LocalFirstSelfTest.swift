@@ -344,7 +344,10 @@ enum G006LocalFirstSelfTest {
         pendingCommand = try requireValue(pendingCommands.first, "missing retry pending command")
         try require(pendingCommands.count == 1, "retry created duplicate pending command")
         try require(pendingCommand.kind == .submitNotificationReply, "retry command has wrong kind")
-        try require(pendingCommand.attemptCount == 1, "failed retry did not mark attempted once")
+        try require(
+            pendingCommand.attemptCount == 0,
+            "Swift retry bridge should not mark durable command attempts"
+        )
         try require(
             service.notificationReplyClientMutationIDs.isEmpty,
             "failed notification reply should not record delivered mutation id"

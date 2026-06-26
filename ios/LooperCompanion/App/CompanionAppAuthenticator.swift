@@ -301,7 +301,7 @@ final class CompanionAppAuthenticator {
                 return "This iPhone is no longer paired with the Mac. Login again with a device code."
             case let .passkeySessionRequired(message):
                 return message
-            case .invalidResponse, .serverError:
+            case .invalidResponse, .localStoreUnavailable, .serverError:
                 return displayMessage(for: error)
             }
         }

@@ -81,7 +81,12 @@ final class CompanionAppModel {
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
-        service = didActivateBundledConnection ? CompanionEnvironment.live().service : environment.service
+        service = didActivateBundledConnection
+            ? CompanionEnvironment.live(
+                commandClientCore: sessionMiniLocalStore?.clientCore,
+                sessionMiniLocalStore: sessionMiniLocalStore
+            ).service
+            : environment.service
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
@@ -348,7 +353,7 @@ final class CompanionAppModel {
 
         if reloadsServiceFromStoredConnection {
             configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-            service = CompanionEnvironment.live().service
+            service = liveEnvironmentFromSessionCore().service
             activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
             resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
         } else {
@@ -534,7 +539,7 @@ final class CompanionAppModel {
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
-        service = CompanionEnvironment.live().service
+        service = liveEnvironmentFromSessionCore().service
         prepareRealtimeConnectionInBackground()
         restartRealtimeSessionSyncIfActive()
         CompanionDiagnostics.record(
@@ -553,6 +558,13 @@ final class CompanionAppModel {
             healthBaseURL: Self.nonEmptyURL(from: serverHealth?.baseURL),
             tailscaleHealthBaseURL: Self.nonEmptyURL(from: serverHealth?.tailscale?.baseURL),
             isTailscaleRunning: serverHealth?.tailscale?.running == true
+        )
+    }
+
+    private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
+        CompanionEnvironment.live(
+            commandClientCore: sessionMiniController.localStore?.clientCore,
+            sessionMiniLocalStore: sessionMiniController.localStore
         )
     }
 
@@ -1304,7 +1316,7 @@ final class CompanionAppModel {
                 return .unauthorized
             case .passkeySessionRequired:
                 return .locked
-            case .invalidResponse, .serverError:
+            case .invalidResponse, .localStoreUnavailable, .serverError:
                 return .connected
             }
         }

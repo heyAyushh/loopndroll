@@ -75,21 +75,33 @@ struct HTTPCompanionService: CompanionService {
     let baseURLs: [URL]
     let bearerToken: String?
     private let commandClientCore: LooperClientCore
+    private let sessionMiniLocalStore: CompanionSessionMiniLocalStore?
 
     var sessionCommandClientCore: LooperClientCore? {
         commandClientCore
     }
 
-    init(baseURL: URL) {
+    init(
+        baseURL: URL,
+        commandClientCore: LooperClientCore = LooperClientCore(),
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+    ) {
         self.baseURLs = [baseURL]
         self.bearerToken = nil
-        self.commandClientCore = LooperClientCore()
+        self.commandClientCore = commandClientCore
+        self.sessionMiniLocalStore = sessionMiniLocalStore
     }
 
-    init(baseURLs: [URL], bearerToken: String? = nil) {
+    init(
+        baseURLs: [URL],
+        bearerToken: String? = nil,
+        commandClientCore: LooperClientCore = LooperClientCore(),
+        sessionMiniLocalStore: CompanionSessionMiniLocalStore? = nil
+    ) {
         self.baseURLs = baseURLs
         self.bearerToken = bearerToken
-        self.commandClientCore = LooperClientCore()
+        self.commandClientCore = commandClientCore
+        self.sessionMiniLocalStore = sessionMiniLocalStore
     }
 
     func prepareRealtimeConnection() async {
@@ -141,7 +153,8 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionSessionModeResult {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitSetMode(
+        let envelope = try await commandClientCore.submitSetModeDurable(
+            localStore: try requiredClientCoreLocalStore(),
             threadId: id,
             preset: preset?.rawValue ?? "",
             clientMutationId: clientMutationID
@@ -179,7 +192,8 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> CompanionPromptSendResult {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitSendPrompt(
+        let envelope = try await commandClientCore.submitSendPromptDurable(
+            localStore: try requiredClientCoreLocalStore(),
             threadId: id,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
@@ -207,7 +221,8 @@ struct HTTPCompanionService: CompanionService {
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse {
         await prepareCommandRuntimeIfNeeded()
-        let envelope = try await commandClientCore.submitNotificationReplyCommand(
+        let envelope = try await commandClientCore.submitNotificationReplyDurable(
+            localStore: try requiredClientCoreLocalStore(),
             notificationId: notificationID,
             threadId: sessionID,
             prompt: prompt,
@@ -235,6 +250,13 @@ struct HTTPCompanionService: CompanionService {
             idempotentReplay: envelope.ack.idempotentReplay,
             notificationID: Self.nonEmpty(envelope.notificationId) ?? notificationID
         )
+    }
+
+    private func requiredClientCoreLocalStore() throws -> LooperClientCoreLocalStore {
+        guard let localStore = sessionMiniLocalStore?.clientCoreLocalStore else {
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
+        return localStore
     }
 
     private func prepareCommandRuntimeIfNeeded() async {
@@ -991,6 +1013,7 @@ private enum HTTPMethod: String {
 
 enum HTTPCompanionServiceError: LocalizedError {
     case invalidResponse
+    case localStoreUnavailable
     case unauthorized
     case passkeySessionRequired(String)
     case serverError(String)
@@ -999,6 +1022,8 @@ enum HTTPCompanionServiceError: LocalizedError {
         switch self {
         case .invalidResponse:
             return "The looper API returned an invalid response."
+        case .localStoreUnavailable:
+            return "The looper realtime local store is unavailable."
         case .unauthorized:
             return "This iPhone is not paired with the Mac."
         case let .passkeySessionRequired(message):
