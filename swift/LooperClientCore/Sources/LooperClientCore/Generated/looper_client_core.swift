@@ -2233,6 +2233,56 @@ public func FfiConverterTypeClientSessionSectionsProjection_lower(_ value: Clien
 }
 
 
+public struct ClientSiriSessionEntityProjection: Equatable, Hashable {
+    public var entries: [ClientSessionIndexEntry]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entries: [ClientSessionIndexEntry]) {
+        self.entries = entries
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSiriSessionEntityProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSiriSessionEntityProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSiriSessionEntityProjection {
+        return
+            try ClientSiriSessionEntityProjection(
+                entries: FfiConverterSequenceTypeClientSessionIndexEntry.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSiriSessionEntityProjection, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeClientSessionIndexEntry.write(value.entries, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSiriSessionEntityProjection_lift(_ buf: RustBuffer) throws -> ClientSiriSessionEntityProjection {
+    return try FfiConverterTypeClientSiriSessionEntityProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSiriSessionEntityProjection_lower(_ value: ClientSiriSessionEntityProjection) -> RustBuffer {
+    return FfiConverterTypeClientSiriSessionEntityProjection.lower(value)
+}
+
+
 public struct ClientSnapshotLoadFailureProjection: Equatable, Hashable {
     public var connectionState: String
     public var preservedConnectedState: Bool
@@ -3591,6 +3641,14 @@ public func reduceSessionSections(sessionsJson: String)throws  -> ClientSessionS
     )
 })
 }
+public func reduceSiriSessionEntities(snapshotJson: String, assistantSurfaceOrder: [String])throws  -> ClientSiriSessionEntityProjection  {
+    return try  FfiConverterTypeClientSiriSessionEntityProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_siri_session_entities(
+        FfiConverterString.lower(snapshotJson),
+        FfiConverterSequenceString.lower(assistantSurfaceOrder),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3641,6 +3699,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_sections() != 8605) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_siri_session_entities() != 51113) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_command_ack() != 37442) {

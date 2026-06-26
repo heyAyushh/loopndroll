@@ -67,6 +67,11 @@ pub struct ClientSessionIndexProjection {
     pub identity: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSiriSessionEntityProjection {
+    pub entries: Vec<ClientSessionIndexEntry>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SnapshotDocument {
     #[serde(default)]
@@ -358,17 +363,7 @@ pub fn reduce_session_index(
     }
 
     let mut sortable_entries = entries_by_id.into_values().collect::<Vec<_>>();
-    sortable_entries.sort_by(|left, right| {
-        if is_newer_or_lower_ref(&left.session, &right.session) {
-            std::cmp::Ordering::Less
-        } else if is_newer_or_lower_ref(&right.session, &left.session) {
-            std::cmp::Ordering::Greater
-        } else {
-            left.surface
-                .cmp(&right.surface)
-                .then(left.surface_index.cmp(&right.surface_index))
-        }
-    });
+    sort_session_index_entries(&mut sortable_entries);
 
     let identity = session_index_identity(&snapshot, &sortable_entries);
     let entries = sortable_entries
@@ -380,6 +375,47 @@ pub fn reduce_session_index(
         .collect();
 
     Ok(ClientSessionIndexProjection { entries, identity })
+}
+
+#[uniffi::export]
+pub fn reduce_siri_session_entities(
+    snapshot_json: String,
+    assistant_surface_order: Vec<String>,
+) -> Result<ClientSiriSessionEntityProjection, ClientCoreError> {
+    let snapshot = parse_snapshot(&snapshot_json)?;
+    let mut entries_by_entity_id = BTreeMap::<(String, String), SortableSessionIndexEntry>::new();
+
+    for surface in assistant_surface_order {
+        for (surface_index, session) in sessions_for_surface(&snapshot, &surface)
+            .into_iter()
+            .enumerate()
+        {
+            if session.is_archived {
+                continue;
+            }
+
+            entries_by_entity_id.insert(
+                (surface.clone(), session.id.clone()),
+                SortableSessionIndexEntry {
+                    surface: surface.clone(),
+                    surface_index: surface_index as u32,
+                    session,
+                },
+            );
+        }
+    }
+
+    let mut sortable_entries = entries_by_entity_id.into_values().collect::<Vec<_>>();
+    sort_session_index_entries(&mut sortable_entries);
+    let entries = sortable_entries
+        .into_iter()
+        .map(|entry| ClientSessionIndexEntry {
+            surface: entry.surface,
+            session_index: entry.surface_index,
+        })
+        .collect();
+
+    Ok(ClientSiriSessionEntityProjection { entries })
 }
 
 impl SessionDocument {
@@ -437,6 +473,20 @@ fn session_index_identity(
 
 fn session_extra_string<'a>(session: &'a SessionDocument, key: &str) -> &'a str {
     session.extra.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn sort_session_index_entries(entries: &mut [SortableSessionIndexEntry]) {
+    entries.sort_by(|left, right| {
+        if is_newer_or_lower_ref(&left.session, &right.session) {
+            std::cmp::Ordering::Less
+        } else if is_newer_or_lower_ref(&right.session, &left.session) {
+            std::cmp::Ordering::Greater
+        } else {
+            left.surface
+                .cmp(&right.surface)
+                .then(left.surface_index.cmp(&right.surface_index))
+        }
+    });
 }
 
 fn sort_sessions_by_freshness(sessions: &mut [SortableSession]) {
@@ -914,6 +964,75 @@ mod tests {
         assert_eq!(
             projection.identity.split('|').take(2).collect::<Vec<_>>(),
             vec!["rev-1", "2"]
+        );
+    }
+
+    #[test]
+    fn siri_session_entities_keep_surface_entities_and_sort_in_rust() {
+        let projection = reduce_siri_session_entities(
+            session_index_json(),
+            vec![CODEX.to_owned(), DEVIN.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert_eq!(
+            projection.entries,
+            vec![
+                ClientSessionIndexEntry {
+                    surface: DEVIN.to_owned(),
+                    session_index: 0,
+                },
+                ClientSessionIndexEntry {
+                    surface: CODEX.to_owned(),
+                    session_index: 0,
+                },
+                ClientSessionIndexEntry {
+                    surface: CODEX.to_owned(),
+                    session_index: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn siri_session_entities_exclude_archived_sessions() {
+        let projection = reduce_siri_session_entities(
+            r#"{
+                "revision":"siri-archived",
+                "globalSettings":{"assistantSurface":"codex"},
+                "sessions":[],
+                "surfaceSessions":{
+                    "codex":[
+                        {
+                            "id":"archived",
+                            "ref":"S1",
+                            "status":"archived",
+                            "lastActivityAtMs":1781596920321,
+                            "lastActivityAt":"2026-06-16T08:02:00.321Z",
+                            "isArchived":true
+                        },
+                        {
+                            "id":"visible",
+                            "ref":"S2",
+                            "status":"active",
+                            "lastActivityAtMs":1781596920000,
+                            "lastActivityAt":"2026-06-16T08:00:00Z",
+                            "isArchived":false
+                        }
+                    ]
+                }
+            }"#
+            .to_owned(),
+            vec![CODEX.to_owned()],
+        )
+        .expect("project siri entities");
+
+        assert_eq!(
+            projection.entries,
+            vec![ClientSessionIndexEntry {
+                surface: CODEX.to_owned(),
+                session_index: 1,
+            }]
         );
     }
 

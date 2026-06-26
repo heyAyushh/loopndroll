@@ -1,4 +1,5 @@
 import Foundation
+import LooperRealtime
 import Testing
 @testable import Looper
 
@@ -110,6 +111,72 @@ struct SessionSummaryTimingTests {
             index.identity
                 == "revision-1|1|thread-main:active:2026-06-16T08:02:00Z:2026-06-16T08:01:00Z::::goal-idle:0:visible"
         )
+    }
+
+    @Test("Siri session entities use Rust projection ordering")
+    func siriSessionEntitiesUseRustProjectionOrdering() async throws {
+        let olderCodex = try sessionSummary(
+            id: "thread-main",
+            ref: "S1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let newerDevin = try sessionSummary(
+            id: "thread-main",
+            ref: "S2",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let middleGrok = try sessionSummary(
+            id: "grok-thread",
+            ref: "G1",
+            activityMilliseconds: Constants.olderActivityMilliseconds + 1,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let archivedZed = try sessionSummary(
+            id: "archived-thread",
+            ref: "Z1",
+            status: "archived",
+            activityMilliseconds: Constants.activityMilliseconds + 1,
+            messageMilliseconds: Constants.messageMilliseconds,
+            isArchived: true
+        )
+        let snapshot = MobileSnapshot(
+            revision: "revision-1",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [olderCodex],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [olderCodex],
+                CompanionAssistantSurface.devin.rawValue: [newerDevin],
+                CompanionAssistantSurface.grokBuild.rawValue: [middleGrok],
+                CompanionAssistantSurface.zed.rawValue: [archivedZed],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let client = LooperSiriSessionClient(
+            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+        )
+        let entities = try await client.suggestedEntities()
+
+        #expect(entities.map(\.ref) == ["S2", "G1", "S1"])
+        #expect(entities.map(\.assistantSurfaceRawValue) == ["devin", "grok-build", "codex"])
+        #expect(!entities.map(\.sessionID).contains("archived-thread"))
     }
 
     @Test("Mobile snapshot decodes Codex work status")
@@ -322,6 +389,7 @@ struct SessionSummaryTimingTests {
         status: String = "active",
         activityMilliseconds: Int64,
         messageMilliseconds: Int64,
+        isArchived: Bool = false,
         goal: [String: Any]? = nil
     ) throws -> SessionSummary {
         let payload = sessionPayload(
@@ -330,6 +398,7 @@ struct SessionSummaryTimingTests {
             status: status,
             activityMilliseconds: activityMilliseconds,
             messageMilliseconds: messageMilliseconds,
+            isArchived: isArchived,
             goal: goal
         )
         let data = try JSONSerialization.data(withJSONObject: payload)
@@ -342,6 +411,7 @@ struct SessionSummaryTimingTests {
         status: String = "active",
         activityMilliseconds: Int64,
         messageMilliseconds: Int64,
+        isArchived: Bool = false,
         goal: [String: Any]? = nil
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -355,6 +425,7 @@ struct SessionSummaryTimingTests {
             "lastActivityAtMs": activityMilliseconds,
             "lastMessageAt": "2026-06-16T08:01:00Z",
             "lastMessageAtMs": messageMilliseconds,
+            "isArchived": isArchived,
             "metadata": [
                 "kind": "project",
                 "source": "vscode",
@@ -380,6 +451,107 @@ struct SessionSummaryTimingTests {
 
         let expectedTimeInterval = TimeInterval(milliseconds) / Constants.millisecondsPerSecond
         return abs(date.timeIntervalSince1970 - expectedTimeInterval) < Constants.dateToleranceSeconds
+    }
+}
+
+private enum SnapshotOnlyCompanionServiceError: Error {
+    case unimplemented
+}
+
+private struct SnapshotOnlyCompanionService: CompanionService {
+    let snapshot: MobileSnapshot
+
+    func prepareRealtimeConnection() async {}
+
+    func loadServerHealth() async throws -> CompanionServerHealth {
+        CompanionServerHealth(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: ["http://127.0.0.1:8765"],
+            serverTime: "2026-06-16T08:02:00Z"
+        )
+    }
+
+    func loadSnapshot() async throws -> MobileSnapshot {
+        snapshot
+    }
+
+    func loadSessionDetail(
+        id _: String,
+        surface _: CompanionAssistantSurface?
+    ) async throws -> SessionDetail {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func setSessionMode(
+        id _: String,
+        preset _: SessionMode?,
+        clientMutationID _: String
+    ) async throws -> CompanionSessionModeResult {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func deleteSession(id _: String) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func sendSessionPrompt(
+        id _: String,
+        prompt _: String,
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID _: String
+    ) async throws -> CompanionPromptSendResult {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func submitNotificationReply(
+        notificationID _: String,
+        sessionID _: String,
+        prompt _: String,
+        assistantSurface _: CompanionAssistantSurface?,
+        clientMutationID _: String
+    ) async throws -> LooperRealtimeNotificationReplyResponse {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func muteSession(id _: String) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func saveDefaultPrompt(_: String) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func saveSiriDefaultSession(
+        id _: String?,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func saveSiriCurrentSession(
+        id _: String?,
+        assistantSurface _: CompanionAssistantSurface?
+    ) async throws -> MobileSnapshot {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func registerPushDevice(
+        _: RemotePushRegistrationRequest
+    ) async throws -> RemotePushRegistrationResponse {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
+    func sendTestPush(installationID _: String) async throws -> RemotePushTestResponse {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 }
 

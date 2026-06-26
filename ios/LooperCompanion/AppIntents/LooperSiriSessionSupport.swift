@@ -2,6 +2,7 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 import LooperCompanionCore
+import LooperClientCore
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -465,19 +466,27 @@ struct LooperSiriSessionClient: Sendable {
     private func sessionEntities(for surface: CompanionAssistantSurface? = nil) async throws -> [LooperSessionEntity] {
         let snapshot = try await service.loadSnapshot()
         let surfaces = surface.map { [$0] } ?? CompanionAssistantSurface.allCases
-        var entitiesByID: [String: LooperSessionEntity] = [:]
+        let projection = LooperSiriSessionEntityReducerCodec.projectSessionEntities(
+            snapshot,
+            surfaces: surfaces
+        )
 
-        for surface in surfaces {
-            for session in snapshot.sessions(for: surface) where !session.isArchived {
-                let entity = LooperSessionEntity(
-                    session: session,
-                    assistantSurface: surface
-                )
-                entitiesByID[entity.id] = entity
+        return projection.entries.map { entry in
+            guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
+                fatalError("Siri session entity reducer returned unknown surface: \(entry.surface)")
             }
-        }
 
-        return entitiesByID.values.sorted(by: isNewerOrLowerReference)
+            let sessions = snapshot.sessions(for: surface)
+            let sessionIndex = Int(entry.sessionIndex)
+            guard sessions.indices.contains(sessionIndex) else {
+                fatalError("Siri session entity reducer returned invalid index \(sessionIndex) for \(surface.rawValue)")
+            }
+
+            return LooperSessionEntity(
+                session: sessions[sessionIndex],
+                assistantSurface: surface
+            )
+        }
     }
 
     private func entityForSession(
@@ -507,16 +516,34 @@ struct LooperSiriSessionClient: Sendable {
         )
     }
 
-    private func isNewerOrLowerReference(
-        left: LooperSessionEntity,
-        right: LooperSessionEntity
-    ) -> Bool {
-        LooperSessionFreshness.isNewerActivityOrLowerReference(
-            leftLastActivityAt: left.lastActive,
-            leftRef: left.ref,
-            rightLastActivityAt: right.lastActive,
-            rightRef: right.ref
-        )
+}
+
+private enum LooperSiriSessionEntityReducerCodec {
+    static func projectSessionEntities(
+        _ snapshot: MobileSnapshot,
+        surfaces: [CompanionAssistantSurface]
+    ) -> ClientSiriSessionEntityProjection {
+        do {
+            return try reduceSiriSessionEntities(
+                snapshotJson: encode(snapshot),
+                assistantSurfaceOrder: surfaces.map(\.rawValue)
+            )
+        } catch {
+            fatalError("Siri session entity reducer failed: \(error)")
+        }
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) -> String {
+        do {
+            let data = try JSONEncoder().encode(value)
+            guard let json = String(data: data, encoding: .utf8) else {
+                fatalError("Siri session entity payload was not valid UTF-8")
+            }
+
+            return json
+        } catch {
+            fatalError("Siri session entity payload encoding failed: \(error)")
+        }
     }
 }
 

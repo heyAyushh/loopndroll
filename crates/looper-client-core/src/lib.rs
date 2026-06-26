@@ -32,8 +32,9 @@ pub use mutation_queue::{
 pub use snapshot_reducer::{
     ClientAssistantSurfaceSelection, ClientDetailCacheProjection, ClientDetailModeProjection,
     ClientOptimisticModeProjection, ClientSessionIndexEntry, ClientSessionIndexProjection,
-    ClientSessionSectionsProjection, ClientSnapshotProjection, reduce_assistant_surface_selection,
-    reduce_mobile_snapshot_detail_cache, reduce_mobile_snapshot_optimistic_mode,
-    reduce_mobile_snapshot_projection, reduce_session_detail_optimistic_mode, reduce_session_index,
-    reduce_session_sections,
+    ClientSessionSectionsProjection, ClientSiriSessionEntityProjection, ClientSnapshotProjection,
+    reduce_assistant_surface_selection, reduce_mobile_snapshot_detail_cache,
+    reduce_mobile_snapshot_optimistic_mode, reduce_mobile_snapshot_projection,
+    reduce_session_detail_optimistic_mode, reduce_session_index, reduce_session_sections,
+    reduce_siri_session_entities,
 };
