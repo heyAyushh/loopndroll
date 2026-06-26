@@ -142,3 +142,9 @@ pub struct ClientStateSnapshot {
     pub outbox_depth: u32,
     pub last_error: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientStateMiniDeltaApplyResult {
+    pub snapshot: ClientStateSnapshot,
+    pub did_change: bool,
+}

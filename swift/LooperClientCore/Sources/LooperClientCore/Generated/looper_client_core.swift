@@ -735,6 +735,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func applyStateMiniDelta(delta: ClientStateMiniDelta) throws  -> ClientStateSnapshot
 
+    func applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta) throws  -> ClientStateMiniDeltaApplyResult
+
     func connect(endpoints: [ClientEndpoint]) throws  -> ClientStateSnapshot
 
     func disconnect() throws  -> ClientStateSnapshot
@@ -848,6 +850,15 @@ open func applyStateDelta(delta: ClientStateDelta)throws  -> ClientStateSnapshot
 open func applyStateMiniDelta(delta: ClientStateMiniDelta)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_apply_state_mini_delta(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClientStateMiniDelta_lower(delta),$0
+    )
+})
+}
+
+open func applyStateMiniDeltaWithResult(delta: ClientStateMiniDelta)throws  -> ClientStateMiniDeltaApplyResult  {
+    return try  FfiConverterTypeClientStateMiniDeltaApplyResult_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_apply_state_mini_delta_with_result(
             self.uniffiCloneHandle(),
         FfiConverterTypeClientStateMiniDelta_lower(delta),$0
     )
@@ -2316,6 +2327,60 @@ public func FfiConverterTypeClientStateMiniDelta_lower(_ value: ClientStateMiniD
 }
 
 
+public struct ClientStateMiniDeltaApplyResult: Equatable, Hashable {
+    public var snapshot: ClientStateSnapshot
+    public var didChange: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(snapshot: ClientStateSnapshot, didChange: Bool) {
+        self.snapshot = snapshot
+        self.didChange = didChange
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMiniDeltaApplyResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMiniDeltaApplyResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMiniDeltaApplyResult {
+        return
+            try ClientStateMiniDeltaApplyResult(
+                snapshot: FfiConverterTypeClientStateSnapshot.read(from: &buf),
+                didChange: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientStateMiniDeltaApplyResult, into buf: inout [UInt8]) {
+        FfiConverterTypeClientStateSnapshot.write(value.snapshot, into: &buf)
+        FfiConverterBool.write(value.didChange, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniDeltaApplyResult_lift(_ buf: RustBuffer) throws -> ClientStateMiniDeltaApplyResult {
+    return try FfiConverterTypeClientStateMiniDeltaApplyResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniDeltaApplyResult_lower(_ value: ClientStateMiniDeltaApplyResult) -> RustBuffer {
+    return FfiConverterTypeClientStateMiniDeltaApplyResult.lower(value)
+}
+
+
 public struct ClientStateMiniSnapshot: Equatable, Hashable {
     public var latestSeq: Int64
     public var sessions: [ClientStateMini]
@@ -3261,6 +3326,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_mini_delta() != 38866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_apply_state_mini_delta_with_result() != 32851) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_connect() != 52119) {

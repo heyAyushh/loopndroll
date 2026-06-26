@@ -4,8 +4,8 @@ use crate::error::ClientCoreError;
 use crate::model::{
     ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientEndpoint,
     ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
-    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
-    OutboundSessionFrameKind,
+    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
+    OutboundSessionFrame, OutboundSessionFrameKind,
 };
 use crate::transport::validate_endpoint_url;
 
@@ -218,35 +218,20 @@ impl LooperClientCore {
         &self,
         delta: ClientStateMiniDelta,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        require_valid_sequence(delta.seq)?;
-        require_valid_sequence(delta.latest_seq)?;
-        if delta.has_session {
-            validate_state_mini(&delta.session)?;
-        }
-        validate_state_minis(&delta.sessions)?;
+        Ok(self.apply_state_mini_delta_with_result(delta)?.snapshot)
+    }
 
+    pub fn apply_state_mini_delta_with_result(
+        &self,
+        delta: ClientStateMiniDelta,
+    ) -> Result<ClientStateMiniDeltaApplyResult, ClientCoreError> {
+        validate_state_mini_delta(&delta)?;
         let mut state = self.lock_state()?;
-        if delta.seq <= state.latest_seq {
-            return Ok(state.snapshot());
-        }
-
-        if delta.has_session {
-            state.upsert_state_mini(delta.session);
-        } else if !delta.sessions.is_empty() {
-            state.state_minis = normalize_state_minis(delta.sessions);
-        }
-
-        state.latest_seq = state.latest_seq.max(delta.seq).max(delta.latest_seq);
-        if !delta.revision.is_empty() {
-            state.revision = delta.revision;
-        } else if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
-            state.revision = revision;
-        }
-        if !delta.server_time.is_empty() {
-            state.server_time = delta.server_time;
-        }
-        state.last_error.clear();
-        Ok(state.snapshot())
+        let did_change = state.apply_state_mini_delta(delta);
+        Ok(ClientStateMiniDeltaApplyResult {
+            snapshot: state.snapshot(),
+            did_change,
+        })
     }
 
     pub fn snapshot(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -346,6 +331,30 @@ impl ClientCoreState {
         }
         sort_state_minis(&mut self.state_minis);
     }
+
+    fn apply_state_mini_delta(&mut self, delta: ClientStateMiniDelta) -> bool {
+        if delta.seq <= self.latest_seq {
+            return false;
+        }
+
+        if delta.has_session {
+            self.upsert_state_mini(delta.session);
+        } else if !delta.sessions.is_empty() {
+            self.state_minis = normalize_state_minis(delta.sessions);
+        }
+
+        self.latest_seq = self.latest_seq.max(delta.seq).max(delta.latest_seq);
+        if !delta.revision.is_empty() {
+            self.revision = delta.revision;
+        } else if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
+            self.revision = revision;
+        }
+        if !delta.server_time.is_empty() {
+            self.server_time = delta.server_time;
+        }
+        self.last_error.clear();
+        true
+    }
 }
 
 fn select_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, ClientCoreError> {
@@ -387,6 +396,15 @@ fn validate_state_minis(sessions: &[ClientStateMini]) -> Result<(), ClientCoreEr
         validate_state_mini(session)?;
     }
     Ok(())
+}
+
+fn validate_state_mini_delta(delta: &ClientStateMiniDelta) -> Result<(), ClientCoreError> {
+    require_valid_sequence(delta.seq)?;
+    require_valid_sequence(delta.latest_seq)?;
+    if delta.has_session {
+        validate_state_mini(&delta.session)?;
+    }
+    validate_state_minis(&delta.sessions)
 }
 
 fn validate_state_mini(session: &ClientStateMini) -> Result<(), ClientCoreError> {
@@ -731,8 +749,8 @@ mod tests {
         })
         .expect("seed minis");
 
-        let snapshot = core
-            .apply_state_mini_delta(ClientStateMiniDelta {
+        let result = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
                 seq: 3,
                 latest_seq: 3,
                 entity_id: "thread-1".to_owned(),
@@ -745,12 +763,14 @@ mod tests {
             })
             .expect("apply mini delta");
 
+        assert!(result.did_change);
+        let snapshot = result.snapshot;
         assert_eq!(snapshot.latest_seq, 3);
         assert_eq!(snapshot.state_minis.len(), 1);
         assert_eq!(snapshot.state_minis[0].payload_json, r#"{"title":"new"}"#);
 
         let stale = core
-            .apply_state_mini_delta(ClientStateMiniDelta {
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
                 seq: 2,
                 latest_seq: 2,
                 entity_id: "thread-1".to_owned(),
@@ -763,9 +783,13 @@ mod tests {
             })
             .expect("ignore stale mini delta");
 
-        assert_eq!(stale.latest_seq, 3);
-        assert_eq!(stale.revision, "rev-3");
-        assert_eq!(stale.state_minis[0].payload_json, r#"{"title":"new"}"#);
+        assert!(!stale.did_change);
+        assert_eq!(stale.snapshot.latest_seq, 3);
+        assert_eq!(stale.snapshot.revision, "rev-3");
+        assert_eq!(
+            stale.snapshot.state_minis[0].payload_json,
+            r#"{"title":"new"}"#
+        );
     }
 
     #[test]

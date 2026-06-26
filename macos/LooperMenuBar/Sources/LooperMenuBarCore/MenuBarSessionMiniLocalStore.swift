@@ -472,12 +472,13 @@ extension MenuBarSessionMiniLocalStore: LooperRealtimeStateMiniLocalState {
     public func applyStateMiniDelta(_ delta: LooperRealtimeStateMiniDelta) throws
         -> LooperRealtimeLocalSnapshot
     {
-        let before = try clientCore.snapshot()
-        let coreSnapshot = try clientCore.applyStateMiniDelta(delta: ClientStateMiniDelta(delta))
-        guard coreSnapshot.hasStateMiniChanges(comparedTo: before) else {
-            return localSnapshot(from: coreSnapshot)
+        let result = try clientCore.applyStateMiniDeltaWithResult(
+            delta: ClientStateMiniDelta(delta)
+        )
+        guard result.didChange else {
+            return localSnapshot(from: result.snapshot)
         }
-        return try persistValidated(coreSnapshot)
+        return try persistValidated(result.snapshot)
     }
 }
 
@@ -533,14 +534,6 @@ private extension ClientStateMiniDelta {
             session: session ?? .empty,
             sessions: session == nil ? delta.sessions.map(ClientStateMini.init) : []
         )
-    }
-}
-
-private extension ClientStateSnapshot {
-    func hasStateMiniChanges(comparedTo before: ClientStateSnapshot) -> Bool {
-        latestSeq != before.latestSeq
-            || serverTime != before.serverTime
-            || stateMinis != before.stateMinis
     }
 }
 
