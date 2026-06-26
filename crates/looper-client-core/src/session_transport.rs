@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
 use http_body_util::{BodyExt, Empty};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
@@ -7,16 +7,15 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tokio_stream::{iter, wrappers::ReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request as TonicRequest, metadata::MetadataValue, transport::Endpoint};
 
 use crate::{
-    command_batch::build_command_batch_response,
     error::ClientCoreError,
     model::{
-        ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientCommandMetadata,
-        ClientEndpoint, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
-        OutboundSessionFrame, OutboundSessionFrameKind,
+        ClientCommandAck, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
+        ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, OutboundSessionFrame,
+        OutboundSessionFrameKind,
     },
 };
 
@@ -24,7 +23,6 @@ pub(crate) mod proto {
     tonic::include_proto!("looper.v1");
 }
 
-const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
@@ -60,66 +58,6 @@ struct StateMiniPayload {
     session_id: String,
     #[serde(rename = "assistantSurface", default)]
     assistant_surface: String,
-}
-
-pub(crate) async fn submit_expected_session_outbox(
-    endpoints: Vec<ClientEndpoint>,
-    bearer_token: String,
-    mobile_session_header: String,
-    frames: Vec<OutboundSessionFrame>,
-) -> Result<ClientCommandBatchResponse, ClientCoreError> {
-    let endpoint = select_transport_endpoint(&endpoints)?;
-    let command_metadata = frames
-        .iter()
-        .map(command_metadata)
-        .collect::<Result<Vec<_>, _>>()?;
-    let expected_mutation_ids = command_metadata
-        .iter()
-        .map(|command| command.client_mutation_id.as_str())
-        .collect::<HashSet<_>>();
-
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
-        .await
-        .map_err(|_| ClientCoreError::SessionCommandTransportFailed)?;
-    let client_frames = frames
-        .into_iter()
-        .map(client_frame)
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut request = TonicRequest::new(iter(client_frames));
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)?;
-
-    let response = client
-        .session(request)
-        .await
-        .map_err(|_| ClientCoreError::SessionCommandTransportFailed)?;
-    let mut stream = response.into_inner();
-    let acks = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
-        let mut acks = Vec::with_capacity(expected_mutation_ids.len());
-        while let Some(frame) = stream
-            .message()
-            .await
-            .map_err(|_| ClientCoreError::SessionCommandTransportFailed)?
-        {
-            let Some(proto::server_frame::Frame::Ack(ack)) = frame.frame else {
-                continue;
-            };
-            if expected_mutation_ids.contains(ack.client_mutation_id.as_str())
-                && !acks.iter().any(|seen: &ClientCommandAck| {
-                    seen.client_mutation_id == ack.client_mutation_id
-                })
-            {
-                acks.push(client_command_ack(ack));
-            }
-            if acks.len() == expected_mutation_ids.len() {
-                return Ok(acks);
-            }
-        }
-        Ok(acks)
-    })
-    .await
-    .map_err(|_| ClientCoreError::SessionCommandAckTimedOut)??;
-
-    build_command_batch_response(command_metadata, acks)
 }
 
 pub(crate) async fn fetch_state_mini_snapshot(
@@ -173,7 +111,9 @@ pub(crate) async fn run_state_mini_stream(
     bearer_token: String,
     mobile_session_header: String,
     after_seq: i64,
+    mut commands: mpsc::Receiver<OutboundSessionFrame>,
     events: mpsc::Sender<StateMiniStreamEvent>,
+    command_acks: mpsc::Sender<ClientCommandAck>,
 ) {
     let mut next_after_seq = after_seq;
     loop {
@@ -186,7 +126,9 @@ pub(crate) async fn run_state_mini_stream(
             &bearer_token,
             &mobile_session_header,
             next_after_seq,
+            &mut commands,
             events.clone(),
+            command_acks.clone(),
         )
         .await
         {
@@ -265,7 +207,9 @@ async fn run_state_mini_stream_session(
     bearer_token: &str,
     mobile_session_header: &str,
     after_seq: i64,
+    commands: &mut mpsc::Receiver<OutboundSessionFrame>,
     events: mpsc::Sender<StateMiniStreamEvent>,
+    command_acks: mpsc::Sender<ClientCommandAck>,
 ) -> Result<i64, StateMiniTransportError> {
     let endpoint = select_transport_endpoint(endpoints).map_err(|error| {
         StateMiniTransportError::Transport {
@@ -279,7 +223,7 @@ async fn run_state_mini_stream_session(
             latest_seq: after_seq,
             error_description: error.to_string(),
         })?;
-    let (request_sender, request_receiver) = mpsc::channel(1);
+    let (request_sender, request_receiver) = mpsc::channel(64);
     request_sender
         .send(resume_client_frame(after_seq))
         .await
@@ -311,51 +255,83 @@ async fn run_state_mini_stream_session(
             }
         }
     })?;
-    let _request_keepalive = request_sender;
     let mut stream = response.into_inner();
     let mut latest_seq = after_seq;
-    while let Some(frame) = stream.message().await.map_err(|status| {
-        if status.code() == tonic::Code::OutOfRange {
-            StateMiniTransportError::RecoveryRequired {
-                latest_seq,
-                error_description: status.message().to_owned(),
-            }
-        } else {
-            StateMiniTransportError::Transport {
-                latest_seq,
-                error_description: status.to_string(),
-            }
-        }
-    })? {
-        match frame.frame {
-            Some(proto::server_frame::Frame::StateDelta(delta)) => {
-                latest_seq = latest_seq.max(delta.seq);
-                events
-                    .send(StateMiniStreamEvent::Delta(client_state_mini_delta(delta)?))
+    loop {
+        tokio::select! {
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    return Ok(latest_seq);
+                };
+                let frame = client_frame(command).map_err(|error| StateMiniTransportError::Transport {
+                    latest_seq,
+                    error_description: error.to_string(),
+                })?;
+                request_sender
+                    .send(frame)
                     .await
                     .map_err(|error| StateMiniTransportError::Transport {
                         latest_seq,
                         error_description: error.to_string(),
                     })?;
             }
-            Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
-                latest_seq = latest_seq.max(heartbeat.latest_seq);
-                events
-                    .send(StateMiniStreamEvent::Heartbeat {
-                        latest_seq,
-                        server_time: heartbeat.server_time,
-                    })
-                    .await
-                    .map_err(|error| StateMiniTransportError::Transport {
-                        latest_seq,
-                        error_description: error.to_string(),
-                    })?;
+            frame = stream.message() => {
+                let Some(frame) = frame.map_err(|status| {
+                    if status.code() == tonic::Code::OutOfRange {
+                        StateMiniTransportError::RecoveryRequired {
+                            latest_seq,
+                            error_description: status.message().to_owned(),
+                        }
+                    } else {
+                        StateMiniTransportError::Transport {
+                            latest_seq,
+                            error_description: status.to_string(),
+                        }
+                    }
+                })? else {
+                    return Ok(latest_seq);
+                };
+
+                match frame.frame {
+                    Some(proto::server_frame::Frame::Ack(ack)) => {
+                        let ack = client_command_ack(ack);
+                        latest_seq = latest_seq.max(ack.ack_seq);
+                        command_acks
+                            .send(ack)
+                            .await
+                            .map_err(|error| StateMiniTransportError::Transport {
+                                latest_seq,
+                                error_description: error.to_string(),
+                            })?;
+                    }
+                    Some(proto::server_frame::Frame::StateDelta(delta)) => {
+                        latest_seq = latest_seq.max(delta.seq);
+                        events
+                            .send(StateMiniStreamEvent::Delta(client_state_mini_delta(delta)?))
+                            .await
+                            .map_err(|error| StateMiniTransportError::Transport {
+                                latest_seq,
+                                error_description: error.to_string(),
+                            })?;
+                    }
+                    Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
+                        latest_seq = latest_seq.max(heartbeat.latest_seq);
+                        events
+                            .send(StateMiniStreamEvent::Heartbeat {
+                                latest_seq,
+                                server_time: heartbeat.server_time,
+                            })
+                            .await
+                            .map_err(|error| StateMiniTransportError::Transport {
+                                latest_seq,
+                                error_description: error.to_string(),
+                            })?;
+                    }
+                    _ => {}
+                }
             }
-            _ => {}
         }
     }
-
-    Ok(latest_seq)
 }
 
 fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
@@ -463,7 +439,7 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
     }
 }
 
-fn command_metadata(
+pub(crate) fn command_metadata(
     frame: &OutboundSessionFrame,
 ) -> Result<ClientCommandMetadata, ClientCoreError> {
     if frame.frame_kind != OutboundSessionFrameKind::Command {

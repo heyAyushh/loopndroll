@@ -7,7 +7,7 @@ use tokio::{
 
 use serde_json::Value;
 
-use crate::command_batch::reduce_expected_command_ack;
+use crate::command_batch::{build_command_batch_response, reduce_expected_command_ack};
 use crate::error::ClientCoreError;
 use crate::local_store::LooperClientCoreLocalStore;
 #[cfg(test)]
@@ -21,9 +21,7 @@ use crate::model::{
 };
 #[cfg(test)]
 use crate::session_transport::fetch_state_mini_snapshot;
-use crate::session_transport::{
-    StateMiniStreamEvent, run_state_mini_stream, submit_expected_session_outbox,
-};
+use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
 use crate::state_mini::{
     latest_state_mini_revision, normalize_state_minis, require_valid_sequence, same_state_mini_key,
     sort_state_minis, validate_state_mini_delta, validate_state_minis,
@@ -32,6 +30,7 @@ use crate::transport::validate_endpoint_url;
 
 const INITIAL_SEQUENCE: i64 = 0;
 const EMPTY_SEQUENCE: i64 = 0;
+const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Default)]
 struct ClientCoreState {
@@ -54,20 +53,12 @@ struct ClientModeRollback {
     sessions: Vec<ClientStateMini>,
 }
 
-#[derive(Clone, Debug, Default)]
-struct ClientCoreRuntimeConfig {
-    endpoints: Vec<ClientEndpoint>,
-    bearer_token: String,
-    mobile_session_header: String,
-}
-
 #[derive(Debug)]
 pub(crate) struct LooperClientCore {
     state: Mutex<ClientCoreState>,
     stream: Mutex<Option<ClientCoreStream>>,
     local_updates: Mutex<Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>>,
     local_update_sender: mpsc::UnboundedSender<ClientStateMiniStreamUpdate>,
-    runtime_config: Mutex<Option<ClientCoreRuntimeConfig>>,
     command_flush: tokio::sync::Mutex<()>,
     notification_reply_drain: tokio::sync::Mutex<()>,
     runtime: tokio::runtime::Runtime,
@@ -77,6 +68,8 @@ pub(crate) struct LooperClientCore {
 struct ClientCoreStream {
     task: tokio::task::JoinHandle<()>,
     receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
+    command_sender: mpsc::Sender<OutboundSessionFrame>,
+    command_ack_receiver: Option<mpsc::Receiver<ClientCommandAck>>,
 }
 
 impl LooperClientCore {
@@ -90,7 +83,6 @@ impl LooperClientCore {
             stream: Mutex::new(None),
             local_updates: Mutex::new(Some(local_updates)),
             local_update_sender,
-            runtime_config: Mutex::new(None),
             command_flush: tokio::sync::Mutex::new(()),
             notification_reply_drain: tokio::sync::Mutex::new(()),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
@@ -100,18 +92,9 @@ impl LooperClientCore {
     pub(crate) fn configure_session_runtime(
         &self,
         endpoints: Vec<ClientEndpoint>,
-        bearer_token: String,
-        mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let endpoint = select_endpoint(&endpoints)?;
         validate_endpoint_url(&endpoint.url)?;
-
-        let config = ClientCoreRuntimeConfig {
-            endpoints,
-            bearer_token,
-            mobile_session_header,
-        };
-        *self.lock_runtime_config()? = Some(config);
 
         let mut state = self.lock_state()?;
         state.phase = ConnectionPhase::Ready;
@@ -126,17 +109,12 @@ impl LooperClientCore {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        self.configure_session_runtime(
-            endpoints.clone(),
-            bearer_token.clone(),
-            mobile_session_header.clone(),
-        )?;
+        self.configure_session_runtime(endpoints.clone())?;
         self.start_state_mini_stream(endpoints, bearer_token, mobile_session_header)
     }
 
     pub(crate) fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
         self.replace_stream_none()?;
-        *self.lock_runtime_config()? = None;
         self.disconnect()
     }
 
@@ -358,21 +336,26 @@ impl LooperClientCore {
 
     async fn submit_expected_outbox(
         &self,
-        endpoints: Vec<ClientEndpoint>,
-        bearer_token: String,
-        mobile_session_header: String,
         expected_client_mutation_ids: Vec<String>,
     ) -> Result<ClientCommandBatchResponse, ClientCoreError> {
         let frames = {
             let state = self.lock_state()?;
             state.expected_outbox(&expected_client_mutation_ids)?
         };
-        let response =
-            submit_expected_session_outbox(endpoints, bearer_token, mobile_session_header, frames)
-                .await?;
+        let command_metadata = frames
+            .iter()
+            .map(command_metadata)
+            .collect::<Result<Vec<_>, _>>()?;
+        let expected_ack_count = expected_client_mutation_ids.len();
+        let expected_client_mutation_ids_for_drain = expected_client_mutation_ids.clone();
+        self.send_session_commands(frames).await?;
+        let acks = self
+            .recv_command_acks(expected_client_mutation_ids, expected_ack_count)
+            .await?;
+        let response = build_command_batch_response(command_metadata, acks)?;
 
         let mut state = self.lock_state()?;
-        state.drain_expected_outbox(&expected_client_mutation_ids)?;
+        state.drain_expected_outbox(&expected_client_mutation_ids_for_drain)?;
         for envelope in &response.command_acks {
             state.reconcile_ack(envelope.ack.clone());
         }
@@ -383,14 +366,8 @@ impl LooperClientCore {
         &self,
         expected_client_mutation_ids: Vec<String>,
     ) -> Result<ClientCommandBatchResponse, ClientCoreError> {
-        let config = self.runtime_config()?;
-        self.submit_expected_outbox(
-            config.endpoints,
-            config.bearer_token,
-            config.mobile_session_header,
-            expected_client_mutation_ids,
-        )
-        .await
+        self.submit_expected_outbox(expected_client_mutation_ids)
+            .await
     }
 }
 
@@ -586,16 +563,22 @@ impl LooperClientCore {
             state.latest_seq
         };
         let (sender, receiver) = mpsc::channel(64);
+        let (command_sender, command_receiver) = mpsc::channel(64);
+        let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
         let task = self.runtime.spawn(run_state_mini_stream(
             endpoints,
             bearer_token,
             mobile_session_header,
             after_seq,
+            command_receiver,
             sender,
+            command_ack_sender,
         ));
         self.replace_stream(ClientCoreStream {
             task,
             receiver: Some(receiver),
+            command_sender,
+            command_ack_receiver: Some(command_ack_receiver),
         })?;
         self.snapshot()
     }
@@ -673,6 +656,84 @@ impl LooperClientCore {
             .map_err(|_| ClientCoreError::StateLockPoisoned)
     }
 
+    async fn send_session_commands(
+        &self,
+        frames: Vec<OutboundSessionFrame>,
+    ) -> Result<(), ClientCoreError> {
+        if frames.is_empty() {
+            return Ok(());
+        }
+        let sender = self.command_sender()?;
+        for frame in frames {
+            sender
+                .send(frame)
+                .await
+                .map_err(|_| ClientCoreError::SessionCommandTransportFailed)?;
+        }
+        Ok(())
+    }
+
+    fn command_sender(&self) -> Result<mpsc::Sender<OutboundSessionFrame>, ClientCoreError> {
+        self.lock_stream()?
+            .as_ref()
+            .map(|stream| stream.command_sender.clone())
+            .ok_or(ClientCoreError::NoEndpoint)
+    }
+
+    async fn recv_command_acks(
+        &self,
+        expected_client_mutation_ids: Vec<String>,
+        expected_ack_count: usize,
+    ) -> Result<Vec<ClientCommandAck>, ClientCoreError> {
+        if expected_ack_count == 0 {
+            return Ok(Vec::new());
+        }
+        let expected_client_mutation_ids =
+            std::collections::HashSet::<String>::from_iter(expected_client_mutation_ids);
+        let mut receiver = self.take_command_ack_receiver()?;
+        let result = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
+            let mut acks = Vec::with_capacity(expected_ack_count);
+            while acks.len() < expected_ack_count {
+                let ack = receiver
+                    .recv()
+                    .await
+                    .ok_or(ClientCoreError::SessionCommandTransportFailed)?;
+                if expected_client_mutation_ids.contains(&ack.client_mutation_id)
+                    && !acks.iter().any(|seen: &ClientCommandAck| {
+                        seen.client_mutation_id == ack.client_mutation_id
+                    })
+                {
+                    acks.push(ack);
+                }
+            }
+            Ok::<_, ClientCoreError>(acks)
+        })
+        .await
+        .map_err(|_| ClientCoreError::SessionCommandAckTimedOut)
+        .and_then(|result| result);
+        self.restore_command_ack_receiver(receiver)?;
+        result
+    }
+
+    fn take_command_ack_receiver(
+        &self,
+    ) -> Result<mpsc::Receiver<ClientCommandAck>, ClientCoreError> {
+        self.lock_stream()?
+            .as_mut()
+            .and_then(|stream| stream.command_ack_receiver.take())
+            .ok_or(ClientCoreError::NoEndpoint)
+    }
+
+    fn restore_command_ack_receiver(
+        &self,
+        receiver: mpsc::Receiver<ClientCommandAck>,
+    ) -> Result<(), ClientCoreError> {
+        let mut stream = self.lock_stream()?;
+        let stream = stream.as_mut().ok_or(ClientCoreError::NoEndpoint)?;
+        stream.command_ack_receiver = Some(receiver);
+        Ok(())
+    }
+
     fn lock_local_updates(
         &self,
     ) -> Result<
@@ -723,20 +784,6 @@ impl LooperClientCore {
             error_description: String::new(),
             snapshot,
         });
-    }
-
-    fn lock_runtime_config(
-        &self,
-    ) -> Result<MutexGuard<'_, Option<ClientCoreRuntimeConfig>>, ClientCoreError> {
-        self.runtime_config
-            .lock()
-            .map_err(|_| ClientCoreError::StateLockPoisoned)
-    }
-
-    fn runtime_config(&self) -> Result<ClientCoreRuntimeConfig, ClientCoreError> {
-        self.lock_runtime_config()?
-            .clone()
-            .ok_or(ClientCoreError::NoEndpoint)
     }
 
     async fn submit_next_notification_reply_durable_without_drain_lock(
@@ -970,9 +1017,13 @@ impl ClientCoreState {
             .iter()
             .find(|mutation| mutation.client_mutation_id == ack.client_mutation_id)
             .map(|mutation| mutation.command_kind);
+        let advances_sequence = ack.ack_seq >= self.latest_seq;
         self.latest_seq = self.latest_seq.max(ack.ack_seq);
-        if !ack.revision.is_empty() {
+        if advances_sequence && !ack.revision.is_empty() {
             self.revision = ack.revision;
+        }
+        if advances_sequence {
+            self.server_time = ack.server_time.clone();
         }
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
@@ -1156,11 +1207,48 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
 mod tests {
     use super::*;
     use crate::model::ClientCommandAckEnvelope;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
     const ENDPOINT_LAST_GOOD: &str = "http://100.64.0.2:8765";
     const SERVER_TIME: &str = "2026-06-25T00:00:02Z";
+
+    fn install_test_session_stream(
+        core: &Arc<LooperClientCore>,
+    ) -> (
+        mpsc::Receiver<OutboundSessionFrame>,
+        mpsc::Sender<ClientCommandAck>,
+    ) {
+        let (events_sender, events_receiver) = mpsc::channel(1);
+        let (commands_sender, commands_receiver) = mpsc::channel(2);
+        let (acks_sender, acks_receiver) = mpsc::channel(2);
+        let task = core.runtime.spawn(async {
+            std::future::pending::<()>().await;
+        });
+        *core.lock_stream().expect("stream lock") = Some(ClientCoreStream {
+            task,
+            receiver: Some(events_receiver),
+            command_sender: commands_sender,
+            command_ack_receiver: Some(acks_receiver),
+        });
+        drop(events_sender);
+        (commands_receiver, acks_sender)
+    }
+
+    fn accepted_ack(client_mutation_id: &str, ack_seq: i64, revision: &str) -> ClientCommandAck {
+        ClientCommandAck {
+            accepted: true,
+            client_mutation_id: client_mutation_id.to_owned(),
+            ack_seq,
+            entity_id: "thread-1".to_owned(),
+            revision: revision.to_owned(),
+            server_time: format!("2026-06-25T00:00:{ack_seq:02}Z"),
+            idempotent_replay: false,
+            error_code: String::new(),
+            reject_reason: String::new(),
+            current_state: String::new(),
+        }
+    }
 
     #[test]
     fn connect_prefers_last_good_endpoint() {
@@ -1362,12 +1450,7 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let error = runtime
-            .block_on(core.submit_expected_outbox(
-                Vec::new(),
-                String::new(),
-                String::new(),
-                vec!["cmid-prompt".to_owned()],
-            ))
+            .block_on(core.submit_expected_outbox(vec!["cmid-prompt".to_owned()]))
             .expect_err("missing endpoint rejects");
 
         assert_eq!(error, ClientCoreError::NoEndpoint);
@@ -1376,6 +1459,105 @@ mod tests {
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
         );
+    }
+
+    #[test]
+    fn submit_expected_outbox_uses_existing_session_stream() {
+        let core = LooperClientCore::new();
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                let frame = commands_receiver.recv().await.expect("command frame");
+                assert_eq!(frame.client_mutation_id, "cmid-prompt");
+                assert_eq!(frame.command_kind, ClientCommandKind::SendSessionPrompt);
+                acks_sender
+                    .send(accepted_ack("cmid-prompt", 42, "rev-42"))
+                    .await
+                    .expect("send ack");
+            });
+
+            let response = core
+                .submit_expected_outbox(vec!["cmid-prompt".to_owned()])
+                .await
+                .expect("submit over existing stream");
+            ack_task.await.expect("ack task");
+            assert!(response.accepted);
+        });
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 0);
+        assert!(snapshot.pending_mutations.is_empty());
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
+    }
+
+    #[test]
+    fn submit_expected_outbox_drains_batch_when_acks_arrive_out_of_order() {
+        let core = LooperClientCore::new();
+        core.set_mode(
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("queue mode");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                let mode_frame = commands_receiver.recv().await.expect("mode frame");
+                let prompt_frame = commands_receiver.recv().await.expect("prompt frame");
+                assert_eq!(mode_frame.client_mutation_id, "cmid-mode");
+                assert_eq!(mode_frame.command_kind, ClientCommandKind::SetSessionMode);
+                assert_eq!(prompt_frame.client_mutation_id, "cmid-prompt");
+                assert_eq!(
+                    prompt_frame.command_kind,
+                    ClientCommandKind::SendSessionPrompt
+                );
+
+                acks_sender
+                    .send(accepted_ack("cmid-prompt", 43, "rev-43"))
+                    .await
+                    .expect("send prompt ack");
+                acks_sender
+                    .send(accepted_ack("cmid-mode", 42, "rev-42"))
+                    .await
+                    .expect("send mode ack");
+            });
+
+            let response = core
+                .submit_expected_outbox(vec!["cmid-mode".to_owned(), "cmid-prompt".to_owned()])
+                .await
+                .expect("submit over existing stream");
+            ack_task.await.expect("ack task");
+            assert!(response.accepted);
+            assert_eq!(response.command_acks.len(), 2);
+        });
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 0);
+        assert!(snapshot.pending_mutations.is_empty());
+        assert_eq!(snapshot.latest_seq, 43);
+        assert_eq!(snapshot.revision, "rev-43");
+        assert_eq!(snapshot.server_time, "2026-06-25T00:00:43Z");
     }
 
     #[test]
@@ -1414,20 +1596,16 @@ mod tests {
         let core = LooperClientCore::new();
 
         let snapshot = core
-            .configure_session_runtime(
-                vec![
-                    ClientEndpoint {
-                        url: ENDPOINT_PRIMARY.to_owned(),
-                        last_good: false,
-                    },
-                    ClientEndpoint {
-                        url: ENDPOINT_LAST_GOOD.to_owned(),
-                        last_good: true,
-                    },
-                ],
-                "token".to_owned(),
-                "mobile-session".to_owned(),
-            )
+            .configure_session_runtime(vec![
+                ClientEndpoint {
+                    url: ENDPOINT_PRIMARY.to_owned(),
+                    last_good: false,
+                },
+                ClientEndpoint {
+                    url: ENDPOINT_LAST_GOOD.to_owned(),
+                    last_good: true,
+                },
+            ])
             .expect("configure runtime");
 
         assert_eq!(snapshot.phase, ConnectionPhase::Ready);
