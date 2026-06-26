@@ -203,6 +203,15 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         )
     }
 
+    func recoverClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws -> LooperRealtimeLocalSnapshot {
+        let snapshot = try await transport.recoverClientCoreStateMiniSnapshot(
+            clientCore: clientCore
+        )
+        return try replaceStateMinis(with: snapshot)
+    }
+
     func stopClientCoreStateMiniStream(
         using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
     ) {
@@ -314,6 +323,13 @@ extension CompanionSessionMiniLocalStore {
             snapshot: ClientStateMiniSnapshot(snapshot)
         )
         return try persistValidated(coreSnapshot)
+    }
+
+    @discardableResult
+    func replaceStateMinis(with snapshot: ClientStateSnapshot) throws
+        -> LooperRealtimeLocalSnapshot
+    {
+        try persistValidated(snapshot)
     }
 
     @discardableResult

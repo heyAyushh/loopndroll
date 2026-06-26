@@ -745,6 +745,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func nextStateMiniStreamUpdate() async throws  -> ClientStateMiniStreamUpdate
 
+    func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) async throws  -> ClientStateSnapshot
+
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
 
     func resumeAfter(afterSeq: Int64) throws  -> ClientStateSnapshot
@@ -913,6 +915,23 @@ open func nextStateMiniStreamUpdate()async throws  -> ClientStateMiniStreamUpdat
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)async throws  -> ClientStateSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_recover_state_mini_snapshot(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeClientEndpoint.lower(endpoints),FfiConverterString.lower(bearerToken),FfiConverterString.lower(mobileSessionHeader)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientStateSnapshot_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -3147,6 +3166,8 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case SessionCommandAckTimedOut
     case RealtimeConnectionWarmupFailed
     case RealtimeConnectionWarmupTimedOut
+    case StateMiniSnapshotTransportFailed
+    case StateMiniSnapshotTimedOut
     case StateMiniStreamNotRunning
     case StateMiniStreamTransportFailed
     case StateMiniStreamRecoveryRequired
@@ -3199,10 +3220,12 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 17: return .SessionCommandAckTimedOut
         case 18: return .RealtimeConnectionWarmupFailed
         case 19: return .RealtimeConnectionWarmupTimedOut
-        case 20: return .StateMiniStreamNotRunning
-        case 21: return .StateMiniStreamTransportFailed
-        case 22: return .StateMiniStreamRecoveryRequired
-        case 23: return .StateLockPoisoned
+        case 20: return .StateMiniSnapshotTransportFailed
+        case 21: return .StateMiniSnapshotTimedOut
+        case 22: return .StateMiniStreamNotRunning
+        case 23: return .StateMiniStreamTransportFailed
+        case 24: return .StateMiniStreamRecoveryRequired
+        case 25: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3291,20 +3314,28 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(19))
 
 
-        case .StateMiniStreamNotRunning:
+        case .StateMiniSnapshotTransportFailed:
             writeInt(&buf, Int32(20))
 
 
-        case .StateMiniStreamTransportFailed:
+        case .StateMiniSnapshotTimedOut:
             writeInt(&buf, Int32(21))
 
 
-        case .StateMiniStreamRecoveryRequired:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(22))
 
 
-        case .StateLockPoisoned:
+        case .StateMiniStreamTransportFailed:
             writeInt(&buf, Int32(23))
+
+
+        case .StateMiniStreamRecoveryRequired:
+            writeInt(&buf, Int32(24))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(25))
 
         }
     }
@@ -4053,6 +4084,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_next_state_mini_stream_update() != 34576) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_recover_state_mini_snapshot() != 17190) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_replace_state_minis() != 24521) {

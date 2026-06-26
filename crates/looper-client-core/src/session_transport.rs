@@ -1,17 +1,22 @@
 use std::{collections::HashSet, time::Duration};
 
+use http_body_util::{BodyExt, Empty};
+use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_stream::{iter, wrappers::ReceiverStream};
-use tonic::{Request, metadata::MetadataValue, transport::Endpoint};
+use tonic::{Request as TonicRequest, metadata::MetadataValue, transport::Endpoint};
 
 use crate::{
     command_batch::build_command_batch_response,
     error::ClientCoreError,
     model::{
         ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientCommandMetadata,
-        ClientEndpoint, ClientStateMini, ClientStateMiniDelta, OutboundSessionFrame,
-        OutboundSessionFrameKind,
+        ClientEndpoint, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
+        OutboundSessionFrame, OutboundSessionFrameKind,
     },
 };
 
@@ -21,7 +26,9 @@ pub(crate) mod proto {
 
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const CONNECTION_WARMUP_TIMEOUT: Duration = Duration::from_millis(1_500);
+const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
+const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const AUTHORIZATION_HEADER: &str = "authorization";
 const MOBILE_SESSION_HEADER: &str = "x-looper-mobile-session";
 const BEARER_PREFIX: &str = "Bearer ";
@@ -77,7 +84,7 @@ pub(crate) async fn submit_expected_session_outbox(
         .into_iter()
         .map(client_frame)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut request = Request::new(iter(client_frames));
+    let mut request = TonicRequest::new(iter(client_frames));
     apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)?;
 
     let response = client
@@ -123,7 +130,7 @@ pub(crate) async fn warm_realtime_connection(
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
         .await
         .map_err(|_| ClientCoreError::RealtimeConnectionWarmupFailed)?;
-    let mut request = Request::new(proto::HealthRequest {});
+    let mut request = TonicRequest::new(proto::HealthRequest {});
     apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)?;
     let response = tokio::time::timeout(CONNECTION_WARMUP_TIMEOUT, client.health(request))
         .await
@@ -134,6 +141,52 @@ pub(crate) async fn warm_realtime_connection(
     } else {
         Err(ClientCoreError::RealtimeConnectionWarmupFailed)
     }
+}
+
+pub(crate) async fn fetch_state_mini_snapshot(
+    endpoints: Vec<ClientEndpoint>,
+    bearer_token: String,
+    mobile_session_header: String,
+) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
+    let endpoint = select_client_endpoint(&endpoints)?;
+    let uri = state_mini_snapshot_uri(&endpoint.url)?;
+    let connector = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .enable_http2()
+        .build();
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+    let mut request = HyperRequest::builder().method(Method::GET).uri(uri);
+    if !bearer_token.trim().is_empty() {
+        request = request.header(
+            AUTHORIZATION_HEADER,
+            format!("{BEARER_PREFIX}{bearer_token}"),
+        );
+    }
+    if !mobile_session_header.trim().is_empty() {
+        request = request.header(MOBILE_SESSION_HEADER, mobile_session_header);
+    }
+    let request = request
+        .body(Empty::<Bytes>::new())
+        .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?;
+
+    let response = tokio::time::timeout(STATE_MINI_SNAPSHOT_TIMEOUT, client.request(request))
+        .await
+        .map_err(|_| ClientCoreError::StateMiniSnapshotTimedOut)?
+        .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?;
+    if response.status() != StatusCode::OK {
+        return Err(ClientCoreError::StateMiniSnapshotTransportFailed);
+    }
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?
+        .to_bytes();
+    let body =
+        serde_json::from_slice::<Value>(&body).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    state_mini_snapshot_from_json(body)
 }
 
 pub(crate) async fn run_state_mini_stream(
@@ -233,7 +286,7 @@ async fn run_state_mini_stream_session(
             latest_seq: after_seq,
             error_description: error.to_string(),
         })?;
-    let mut request = Request::new(ReceiverStream::new(request_receiver));
+    let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
     apply_metadata(
         request.metadata_mut(),
         bearer_token.to_owned(),
@@ -305,12 +358,27 @@ async fn run_state_mini_stream_session(
 }
 
 fn select_transport_endpoint(endpoints: &[ClientEndpoint]) -> Result<Endpoint, ClientCoreError> {
-    let endpoint = endpoints
+    let endpoint = select_client_endpoint(endpoints)?;
+    Endpoint::from_shared(endpoint.url).map_err(|_| ClientCoreError::InvalidEndpoint)
+}
+
+fn select_client_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, ClientCoreError> {
+    endpoints
         .iter()
         .find(|endpoint| endpoint.last_good)
         .or_else(|| endpoints.first())
-        .ok_or(ClientCoreError::NoEndpoint)?;
-    Endpoint::from_shared(endpoint.url.clone()).map_err(|_| ClientCoreError::InvalidEndpoint)
+        .cloned()
+        .ok_or(ClientCoreError::NoEndpoint)
+}
+
+fn state_mini_snapshot_uri(endpoint_url: &str) -> Result<Uri, ClientCoreError> {
+    let endpoint_url = endpoint_url.trim().trim_end_matches('/');
+    if endpoint_url.is_empty() {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
+    format!("{endpoint_url}{STATE_MINI_SNAPSHOT_PATH}")
+        .parse::<Uri>()
+        .map_err(|_| ClientCoreError::InvalidEndpoint)
 }
 
 fn apply_metadata(
@@ -420,6 +488,62 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
     }
 }
 
+fn state_mini_snapshot_from_json(value: Value) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
+    let latest_seq = value
+        .get("latestSeq")
+        .or_else(|| value.get("latest_seq"))
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let server_time = value
+        .get("serverTime")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let sessions = value
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(|sessions| {
+            sessions
+                .iter()
+                .filter_map(client_state_mini_from_json)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(ClientStateMiniSnapshot {
+        latest_seq,
+        sessions,
+        server_time,
+    })
+}
+
+fn client_state_mini_from_json(value: &Value) -> Option<ClientStateMini> {
+    let session_id = value
+        .get("sessionID")
+        .or_else(|| value.get("sessionId"))
+        .and_then(Value::as_str)?
+        .trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    let payload_json = serde_json::to_string(value).ok()?;
+    Some(ClientStateMini {
+        session_id: session_id.to_owned(),
+        assistant_surface: value
+            .get("assistantSurface")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        seq: value.get("seq").and_then(Value::as_i64).unwrap_or_default(),
+        revision: value
+            .get("revision")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        payload_json,
+    })
+}
+
 fn client_command_ack(ack: proto::CommandAck) -> ClientCommandAck {
     ClientCommandAck {
         accepted: ack.accepted,
@@ -463,4 +587,62 @@ fn client_state_mini_delta(
         session,
         sessions: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn state_mini_snapshot_from_json_preserves_payloads_and_skips_invalid_sessions() {
+        let snapshot = state_mini_snapshot_from_json(json!({
+            "latest_seq": 12,
+            "serverTime": "2026-06-26T00:00:00Z",
+            "sessions": [
+                {
+                    "sessionId": "thread-1",
+                    "assistantSurface": "codex",
+                    "seq": 11,
+                    "revision": "rev-11",
+                    "title": "Build Looper"
+                },
+                {
+                    "sessionID": "thread-2",
+                    "seq": 12,
+                    "revision": "rev-12"
+                },
+                {
+                    "assistantSurface": "codex",
+                    "seq": 13
+                }
+            ]
+        }))
+        .expect("snapshot");
+
+        assert_eq!(snapshot.latest_seq, 12);
+        assert_eq!(snapshot.server_time, "2026-06-26T00:00:00Z");
+        assert_eq!(snapshot.sessions.len(), 2);
+        assert_eq!(snapshot.sessions[0].session_id, "thread-1");
+        assert_eq!(snapshot.sessions[0].assistant_surface, "codex");
+        assert_eq!(snapshot.sessions[0].seq, 11);
+        assert!(
+            snapshot.sessions[0]
+                .payload_json
+                .contains("\"title\":\"Build Looper\"")
+        );
+        assert_eq!(snapshot.sessions[1].session_id, "thread-2");
+        assert!(snapshot.sessions[1].assistant_surface.is_empty());
+    }
+
+    #[test]
+    fn state_mini_snapshot_url_appends_recovery_path() {
+        let url = state_mini_snapshot_uri("http://127.0.0.1:8766/base/").expect("snapshot url");
+
+        assert_eq!(
+            url.to_string(),
+            "http://127.0.0.1:8766/base/api/mobile/session-minis/snapshot"
+        );
+    }
 }

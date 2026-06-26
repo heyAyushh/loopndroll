@@ -1271,14 +1271,17 @@ private final class G006StateMiniStreamTransport:
         self.streamPlans = streamPlans
     }
 
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        try lock.withLock {
+    func recoverClientCoreStateMiniSnapshot(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateSnapshot {
+        let snapshot = try lock.withLock {
             guard let pendingSnapshot else {
                 throw LooperRealtimeError.unavailable
             }
             self.pendingSnapshot = nil
             return pendingSnapshot
         }
+        return try clientCore.replaceStateMinis(snapshot: Self.clientStateMiniSnapshot(snapshot))
     }
 
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
@@ -1367,6 +1370,16 @@ private final class G006StateMiniStreamTransport:
             seq: mini.seq,
             revision: mini.revision,
             payloadJson: mini.payloadJSON
+        )
+    }
+
+    private static func clientStateMiniSnapshot(
+        _ snapshot: LooperRealtimeStateMiniSnapshot
+    ) -> ClientStateMiniSnapshot {
+        ClientStateMiniSnapshot(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map(Self.clientStateMini),
+            serverTime: snapshot.serverTime ?? ""
         )
     }
 

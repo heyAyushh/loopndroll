@@ -679,8 +679,12 @@ private final class RecordingClientCoreStateMiniStreamTransport:
         lock.withLock { recordedStopCount }
     }
 
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        LooperRealtimeStateMiniSnapshot(latestSeq: 0, sessions: [], serverTime: nil)
+    func recoverClientCoreStateMiniSnapshot(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateSnapshot {
+        try clientCore.replaceStateMinis(
+            snapshot: ClientStateMiniSnapshot(latestSeq: 0, sessions: [], serverTime: "")
+        )
     }
 
     func startClientCoreStateMiniStream(clientCore _: LooperClientCore) async throws {
@@ -764,11 +768,13 @@ private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
         self.snapshot = snapshot
     }
 
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+    func recoverClientCoreStateMiniSnapshot(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateSnapshot {
         lock.withLock {
             snapshotRequests += 1
         }
-        return snapshot
+        return try clientCore.replaceStateMinis(snapshot: Self.clientStateMiniSnapshot(snapshot))
     }
 
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
@@ -799,6 +805,24 @@ private final class RecordingRecoveryClientCoreStateMiniStreamTransport:
 
     func snapshotRequestCount() -> Int {
         lock.withLock { snapshotRequests }
+    }
+
+    private static func clientStateMiniSnapshot(
+        _ snapshot: LooperRealtimeStateMiniSnapshot
+    ) -> ClientStateMiniSnapshot {
+        ClientStateMiniSnapshot(
+            latestSeq: snapshot.latestSeq,
+            sessions: snapshot.sessions.map {
+                ClientStateMini(
+                    sessionId: $0.sessionID,
+                    assistantSurface: $0.assistantSurface,
+                    seq: $0.seq,
+                    revision: $0.revision,
+                    payloadJson: $0.payloadJSON
+                )
+            },
+            serverTime: snapshot.serverTime ?? ""
+        )
     }
 }
 

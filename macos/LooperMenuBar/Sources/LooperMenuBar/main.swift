@@ -1897,9 +1897,11 @@ extension LooperHandoffHotkeyOption {
 private struct MenuBarStateMiniStreamTransport: LooperRealtimeClientCoreStateMiniStreamTransport {
   let client: any ControlPlaneClient
 
-  func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
+  func recoverClientCoreStateMiniSnapshot(
+    clientCore: LooperClientCore
+  ) async throws -> ClientStateSnapshot {
     let realtimeClient = try await makeRealtimeClient()
-    return try await realtimeClient.getStateMiniSnapshot()
+    return try await realtimeClient.recoverClientCoreStateMiniSnapshot(clientCore: clientCore)
   }
 
   func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {

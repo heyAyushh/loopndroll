@@ -29,6 +29,16 @@ MACOS_TARGETS=(
   aarch64-apple-darwin
 )
 
+build_apple_target() {
+  local target="$1"
+  local deployment_env_name="$2"
+  local deployment_target="$3"
+
+  rustup target add "$target"
+  env "$deployment_env_name=$deployment_target" \
+    cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --target "$target" --release
+}
+
 echo "Building looper-client-core host library for UniFFI metadata"
 cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --release
 
@@ -50,13 +60,11 @@ strip_generated_whitespace "$BINDINGS_DIR"
 cp "$BINDINGS_DIR/looper_client_coreFFI.modulemap" "$BINDINGS_DIR/module.modulemap"
 
 for target in "${IOS_TARGETS[@]}"; do
-  rustup target add "$target"
-  cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --target "$target" --release
+  build_apple_target "$target" IPHONEOS_DEPLOYMENT_TARGET 18.0
 done
 
 for target in "${MACOS_TARGETS[@]}"; do
-  rustup target add "$target"
-  cargo build --manifest-path "$CRATE_DIR/Cargo.toml" --target "$target" --release
+  build_apple_target "$target" MACOSX_DEPLOYMENT_TARGET 15.0
 done
 
 mkdir -p "$FRAMEWORKS_DIR"

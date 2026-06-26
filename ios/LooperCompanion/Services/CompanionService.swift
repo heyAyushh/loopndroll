@@ -76,7 +76,6 @@ protocol CompanionService: Sendable {
         -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
     func loadServerHealth() async throws -> CompanionServerHealth
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth
-    func loadSessionMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot?
     func loadSnapshot() async throws -> MobileSnapshot
     func loadSessionDetail(id: String, surface: CompanionAssistantSurface?) async throws -> SessionDetail
     func setSessionMode(
@@ -132,10 +131,6 @@ extension CompanionService {
             health: try await loadServerHealth(),
             reachedBaseURL: nil
         )
-    }
-
-    func loadSessionMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot? {
-        nil
     }
 
     func makeClientCoreStateMiniStreamTransport() async

@@ -2,7 +2,9 @@ import Foundation
 import LooperClientCore
 
 public protocol LooperRealtimeClientCoreStateMiniStreamTransport: Sendable {
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot
+    func recoverClientCoreStateMiniSnapshot(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateSnapshot
     func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws
     func nextClientCoreStateMiniStreamUpdate(
         clientCore: LooperClientCore

@@ -297,8 +297,11 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     public func recoverClientCoreStateMiniStream(
         using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
     ) async throws -> MenuBarSessionMiniLocalSnapshot? {
-        let snapshot = try await transport.getStateMiniSnapshot()
-        return try replace(with: snapshot)
+        let snapshot = try await transport.recoverClientCoreStateMiniSnapshot(
+            clientCore: clientCore
+        )
+        let localSnapshot = try persistValidated(snapshot)
+        return try menuSnapshot(from: localSnapshot)
     }
 
     public func stopClientCoreStateMiniStream(

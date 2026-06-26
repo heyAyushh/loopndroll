@@ -162,8 +162,9 @@ final class CompanionSessionMiniController: CompanionSessionCommandLocalStore {
         onUpdate: @escaping SyncUpdateHandler
     ) async {
         do {
-            let snapshot = try await transport.getStateMiniSnapshot()
-            let localSnapshot = try localStore.replaceStateMinis(with: snapshot)
+            let localSnapshot = try await localStore.recoverClientCoreStateMiniStream(
+                using: transport
+            )
             onUpdate(
                 LooperRealtimeStateMiniUpdate(
                     reason: .recovery,

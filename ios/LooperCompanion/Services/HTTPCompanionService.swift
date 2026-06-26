@@ -123,17 +123,6 @@ struct HTTPCompanionService: CompanionService {
         try await request(path: Self.snapshotPath, method: HTTPMethod.get)
     }
 
-    func loadSessionMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot? {
-        guard let realtimeClient = await RealtimeCompanionClientFactory.makeClient(
-            baseURLs: baseURLs,
-            bearerToken: bearerToken
-        ) else {
-            return nil
-        }
-
-        return try await realtimeClient.getStateMiniSnapshot()
-    }
-
     func loadSessionDetail(
         id: String,
         surface: CompanionAssistantSurface?

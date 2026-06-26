@@ -38,6 +38,10 @@ pub enum ClientCoreError {
     RealtimeConnectionWarmupFailed,
     #[error("realtime connection warmup timed out")]
     RealtimeConnectionWarmupTimedOut,
+    #[error("state mini snapshot transport failed")]
+    StateMiniSnapshotTransportFailed,
+    #[error("state mini snapshot timed out")]
+    StateMiniSnapshotTimedOut,
     #[error("state mini stream is not running")]
     StateMiniStreamNotRunning,
     #[error("state mini stream transport failed")]
