@@ -384,7 +384,15 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     snapshot: DesktopSnapshotResponse?
   ) -> LooperThreadOpenTarget {
     if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
-      return target
+      guard let thread = snapshot?.threads.first(where: { $0.threadId == threadID }) else {
+        return target
+      }
+      return LooperThreadOpenTarget(
+        threadId: target.threadId,
+        transcriptPath: thread.transcriptPath,
+        workingDirectory: target.projectURL?.path ?? thread.cwd,
+        agentPath: thread.capabilities.agentPath
+      )
     }
 
     if let thread = snapshot?.threads.first(where: { $0.threadId == threadID }) {
@@ -488,12 +496,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let submenu = NSMenu(title: Layout.detailsMenuTitle)
     submenu.autoenablesItems = false
 
-    if let snapshot {
+    if let sessionMiniSnapshot {
+      addSessionMiniDetails(sessionMiniSnapshot, to: submenu)
+      if let snapshot {
+        submenu.addItem(NSMenuItem.separator())
+        addSnapshotEnrichmentDetails(snapshot, connections: connections, to: submenu)
+      }
+    } else if let snapshot {
       addSnapshotDetails(snapshot, connections: connections, to: submenu)
     } else if error != nil {
       addUnavailableDetails(to: submenu)
-    } else if let sessionMiniSnapshot {
-      addSessionMiniDetails(sessionMiniSnapshot, to: submenu)
     } else {
       addStartingDetails(to: submenu)
     }
@@ -543,6 +555,23 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     addDisabledItem(
       "Chats: \(snapshot.activeThreadCount) active, \(snapshot.archivedThreadCount) archived",
       to: menu)
+    menu.addItem(NSMenuItem.separator())
+    addAgentDetails(snapshot, connections: connections, to: menu)
+    addCoverageDetails(snapshot, to: menu)
+  }
+
+  private func addSnapshotEnrichmentDetails(
+    _ snapshot: DesktopSnapshotResponse,
+    connections: DesktopConnectionsResponse?,
+    to menu: NSMenu
+  ) {
+    let status = LooperHumanStatus.from(
+      snapshot: snapshot,
+      mobileHealth: mobileHealth,
+      detachOnQuit: detachServerOnQuit
+    )
+    addDisabledItem("Control plane: \(status.title)", to: menu)
+    addDisabledItem("Lifecycle: \(status.lifecycle)", to: menu)
     menu.addItem(NSMenuItem.separator())
     addAgentDetails(snapshot, connections: connections, to: menu)
     addCoverageDetails(snapshot, to: menu)
