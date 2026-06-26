@@ -19,6 +19,12 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let attemptCount: Int
 }
 
+struct CompanionClientCoreStateMiniStreamResult: Sendable {
+    let reason: ClientStateMiniStreamUpdateReason
+    let update: LooperRealtimeStateMiniSyncUpdate?
+    let errorDescription: String
+}
+
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = LooperRealtimeLocalStore.defaultFileName
 
@@ -161,6 +167,50 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
                 notificationID: $0.notificationID,
                 prompt: $0.prompt,
                 attemptCount: $0.attemptCount
+            )
+        }
+    }
+
+    func startClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws {
+        _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
+        try await transport.startClientCoreStateMiniStream(clientCore: clientCore)
+    }
+
+    func nextClientCoreStateMiniStreamResult(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) async throws -> CompanionClientCoreStateMiniStreamResult {
+        let streamUpdate = try await transport.nextClientCoreStateMiniStreamUpdate(
+            clientCore: clientCore
+        )
+        guard streamUpdate.reason == .delta, streamUpdate.didChange else {
+            return CompanionClientCoreStateMiniStreamResult(
+                reason: streamUpdate.reason,
+                update: nil,
+                errorDescription: streamUpdate.errorDescription
+            )
+        }
+
+        let localSnapshot = try persistValidated(streamUpdate.snapshot)
+        return CompanionClientCoreStateMiniStreamResult(
+            reason: streamUpdate.reason,
+            update: LooperRealtimeStateMiniSyncUpdate(
+                reason: .delta,
+                snapshot: localSnapshot
+            ),
+            errorDescription: streamUpdate.errorDescription
+        )
+    }
+
+    func stopClientCoreStateMiniStream(
+        using transport: any LooperRealtimeClientCoreStateMiniStreamTransport
+    ) {
+        do {
+            try transport.stopClientCoreStateMiniStream(clientCore: clientCore)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:client-core-stream-stop-failed error=\(error.localizedDescription)"
             )
         }
     }

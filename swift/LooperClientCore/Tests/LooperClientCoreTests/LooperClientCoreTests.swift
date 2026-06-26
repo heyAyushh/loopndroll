@@ -1,14 +1,16 @@
-import XCTest
+import Testing
 @testable import LooperClientCore
 
-final class LooperClientCoreTests: XCTestCase {
+@Suite("LooperClientCoreTests", .serialized)
+struct LooperClientCoreTests {
     private let primaryEndpoint = "http://127.0.0.1:8765"
     private let lastGoodEndpoint = "http://100.64.0.2:8765"
     private let threadID = "thread-1"
     private let mutationID = "mutation-1"
     private let serverTime = "2026-06-25T00:00:00Z"
 
-    func testConnectPrefersLastGoodEndpoint() throws {
+    @Test
+    func connectPrefersLastGoodEndpoint() throws {
         let core = LooperClientCore()
 
         let snapshot = try core.connect(endpoints: [
@@ -16,12 +18,13 @@ final class LooperClientCoreTests: XCTestCase {
             ClientEndpoint(url: lastGoodEndpoint, lastGood: true),
         ])
 
-        XCTAssertEqual(snapshot.phase, .ready)
-        XCTAssertEqual(snapshot.endpointUrl, lastGoodEndpoint)
-        XCTAssertEqual(snapshot.outboxDepth, 0)
+        #expect(snapshot.phase == .ready)
+        #expect(snapshot.endpointUrl == lastGoodEndpoint)
+        #expect(snapshot.outboxDepth == 0)
     }
 
-    func testModeCommandQueuesPendingMutationAndOutboundFrame() throws {
+    @Test
+    func modeCommandQueuesPendingMutationAndOutboundFrame() throws {
         let core = LooperClientCore()
 
         let snapshot = try core.setMode(
@@ -30,21 +33,22 @@ final class LooperClientCoreTests: XCTestCase {
             clientMutationId: mutationID
         )
 
-        XCTAssertEqual(snapshot.outboxDepth, 1)
-        XCTAssertEqual(snapshot.pendingMutations.map(\.clientMutationId), [mutationID])
-        XCTAssertEqual(snapshot.pendingMutations.first?.commandKind, .setSessionMode)
+        #expect(snapshot.outboxDepth == 1)
+        #expect(snapshot.pendingMutations.map(\.clientMutationId) == [mutationID])
+        #expect(snapshot.pendingMutations.first?.commandKind == .setSessionMode)
 
         let frames = try core.takeOutbox()
-        XCTAssertEqual(frames.count, 1)
-        XCTAssertEqual(frames.first?.frameKind, .command)
-        XCTAssertEqual(frames.first?.commandKind, .setSessionMode)
-        XCTAssertEqual(frames.first?.threadId, threadID)
-        XCTAssertEqual(frames.first?.preset, "ask")
-        XCTAssertEqual(frames.first?.clientMutationId, mutationID)
-        XCTAssertEqual(try core.snapshot().outboxDepth, 0)
+        #expect(frames.count == 1)
+        #expect(frames.first?.frameKind == .command)
+        #expect(frames.first?.commandKind == .setSessionMode)
+        #expect(frames.first?.threadId == threadID)
+        #expect(frames.first?.preset == "ask")
+        #expect(frames.first?.clientMutationId == mutationID)
+        #expect(try core.snapshot().outboxDepth == 0)
     }
 
-    func testExpectedOutboxValidatesMutationOrderBeforeDrain() throws {
+    @Test
+    func expectedOutboxValidatesMutationOrderBeforeDrain() throws {
         let core = LooperClientCore()
         _ = try core.setMode(
             threadId: threadID,
@@ -58,22 +62,23 @@ final class LooperClientCoreTests: XCTestCase {
             clientMutationId: "mutation-prompt"
         )
 
-        XCTAssertThrowsError(try core.takeExpectedOutbox(
+        #expect(throws: ClientCoreError.UnexpectedOutboxMutations) {
+            _ = try core.takeExpectedOutbox(
             expectedClientMutationIds: ["mutation-prompt", "mutation-mode"]
-        )) { error in
-            XCTAssertEqual(error as? ClientCoreError, .UnexpectedOutboxMutations)
+            )
         }
-        XCTAssertEqual(try core.snapshot().outboxDepth, 2)
+        #expect(try core.snapshot().outboxDepth == 2)
 
         let frames = try core.takeExpectedOutbox(
             expectedClientMutationIds: ["mutation-mode", "mutation-prompt"]
         )
 
-        XCTAssertEqual(frames.map(\.clientMutationId), ["mutation-mode", "mutation-prompt"])
-        XCTAssertEqual(try core.snapshot().outboxDepth, 0)
+        #expect(frames.map(\.clientMutationId) == ["mutation-mode", "mutation-prompt"])
+        #expect(try core.snapshot().outboxDepth == 0)
     }
 
-    func testAcceptedAckClearsPendingMutation() throws {
+    @Test
+    func acceptedAckClearsPendingMutation() throws {
         let core = LooperClientCore()
         _ = try core.sendPrompt(
             threadId: threadID,
@@ -95,13 +100,14 @@ final class LooperClientCoreTests: XCTestCase {
             currentState: ""
         ))
 
-        XCTAssertTrue(snapshot.pendingMutations.isEmpty)
-        XCTAssertEqual(snapshot.latestSeq, 42)
-        XCTAssertEqual(snapshot.revision, "rev-42")
-        XCTAssertEqual(snapshot.lastError, "")
+        #expect(snapshot.pendingMutations.isEmpty)
+        #expect(snapshot.latestSeq == 42)
+        #expect(snapshot.revision == "rev-42")
+        #expect(snapshot.lastError == "")
     }
 
-    func testRejectedAckRecordsStableError() throws {
+    @Test
+    func rejectedAckRecordsStableError() throws {
         let core = LooperClientCore()
         _ = try core.setMode(
             threadId: threadID,
@@ -122,12 +128,13 @@ final class LooperClientCoreTests: XCTestCase {
             currentState: "awaiting_mode"
         ))
 
-        XCTAssertEqual(snapshot.pendingMutations, [])
-        XCTAssertEqual(snapshot.latestSeq, 7)
-        XCTAssertEqual(snapshot.lastError, "mode_required: session is waiting for a mode")
+        #expect(snapshot.pendingMutations == [])
+        #expect(snapshot.latestSeq == 7)
+        #expect(snapshot.lastError == "mode_required: session is waiting for a mode")
     }
 
-    func testCommandBatchResponseReconcilesInRustCore() throws {
+    @Test
+    func commandBatchResponseReconcilesInRustCore() throws {
         let core = LooperClientCore()
         _ = try core.setMode(
             threadId: threadID,
@@ -173,13 +180,14 @@ final class LooperClientCoreTests: XCTestCase {
             ]
         ))
 
-        XCTAssertTrue(snapshot.pendingMutations.isEmpty)
-        XCTAssertEqual(snapshot.latestSeq, 42)
-        XCTAssertEqual(snapshot.revision, "rev-42")
-        XCTAssertEqual(snapshot.lastError, "mode_required: session is waiting for a mode")
+        #expect(snapshot.pendingMutations.isEmpty)
+        #expect(snapshot.latestSeq == 42)
+        #expect(snapshot.revision == "rev-42")
+        #expect(snapshot.lastError == "mode_required: session is waiting for a mode")
     }
 
-    func testCommandBatchResponseMatchesAcksInRustCore() throws {
+    @Test
+    func commandBatchResponseMatchesAcksInRustCore() throws {
         let response = try buildCommandBatchResponse(
             commands: [
                 ClientCommandMetadata(
@@ -204,16 +212,17 @@ final class LooperClientCoreTests: XCTestCase {
             ]
         )
 
-        XCTAssertTrue(response.accepted)
-        XCTAssertEqual(response.commandAcks.map(\.ack.clientMutationId), [
+        #expect(response.accepted)
+        #expect(response.commandAcks.map(\.ack.clientMutationId) == [
             "mutation-prompt",
             "mutation-mode",
         ])
-        XCTAssertEqual(response.commandAcks.first?.dispatchKind, "accepted")
-        XCTAssertEqual(response.commandAcks.last?.preset, "await-reply")
+        #expect(response.commandAcks.first?.dispatchKind == "accepted")
+        #expect(response.commandAcks.last?.preset == "await-reply")
     }
 
-    func testRejectedCommandBatchAckUsesRejectedDispatchKind() throws {
+    @Test
+    func rejectedCommandBatchAckUsesRejectedDispatchKind() throws {
         let response = try buildCommandBatchResponse(
             commands: [
                 ClientCommandMetadata(
@@ -229,12 +238,13 @@ final class LooperClientCoreTests: XCTestCase {
             ]
         )
 
-        XCTAssertFalse(response.accepted)
-        XCTAssertEqual(response.commandAcks.first?.dispatchKind, "rejected")
-        XCTAssertEqual(response.commandAcks.first?.notificationId, "notification-1")
+        #expect(!response.accepted)
+        #expect(response.commandAcks.first?.dispatchKind == "rejected")
+        #expect(response.commandAcks.first?.notificationId == "notification-1")
     }
 
-    func testStateDeltaAdvancesSequenceAndRevision() throws {
+    @Test
+    func stateDeltaAdvancesSequenceAndRevision() throws {
         let core = LooperClientCore()
 
         let snapshot = try core.applyStateDelta(delta: ClientStateDelta(
@@ -246,12 +256,13 @@ final class LooperClientCoreTests: XCTestCase {
             payloadJson: "{}"
         ))
 
-        XCTAssertEqual(snapshot.latestSeq, 99)
-        XCTAssertEqual(snapshot.revision, "rev-99")
-        XCTAssertEqual(snapshot.serverTime, serverTime)
+        #expect(snapshot.latestSeq == 99)
+        #expect(snapshot.revision == "rev-99")
+        #expect(snapshot.serverTime == serverTime)
     }
 
-    func testStateMiniSnapshotReplacesAndNormalizesRecords() throws {
+    @Test
+    func stateMiniSnapshotReplacesAndNormalizesRecords() throws {
         let core = LooperClientCore()
 
         let snapshot = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
@@ -264,14 +275,15 @@ final class LooperClientCoreTests: XCTestCase {
             serverTime: serverTime
         ))
 
-        XCTAssertEqual(snapshot.latestSeq, 10)
-        XCTAssertEqual(snapshot.revision, "rev-9")
-        XCTAssertEqual(snapshot.serverTime, serverTime)
-        XCTAssertEqual(snapshot.stateMinis.map(\.sessionId), ["thread-2", threadID])
-        XCTAssertEqual(snapshot.stateMinis.last?.payloadJson, #"{"title":"current"}"#)
+        #expect(snapshot.latestSeq == 10)
+        #expect(snapshot.revision == "rev-9")
+        #expect(snapshot.serverTime == serverTime)
+        #expect(snapshot.stateMinis.map(\.sessionId) == ["thread-2", threadID])
+        #expect(snapshot.stateMinis.last?.payloadJson == #"{"title":"current"}"#)
     }
 
-    func testStateMiniDeltaUpsertsAndIgnoresStaleSequences() throws {
+    @Test
+    func stateMiniDeltaUpsertsAndIgnoresStaleSequences() throws {
         let core = LooperClientCore()
         _ = try core.replaceStateMinis(snapshot: ClientStateMiniSnapshot(
             latestSeq: 2,
@@ -291,9 +303,9 @@ final class LooperClientCoreTests: XCTestCase {
             sessions: []
         ))
 
-        XCTAssertEqual(snapshot.latestSeq, 3)
-        XCTAssertEqual(snapshot.revision, "rev-3")
-        XCTAssertEqual(snapshot.stateMinis.map(\.payloadJson), [#"{"title":"new"}"#])
+        #expect(snapshot.latestSeq == 3)
+        #expect(snapshot.revision == "rev-3")
+        #expect(snapshot.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
 
         let stale = try core.applyStateMiniDelta(delta: ClientStateMiniDelta(
             seq: 2,
@@ -307,9 +319,9 @@ final class LooperClientCoreTests: XCTestCase {
             sessions: []
         ))
 
-        XCTAssertEqual(stale.latestSeq, 3)
-        XCTAssertEqual(stale.revision, "rev-3")
-        XCTAssertEqual(stale.stateMinis.map(\.payloadJson), [#"{"title":"new"}"#])
+        #expect(stale.latestSeq == 3)
+        #expect(stale.revision == "rev-3")
+        #expect(stale.stateMinis.map(\.payloadJson) == [#"{"title":"new"}"#])
     }
 
     private func stateMini(

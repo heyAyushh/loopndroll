@@ -72,7 +72,8 @@ struct CompanionModePromptBatchResult: Sendable {
 protocol CompanionService: Sendable {
     var supportsModePromptBatch: Bool { get }
     func prepareRealtimeConnection() async
-    func makeStateMiniSyncTransport() async -> (any LooperRealtimeStateMiniSyncTransport)?
+    func makeClientCoreStateMiniStreamTransport() async
+        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
     func loadServerHealth() async throws -> CompanionServerHealth
     func resolveServerHealth() async throws -> ResolvedCompanionServerHealth
     func loadSessionMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot?
@@ -137,7 +138,9 @@ extension CompanionService {
         nil
     }
 
-    func makeStateMiniSyncTransport() async -> (any LooperRealtimeStateMiniSyncTransport)? {
+    func makeClientCoreStateMiniStreamTransport() async
+        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+    {
         nil
     }
 
@@ -161,26 +164,5 @@ extension CompanionService {
             clientMutationID: promptClientMutationID
         )
         return CompanionModePromptBatchResult(mode: mode, prompt: prompt)
-    }
-}
-
-struct DeferredCompanionStateMiniSyncTransport: LooperRealtimeStateMiniSyncTransport {
-    let service: any CompanionService
-
-    func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot {
-        guard let transport = await service.makeStateMiniSyncTransport() else {
-            throw LooperRealtimeError.unavailable
-        }
-        return try await transport.getStateMiniSnapshot()
-    }
-
-    func streamStateMinis(
-        afterSeq: Int64,
-        onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
-    ) async throws {
-        guard let transport = await service.makeStateMiniSyncTransport() else {
-            throw LooperRealtimeError.unavailable
-        }
-        try await transport.streamStateMinis(afterSeq: afterSeq, onDelta: onDelta)
     }
 }

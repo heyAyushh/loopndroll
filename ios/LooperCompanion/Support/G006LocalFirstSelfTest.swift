@@ -481,8 +481,7 @@ enum G006LocalFirstSelfTest {
             ]
         )
         let service = G006LocalFirstServiceSpy(
-            snapshot: networkSnapshot(),
-            stateMiniSyncTransport: transport
+            snapshot: networkSnapshot()
         )
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
@@ -1048,23 +1047,15 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
     var promptError: Error?
     var snapshotError: Error?
     var modeResponseDelayNanosecondsByCall: [UInt64] = []
-    private var stateMiniSyncTransport: (any LooperRealtimeStateMiniSyncTransport)?
-
     init(
         snapshot: MobileSnapshot,
-        stateMiniSyncTransport: (any LooperRealtimeStateMiniSyncTransport)? = nil,
         responseDelayNanoseconds: UInt64 = 0
     ) {
         self.snapshot = snapshot
-        self.stateMiniSyncTransport = stateMiniSyncTransport
         self.responseDelayNanoseconds = responseDelayNanoseconds
     }
 
     func prepareRealtimeConnection() async {}
-
-    func makeStateMiniSyncTransport() async -> (any LooperRealtimeStateMiniSyncTransport)? {
-        stateMiniSyncTransport
-    }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
         CompanionServerHealth(

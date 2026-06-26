@@ -743,6 +743,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func markReconnecting() throws  -> ClientStateSnapshot
 
+    func nextStateMiniStreamUpdate() async throws  -> ClientStateMiniStreamUpdate
+
     func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws  -> ClientStateSnapshot
 
     func resumeAfter(afterSeq: Int64) throws  -> ClientStateSnapshot
@@ -752,6 +754,10 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
     func setMode(threadId: String, preset: String, clientMutationId: String) throws  -> ClientStateSnapshot
 
     func snapshot() throws  -> ClientStateSnapshot
+
+    func startStateMiniStream(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
+
+    func stopStateMiniStream() throws  -> ClientStateSnapshot
 
     func submitExpectedOutbox(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String, expectedClientMutationIds: [String]) async throws  -> ClientCommandBatchResponse
 
@@ -892,6 +898,23 @@ open func markReconnecting()throws  -> ClientStateSnapshot  {
 })
 }
 
+open func nextStateMiniStreamUpdate()async throws  -> ClientStateMiniStreamUpdate  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_next_state_mini_stream_update(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientStateMiniStreamUpdate_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func replaceStateMinis(snapshot: ClientStateMiniSnapshot)throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_replace_state_minis(
@@ -936,6 +959,25 @@ open func setMode(threadId: String, preset: String, clientMutationId: String)thr
 open func snapshot()throws  -> ClientStateSnapshot  {
     return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_method_looperclientcore_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func startStateMiniStream(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)throws  -> ClientStateSnapshot  {
+    return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_start_state_mini_stream(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeClientEndpoint.lower(endpoints),
+        FfiConverterString.lower(bearerToken),
+        FfiConverterString.lower(mobileSessionHeader),$0
+    )
+})
+}
+
+open func stopStateMiniStream()throws  -> ClientStateSnapshot  {
+    return try  FfiConverterTypeClientStateSnapshot_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcore_stop_state_mini_stream(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -2752,6 +2794,72 @@ public func FfiConverterTypeClientStateMiniSnapshot_lower(_ value: ClientStateMi
 }
 
 
+public struct ClientStateMiniStreamUpdate: Equatable, Hashable {
+    public var reason: ClientStateMiniStreamUpdateReason
+    public var snapshot: ClientStateSnapshot
+    public var didChange: Bool
+    public var latestSeq: Int64
+    public var errorDescription: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientStateSnapshot, didChange: Bool, latestSeq: Int64, errorDescription: String) {
+        self.reason = reason
+        self.snapshot = snapshot
+        self.didChange = didChange
+        self.latestSeq = latestSeq
+        self.errorDescription = errorDescription
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMiniStreamUpdate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMiniStreamUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMiniStreamUpdate {
+        return
+            try ClientStateMiniStreamUpdate(
+                reason: FfiConverterTypeClientStateMiniStreamUpdateReason.read(from: &buf),
+                snapshot: FfiConverterTypeClientStateSnapshot.read(from: &buf),
+                didChange: FfiConverterBool.read(from: &buf),
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                errorDescription: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientStateMiniStreamUpdate, into buf: inout [UInt8]) {
+        FfiConverterTypeClientStateMiniStreamUpdateReason.write(value.reason, into: &buf)
+        FfiConverterTypeClientStateSnapshot.write(value.snapshot, into: &buf)
+        FfiConverterBool.write(value.didChange, into: &buf)
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterString.write(value.errorDescription, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniStreamUpdate_lift(_ buf: RustBuffer) throws -> ClientStateMiniStreamUpdate {
+    return try FfiConverterTypeClientStateMiniStreamUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniStreamUpdate_lower(_ value: ClientStateMiniStreamUpdate) -> RustBuffer {
+    return FfiConverterTypeClientStateMiniStreamUpdate.lower(value)
+}
+
+
 public struct ClientStateSnapshot: Equatable, Hashable {
     public var phase: ConnectionPhase
     public var endpointUrl: String
@@ -3018,6 +3126,9 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case MissingCommandAcknowledgement
     case SessionCommandTransportFailed
     case SessionCommandAckTimedOut
+    case StateMiniStreamNotRunning
+    case StateMiniStreamTransportFailed
+    case StateMiniStreamRecoveryRequired
     case StateLockPoisoned
 
 
@@ -3065,7 +3176,10 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 15: return .MissingCommandAcknowledgement
         case 16: return .SessionCommandTransportFailed
         case 17: return .SessionCommandAckTimedOut
-        case 18: return .StateLockPoisoned
+        case 18: return .StateMiniStreamNotRunning
+        case 19: return .StateMiniStreamTransportFailed
+        case 20: return .StateMiniStreamRecoveryRequired
+        case 21: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3146,8 +3260,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(17))
 
 
-        case .StateLockPoisoned:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(18))
+
+
+        case .StateMiniStreamTransportFailed:
+            writeInt(&buf, Int32(19))
+
+
+        case .StateMiniStreamRecoveryRequired:
+            writeInt(&buf, Int32(20))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(21))
 
         }
     }
@@ -3167,6 +3293,94 @@ public func FfiConverterTypeClientCoreError_lift(_ buf: RustBuffer) throws -> Cl
 public func FfiConverterTypeClientCoreError_lower(_ value: ClientCoreError) -> RustBuffer {
     return FfiConverterTypeClientCoreError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ClientStateMiniStreamUpdateReason: Equatable, Hashable {
+
+    case delta
+    case heartbeat
+    case reconnecting
+    case recoveryRequired
+    case stopped
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientStateMiniStreamUpdateReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientStateMiniStreamUpdateReason: FfiConverterRustBuffer {
+    typealias SwiftType = ClientStateMiniStreamUpdateReason
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientStateMiniStreamUpdateReason {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .delta
+
+        case 2: return .heartbeat
+
+        case 3: return .reconnecting
+
+        case 4: return .recoveryRequired
+
+        case 5: return .stopped
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClientStateMiniStreamUpdateReason, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .delta:
+            writeInt(&buf, Int32(1))
+
+
+        case .heartbeat:
+            writeInt(&buf, Int32(2))
+
+
+        case .reconnecting:
+            writeInt(&buf, Int32(3))
+
+
+        case .recoveryRequired:
+            writeInt(&buf, Int32(4))
+
+
+        case .stopped:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniStreamUpdateReason_lift(_ buf: RustBuffer) throws -> ClientStateMiniStreamUpdateReason {
+    return try FfiConverterTypeClientStateMiniStreamUpdateReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientStateMiniStreamUpdateReason_lower(_ value: ClientStateMiniStreamUpdateReason) -> RustBuffer {
+    return FfiConverterTypeClientStateMiniStreamUpdateReason.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -3807,6 +4021,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_mark_reconnecting() != 54428) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_next_state_mini_stream_update() != 34576) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_replace_state_minis() != 24521) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3820,6 +4037,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_snapshot() != 17737) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_start_state_mini_stream() != 55992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_stop_state_mini_stream() != 1254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_expected_outbox() != 19336) {

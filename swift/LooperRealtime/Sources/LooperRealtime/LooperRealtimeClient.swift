@@ -88,6 +88,24 @@ public final class LooperRealtimeClient: Sendable {
         }
     }
 
+    public func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
+        _ = try clientCore.startStateMiniStream(
+            endpoints: endpoints.map(\.clientCoreEndpoint),
+            bearerToken: credentials.bearerToken ?? "",
+            mobileSessionHeader: credentials.mobileSessionHeader ?? ""
+        )
+    }
+
+    public func nextClientCoreStateMiniStreamUpdate(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateMiniStreamUpdate {
+        try await clientCore.nextStateMiniStreamUpdate()
+    }
+
+    public func stopClientCoreStateMiniStream(clientCore: LooperClientCore) throws {
+        _ = try clientCore.stopStateMiniStream()
+    }
+
     private func withFirstAvailableService<Result: Sendable>(
         _ operation: @Sendable @escaping (
             Looper_V1_LooperRealtime.Client<HTTP2ClientTransport.TransportServices>,
@@ -151,6 +169,7 @@ public final class LooperRealtimeClient: Sendable {
 
 extension LooperRealtimeClient: LooperRealtimeStateMiniSyncTransport {}
 extension LooperRealtimeClient: LooperRealtimeSessionCommandSubmitting {}
+extension LooperRealtimeClient: LooperRealtimeClientCoreStateMiniStreamTransport {}
 
 private extension LooperRealtimeEndpoint {
     var clientCoreEndpoint: ClientEndpoint {

@@ -1,13 +1,18 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use tokio::sync::mpsc;
+
 use crate::error::ClientCoreError;
 use crate::model::{
     ClientCommandAck, ClientCommandBatchResponse, ClientCommandKind, ClientEndpoint,
     ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
-    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
-    OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
+    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind,
 };
-use crate::session_transport::submit_expected_session_outbox;
+use crate::session_transport::{
+    StateMiniStreamEvent, run_state_mini_stream, submit_expected_session_outbox,
+};
 use crate::transport::validate_endpoint_url;
 
 const INITIAL_SEQUENCE: i64 = 0;
@@ -29,6 +34,14 @@ struct ClientCoreState {
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCore {
     state: Mutex<ClientCoreState>,
+    stream: Mutex<Option<ClientCoreStream>>,
+    runtime: tokio::runtime::Runtime,
+}
+
+#[derive(Debug)]
+struct ClientCoreStream {
+    task: tokio::task::JoinHandle<()>,
+    receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
 }
 
 #[uniffi::export]
@@ -40,6 +53,8 @@ impl LooperClientCore {
                 latest_seq: INITIAL_SEQUENCE,
                 ..ClientCoreState::default()
             }),
+            stream: Mutex::new(None),
+            runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
     }
 
@@ -288,6 +303,64 @@ impl LooperClientCore {
         }
         Ok(response)
     }
+
+    pub fn start_state_mini_stream(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        let endpoint = select_endpoint(&endpoints)?;
+        validate_endpoint_url(&endpoint.url)?;
+        let after_seq = {
+            let mut state = self.lock_state()?;
+            state.phase = ConnectionPhase::Ready;
+            state.endpoint_url = endpoint.url;
+            state.last_error.clear();
+            state.latest_seq
+        };
+        let (sender, receiver) = mpsc::channel(64);
+        let task = self.runtime.spawn(run_state_mini_stream(
+            endpoints,
+            bearer_token,
+            mobile_session_header,
+            after_seq,
+            sender,
+        ));
+        self.replace_stream(ClientCoreStream {
+            task,
+            receiver: Some(receiver),
+        })?;
+        self.snapshot()
+    }
+
+    pub async fn next_state_mini_stream_update(
+        &self,
+    ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
+        let mut receiver = {
+            let mut stream = self.lock_stream()?;
+            stream
+                .as_mut()
+                .and_then(|stream| stream.receiver.take())
+                .ok_or(ClientCoreError::StateMiniStreamNotRunning)?
+        };
+        let event = receiver
+            .recv()
+            .await
+            .ok_or(ClientCoreError::StateMiniStreamNotRunning);
+        {
+            let mut stream = self.lock_stream()?;
+            if let Some(stream) = stream.as_mut() {
+                stream.receiver = Some(receiver);
+            }
+        }
+        self.apply_state_mini_stream_event(event?)
+    }
+
+    pub fn stop_state_mini_stream(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
+        self.replace_stream_none()?;
+        self.disconnect()
+    }
 }
 
 impl LooperClientCore {
@@ -295,6 +368,99 @@ impl LooperClientCore {
         self.state
             .lock()
             .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn lock_stream(&self) -> Result<MutexGuard<'_, Option<ClientCoreStream>>, ClientCoreError> {
+        self.stream
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)
+    }
+
+    fn replace_stream(&self, stream: ClientCoreStream) -> Result<(), ClientCoreError> {
+        self.replace_stream_none()?;
+        *self.lock_stream()? = Some(stream);
+        Ok(())
+    }
+
+    fn replace_stream_none(&self) -> Result<(), ClientCoreError> {
+        if let Some(stream) = self.lock_stream()?.take() {
+            stream.task.abort();
+        }
+        Ok(())
+    }
+
+    fn apply_state_mini_stream_event(
+        &self,
+        event: StateMiniStreamEvent,
+    ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
+        let mut state = self.lock_state()?;
+        let (reason, did_change, latest_seq, error_description) = match event {
+            StateMiniStreamEvent::Delta(delta) => {
+                let latest_seq = delta.seq.max(delta.latest_seq);
+                let did_change = state.apply_state_mini_delta(delta);
+                state.phase = ConnectionPhase::Ready;
+                (
+                    ClientStateMiniStreamUpdateReason::Delta,
+                    did_change,
+                    latest_seq,
+                    String::new(),
+                )
+            }
+            StateMiniStreamEvent::Heartbeat {
+                latest_seq,
+                server_time,
+            } => {
+                state.phase = ConnectionPhase::Ready;
+                if !server_time.is_empty() {
+                    state.server_time = server_time;
+                }
+                (
+                    ClientStateMiniStreamUpdateReason::Heartbeat,
+                    false,
+                    latest_seq,
+                    String::new(),
+                )
+            }
+            StateMiniStreamEvent::Reconnecting {
+                latest_seq,
+                error_description,
+            } => {
+                state.phase = ConnectionPhase::Reconnecting;
+                state.last_error = error_description.clone();
+                (
+                    ClientStateMiniStreamUpdateReason::Reconnecting,
+                    false,
+                    latest_seq,
+                    error_description,
+                )
+            }
+            StateMiniStreamEvent::RecoveryRequired {
+                latest_seq,
+                error_description,
+            } => {
+                state.phase = ConnectionPhase::Reconnecting;
+                state.last_error = error_description.clone();
+                (
+                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                    false,
+                    latest_seq,
+                    error_description,
+                )
+            }
+            StateMiniStreamEvent::Stopped { latest_seq } => (
+                ClientStateMiniStreamUpdateReason::Stopped,
+                false,
+                latest_seq,
+                String::new(),
+            ),
+        };
+        Ok(ClientStateMiniStreamUpdate {
+            reason,
+            snapshot: state.snapshot(),
+            did_change,
+            latest_seq,
+            error_description,
+        })
     }
 }
 
@@ -627,6 +793,58 @@ mod tests {
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
         );
+    }
+
+    #[test]
+    fn state_mini_stream_delta_event_updates_core_snapshot() {
+        let core = LooperClientCore::new();
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 7,
+                latest_seq: 7,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-7".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: ClientStateMini {
+                    session_id: "thread-1".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 7,
+                    revision: "rev-7".to_owned(),
+                    payload_json: "{\"sessionId\":\"thread-1\",\"assistantSurface\":\"codex\"}"
+                        .to_owned(),
+                },
+                sessions: Vec::new(),
+            }))
+            .expect("stream update");
+
+        assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.latest_seq, 7);
+        assert_eq!(update.snapshot.state_minis.len(), 1);
+        assert_eq!(update.snapshot.state_minis[0].session_id, "thread-1");
+    }
+
+    #[test]
+    fn state_mini_stream_recovery_event_marks_reconnecting() {
+        let core = LooperClientCore::new();
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveryRequired {
+                latest_seq: 9,
+                error_description: "seq_gap".to_owned(),
+            })
+            .expect("stream update");
+
+        assert_eq!(
+            update.reason,
+            ClientStateMiniStreamUpdateReason::RecoveryRequired
+        );
+        assert!(!update.did_change);
+        assert_eq!(update.snapshot.phase, ConnectionPhase::Reconnecting);
+        assert_eq!(update.snapshot.last_error, "seq_gap");
     }
 
     #[test]

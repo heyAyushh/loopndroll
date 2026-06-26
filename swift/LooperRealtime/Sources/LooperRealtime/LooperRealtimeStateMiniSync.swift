@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 
 public protocol LooperRealtimeStateMiniSyncTransport: Sendable {
     func getStateMiniSnapshot() async throws -> LooperRealtimeStateMiniSnapshot
@@ -6,6 +7,14 @@ public protocol LooperRealtimeStateMiniSyncTransport: Sendable {
         afterSeq: Int64,
         onDelta: @escaping @Sendable (LooperRealtimeStateMiniDelta) async throws -> Void
     ) async throws
+}
+
+public protocol LooperRealtimeClientCoreStateMiniStreamTransport: LooperRealtimeStateMiniSyncTransport {
+    func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws
+    func nextClientCoreStateMiniStreamUpdate(
+        clientCore: LooperClientCore
+    ) async throws -> ClientStateMiniStreamUpdate
+    func stopClientCoreStateMiniStream(clientCore: LooperClientCore) throws
 }
 
 public protocol LooperRealtimeStateMiniLocalState: Sendable {

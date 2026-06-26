@@ -97,7 +97,9 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func makeStateMiniSyncTransport() async -> (any LooperRealtimeStateMiniSyncTransport)? {
+    func makeClientCoreStateMiniStreamTransport() async
+        -> (any LooperRealtimeClientCoreStateMiniStreamTransport)?
+    {
         await RealtimeCompanionClientFactory.makeClient(
             baseURLs: baseURLs,
             bearerToken: bearerToken

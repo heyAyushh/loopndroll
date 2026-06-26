@@ -34,6 +34,12 @@ pub enum ClientCoreError {
     SessionCommandTransportFailed,
     #[error("session command acknowledgement timed out")]
     SessionCommandAckTimedOut,
+    #[error("state mini stream is not running")]
+    StateMiniStreamNotRunning,
+    #[error("state mini stream transport failed")]
+    StateMiniStreamTransportFailed,
+    #[error("state mini stream recovery is required")]
+    StateMiniStreamRecoveryRequired,
     #[error("client core state lock is poisoned")]
     StateLockPoisoned,
 }

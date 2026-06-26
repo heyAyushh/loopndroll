@@ -148,3 +148,21 @@ pub struct ClientStateMiniDeltaApplyResult {
     pub snapshot: ClientStateSnapshot,
     pub did_change: bool,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum ClientStateMiniStreamUpdateReason {
+    Delta,
+    Heartbeat,
+    Reconnecting,
+    RecoveryRequired,
+    Stopped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientStateMiniStreamUpdate {
+    pub reason: ClientStateMiniStreamUpdateReason,
+    pub snapshot: ClientStateSnapshot,
+    pub did_change: bool,
+    pub latest_seq: i64,
+    pub error_description: String,
+}
