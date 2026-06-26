@@ -79,55 +79,6 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(store.pendingCommands().count == 1)
     }
 
-    @Test
-    func testClientCoreStateMiniStreamUsesRustCoreStoreAndPreservesOutbox() async throws {
-        let store = try Self.temporaryMiniStore()
-        let cachedSession = Self.sessionSummary(
-            id: Constants.cachedThreadID,
-            title: "Cached Mini",
-            ref: "C1",
-            status: .active
-        )
-        try store.replace(
-            latestSeq: 5,
-            records: [
-                Self.miniRecord(session: cachedSession, seq: 5, revision: "mini-revision-5"),
-            ]
-        )
-        try store.enqueuePromptCommand(
-            threadID: Constants.cachedThreadID,
-            prompt: "continue",
-            assistantSurface: .codex,
-            clientMutationID: "mutation-outbox"
-        )
-        let staleSession = Self.sessionSummary(
-            id: Constants.cachedThreadID,
-            title: "Stale Mini",
-            ref: "C1",
-            status: .active
-        )
-        let streamedSession = Self.sessionSummary(
-            id: Constants.cachedThreadID,
-            title: "Streamed Mini",
-            ref: "C1",
-            status: .active
-        )
-        let transport = StateMiniDeltaTransport(deltas: [
-            try Self.miniDelta(session: staleSession, seq: 4, revision: "mini-revision-4"),
-            try Self.miniDelta(session: streamedSession, seq: 6, revision: "mini-revision-6"),
-        ])
-
-        try await store.startClientCoreStateMiniStream(using: transport)
-        let result = try await store.nextClientCoreStateMiniStreamResult(using: transport)
-        store.stopClientCoreStateMiniStream(using: transport)
-
-        #expect(result.reason == .delta)
-        #expect(result.update?.snapshot.latestSeq == 6)
-        #expect(transport.requestedAfterSeq() == 5)
-        #expect(try store.cachedSnapshot()?.session(withID: Constants.cachedThreadID)?.title == "Streamed Mini")
-        #expect(store.pendingCommands().map(\.clientMutationID) == ["mutation-outbox"])
-    }
-
     @MainActor
     @Test
     func testOptimisticCommandsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
@@ -418,32 +369,6 @@ struct CompanionSessionMiniLocalFirstTests {
         )
     }
 
-    private static func miniDelta(
-        session: SessionSummary,
-        seq: Int64,
-        revision: String
-    ) throws -> ClientStateMiniDelta {
-        let record = try miniRecord(session: session, seq: seq, revision: revision)
-        let mini = ClientStateMini(
-            sessionId: record.sessionID,
-            assistantSurface: record.assistantSurface,
-            seq: record.seq,
-            revision: record.revision,
-            payloadJson: record.payloadJSON
-        )
-        return ClientStateMiniDelta(
-            seq: seq,
-            latestSeq: seq,
-            entityId: session.id,
-            kind: "session_mini",
-            revision: revision,
-            serverTime: Constants.timestamp,
-            hasSession: true,
-            session: mini,
-            sessions: []
-        )
-    }
-
     private static func networkSnapshot() -> MobileSnapshot {
         let session = sessionSummary(
             id: Constants.fallbackThreadID,
@@ -495,75 +420,6 @@ struct CompanionSessionMiniLocalFirstTests {
             canSendPrompt: true
         )
     }
-}
-
-private final class StateMiniDeltaTransport:
-    LooperClientCoreStateMiniStreamTransport,
-    @unchecked Sendable
-{
-    private let lock = NSLock()
-    private var deltas: [ClientStateMiniDelta]
-    private var afterSeq: Int64?
-
-    init(deltas: [ClientStateMiniDelta]) {
-        self.deltas = deltas
-    }
-
-    func requestedAfterSeq() -> Int64? {
-        lock.withLock { afterSeq }
-    }
-
-    func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
-        let latestSeq = try clientCore.snapshot().latestSeq
-        lock.withLock {
-            afterSeq = latestSeq
-        }
-    }
-
-    func nextClientCoreStateMiniStreamUpdate(
-        clientCore: LooperClientCore
-    ) async throws -> ClientStateMiniStreamUpdate {
-        var latestUpdate: ClientStateMiniStreamUpdate?
-        let pendingDeltas = lock.withLock {
-            let pending = deltas
-            deltas = []
-            return pending
-        }
-        for delta in pendingDeltas {
-            latestUpdate = try apply(delta: delta, to: clientCore)
-        }
-        return try latestUpdate ?? stoppedUpdate(clientCore: clientCore)
-    }
-
-    func stopClientCoreStateMiniStream(clientCore _: LooperClientCore) throws {}
-
-    private func apply(
-        delta: ClientStateMiniDelta,
-        to clientCore: LooperClientCore
-    ) throws -> ClientStateMiniStreamUpdate {
-        let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: delta
-        )
-        return ClientStateMiniStreamUpdate(
-            reason: .delta,
-            snapshot: result.snapshot,
-            didChange: result.didChange,
-            latestSeq: result.snapshot.latestSeq,
-            errorDescription: ""
-        )
-    }
-
-    private func stoppedUpdate(clientCore: LooperClientCore) throws -> ClientStateMiniStreamUpdate {
-        let snapshot = try clientCore.snapshot()
-        return ClientStateMiniStreamUpdate(
-            reason: .stopped,
-            snapshot: snapshot,
-            didChange: false,
-            latestSeq: snapshot.latestSeq,
-            errorDescription: ""
-        )
-    }
-
 }
 
 private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecked Sendable {

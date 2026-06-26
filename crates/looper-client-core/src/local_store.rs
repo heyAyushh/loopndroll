@@ -344,6 +344,67 @@ mod tests {
     }
 
     #[test]
+    fn local_store_recovery_snapshot_preserves_pending_commands() {
+        let path = temp_store_path("recovery-preserves-outbox");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 5,
+                sessions: vec![state_mini("thread-old", "codex", 5, "rev-5", "Old")],
+                server_time: "2026-06-24T00:00:00Z".to_owned(),
+            })
+            .expect("seed minis");
+        store
+            .enqueue(ClientPendingCommand {
+                kind: ClientPendingCommandKind::SendSessionPrompt,
+                client_mutation_id: "mutation-pending".to_owned(),
+                thread_id: "thread-old".to_owned(),
+                preset: String::new(),
+                assistant_surface: "codex".to_owned(),
+                prompt: "continue".to_owned(),
+                notification_id: String::new(),
+                attempt_count: 0,
+            })
+            .expect("enqueue");
+
+        let snapshot = store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 6,
+                sessions: vec![state_mini(
+                    "thread-recovered",
+                    "codex",
+                    6,
+                    "rev-6",
+                    "Recovered",
+                )],
+                server_time: "2026-06-24T00:00:01Z".to_owned(),
+            })
+            .expect("recover minis");
+
+        assert_eq!(snapshot.latest_seq, 6);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].session_id, "thread-recovered");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-pending"
+        );
+        assert_eq!(snapshot.pending_commands[0].thread_id, "thread-old");
+
+        drop(store);
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let reopened_snapshot = reopened.snapshot().expect("snapshot");
+        assert_eq!(reopened_snapshot.sessions[0].session_id, "thread-recovered");
+        assert_eq!(
+            reopened_snapshot.pending_commands[0].client_mutation_id,
+            "mutation-pending"
+        );
+    }
+
+    #[test]
     fn local_store_recovers_corrupt_cache() {
         let path = temp_store_path("corrupt");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");

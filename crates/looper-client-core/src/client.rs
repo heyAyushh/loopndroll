@@ -819,6 +819,62 @@ mod tests {
     }
 
     #[test]
+    fn state_mini_stream_ignores_stale_delta_then_applies_fresh_delta() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 5,
+            sessions: vec![state_mini("thread-1", "codex", 5, "rev-5", "cached")],
+            server_time: String::new(),
+        })
+        .expect("seed minis");
+
+        let stale = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 4,
+                latest_seq: 4,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-4".to_owned(),
+                server_time: String::new(),
+                has_session: true,
+                session: state_mini("thread-1", "codex", 4, "rev-4", "stale"),
+                sessions: Vec::new(),
+            }))
+            .expect("stale stream update");
+
+        assert_eq!(stale.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(!stale.did_change);
+        assert_eq!(stale.snapshot.latest_seq, 5);
+        assert_eq!(
+            stale.snapshot.state_minis[0].payload_json,
+            r#"{"title":"cached"}"#
+        );
+
+        let fresh = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 6,
+                latest_seq: 6,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-6".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: state_mini("thread-1", "codex", 6, "rev-6", "streamed"),
+                sessions: Vec::new(),
+            }))
+            .expect("fresh stream update");
+
+        assert_eq!(fresh.reason, ClientStateMiniStreamUpdateReason::Delta);
+        assert!(fresh.did_change);
+        assert_eq!(fresh.snapshot.latest_seq, 6);
+        assert_eq!(fresh.snapshot.revision, "rev-6");
+        assert_eq!(
+            fresh.snapshot.state_minis[0].payload_json,
+            r#"{"title":"streamed"}"#
+        );
+    }
+
+    #[test]
     fn state_mini_stream_recovery_event_marks_reconnecting() {
         let core = LooperClientCore::new();
 
