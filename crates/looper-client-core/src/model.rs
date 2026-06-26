@@ -71,6 +71,16 @@ pub struct ClientPendingCommand {
     pub attempt_count: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ClientNotificationReplyRetryPlan {
+    pub(crate) has_pending: bool,
+    pub(crate) client_mutation_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) notification_id: String,
+    pub(crate) attempt_count: u32,
+    pub(crate) delay_nanoseconds: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct OutboundSessionFrame {
     pub frame_kind: OutboundSessionFrameKind,

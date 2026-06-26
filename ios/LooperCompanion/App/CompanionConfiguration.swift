@@ -659,6 +659,9 @@ struct UnconfiguredCompanionService: CompanionService {
     ) async throws -> LooperRealtimeNotificationReplyResponse {
         throw error
     }
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+        throw error
+    }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot { throw error }
     func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot { throw error }

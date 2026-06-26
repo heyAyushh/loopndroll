@@ -135,17 +135,13 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) throws {
-        _ = try clientCoreLocalStore.enqueueNotificationReplyCommand(
-            notificationId: notificationID,
-            threadId: threadID,
+        _ = try sessionManager.persistNotificationReply(
+            notificationID: notificationID,
+            threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface?.rawValue ?? "",
-            clientMutationId: clientMutationID
+            clientMutationID: clientMutationID
         )
-    }
-
-    func markDelivered(clientMutationID: String) throws {
-        try clientCoreLocalStore.markDelivered(clientMutationId: clientMutationID)
     }
 
     func pendingCommands() -> [CompanionSessionMiniPendingCommand] {

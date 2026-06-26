@@ -518,6 +518,10 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+        throw SnapshotOnlyCompanionServiceError.unimplemented
+    }
+
     func muteSession(id _: String) async throws -> MobileSnapshot {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }

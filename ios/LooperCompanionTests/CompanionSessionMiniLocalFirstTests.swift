@@ -508,6 +508,28 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         )
     }
 
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+        if let promptError {
+            throw promptError
+        }
+
+        let notificationID = "pending-notification"
+        let clientMutationID = "pending-mutation"
+        appendNotificationReply(notificationID: notificationID, clientMutationID: clientMutationID)
+        return LooperRealtimeNotificationReplyResponse(
+            accepted: true,
+            dispatchKind: "resume",
+            promptID: "prompt-1",
+            serverTime: nil,
+            clientMutationID: clientMutationID,
+            ackSeq: 0,
+            entityID: "thread-main",
+            revision: "",
+            idempotentReplay: false,
+            notificationID: notificationID
+        )
+    }
+
     private func incrementLoadSnapshotCallCount() {
         lock.lock()
         defer { lock.unlock() }

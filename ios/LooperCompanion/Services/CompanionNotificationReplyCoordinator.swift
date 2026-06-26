@@ -66,12 +66,6 @@ final class CompanionNotificationReplyCoordinator {
                 notificationID: trimmedNotificationID
             )
             : providedMutationID
-        sessionMiniController.enqueueNotificationReplyCommand(
-            notificationID: trimmedNotificationID,
-            sessionID: sessionID,
-            prompt: trimmedPrompt,
-            clientMutationID: clientMutationID
-        )
 
         return await sendNotificationReplyCommand(
             notificationID: trimmedNotificationID,
@@ -95,17 +89,13 @@ final class CompanionNotificationReplyCoordinator {
 
         return sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(
             drainID: delegate.notificationReplyMakeClientMutationID()
-        ) { [weak self] command in
-            await self?.submitPendingNotificationReplyCommand(command) ?? false
+        ) { [weak self] in
+            await self?.submitPendingNotificationReply() ?? false
         }
     }
 
     func stopOutboxDrain() {
         sessionMiniController.stopNotificationReplyOutboxDrain()
-    }
-
-    private func nextPendingCommand() -> CompanionSessionMiniPendingCommand? {
-        sessionMiniController.pendingNotificationReplyCommand()
     }
 
     @discardableResult
@@ -128,10 +118,6 @@ final class CompanionNotificationReplyCoordinator {
                 assistantSurface: nil,
                 clientMutationID: clientMutationID
             )
-            sessionMiniController.markCommandDelivered(response.clientMutationID)
-            if nextPendingCommand() == nil {
-                sessionMiniController.resetNotificationReplyOutboxRetry()
-            }
             await delegate.notificationReplyApplyAccepted(
                 response,
                 sessionID: sessionID,
@@ -145,47 +131,40 @@ final class CompanionNotificationReplyCoordinator {
                 sessionID: sessionID,
                 notificationID: notificationID
             )
-            scheduleOutboxRetryIfNeeded()
+            startOutboxDrainIfNeeded()
             return false
         }
     }
 
     @discardableResult
-    private func submitPendingNotificationReplyCommand(
-        _ command: CompanionSessionMiniPendingCommand
-    ) async -> Bool {
-        guard let notificationID = Self.nonEmptyText(command.notificationID),
-              let prompt = Self.nonEmptyText(command.prompt),
-              let sessionID = Self.nonEmptyText(command.threadID)
-        else {
-            CompanionDiagnostics.record(
-                "notification-reply:drop-malformed-outbox-command id=\(command.clientMutationID)"
+    private func submitPendingNotificationReply() async -> Bool {
+        do {
+            guard let delegate else {
+                return false
+            }
+            let response = try await delegate.notificationReplyService.submitPendingNotificationReply()
+            guard let acceptedSessionID = Self.nonEmptyText(response.entityID),
+                  let acceptedNotificationID = Self.nonEmptyText(response.notificationID)
+            else {
+                CompanionDiagnostics.record(
+                    "notification-reply:pending-drain-missing-ack-target"
+                )
+                return false
+            }
+            let acceptedSurface = delegate.notificationReplyAssistantSurface(for: acceptedSessionID)
+                ?? delegate.notificationReplySelectedAssistantSurface
+            await delegate.notificationReplyApplyAccepted(
+                response,
+                sessionID: acceptedSessionID,
+                notificationID: acceptedNotificationID,
+                targetSurface: acceptedSurface
             )
-            sessionMiniController.markCommandDelivered(command.clientMutationID)
             return true
-        }
-
-        let targetSurface = delegate?.notificationReplyAssistantSurface(for: sessionID)
-            ?? delegate?.notificationReplySelectedAssistantSurface
-            ?? .defaultSurface
-        return await sendNotificationReplyCommand(
-            notificationID: notificationID,
-            sessionID: sessionID,
-            prompt: prompt,
-            targetSurface: targetSurface,
-            clientMutationID: command.clientMutationID
-        )
-    }
-
-    private func scheduleOutboxRetryIfNeeded() {
-        guard let delegate else {
-            return
-        }
-
-        sessionMiniController.scheduleNotificationReplyOutboxRetryIfNeeded(
-            drainID: delegate.notificationReplyMakeClientMutationID()
-        ) { [weak self] command in
-            await self?.submitPendingNotificationReplyCommand(command) ?? false
+        } catch {
+            CompanionDiagnostics.record(
+                "notification-reply:pending-drain-failed error=\(error.localizedDescription)"
+            )
+            return false
         }
     }
 

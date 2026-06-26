@@ -110,6 +110,28 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         )
     }
 
+    @discardableResult
+    public func drainNotificationReplyOutbox() async throws -> ClientCommandAckEnvelope {
+        try await clientCore.drainNotificationReplyOutboxDurable(localStore: localStore)
+    }
+
+    @discardableResult
+    public func persistNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String,
+        clientMutationID: String
+    ) throws -> ClientLocalStateSnapshot {
+        try localStore.enqueueNotificationReplyCommand(
+            notificationId: notificationID,
+            threadId: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface,
+            clientMutationId: clientMutationID
+        )
+    }
+
     public func outboxDepth() throws -> UInt32 {
         try clientCore.snapshot().outboxDepth
     }

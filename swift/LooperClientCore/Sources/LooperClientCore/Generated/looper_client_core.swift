@@ -761,6 +761,8 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func disconnect() throws  -> ClientStateSnapshot
 
+    func drainNotificationReplyOutboxDurable(localStore: LooperClientCoreLocalStore) async throws  -> ClientCommandAckEnvelope
+
     func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String) throws  -> ClientModeMutationEnqueueResult
 
     func finishBatchedModeMutation(sessionId: String, clientMutationId: String) throws  -> ClientModeMutationBatchFinish
@@ -962,6 +964,23 @@ open func disconnect()throws  -> ClientStateSnapshot  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+open func drainNotificationReplyOutboxDurable(localStore: LooperClientCoreLocalStore)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_drain_notification_reply_outbox_durable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
 }
 
 open func enqueueModeMutation(sessionId: String, preset: String, clientMutationId: String)throws  -> ClientModeMutationEnqueueResult  {
@@ -4187,6 +4206,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case InvalidConnectionState
     case UnexpectedOutboxMutations
     case MissingCommandAcknowledgement
+    case NoPendingNotificationReply
     case SessionCommandTransportFailed
     case SessionCommandAckTimedOut
     case RealtimeConnectionWarmupFailed
@@ -4244,19 +4264,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 13: return .InvalidConnectionState
         case 14: return .UnexpectedOutboxMutations
         case 15: return .MissingCommandAcknowledgement
-        case 16: return .SessionCommandTransportFailed
-        case 17: return .SessionCommandAckTimedOut
-        case 18: return .RealtimeConnectionWarmupFailed
-        case 19: return .RealtimeConnectionWarmupTimedOut
-        case 20: return .StateMiniSnapshotTransportFailed
-        case 21: return .StateMiniSnapshotTimedOut
-        case 22: return .StateMiniStreamNotRunning
-        case 23: return .StateMiniStreamTransportFailed
-        case 24: return .StateMiniStreamRecoveryRequired
-        case 25: return .LocalStorePathRequired
-        case 26: return .LocalStoreReadFailed
-        case 27: return .LocalStoreWriteFailed
-        case 28: return .StateLockPoisoned
+        case 16: return .NoPendingNotificationReply
+        case 17: return .SessionCommandTransportFailed
+        case 18: return .SessionCommandAckTimedOut
+        case 19: return .RealtimeConnectionWarmupFailed
+        case 20: return .RealtimeConnectionWarmupTimedOut
+        case 21: return .StateMiniSnapshotTransportFailed
+        case 22: return .StateMiniSnapshotTimedOut
+        case 23: return .StateMiniStreamNotRunning
+        case 24: return .StateMiniStreamTransportFailed
+        case 25: return .StateMiniStreamRecoveryRequired
+        case 26: return .LocalStorePathRequired
+        case 27: return .LocalStoreReadFailed
+        case 28: return .LocalStoreWriteFailed
+        case 29: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4329,56 +4350,60 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(15))
 
 
-        case .SessionCommandTransportFailed:
+        case .NoPendingNotificationReply:
             writeInt(&buf, Int32(16))
 
 
-        case .SessionCommandAckTimedOut:
+        case .SessionCommandTransportFailed:
             writeInt(&buf, Int32(17))
 
 
-        case .RealtimeConnectionWarmupFailed:
+        case .SessionCommandAckTimedOut:
             writeInt(&buf, Int32(18))
 
 
-        case .RealtimeConnectionWarmupTimedOut:
+        case .RealtimeConnectionWarmupFailed:
             writeInt(&buf, Int32(19))
 
 
-        case .StateMiniSnapshotTransportFailed:
+        case .RealtimeConnectionWarmupTimedOut:
             writeInt(&buf, Int32(20))
 
 
-        case .StateMiniSnapshotTimedOut:
+        case .StateMiniSnapshotTransportFailed:
             writeInt(&buf, Int32(21))
 
 
-        case .StateMiniStreamNotRunning:
+        case .StateMiniSnapshotTimedOut:
             writeInt(&buf, Int32(22))
 
 
-        case .StateMiniStreamTransportFailed:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(23))
 
 
-        case .StateMiniStreamRecoveryRequired:
+        case .StateMiniStreamTransportFailed:
             writeInt(&buf, Int32(24))
 
 
-        case .LocalStorePathRequired:
+        case .StateMiniStreamRecoveryRequired:
             writeInt(&buf, Int32(25))
 
 
-        case .LocalStoreReadFailed:
+        case .LocalStorePathRequired:
             writeInt(&buf, Int32(26))
 
 
-        case .LocalStoreWriteFailed:
+        case .LocalStoreReadFailed:
             writeInt(&buf, Int32(27))
 
 
-        case .StateLockPoisoned:
+        case .LocalStoreWriteFailed:
             writeInt(&buf, Int32(28))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(29))
 
         }
     }
@@ -5286,6 +5311,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_disconnect() != 50682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_drain_notification_reply_outbox_durable() != 4394) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_enqueue_mode_mutation() != 1952) {

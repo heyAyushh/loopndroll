@@ -90,6 +90,7 @@ protocol CompanionService: Sendable {
         assistantSurface: CompanionAssistantSurface?,
         clientMutationID: String
     ) async throws -> LooperRealtimeNotificationReplyResponse
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse
     func muteSession(id: String) async throws -> MobileSnapshot
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot
     func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot

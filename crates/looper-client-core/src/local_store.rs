@@ -8,13 +8,17 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::ClientCoreError,
     model::{
-        ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind, ClientStateMini,
-        ClientStateMiniSnapshot,
+        ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan, ClientPendingCommand,
+        ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
     state_mini::{normalize_state_minis, require_valid_sequence, validate_state_minis},
 };
 
 pub const DEFAULT_LOCAL_STORE_FILE_NAME: &str = "looper-realtime-state-minis.json";
+
+const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
+const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
+const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreLocalStore {
@@ -210,6 +214,20 @@ impl LooperClientCoreLocalStore {
 }
 
 impl LooperClientCoreLocalStore {
+    pub(crate) fn notification_reply_retry_plan(
+        &self,
+    ) -> Result<ClientNotificationReplyRetryPlan, ClientCoreError> {
+        let state = self.lock_state()?;
+        Ok(state.notification_reply_retry_plan())
+    }
+
+    pub(crate) fn pending_notification_reply_command(
+        &self,
+    ) -> Result<Option<ClientPendingCommand>, ClientCoreError> {
+        let state = self.lock_state()?;
+        Ok(state.pending_notification_reply_command())
+    }
+
     fn lock_state(&self) -> Result<MutexGuard<'_, StoredState>, ClientCoreError> {
         self.state
             .lock()
@@ -240,6 +258,36 @@ impl StoredState {
                 .map(ClientPendingCommand::from)
                 .collect(),
             server_time: self.server_time.clone().unwrap_or_default(),
+        }
+    }
+
+    fn pending_notification_reply_command(&self) -> Option<ClientPendingCommand> {
+        self.pending_commands
+            .iter()
+            .find(|command| command.kind == ClientPendingCommandKind::SubmitNotificationReply)
+            .cloned()
+            .map(ClientPendingCommand::from)
+    }
+
+    fn notification_reply_retry_plan(&self) -> ClientNotificationReplyRetryPlan {
+        let Some(command) = self.pending_notification_reply_command() else {
+            return ClientNotificationReplyRetryPlan {
+                has_pending: false,
+                client_mutation_id: String::new(),
+                thread_id: String::new(),
+                notification_id: String::new(),
+                attempt_count: 0,
+                delay_nanoseconds: 0,
+            };
+        };
+
+        ClientNotificationReplyRetryPlan {
+            has_pending: true,
+            client_mutation_id: command.client_mutation_id,
+            thread_id: command.thread_id,
+            notification_id: command.notification_id,
+            attempt_count: command.attempt_count,
+            delay_nanoseconds: notification_reply_retry_delay(command.attempt_count),
         }
     }
 }
@@ -327,6 +375,18 @@ fn non_empty(value: String) -> Option<String> {
     } else {
         Some(value)
     }
+}
+
+fn notification_reply_retry_delay(attempt_count: u32) -> u64 {
+    if attempt_count == 0 {
+        return 0;
+    }
+
+    let exponent = attempt_count.saturating_sub(1);
+    let multiplier = NOTIFICATION_REPLY_BACKOFF_MULTIPLIER.saturating_pow(exponent);
+    NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS
+        .saturating_mul(multiplier)
+        .min(NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS)
 }
 
 #[cfg(test)]
@@ -516,6 +576,79 @@ mod tests {
             )
             .expect_err("notification id required");
         assert_eq!(error, ClientCoreError::EmptyNotificationId);
+    }
+
+    #[test]
+    fn notification_reply_retry_plan_selects_pending_reply_with_capped_backoff() {
+        let path = temp_store_path("notification-reply-retry-plan");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        assert_eq!(
+            store
+                .notification_reply_retry_plan()
+                .expect("empty retry plan"),
+            ClientNotificationReplyRetryPlan {
+                has_pending: false,
+                client_mutation_id: String::new(),
+                thread_id: String::new(),
+                notification_id: String::new(),
+                attempt_count: 0,
+                delay_nanoseconds: 0,
+            }
+        );
+
+        store
+            .enqueue_notification_reply_command(
+                "notification-1".to_owned(),
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "mutation-reply".to_owned(),
+            )
+            .expect("enqueue reply");
+
+        assert_eq!(
+            store
+                .notification_reply_retry_plan()
+                .expect("initial retry plan"),
+            ClientNotificationReplyRetryPlan {
+                has_pending: true,
+                client_mutation_id: "mutation-reply".to_owned(),
+                thread_id: "thread-main".to_owned(),
+                notification_id: "notification-1".to_owned(),
+                attempt_count: 0,
+                delay_nanoseconds: 0,
+            }
+        );
+
+        store
+            .mark_attempted("mutation-reply".to_owned())
+            .expect("first attempt");
+        store
+            .mark_attempted("mutation-reply".to_owned())
+            .expect("second attempt");
+        assert_eq!(
+            store
+                .notification_reply_retry_plan()
+                .expect("backoff retry plan")
+                .delay_nanoseconds,
+            NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS
+                * NOTIFICATION_REPLY_BACKOFF_MULTIPLIER
+        );
+
+        for _ in 0..20 {
+            store
+                .mark_attempted("mutation-reply".to_owned())
+                .expect("additional attempt");
+        }
+        assert_eq!(
+            store
+                .notification_reply_retry_plan()
+                .expect("capped retry plan")
+                .delay_nanoseconds,
+            NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS
+        );
     }
 
     #[test]

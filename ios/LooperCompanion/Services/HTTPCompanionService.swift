@@ -221,17 +221,27 @@ struct HTTPCompanionService: CompanionService {
         CompanionDiagnostics.record(
             "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
         )
-        return LooperRealtimeNotificationReplyResponse(
-            accepted: envelope.ack.accepted,
-            dispatchKind: Self.dispatchKind(from: envelope.dispatchKind),
-            promptID: Self.nonEmpty(envelope.promptId),
-            serverTime: envelope.ack.serverTime,
-            clientMutationID: envelope.ack.clientMutationId,
-            ackSeq: envelope.ack.ackSeq,
-            entityID: envelope.ack.entityId,
-            revision: envelope.ack.revision,
-            idempotentReplay: envelope.ack.idempotentReplay,
-            notificationID: Self.nonEmpty(envelope.notificationId) ?? notificationID
+        return Self.notificationReplyResponse(
+            from: envelope,
+            fallbackNotificationID: notificationID
+        )
+    }
+
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+        await prepareCommandRuntimeIfNeeded()
+        let envelope = try await requiredSessionManager().drainNotificationReplyOutbox()
+        guard envelope.ack.accepted else {
+            CompanionDiagnostics.record(
+                "notification-reply:grpc-pending-invalid id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId)"
+            )
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record(
+            "notification-reply:grpc-pending-accepted id=\(envelope.ack.entityId) notificationID=\(envelope.notificationId) kind=\(Self.dispatchKind(from: envelope.dispatchKind))"
+        )
+        return Self.notificationReplyResponse(
+            from: envelope,
+            fallbackNotificationID: envelope.notificationId
         )
     }
 
@@ -288,6 +298,24 @@ struct HTTPCompanionService: CompanionService {
 
     private static func dispatchKind(from value: String) -> String {
         nonEmpty(value) ?? "accepted"
+    }
+
+    private static func notificationReplyResponse(
+        from envelope: ClientCommandAckEnvelope,
+        fallbackNotificationID: String
+    ) -> LooperRealtimeNotificationReplyResponse {
+        LooperRealtimeNotificationReplyResponse(
+            accepted: envelope.ack.accepted,
+            dispatchKind: dispatchKind(from: envelope.dispatchKind),
+            promptID: nonEmpty(envelope.promptId),
+            serverTime: envelope.ack.serverTime,
+            clientMutationID: envelope.ack.clientMutationId,
+            ackSeq: envelope.ack.ackSeq,
+            entityID: envelope.ack.entityId,
+            revision: envelope.ack.revision,
+            idempotentReplay: envelope.ack.idempotentReplay,
+            notificationID: nonEmpty(envelope.notificationId) ?? fallbackNotificationID
+        )
     }
 
     private static func nonEmpty(_ value: String) -> String? {

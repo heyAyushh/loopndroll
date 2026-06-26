@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use tokio::sync::mpsc;
+use tokio::{
+    sync::mpsc,
+    time::{Duration, sleep},
+};
 
 use crate::command_batch::reduce_expected_command_ack;
 use crate::error::ClientCoreError;
@@ -542,6 +545,35 @@ impl LooperClientCore {
         Ok(envelope)
     }
 
+    pub async fn drain_notification_reply_outbox_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let mut last_envelope = None;
+        loop {
+            let plan = local_store.notification_reply_retry_plan()?;
+            if !plan.has_pending {
+                return last_envelope.ok_or(ClientCoreError::NoPendingNotificationReply);
+            }
+
+            if plan.delay_nanoseconds > 0 {
+                sleep(Duration::from_nanos(plan.delay_nanoseconds)).await;
+            }
+
+            match self
+                .submit_next_notification_reply_durable(local_store.clone())
+                .await
+            {
+                Ok(envelope) if envelope.ack.accepted => {
+                    last_envelope = Some(envelope);
+                }
+                Ok(envelope) => return Ok(envelope),
+                Err(error) if should_retry_notification_reply_drain(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     pub async fn warm_connection(
         &self,
         endpoints: Vec<ClientEndpoint>,
@@ -665,6 +697,24 @@ impl LooperClientCore {
         self.lock_runtime_config()?
             .clone()
             .ok_or(ClientCoreError::NoEndpoint)
+    }
+
+    async fn submit_next_notification_reply_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let command = local_store
+            .pending_notification_reply_command()?
+            .ok_or(ClientCoreError::NoPendingNotificationReply)?;
+        self.submit_notification_reply_durable(
+            local_store,
+            command.notification_id,
+            command.thread_id,
+            command.prompt,
+            command.assistant_surface,
+            command.client_mutation_id,
+        )
+        .await
     }
 
     async fn submit_pending_command_ack(
@@ -947,6 +997,16 @@ fn reject_message(ack: &ClientCommandAck) -> String {
     }
 }
 
+fn should_retry_notification_reply_drain(error: &ClientCoreError) -> bool {
+    matches!(
+        error,
+        ClientCoreError::NoEndpoint
+            | ClientCoreError::MissingCommandAcknowledgement
+            | ClientCoreError::SessionCommandTransportFailed
+            | ClientCoreError::SessionCommandAckTimedOut
+    )
+}
+
 fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCoreError> {
     if value.trim().is_empty() {
         Err(error)
@@ -985,6 +1045,28 @@ mod tests {
         assert_eq!(snapshot.phase, ConnectionPhase::Ready);
         assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+    }
+
+    #[test]
+    fn notification_reply_drain_retries_only_transient_failures() {
+        assert!(should_retry_notification_reply_drain(
+            &ClientCoreError::NoEndpoint
+        ));
+        assert!(should_retry_notification_reply_drain(
+            &ClientCoreError::SessionCommandTransportFailed
+        ));
+        assert!(should_retry_notification_reply_drain(
+            &ClientCoreError::SessionCommandAckTimedOut
+        ));
+        assert!(should_retry_notification_reply_drain(
+            &ClientCoreError::MissingCommandAcknowledgement
+        ));
+        assert!(!should_retry_notification_reply_drain(
+            &ClientCoreError::EmptyPrompt
+        ));
+        assert!(!should_retry_notification_reply_drain(
+            &ClientCoreError::EmptyNotificationId
+        ));
     }
 
     #[test]

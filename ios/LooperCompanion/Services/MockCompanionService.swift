@@ -329,6 +329,21 @@ struct MockCompanionService: CompanionService {
         )
     }
 
+    func submitPendingNotificationReply() async throws -> LooperRealtimeNotificationReplyResponse {
+        LooperRealtimeNotificationReplyResponse(
+            accepted: true,
+            dispatchKind: "mock",
+            promptID: nil,
+            serverTime: Date().ISO8601Format(),
+            clientMutationID: "",
+            ackSeq: 0,
+            entityID: "",
+            revision: "",
+            idempotentReplay: false,
+            notificationID: ""
+        )
+    }
+
     func muteSession(id: String) async throws -> MobileSnapshot {
         await store.mute(id: id)
     }

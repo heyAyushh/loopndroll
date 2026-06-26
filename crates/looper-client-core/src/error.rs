@@ -30,6 +30,8 @@ pub enum ClientCoreError {
     UnexpectedOutboxMutations,
     #[error("expected command acknowledgement was missing")]
     MissingCommandAcknowledgement,
+    #[error("no pending notification reply command")]
+    NoPendingNotificationReply,
     #[error("session command transport failed")]
     SessionCommandTransportFailed,
     #[error("session command acknowledgement timed out")]
