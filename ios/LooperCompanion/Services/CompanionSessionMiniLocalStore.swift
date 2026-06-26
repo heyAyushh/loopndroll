@@ -43,40 +43,17 @@ typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -
 final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
-    let clientCoreLocalStore: LooperClientCoreLocalStore
-    let clientCore: LooperClientCore
     let sessionManager: LooperClientCoreSessionManager
     private let decoder = JSONDecoder()
 
-    init(
-        fileURL: URL,
-        clientCore: LooperClientCore = LooperClientCore()
-    ) throws {
-        let clientCoreLocalStore = try LooperClientCoreLocalStore(filePath: fileURL.path)
-        self.clientCoreLocalStore = clientCoreLocalStore
-        self.clientCore = clientCore
-        self.sessionManager = LooperClientCoreSessionManager(
-            clientCore: clientCore,
-            localStore: clientCoreLocalStore
-        )
-        do {
-            _ = try sessionManager.replaceStateMinis(
-                snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
-            )
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:client-core-seed-failed error=\(error.localizedDescription)"
-            )
-        }
+    init(fileURL: URL) throws {
+        self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
     }
 
-    static func liveDefault(
-        clientCore: LooperClientCore = LooperClientCore()
-    ) -> CompanionSessionMiniLocalStore? {
+    static func liveDefault() -> CompanionSessionMiniLocalStore? {
         do {
             return try CompanionSessionMiniLocalStore(
-                fileURL: defaultFileURL(),
-                clientCore: clientCore
+                fileURL: defaultFileURL()
             )
         } catch {
             CompanionDiagnostics.record("session-mini:store-unavailable error=\(error.localizedDescription)")
@@ -145,14 +122,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func pendingCommands() -> [CompanionSessionMiniPendingCommand] {
-        (try? clientCoreLocalStore.snapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
-    }
-
-    func startClientCoreStateMiniStream() async throws {
-        _ = try sessionManager.replaceStateMinis(
-            snapshot: ClientStateMiniSnapshot(clientCoreLocalStore.snapshot())
-        )
-        _ = try sessionManager.startConfiguredStateMiniStream()
+        (try? sessionManager.localSnapshot().pendingCommands.map(CompanionSessionMiniPendingCommand.init)) ?? []
     }
 
     func nextClientCoreStateMiniStreamResult() async throws -> CompanionClientCoreStateMiniStreamResult {
@@ -168,7 +138,12 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             )
         }
 
-        let localSnapshot = try persistValidated(streamUpdate.snapshot)
+        let localSnapshot = try sessionManager.localSnapshot()
+        _ = try mobileSnapshot(
+            latestSeq: localSnapshot.latestSeq,
+            sessions: localSnapshot.sessions,
+            serverTime: localSnapshot.serverTime
+        )
         return CompanionClientCoreStateMiniStreamResult(
             reason: streamUpdate.reason,
             update: CompanionSessionMiniSyncUpdate(
@@ -181,7 +156,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
 
     func stopClientCoreStateMiniStream() {
         do {
-            _ = try sessionManager.stopStateMiniStream()
+            _ = try sessionManager.stop()
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:client-core-stream-stop-failed error=\(error.localizedDescription)"
@@ -198,7 +173,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         }
 
         do {
-            try await startClientCoreStateMiniStream()
             try await drainClientCoreStateMiniSync(
                 onUpdate: onUpdate,
                 onDebugMessage: onDebugMessage
@@ -220,16 +194,6 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         .appendingPathComponent(defaultFileName)
     }
 
-    private func localSnapshot(from snapshot: ClientStateSnapshot) -> ClientLocalStateSnapshot {
-        let durableSnapshot = try? clientCoreLocalStore.snapshot()
-        return ClientLocalStateSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.stateMinis,
-            pendingCommands: durableSnapshot?.pendingCommands ?? [],
-            serverTime: snapshot.serverTime
-        )
-    }
-
     @discardableResult
     private func persistValidated(_ snapshot: ClientStateSnapshot) throws
         -> ClientLocalStateSnapshot
@@ -240,7 +204,7 @@ final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             sessions: sessions,
             serverTime: snapshot.serverTime.nilIfEmpty
         )
-        return try clientCoreLocalStore.replaceStateMinis(
+        return try sessionManager.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(
                 latestSeq: snapshot.latestSeq,
                 sessions: sessions,
@@ -322,18 +286,17 @@ private extension ClientStateMini {
 extension CompanionSessionMiniLocalStore {
     func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
-            return try localSnapshot(from: clientCore.snapshot())
+            return try sessionManager.localSnapshot()
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:client-core-snapshot-failed error=\(error.localizedDescription)"
             )
-            return (try? clientCoreLocalStore.snapshot())
-                ?? ClientLocalStateSnapshot(
-                    latestSeq: 0,
-                    sessions: [],
-                    pendingCommands: [],
-                    serverTime: ""
-                )
+            return ClientLocalStateSnapshot(
+                latestSeq: 0,
+                sessions: [],
+                pendingCommands: [],
+                serverTime: ""
+            )
         }
     }
 
@@ -341,10 +304,9 @@ extension CompanionSessionMiniLocalStore {
     func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
         -> ClientLocalStateSnapshot
     {
-        let coreSnapshot = try clientCore.replaceStateMinis(
+        try sessionManager.replaceStateMinis(
             snapshot: snapshot
         )
-        return try persistValidated(coreSnapshot)
     }
 
     @discardableResult
@@ -358,13 +320,7 @@ extension CompanionSessionMiniLocalStore {
     func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
         -> ClientLocalStateSnapshot
     {
-        let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: delta
-        )
-        guard result.didChange else {
-            return localSnapshot(from: result.snapshot)
-        }
-        return try persistValidated(result.snapshot)
+        try sessionManager.applyStateMiniDelta(delta)
     }
 }
 

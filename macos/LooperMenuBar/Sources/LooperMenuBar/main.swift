@@ -44,12 +44,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
-  private let sessionClientCore: LooperClientCore
   private let sessionMiniLocalStore: MenuBarSessionMiniLocalStore?
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
   private lazy var sessionCommandCenter = MenuBarSessionCommandCenter(
-    localStore: sessionMiniLocalStore,
-    clientCore: sessionClientCore
+    localStore: sessionMiniLocalStore
   )
   private var statusItem: NSStatusItem?
   private var menu: NSMenu?
@@ -78,12 +76,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   override init() {
     let endpointStore = ControlPlaneEndpointStore()
     let client = HTTPControlPlaneClient(endpointStore: endpointStore)
-    let sessionClientCore = LooperClientCore()
     self.client = client
-    self.sessionClientCore = sessionClientCore
-    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault(
-      clientCore: sessionClientCore
-    )
+    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault()
     self.lifecycle = LooperLifecycleCoordinator(
       client: client,
       service: BundledControlPlaneService(endpointStore: endpointStore)
@@ -117,7 +111,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   func applicationWillTerminate(_ notification: Notification) {
     continuationRefreshTask?.cancel()
     stopSessionMiniSync()
-    _ = try? sessionClientCore.stop()
+    _ = try? sessionMiniLocalStore?.sessionManager.stop()
     continuationPublisher.invalidate()
     if !detachServerOnQuit {
       _ = lifecycle.unregisterBeforeQuit()
@@ -716,7 +710,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func configureSessionClientCoreRuntimeIfNeeded() async throws {
-    if (try? sessionClientCore.snapshot().endpointUrl.isEmpty) == false {
+    guard let sessionManager = sessionMiniLocalStore?.sessionManager else {
+      throw MenuBarSessionRuntimeError.noRealtimeEndpoint
+    }
+    if (try? sessionManager.isRuntimeConfigured()) == true {
       return
     }
     let health = try await client.fetchMobileHealth()
@@ -726,7 +723,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     guard !endpoints.isEmpty else {
       throw MenuBarSessionRuntimeError.noRealtimeEndpoint
     }
-    _ = try sessionClientCore.configureSessionRuntime(
+    _ = try sessionManager.start(
       endpoints: endpoints,
       bearerToken: "",
       mobileSessionHeader: ""

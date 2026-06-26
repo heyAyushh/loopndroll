@@ -99,7 +99,7 @@ struct HTTPCompanionService: CompanionService {
 
     func prepareRealtimeConnection() async {
         do {
-            try await configureSessionRuntime()
+            try await startSessionRuntime()
             CompanionDiagnostics.record("realtime:warm-success")
         } catch {
             CompanionDiagnostics.record("realtime:warm-failed error=\(error.localizedDescription)")
@@ -253,11 +253,11 @@ struct HTTPCompanionService: CompanionService {
     }
 
     private func prepareCommandRuntimeIfNeeded() async {
-        guard (try? sessionManager?.clientCore.snapshot().endpointUrl.isEmpty) != false else {
+        guard (try? sessionManager?.isRuntimeConfigured()) != true else {
             return
         }
         do {
-            try await configureSessionRuntime()
+            try await startSessionRuntime()
         } catch {
             CompanionDiagnostics.record(
                 "realtime:configure-failed error=\(error.localizedDescription)"
@@ -265,7 +265,7 @@ struct HTTPCompanionService: CompanionService {
         }
     }
 
-    private func configureSessionRuntime() async throws {
+    private func startSessionRuntime() async throws {
         let responseData = try await responseDataWithConfiguredURLs(
             path: Self.healthPath,
             method: .get,
@@ -276,7 +276,7 @@ struct HTTPCompanionService: CompanionService {
         guard !endpoints.isEmpty else {
             throw HTTPCompanionServiceError.invalidResponse
         }
-        _ = try requiredSessionManager().configure(
+        _ = try requiredSessionManager().start(
             endpoints: endpoints,
             bearerToken: bearerToken ?? "",
             mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""

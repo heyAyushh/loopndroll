@@ -119,9 +119,9 @@ struct LooperClientCoreRealtimeBridgeTests {
 
     @Test
     func sessionManagerOwnsDurableCommandBoundary() async throws {
-        let core = LooperClientCore()
-        let store = try localStore(named: "session-manager-command-boundary")
-        let manager = LooperClientCoreSessionManager(clientCore: core, localStore: store)
+        let manager = try LooperClientCoreSessionManager(
+            filePath: localStorePath(named: "session-manager-command-boundary")
+        )
 
         do {
             _ = try await manager.sendPrompt(
@@ -135,7 +135,7 @@ struct LooperClientCoreRealtimeBridgeTests {
             #expect(error == .NoEndpoint)
         }
 
-        let snapshot = try store.snapshot()
+        let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
         #expect(snapshot.pendingCommands.first?.kind == .sendSessionPrompt)
         #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-manager-prompt")
@@ -172,10 +172,14 @@ struct LooperClientCoreRealtimeBridgeTests {
 
     private func localStore(named name: String) throws -> LooperClientCoreLocalStore {
         try LooperClientCoreLocalStore(
-            filePath: FileManager.default.temporaryDirectory
-                .appendingPathComponent("LooperClientCoreTests-\(UUID().uuidString)", isDirectory: true)
-                .appendingPathComponent("\(name)-state-minis.json")
-                .path
+            filePath: localStorePath(named: name)
         )
+    }
+
+    private func localStorePath(named name: String) -> String {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("LooperClientCoreTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(name)-state-minis.json")
+            .path
     }
 }

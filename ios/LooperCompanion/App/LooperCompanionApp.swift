@@ -1,6 +1,5 @@
 import AppIntents
 import CoreSpotlight
-import LooperClientCore
 import SwiftUI
 import UserNotifications
 
@@ -38,10 +37,9 @@ struct LooperApp: App {
         }
 
         Self.prepareUITestStateIfNeeded()
-        let sessionClientCore = LooperClientCore()
         let sessionMiniLocalStore = (isRunningUnitTests || isRunningG006SelfTest)
             ? nil
-            : CompanionSessionMiniLocalStore.liveDefault(clientCore: sessionClientCore)
+            : CompanionSessionMiniLocalStore.liveDefault()
         _authenticator = State(initialValue: CompanionAppAuthenticator())
         _model = State(
             initialValue: CompanionAppModel(

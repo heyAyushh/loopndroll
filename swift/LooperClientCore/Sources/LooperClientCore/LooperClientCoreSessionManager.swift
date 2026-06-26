@@ -1,28 +1,14 @@
 import Foundation
 
 public final class LooperClientCoreSessionManager: @unchecked Sendable {
-    public let clientCore: LooperClientCore
-    public let localStore: LooperClientCoreLocalStore
+    private let runtime: LooperClientCoreSessionRuntime
 
-    public init(
-        clientCore: LooperClientCore = LooperClientCore(),
-        localStore: LooperClientCoreLocalStore
-    ) {
-        self.clientCore = clientCore
-        self.localStore = localStore
+    public init(fileURL: URL) throws {
+        self.runtime = try LooperClientCoreSessionRuntime(filePath: fileURL.path)
     }
 
-    @discardableResult
-    public func configure(
-        endpoints: [ClientEndpoint],
-        bearerToken: String,
-        mobileSessionHeader: String
-    ) throws -> ClientStateSnapshot {
-        try clientCore.configureSessionRuntime(
-            endpoints: endpoints,
-            bearerToken: bearerToken,
-            mobileSessionHeader: mobileSessionHeader
-        )
+    public init(filePath: String) throws {
+        self.runtime = try LooperClientCoreSessionRuntime(filePath: filePath)
     }
 
     @discardableResult
@@ -31,7 +17,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         bearerToken: String,
         mobileSessionHeader: String
     ) throws -> ClientStateSnapshot {
-        try clientCore.start(
+        try runtime.start(
             endpoints: endpoints,
             bearerToken: bearerToken,
             mobileSessionHeader: mobileSessionHeader
@@ -39,27 +25,34 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
-    public func startConfiguredStateMiniStream() throws -> ClientStateSnapshot {
-        try clientCore.startConfiguredStateMiniStream()
+    public func stop() throws -> ClientStateSnapshot {
+        try runtime.stop()
     }
 
     public func observe() async throws -> ClientStateMiniStreamUpdate {
-        try await clientCore.observe()
+        try await runtime.observe()
+    }
+
+    public func isRuntimeConfigured() throws -> Bool {
+        try !runtime.stateSnapshot().endpointUrl.isEmpty
+    }
+
+    public func localSnapshot() throws -> ClientLocalStateSnapshot {
+        try runtime.localSnapshot()
+    }
+
+    public func stateSnapshot() throws -> ClientStateSnapshot {
+        try runtime.stateSnapshot()
     }
 
     @discardableResult
-    public func stop() throws -> ClientStateSnapshot {
-        try clientCore.stop()
+    public func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws -> ClientLocalStateSnapshot {
+        try runtime.replaceStateMinis(snapshot: snapshot)
     }
 
     @discardableResult
-    public func stopStateMiniStream() throws -> ClientStateSnapshot {
-        try clientCore.stopStateMiniStream()
-    }
-
-    @discardableResult
-    public func replaceStateMinis(snapshot: ClientStateMiniSnapshot) throws -> ClientStateSnapshot {
-        try clientCore.replaceStateMinis(snapshot: snapshot)
+    public func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws -> ClientLocalStateSnapshot {
+        try runtime.applyStateMiniDelta(delta: delta)
     }
 
     @discardableResult
@@ -68,8 +61,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         preset: String,
         clientMutationID: String
     ) async throws -> ClientCommandAckEnvelope {
-        try await clientCore.submitSetModeDurable(
-            localStore: localStore,
+        try await runtime.setMode(
             threadId: threadID,
             preset: preset,
             clientMutationId: clientMutationID
@@ -83,8 +75,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         assistantSurface: String,
         clientMutationID: String
     ) async throws -> ClientCommandAckEnvelope {
-        try await clientCore.submitSendPromptDurable(
-            localStore: localStore,
+        try await runtime.sendPrompt(
             threadId: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface,
@@ -100,8 +91,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         assistantSurface: String,
         clientMutationID: String
     ) async throws -> ClientCommandAckEnvelope {
-        try await clientCore.submitNotificationReplyDurable(
-            localStore: localStore,
+        try await runtime.submitNotificationReply(
             notificationId: notificationID,
             threadId: threadID,
             prompt: prompt,
@@ -112,7 +102,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
 
     @discardableResult
     public func drainNotificationReplyOutbox() async throws -> ClientCommandAckEnvelope {
-        try await clientCore.drainNotificationReplyOutboxDurable(localStore: localStore)
+        try await runtime.drainNotificationReplyOutbox()
     }
 
     @discardableResult
@@ -123,7 +113,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         assistantSurface: String,
         clientMutationID: String
     ) throws -> ClientLocalStateSnapshot {
-        try localStore.enqueueNotificationReplyCommand(
+        try runtime.persistNotificationReply(
             notificationId: notificationID,
             threadId: threadID,
             prompt: prompt,
@@ -133,6 +123,6 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     public func outboxDepth() throws -> UInt32 {
-        try clientCore.snapshot().outboxDepth
+        try runtime.outboxDepth()
     }
 }

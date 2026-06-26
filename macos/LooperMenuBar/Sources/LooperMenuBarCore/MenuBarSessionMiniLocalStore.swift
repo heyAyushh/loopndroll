@@ -137,28 +137,16 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         static let applicationSupportDirectoryName = "looper"
     }
 
-    private let store: LooperClientCoreLocalStore
-    private let clientCore: LooperClientCore
+    public let sessionManager: LooperClientCoreSessionManager
 
-    var clientCoreLocalStore: LooperClientCoreLocalStore {
-        store
+    public init(fileURL: URL) throws {
+        self.sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
     }
 
-    public init(fileURL: URL, clientCore: LooperClientCore = LooperClientCore()) throws {
-        store = try LooperClientCoreLocalStore(filePath: fileURL.path)
-        self.clientCore = clientCore
-        _ = try? clientCore.replaceStateMinis(
-            snapshot: ClientStateMiniSnapshot(store.snapshot())
-        )
-    }
-
-    public static func liveDefault(
-        clientCore: LooperClientCore = LooperClientCore()
-    ) -> MenuBarSessionMiniLocalStore? {
+    public static func liveDefault() -> MenuBarSessionMiniLocalStore? {
         do {
             return try MenuBarSessionMiniLocalStore(
-                fileURL: defaultFileURL(),
-                clientCore: clientCore
+                fileURL: defaultFileURL()
             )
         } catch {
             return nil
@@ -209,18 +197,13 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
-        (try? store.snapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
-    }
-
-    public func startClientCoreStateMiniStream() async throws {
-        _ = try clientCore.replaceStateMinis(snapshot: ClientStateMiniSnapshot(store.snapshot()))
-        _ = try clientCore.startConfiguredStateMiniStream()
+        (try? sessionManager.localSnapshot().pendingCommands.map(MenuBarSessionMiniPendingCommand.init)) ?? []
     }
 
     public func nextClientCoreStateMiniStreamResult() async throws
         -> MenuBarClientCoreStateMiniStreamResult
     {
-        let streamUpdate = try await clientCore.observe()
+        let streamUpdate = try await sessionManager.observe()
         guard
             (streamUpdate.reason == .delta || streamUpdate.reason == .recoveryRequired),
             streamUpdate.didChange
@@ -233,7 +216,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
             )
         }
 
-        let localSnapshot = try persistValidated(streamUpdate.snapshot)
+        let localSnapshot = try sessionManager.localSnapshot()
         return MenuBarClientCoreStateMiniStreamResult(
             reason: MenuBarClientCoreStateMiniStreamUpdateReason(streamUpdate.reason),
             snapshot: try menuSnapshot(from: localSnapshot),
@@ -243,7 +226,7 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     public func stopClientCoreStateMiniStream() {
-        _ = try? clientCore.stopStateMiniStream()
+        _ = try? sessionManager.stop()
     }
 
     public func runClientCoreStateMiniSync(
@@ -255,7 +238,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         }
 
         do {
-            try await startClientCoreStateMiniStream()
             try await drainClientCoreStateMiniSync(
                 onSnapshot: onSnapshot,
                 onDebugMessage: onDebugMessage
@@ -301,38 +283,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
                 return
             }
         }
-    }
-
-    private func localSnapshot(from snapshot: ClientStateSnapshot) -> ClientLocalStateSnapshot {
-        let durableSnapshot = try? store.snapshot()
-        return ClientLocalStateSnapshot(
-            latestSeq: snapshot.latestSeq,
-            sessions: snapshot.stateMinis,
-            pendingCommands: durableSnapshot?.pendingCommands ?? [],
-            serverTime: snapshot.serverTime
-        )
-    }
-
-    @discardableResult
-    private func persistValidated(_ snapshot: ClientStateSnapshot) throws
-        -> ClientLocalStateSnapshot
-    {
-        let sessions = snapshot.stateMinis
-        _ = try menuSnapshot(
-            from: ClientLocalStateSnapshot(
-                latestSeq: snapshot.latestSeq,
-                sessions: sessions,
-                pendingCommands: [],
-                serverTime: snapshot.serverTime
-            )
-        )
-        return try store.replaceStateMinis(
-            snapshot: ClientStateMiniSnapshot(
-                latestSeq: snapshot.latestSeq,
-                sessions: sessions,
-                serverTime: snapshot.serverTime
-            )
-        )
     }
 
     private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
@@ -389,15 +339,14 @@ private extension ClientStateMini {
 extension MenuBarSessionMiniLocalStore {
     public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
         do {
-            return try localSnapshot(from: clientCore.snapshot())
+            return try sessionManager.localSnapshot()
         } catch {
-            return (try? store.snapshot())
-                ?? ClientLocalStateSnapshot(
-                    latestSeq: 0,
-                    sessions: [],
-                    pendingCommands: [],
-                    serverTime: ""
-                )
+            return ClientLocalStateSnapshot(
+                latestSeq: 0,
+                sessions: [],
+                pendingCommands: [],
+                serverTime: ""
+            )
         }
     }
 
@@ -405,23 +354,16 @@ extension MenuBarSessionMiniLocalStore {
     public func replaceStateMinis(with snapshot: ClientStateMiniSnapshot) throws
         -> ClientLocalStateSnapshot
     {
-        let coreSnapshot = try clientCore.replaceStateMinis(
+        try sessionManager.replaceStateMinis(
             snapshot: snapshot
         )
-        return try persistValidated(coreSnapshot)
     }
 
     @discardableResult
     public func applyStateMiniDelta(_ delta: ClientStateMiniDelta) throws
         -> ClientLocalStateSnapshot
     {
-        let result = try clientCore.applyStateMiniDeltaWithResult(
-            delta: delta
-        )
-        guard result.didChange else {
-            return localSnapshot(from: result.snapshot)
-        }
-        return try persistValidated(result.snapshot)
+        try sessionManager.applyStateMiniDelta(delta)
     }
 }
 

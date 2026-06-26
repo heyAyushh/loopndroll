@@ -8,6 +8,7 @@ mod local_store;
 mod menu_snapshot;
 mod mobile_snapshot;
 mod model;
+mod session_runtime;
 mod session_transport;
 mod snapshot_reducer;
 mod state_mini;
@@ -33,6 +34,7 @@ pub use model::{
     ClientStateMiniDelta, ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot,
     ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
+pub use session_runtime::LooperClientCoreSessionRuntime;
 pub use snapshot_reducer::{
     ClientAssistantSurfaceSelection, ClientDetailCacheProjection, ClientDetailModeProjection,
     ClientOptimisticModeProjection, ClientSessionIndexEntry, ClientSessionIndexProjection,
