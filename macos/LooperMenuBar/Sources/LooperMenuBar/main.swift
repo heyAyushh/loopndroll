@@ -44,12 +44,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
+  private let sessionClientCore: LooperClientCore
   private let sessionMiniLocalStore: MenuBarSessionMiniLocalStore?
-  private let sessionCommandClient: MenuBarRealtimeSessionCommandClient
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(client: client)
   private lazy var sessionCommandCenter = MenuBarSessionCommandCenter(
-    client: sessionCommandClient,
-    localStore: sessionMiniLocalStore
+    localStore: sessionMiniLocalStore,
+    clientCore: sessionClientCore
   )
   private var statusItem: NSStatusItem?
   private var menu: NSMenu?
@@ -78,9 +78,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   override init() {
     let endpointStore = ControlPlaneEndpointStore()
     let client = HTTPControlPlaneClient(endpointStore: endpointStore)
+    let sessionClientCore = LooperClientCore()
     self.client = client
-    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault()
-    self.sessionCommandClient = MenuBarRealtimeSessionCommandClient(controlPlaneClient: client)
+    self.sessionClientCore = sessionClientCore
+    self.sessionMiniLocalStore = MenuBarSessionMiniLocalStore.liveDefault(
+      clientCore: sessionClientCore
+    )
     self.lifecycle = LooperLifecycleCoordinator(
       client: client,
       service: BundledControlPlaneService(endpointStore: endpointStore)
@@ -114,9 +117,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   func applicationWillTerminate(_ notification: Notification) {
     continuationRefreshTask?.cancel()
     stopSessionMiniSync()
-    Task {
-      await sessionCommandClient.disconnect()
-    }
+    _ = try? sessionClientCore.stop()
     continuationPublisher.invalidate()
     if !detachServerOnQuit {
       _ = lifecycle.unregisterBeforeQuit()
@@ -351,6 +352,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     prompt: String
   ) async {
     do {
+      try await configureSessionClientCoreRuntimeIfNeeded()
       _ = try await sessionCommandCenter.submitNotificationReply(
         notificationID: notificationID,
         threadID: threadID,
@@ -653,10 +655,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return
     }
 
-    let transport = MenuBarStateMiniStreamTransport(client: client)
-    sessionMiniSyncTask = Task { [weak self] in
+    let clientCore = sessionClientCore
+    sessionMiniSyncTask = Task { [weak self, sessionMiniLocalStore, clientCore] in
+      guard let self else {
+        return
+      }
+      do {
+        try await self.configureSessionClientCoreRuntimeIfNeeded()
+      } catch {
+        os_log(.debug, log: .default, "session mini runtime failed: %{public}@", error.localizedDescription)
+        return
+      }
       await sessionMiniLocalStore.runClientCoreStateMiniSync(
-        using: transport,
+        using: clientCore,
         onSnapshot: { [weak self] snapshot in
           self?.applySessionMiniSnapshot(snapshot)
         },
@@ -665,6 +676,24 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
       )
     }
+  }
+
+  private func configureSessionClientCoreRuntimeIfNeeded() async throws {
+    if (try? sessionClientCore.snapshot().endpointUrl.isEmpty) == false {
+      return
+    }
+    let health = try await client.fetchMobileHealth()
+    let endpoints = health.preferredRealtimeBaseURLs.map {
+      ClientEndpoint(url: $0.absoluteString, lastGood: false)
+    }
+    guard !endpoints.isEmpty else {
+      throw MenuBarSessionRuntimeError.noRealtimeEndpoint
+    }
+    _ = try sessionClientCore.configureSessionRuntime(
+      endpoints: endpoints,
+      bearerToken: "",
+      mobileSessionHeader: ""
+    )
   }
 
   private func stopSessionMiniSync() {
@@ -1926,34 +1955,14 @@ extension LooperHandoffHotkeyOption {
   }
 }
 
-private struct MenuBarStateMiniStreamTransport: LooperClientCoreStateMiniStreamTransport {
-  let client: any ControlPlaneClient
+private enum MenuBarSessionRuntimeError: LocalizedError {
+  case noRealtimeEndpoint
 
-  func startClientCoreStateMiniStream(clientCore: LooperClientCore) async throws {
-    let realtimeClient = try await makeRealtimeClient()
-    try await realtimeClient.startClientCoreStateMiniStream(clientCore: clientCore)
-  }
-
-  func nextClientCoreStateMiniStreamUpdate(
-    clientCore: LooperClientCore
-  ) async throws -> ClientStateMiniStreamUpdate {
-    try await clientCore.nextStateMiniStreamUpdate()
-  }
-
-  func stopClientCoreStateMiniStream(clientCore: LooperClientCore) throws {
-    _ = try clientCore.stopStateMiniStream()
-  }
-
-  private func makeRealtimeClient() async throws -> LooperRealtimeClient {
-    let health = try await client.fetchMobileHealth()
-    let endpoints = health.preferredRealtimeBaseURLs.map(LooperRealtimeEndpoint.init(baseURL:))
-    guard !endpoints.isEmpty else {
-      throw LooperRealtimeError.unavailable
+  var errorDescription: String? {
+    switch self {
+    case .noRealtimeEndpoint:
+      "No realtime endpoint available"
     }
-    return LooperRealtimeClient(
-      endpoints: endpoints,
-      credentials: LooperRealtimeCredentials(bearerToken: nil, mobileSessionHeader: nil)
-    )
   }
 }
 

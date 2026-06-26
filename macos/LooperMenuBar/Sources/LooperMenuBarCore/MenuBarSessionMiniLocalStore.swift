@@ -140,17 +140,26 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     private let store: LooperClientCoreLocalStore
     private let clientCore: LooperClientCore
 
-    public init(fileURL: URL) throws {
+    var clientCoreLocalStore: LooperClientCoreLocalStore {
+        store
+    }
+
+    public init(fileURL: URL, clientCore: LooperClientCore = LooperClientCore()) throws {
         store = try LooperClientCoreLocalStore(filePath: fileURL.path)
-        clientCore = LooperClientCore()
+        self.clientCore = clientCore
         _ = try? clientCore.replaceStateMinis(
             snapshot: ClientStateMiniSnapshot(store.snapshot())
         )
     }
 
-    public static func liveDefault() -> MenuBarSessionMiniLocalStore? {
+    public static func liveDefault(
+        clientCore: LooperClientCore = LooperClientCore()
+    ) -> MenuBarSessionMiniLocalStore? {
         do {
-            return try MenuBarSessionMiniLocalStore(fileURL: defaultFileURL())
+            return try MenuBarSessionMiniLocalStore(
+                fileURL: defaultFileURL(),
+                clientCore: clientCore
+            )
         } catch {
             return nil
         }
@@ -197,74 +206,6 @@ public final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
                 serverTime: serverTime ?? ""
             )
         )
-    }
-
-    public func enqueueModeCommand(
-        threadID: String,
-        preset: String?,
-        clientMutationID: String
-    ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .setSessionMode,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: preset ?? "",
-                assistantSurface: "",
-                prompt: "",
-                notificationId: "",
-                attemptCount: 0
-            )
-        )
-    }
-
-    public func enqueuePromptCommand(
-        threadID: String,
-        prompt: String,
-        assistantSurface: String?,
-        clientMutationID: String
-    ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .sendSessionPrompt,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: "",
-                assistantSurface: assistantSurface ?? "",
-                prompt: prompt,
-                notificationId: "",
-                attemptCount: 0
-            )
-        )
-    }
-
-    public func enqueueNotificationReplyCommand(
-        notificationID: String,
-        threadID: String,
-        prompt: String,
-        assistantSurface: String?,
-        clientMutationID: String
-    ) throws {
-        _ = try store.enqueue(
-            command: ClientPendingCommand(
-                kind: .submitNotificationReply,
-                clientMutationId: clientMutationID,
-                threadId: threadID,
-                preset: "",
-                assistantSurface: assistantSurface ?? "",
-                prompt: prompt,
-                notificationId: notificationID,
-                attemptCount: 0
-            )
-        )
-    }
-
-    public func markAttempted(clientMutationID: String) throws {
-        _ = try store.markAttempted(clientMutationId: clientMutationID)
-    }
-
-    public func markDelivered(clientMutationID: String) throws {
-        try store.markDelivered(clientMutationId: clientMutationID)
     }
 
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {

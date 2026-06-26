@@ -1,50 +1,6 @@
 import Foundation
 import LooperClientCore
 
-public protocol MenuBarSessionCommandClient: LooperRealtimeSessionCommandSubmitting {}
-
-public actor MenuBarRealtimeSessionCommandClient: MenuBarSessionCommandClient {
-    private let controlPlaneClient: any ControlPlaneClient
-    private var realtimeClient: LooperRealtimeClient?
-
-    public init(controlPlaneClient: any ControlPlaneClient) {
-        self.controlPlaneClient = controlPlaneClient
-    }
-
-    public func submitClientCoreOutbox(
-        clientCore: LooperClientCore,
-        expectedClientMutationIDs: [String]
-    ) async throws -> LooperRealtimeSessionCommandBatchResponse {
-        let client = try await realtimeSessionClient()
-        return try await client.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: expectedClientMutationIDs
-        )
-    }
-
-    public func disconnect() {
-        realtimeClient = nil
-    }
-
-    private func realtimeSessionClient() async throws -> LooperRealtimeClient {
-        if let realtimeClient {
-            return realtimeClient
-        }
-
-        let health = try await controlPlaneClient.fetchMobileHealth()
-        let endpoints = health.preferredRealtimeBaseURLs.map(LooperRealtimeEndpoint.init(baseURL:))
-        guard !endpoints.isEmpty else {
-            throw LooperRealtimeError.unavailable
-        }
-        let client = LooperRealtimeClient(
-            endpoints: endpoints,
-            credentials: LooperRealtimeCredentials(bearerToken: nil, mobileSessionHeader: nil)
-        )
-        realtimeClient = client
-        return client
-    }
-}
-
 public struct MenuBarSessionModeCommandResult: Equatable, Sendable {
     public let clientMutationID: String
     public let accepted: Bool
@@ -70,19 +26,17 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyThreadID
     case emptyNotificationID
     case emptyPrompt
+    case localStoreUnavailable
 }
 
 public actor MenuBarSessionCommandCenter {
-    private let client: any MenuBarSessionCommandClient
     private let clientCore: LooperClientCore
     private let localStore: MenuBarSessionMiniLocalStore?
 
     public init(
-        client: any MenuBarSessionCommandClient,
         localStore: MenuBarSessionMiniLocalStore?,
         clientCore: LooperClientCore = LooperClientCore()
     ) {
-        self.client = client
         self.clientCore = clientCore
         self.localStore = localStore
     }
@@ -94,30 +48,13 @@ public actor MenuBarSessionCommandCenter {
         clientMutationID: String = UUID().uuidString
     ) async throws -> MenuBarSessionModeCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
-        _ = try clientCore.setMode(
+        let envelope = try await clientCore.submitSetModeDurable(
+            localStore: try requiredLocalStore().clientCoreLocalStore,
             threadId: normalizedThreadID,
             preset: preset?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        try localStore?.enqueueModeCommand(
-            threadID: normalizedThreadID,
-            preset: preset?.nilIfBlank,
-            clientMutationID: clientMutationID
-        )
-        try localStore?.markAttempted(clientMutationID: clientMutationID)
-
-        let response = try await client.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: [clientMutationID]
-        )
-        let envelope = try response.expectedAcknowledgement(
-            commandKind: .setSessionMode,
-            clientMutationID: clientMutationID
-        )
-        let acknowledgedMutationID = envelope.ack.clientMutationID
-        if envelope.ack.accepted {
-            try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
-        }
+        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionModeCommandResult(
             clientMutationID: acknowledgedMutationID,
             accepted: envelope.ack.accepted,
@@ -134,37 +71,19 @@ public actor MenuBarSessionCommandCenter {
     ) async throws -> MenuBarSessionPromptCommandResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        _ = try clientCore.sendPrompt(
+        let envelope = try await clientCore.submitSendPromptDurable(
+            localStore: try requiredLocalStore().clientCoreLocalStore,
             threadId: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: assistantSurface?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        try localStore?.enqueuePromptCommand(
-            threadID: normalizedThreadID,
-            prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank,
-            clientMutationID: clientMutationID
-        )
-        try localStore?.markAttempted(clientMutationID: clientMutationID)
-
-        let response = try await client.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: [clientMutationID]
-        )
-        let envelope = try response.expectedAcknowledgement(
-            commandKind: .sendSessionPrompt,
-            clientMutationID: clientMutationID
-        )
-        let acknowledgedMutationID = envelope.ack.clientMutationID
-        if envelope.ack.accepted {
-            try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
-        }
+        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarSessionPromptCommandResult(
             clientMutationID: acknowledgedMutationID,
             accepted: envelope.ack.accepted,
             delivered: envelope.ack.accepted,
-            dispatchKind: envelope.dispatchKind ?? "accepted"
+            dispatchKind: envelope.dispatchKind.nilIfBlank ?? "accepted"
         )
     }
 
@@ -182,41 +101,29 @@ public actor MenuBarSessionCommandCenter {
         )
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
-        _ = try clientCore.submitNotificationReply(
+        let envelope = try await clientCore.submitNotificationReplyDurable(
+            localStore: try requiredLocalStore().clientCoreLocalStore,
             notificationId: normalizedNotificationID,
             threadId: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: assistantSurface?.nilIfBlank ?? "",
             clientMutationId: clientMutationID
         )
-        try localStore?.enqueueNotificationReplyCommand(
-            notificationID: normalizedNotificationID,
-            threadID: normalizedThreadID,
-            prompt: normalizedPrompt,
-            assistantSurface: assistantSurface?.nilIfBlank,
-            clientMutationID: clientMutationID
-        )
-        try localStore?.markAttempted(clientMutationID: clientMutationID)
-
-        let response = try await client.submitClientCoreOutbox(
-            clientCore: clientCore,
-            expectedClientMutationIDs: [clientMutationID]
-        )
-        let envelope = try response.expectedAcknowledgement(
-            commandKind: .submitNotificationReply,
-            clientMutationID: clientMutationID
-        )
-        let acknowledgedMutationID = envelope.ack.clientMutationID
-        if envelope.ack.accepted {
-            try localStore?.markDelivered(clientMutationID: acknowledgedMutationID)
-        }
+        let acknowledgedMutationID = envelope.ack.clientMutationId
         return MenuBarNotificationReplyCommandResult(
-            notificationID: envelope.notificationID ?? normalizedNotificationID,
+            notificationID: envelope.notificationId.nilIfBlank ?? normalizedNotificationID,
             clientMutationID: acknowledgedMutationID,
             accepted: envelope.ack.accepted,
             delivered: envelope.ack.accepted,
-            dispatchKind: envelope.dispatchKind ?? "accepted"
+            dispatchKind: envelope.dispatchKind.nilIfBlank ?? "accepted"
         )
+    }
+
+    private func requiredLocalStore() throws -> MenuBarSessionMiniLocalStore {
+        guard let localStore else {
+            throw MenuBarSessionCommandError.localStoreUnavailable
+        }
+        return localStore
     }
 
     private func normalizedRequired(

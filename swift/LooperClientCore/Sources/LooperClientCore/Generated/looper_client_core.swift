@@ -809,11 +809,17 @@ public protocol LooperClientCoreProtocol: AnyObject, Sendable {
 
     func submitNotificationReplyCommand(notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
+    func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
     func submitPendingOutbox(expectedClientMutationIds: [String]) async throws  -> ClientCommandBatchResponse
 
     func submitSendPrompt(threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
+    func submitSendPromptDurable(localStore: LooperClientCoreLocalStore, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
     func submitSetMode(threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
+
+    func submitSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String) async throws  -> ClientCommandAckEnvelope
 
     func takeExpectedOutbox(expectedClientMutationIds: [String]) throws  -> [OutboundSessionFrame]
 
@@ -1232,6 +1238,23 @@ open func submitNotificationReplyCommand(notificationId: String, threadId: Strin
         )
 }
 
+open func submitNotificationReplyDurable(localStore: LooperClientCoreLocalStore, notificationId: String, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_submit_notification_reply_durable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(notificationId),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func submitPendingOutbox(expectedClientMutationIds: [String])async throws  -> ClientCommandBatchResponse  {
     return
         try  await uniffiRustCallAsync(
@@ -1266,6 +1289,23 @@ open func submitSendPrompt(threadId: String, prompt: String, assistantSurface: S
         )
 }
 
+open func submitSendPromptDurable(localStore: LooperClientCoreLocalStore, threadId: String, prompt: String, assistantSurface: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_submit_send_prompt_durable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func submitSetMode(threadId: String, preset: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
     return
         try  await uniffiRustCallAsync(
@@ -1273,6 +1313,23 @@ open func submitSetMode(threadId: String, preset: String, clientMutationId: Stri
                 uniffi_looper_client_core_fn_method_looperclientcore_submit_set_mode(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(threadId),FfiConverterString.lower(preset),FfiConverterString.lower(clientMutationId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientCommandAckEnvelope_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func submitSetModeDurable(localStore: LooperClientCoreLocalStore, threadId: String, preset: String, clientMutationId: String)async throws  -> ClientCommandAckEnvelope  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcore_submit_set_mode_durable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeLooperClientCoreLocalStore_lower(localStore),FfiConverterString.lower(threadId),FfiConverterString.lower(preset),FfiConverterString.lower(clientMutationId)
                 )
             },
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
@@ -5318,13 +5375,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_command() != 10820) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_notification_reply_durable() != 24560) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_pending_outbox() != 20552) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_send_prompt() != 60533) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_send_prompt_durable() != 21987) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_set_mode() != 22774) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcore_submit_set_mode_durable() != 24405) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcore_take_expected_outbox() != 30309) {

@@ -4,48 +4,8 @@ import Testing
 
 struct LooperClientCoreRealtimeBridgeTests {
     @Test
-    func endpointStoresBaseURL() throws {
-        let endpoint = try #require(URL(string: "https://192.168.1.4:8766"))
-        let realtimeEndpoint = LooperRealtimeEndpoint(baseURL: endpoint)
-
-        #expect(realtimeEndpoint.baseURL == endpoint)
-    }
-
-    @Test
-    func endpointIsStablePoolKey() throws {
-        let firstURL = try #require(URL(string: "http://127.0.0.1:8766"))
-        let secondURL = try #require(URL(string: "http://127.0.0.1:8766"))
-        let firstEndpoint = LooperRealtimeEndpoint(baseURL: firstURL)
-        let secondEndpoint = LooperRealtimeEndpoint(baseURL: secondURL)
-
-        #expect(Set([firstEndpoint, secondEndpoint]).count == 1)
-    }
-
-    @Test
-    func commandResponsesExposeAckFields() {
-        let mode = LooperRealtimeModeResponse(
-            accepted: true,
-            threadID: "thread-main",
-            preset: "await-reply",
-            serverTime: "2026-06-24T00:00:00Z",
-            clientMutationID: "mutation-1",
-            ackSeq: 42,
-            entityID: "thread-main",
-            revision: "revision-1",
-            idempotentReplay: true
-        )
-        let prompt = LooperRealtimePromptResponse(
-            accepted: true,
-            dispatchKind: "queued",
-            promptID: "prompt-1",
-            serverTime: "2026-06-24T00:00:00Z",
-            clientMutationID: "mutation-1",
-            ackSeq: 42,
-            entityID: "thread-main",
-            revision: "revision-1",
-            idempotentReplay: true
-        )
-        let notificationReply = LooperRealtimeNotificationReplyResponse(
+    func notificationReplyResponseExposesAckFields() {
+        let response = LooperRealtimeNotificationReplyResponse(
             accepted: true,
             dispatchKind: "queued",
             promptID: "prompt-1",
@@ -67,277 +27,126 @@ struct LooperClientCoreRealtimeBridgeTests {
             idempotentReplay: true
         )
 
-        #expect(mode.clientMutationID == "mutation-1")
-        #expect(mode.ackSeq == 42)
-        #expect(mode.entityID == "thread-main")
-        #expect(mode.revision == "revision-1")
-        #expect(mode.idempotentReplay)
-        #expect(mode.ack == expectedAck)
-        #expect(prompt.ack == expectedAck)
-        #expect(notificationReply.ack == expectedAck)
+        #expect(response.ack == expectedAck)
+        #expect(response.notificationID == "notification-1")
     }
 
     @Test
-    func commandBatchResponseUsesClientCoreAckEnvelope() {
-        let coreAck = ClientCommandAck(
-            accepted: false,
-            clientMutationId: "mutation-1",
-            ackSeq: 42,
-            entityId: "thread-main",
-            revision: "revision-1",
-            serverTime: "2026-06-24T00:00:00Z",
-            idempotentReplay: true,
-            errorCode: "mode_required",
-            rejectReason: "session is waiting for a mode",
-            currentState: ""
-        )
-        let response = LooperRealtimeSessionCommandBatchResponse(
-            ClientCommandBatchResponse(
-                accepted: false,
-                commandAcks: [
-                    ClientCommandAckEnvelope(
-                        commandKind: .submitNotificationReply,
-                        ack: coreAck,
-                        preset: "",
-                        dispatchKind: "rejected",
-                        promptId: "",
-                        notificationId: "notification-1"
-                    ),
-                ]
+    func durableModeCommandPersistsBeforeTransport() async throws {
+        let core = LooperClientCore()
+        let store = try localStore(named: "durable-mode")
+
+        do {
+            _ = try await core.submitSetModeDurable(
+                localStore: store,
+                threadId: "thread-main",
+                preset: "await-reply",
+                clientMutationId: "mutation-mode"
             )
-        )
+            Issue.record("expected missing runtime config")
+        } catch let error as ClientCoreError {
+            #expect(error == .NoEndpoint)
+        }
 
-        #expect(!response.accepted)
-        #expect(response.commandAcks.first?.commandKind == "SubmitNotificationReply")
-        #expect(response.commandAcks.first?.dispatchKind == "rejected")
-        #expect(response.commandAcks.first?.notificationID == "notification-1")
-        #expect(response.commandAcks.first?.ack.clientCoreAck == coreAck)
+        let snapshot = try store.snapshot()
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .setSessionMode)
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-mode")
+        #expect(snapshot.pendingCommands.first?.threadId == "thread-main")
+        #expect(snapshot.pendingCommands.first?.preset == "await-reply")
+        #expect(snapshot.pendingCommands.first?.attemptCount == 1)
+        #expect(try core.snapshot().outboxDepth == 1)
     }
 
     @Test
-    func commandBatchResponseRoundTripsToClientCoreResponse() throws {
-        let response = LooperRealtimeSessionCommandBatchResponse(
-            accepted: false,
-            commandAcks: [
-                LooperRealtimeCommandAckEnvelope(
-                    commandKind: "SendSessionPrompt",
-                    ack: LooperRealtimeCommandAck(
-                        accepted: false,
-                        clientMutationID: "mutation-1",
-                        ackSeq: 42,
-                        entityID: "thread-main",
-                        revision: "revision-42",
-                        serverTime: "2026-06-24T00:00:00Z",
-                        idempotentReplay: false,
-                        errorCode: "mode_required",
-                        rejectReason: "session is waiting for a mode"
-                    ),
-                    preset: nil,
-                    dispatchKind: "rejected",
-                    promptID: nil,
-                    notificationID: nil
-                ),
-            ]
-        )
+    func durablePromptCommandPersistsBeforeTransport() async throws {
+        let core = LooperClientCore()
+        let store = try localStore(named: "durable-prompt")
 
-        let coreResponse = try response.clientCoreResponse()
-
-        #expect(!coreResponse.accepted)
-        #expect(coreResponse.commandAcks.first?.commandKind == .sendSessionPrompt)
-        #expect(coreResponse.commandAcks.first?.ack.clientMutationId == "mutation-1")
-        #expect(coreResponse.commandAcks.first?.ack.errorCode == "mode_required")
-        #expect(coreResponse.commandAcks.first?.dispatchKind == "rejected")
-    }
-
-    @Test
-    func commandBatchResponseSelectsExpectedAcknowledgementInClientCore() throws {
-        let response = LooperRealtimeSessionCommandBatchResponse(
-            accepted: true,
-            commandAcks: [
-                LooperRealtimeCommandAckEnvelope(
-                    commandKind: "SetSessionMode",
-                    ack: LooperRealtimeCommandAck(
-                        accepted: true,
-                        clientMutationID: "mutation-mode",
-                        ackSeq: 41,
-                        entityID: "thread-main",
-                        revision: "revision-41",
-                        serverTime: "2026-06-24T00:00:00Z",
-                        idempotentReplay: false
-                    ),
-                    preset: "await-reply",
-                    dispatchKind: nil,
-                    promptID: nil,
-                    notificationID: nil
-                ),
-                LooperRealtimeCommandAckEnvelope(
-                    commandKind: "SendSessionPrompt",
-                    ack: LooperRealtimeCommandAck(
-                        accepted: true,
-                        clientMutationID: "mutation-prompt",
-                        ackSeq: 42,
-                        entityID: "thread-main",
-                        revision: "revision-42",
-                        serverTime: "2026-06-24T00:00:00Z",
-                        idempotentReplay: false
-                    ),
-                    preset: nil,
-                    dispatchKind: "accepted",
-                    promptID: "prompt-1",
-                    notificationID: nil
-                ),
-            ]
-        )
-
-        let envelope = try response.expectedAcknowledgement(
-            commandKind: .sendSessionPrompt,
-            clientMutationID: "mutation-prompt"
-        )
-
-        #expect(envelope.commandKind == "SendSessionPrompt")
-        #expect(envelope.ack.clientMutationID == "mutation-prompt")
-        #expect(envelope.dispatchKind == "accepted")
-        #expect(envelope.promptID == "prompt-1")
-    }
-
-    @Test
-    func commandBatchResponseUsesClientCoreForMissingAcknowledgement() {
-        let response = LooperRealtimeSessionCommandBatchResponse(
-            accepted: true,
-            commandAcks: []
-        )
-
-        #expect(throws: ClientCoreError.MissingCommandAcknowledgement) {
-            _ = try response.expectedAcknowledgement(
-                commandKind: .sendSessionPrompt,
-                clientMutationID: "mutation-prompt"
+        do {
+            _ = try await core.submitSendPromptDurable(
+                localStore: store,
+                threadId: "thread-main",
+                prompt: "ship it",
+                assistantSurface: "codex",
+                clientMutationId: "mutation-prompt"
             )
+            Issue.record("expected missing runtime config")
+        } catch let error as ClientCoreError {
+            #expect(error == .NoEndpoint)
         }
+
+        let snapshot = try store.snapshot()
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .sendSessionPrompt)
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "mutation-prompt")
+        #expect(snapshot.pendingCommands.first?.prompt == "ship it")
+        #expect(snapshot.pendingCommands.first?.assistantSurface == "codex")
+        #expect(snapshot.pendingCommands.first?.attemptCount == 1)
+        #expect(try core.snapshot().outboxDepth == 1)
     }
 
     @Test
-    func commandBatchResponseRejectsUnknownCommandKind() {
-        let response = LooperRealtimeSessionCommandBatchResponse(
-            accepted: true,
-            commandAcks: [
-                LooperRealtimeCommandAckEnvelope(
-                    commandKind: "UnexpectedCommand",
-                    ack: LooperRealtimeCommandAck(
-                        accepted: true,
-                        clientMutationID: "mutation-1",
-                        ackSeq: 42,
-                        entityID: "thread-main",
-                        revision: "revision-42",
-                        serverTime: "2026-06-24T00:00:00Z",
-                        idempotentReplay: false
-                    ),
-                    preset: nil,
-                    dispatchKind: nil,
-                    promptID: nil,
-                    notificationID: nil
-                ),
-            ]
-        )
+    func durableNotificationReplyRetryDedupesCommand() async throws {
+        let core = LooperClientCore()
+        let store = try localStore(named: "durable-notification-retry")
 
-        #expect(throws: LooperRealtimeSessionCommandFrameError.unexpectedCommandKind("UnexpectedCommand")) {
-            try response.clientCoreResponse()
+        for _ in 0..<2 {
+            do {
+                _ = try await core.submitNotificationReplyDurable(
+                    localStore: store,
+                    notificationId: "notification-main",
+                    threadId: "thread-main",
+                    prompt: "continue",
+                    assistantSurface: "codex",
+                    clientMutationId: "notification-reply:notification-main"
+                )
+                Issue.record("expected missing runtime config")
+            } catch let error as ClientCoreError {
+                #expect(error == .NoEndpoint)
+            }
         }
+
+        let snapshot = try store.snapshot()
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .submitNotificationReply)
+        #expect(snapshot.pendingCommands.first?.clientMutationId == "notification-reply:notification-main")
+        #expect(snapshot.pendingCommands.first?.notificationId == "notification-main")
+        #expect(snapshot.pendingCommands.first?.prompt == "continue")
+        #expect(snapshot.pendingCommands.first?.attemptCount == 2)
+        #expect(try core.snapshot().outboxDepth == 1)
     }
 
     @Test
-    func clientCoreOutboxSubmitterDrainsAndReconcilesAck() async throws {
+    func duplicateClientMutationReplacesCoreOutboxFrame() throws {
         let core = LooperClientCore()
         _ = try core.sendPrompt(
             threadId: "thread-main",
-            prompt: "ship it",
+            prompt: "first",
             assistantSurface: "codex",
-            clientMutationId: "mutation-1"
+            clientMutationId: "mutation-prompt"
         )
-        let submitter = RecordingCommandSubmitter { frames in
-            #expect(frames.map(\.threadId) == ["thread-main"])
-            #expect(frames.map(\.prompt) == ["ship it"])
-            #expect(frames.map(\.assistantSurface) == ["codex"])
-            #expect(frames.map(\.clientMutationId) == ["mutation-1"])
-            return ClientCommandBatchResponse(
-                accepted: true,
-                commandAcks: [
-                    ClientCommandAckEnvelope(
-                        commandKind: .sendSessionPrompt,
-                        ack: ClientCommandAck(
-                            accepted: true,
-                            clientMutationId: "mutation-1",
-                            ackSeq: 42,
-                            entityId: "thread-main",
-                            revision: "revision-42",
-                            serverTime: "2026-06-24T00:00:00Z",
-                            idempotentReplay: false,
-                            errorCode: "",
-                            rejectReason: "",
-                            currentState: ""
-                        ),
-                        preset: "",
-                        dispatchKind: "accepted",
-                        promptId: "",
-                        notificationId: ""
-                    ),
-                ]
-            )
-        }
-
-        let response = try await submitter.submitClientCoreOutbox(
-            clientCore: core,
-            expectedClientMutationIDs: ["mutation-1"]
-        )
-        let snapshot = try core.snapshot()
-
-        #expect(response.accepted)
-        #expect(snapshot.pendingMutations.isEmpty)
-        #expect(snapshot.outboxDepth == 0)
-        #expect(snapshot.latestSeq == 42)
-        #expect(snapshot.revision == "revision-42")
-    }
-
-    @Test
-    func clientCoreOutboxSubmitterRejectsUnexpectedMutations() async throws {
-        let core = LooperClientCore()
-        _ = try core.setMode(
+        _ = try core.sendPrompt(
             threadId: "thread-main",
-            preset: "await-reply",
-            clientMutationId: "actual-mutation"
+            prompt: "second",
+            assistantSurface: "codex",
+            clientMutationId: "mutation-prompt"
         )
-        let submitter = RecordingCommandSubmitter { _ in
-            Issue.record("unexpected submit")
-            return ClientCommandBatchResponse(accepted: true, commandAcks: [])
-        }
 
-        do {
-            _ = try await submitter.submitClientCoreOutbox(
-                clientCore: core,
-                expectedClientMutationIDs: ["expected-mutation"]
-            )
-            Issue.record("expected unexpected mutation error")
-        } catch let error as ClientCoreError {
-            #expect(error == .UnexpectedOutboxMutations)
-        } catch {
-            Issue.record("unexpected error: \(error)")
-        }
+        let outbox = try core.takeExpectedOutbox(
+            expectedClientMutationIds: ["mutation-prompt"]
+        )
+        #expect(outbox.count == 1)
+        #expect(outbox.first?.prompt == "second")
+        #expect(outbox.first?.clientMutationId == "mutation-prompt")
     }
 
-}
-
-private struct RecordingCommandSubmitter: LooperRealtimeSessionCommandSubmitting {
-    let handler: @Sendable ([OutboundSessionFrame]) async throws
-        -> ClientCommandBatchResponse
-
-    func submitClientCoreOutbox(
-        clientCore: LooperClientCore,
-        expectedClientMutationIDs: [String]
-    ) async throws -> LooperRealtimeSessionCommandBatchResponse {
-        let frames = try clientCore.takeExpectedOutbox(
-            expectedClientMutationIds: expectedClientMutationIDs
+    private func localStore(named name: String) throws -> LooperClientCoreLocalStore {
+        try LooperClientCoreLocalStore(
+            filePath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("LooperClientCoreTests-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("\(name)-state-minis.json")
+                .path
         )
-        let response = try await handler(frames)
-        _ = try clientCore.applyCommandBatchResponse(response: response)
-        return LooperRealtimeSessionCommandBatchResponse(response)
     }
 }

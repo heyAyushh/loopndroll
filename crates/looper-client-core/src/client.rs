@@ -4,12 +4,13 @@ use tokio::sync::mpsc;
 
 use crate::command_batch::reduce_expected_command_ack;
 use crate::error::ClientCoreError;
+use crate::local_store::LooperClientCoreLocalStore;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientPendingMutation, ClientStateDelta, ClientStateMini, ClientStateMiniDelta,
-    ClientStateMiniDeltaApplyResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
-    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
-    OutboundSessionFrameKind,
+    ClientEndpoint, ClientPendingCommand, ClientPendingCommandKind, ClientPendingMutation,
+    ClientStateDelta, ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
+    ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
+    ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 use crate::mutation_queue::{
     ClientModeMutationBatchFinish, ClientModeMutationDrainFinish, ClientModeMutationEnqueueResult,
@@ -467,6 +468,37 @@ impl LooperClientCore {
             .await
     }
 
+    pub async fn submit_set_mode_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        preset: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.set_mode(
+            thread_id.clone(),
+            preset.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetSessionMode,
+            client_mutation_id: client_mutation_id.clone(),
+            thread_id,
+            preset,
+            assistant_surface: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            attempt_count: 0,
+        })?;
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        let envelope = self
+            .submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
+            .await?;
+        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        Ok(envelope)
+    }
+
     pub async fn submit_send_prompt(
         &self,
         thread_id: String,
@@ -483,6 +515,39 @@ impl LooperClientCore {
         )?;
         self.submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
             .await
+    }
+
+    pub async fn submit_send_prompt_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.send_prompt(
+            thread_id.clone(),
+            prompt.clone(),
+            assistant_surface.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SendSessionPrompt,
+            client_mutation_id: client_mutation_id.clone(),
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt,
+            notification_id: String::new(),
+            attempt_count: 0,
+        })?;
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        let envelope = self
+            .submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
+            .await?;
+        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        Ok(envelope)
     }
 
     pub async fn submit_notification_reply_command(
@@ -507,6 +572,44 @@ impl LooperClientCore {
             ClientCommandKind::SubmitNotificationReply,
             client_mutation_id,
         )
+    }
+
+    pub async fn submit_notification_reply_durable(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        self.submit_notification_reply(
+            notification_id.clone(),
+            thread_id.clone(),
+            prompt.clone(),
+            assistant_surface.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SubmitNotificationReply,
+            client_mutation_id: client_mutation_id.clone(),
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt,
+            notification_id,
+            attempt_count: 0,
+        })?;
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        let envelope = self
+            .submit_pending_command_ack(
+                ClientCommandKind::SubmitNotificationReply,
+                client_mutation_id,
+            )
+            .await?;
+        self.mark_durable_command_delivered(&local_store, &envelope)?;
+        Ok(envelope)
     }
 
     pub async fn warm_connection(
@@ -646,6 +749,17 @@ impl LooperClientCore {
         reduce_expected_command_ack(response, command_kind, client_mutation_id)
     }
 
+    fn mark_durable_command_delivered(
+        &self,
+        local_store: &LooperClientCoreLocalStore,
+        envelope: &ClientCommandAckEnvelope,
+    ) -> Result<(), ClientCoreError> {
+        if envelope.ack.accepted {
+            local_store.mark_delivered(envelope.ack.client_mutation_id.clone())?;
+        }
+        Ok(())
+    }
+
     fn replace_stream(&self, stream: ClientCoreStream) -> Result<(), ClientCoreError> {
         self.replace_stream_none()?;
         *self.lock_stream()? = Some(stream);
@@ -765,12 +879,29 @@ impl ClientCoreState {
     }
 
     fn queue_command(&mut self, frame: OutboundSessionFrame) {
-        self.pending_mutations.push(ClientPendingMutation {
+        let pending_mutation = ClientPendingMutation {
             client_mutation_id: frame.client_mutation_id.clone(),
             command_kind: frame.command_kind,
             thread_id: frame.thread_id.clone(),
-        });
-        self.outbox.push(frame);
+        };
+        if let Some(existing) = self
+            .pending_mutations
+            .iter_mut()
+            .find(|mutation| mutation.client_mutation_id == pending_mutation.client_mutation_id)
+        {
+            *existing = pending_mutation;
+        } else {
+            self.pending_mutations.push(pending_mutation);
+        }
+        if let Some(existing) = self
+            .outbox
+            .iter_mut()
+            .find(|queued| queued.client_mutation_id == frame.client_mutation_id)
+        {
+            *existing = frame;
+        } else {
+            self.outbox.push(frame);
+        }
         self.last_error.clear();
     }
 
@@ -898,6 +1029,7 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
 mod tests {
     use super::*;
     use crate::model::ClientCommandAckEnvelope;
+    use std::path::PathBuf;
 
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
     const ENDPOINT_LAST_GOOD: &str = "http://100.64.0.2:8765";
@@ -1013,6 +1145,34 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_client_mutation_replaces_queued_command() {
+        let core = LooperClientCore::new();
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "first".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue first");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "second".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("replace retry");
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+
+        let outbox = core.take_outbox().expect("outbox");
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].prompt, "second");
+        assert_eq!(outbox[0].client_mutation_id, "cmid-prompt");
+    }
+
+    #[test]
     fn client_core_owns_mode_mutation_queue() {
         let core = LooperClientCore::new();
         let first = core
@@ -1074,6 +1234,37 @@ mod tests {
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
         );
+    }
+
+    #[test]
+    fn durable_prompt_retry_dedupes_local_store_and_core_outbox() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-prompt-retry");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        for _ in 0..2 {
+            let error = runtime
+                .block_on(core.submit_send_prompt_durable(
+                    store.clone(),
+                    "thread-1".to_owned(),
+                    "continue".to_owned(),
+                    "codex".to_owned(),
+                    "cmid-prompt".to_owned(),
+                ))
+                .expect_err("missing runtime config rejects");
+            assert_eq!(error, ClientCoreError::NoEndpoint);
+        }
+
+        let snapshot = store.snapshot().expect("store snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "cmid-prompt"
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 2);
+        assert_eq!(core.snapshot().expect("core snapshot").outbox_depth, 1);
     }
 
     #[test]
@@ -1601,5 +1792,12 @@ mod tests {
             revision: revision.to_owned(),
             payload_json: format!(r#"{{"title":"{}"}}"#, title),
         }
+    }
+
+    fn temp_store_path(name: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join("looper-client-core-client-tests")
+            .join(format!("{name}-{}", std::process::id()))
+            .join(crate::local_store::DEFAULT_LOCAL_STORE_FILE_NAME)
     }
 }

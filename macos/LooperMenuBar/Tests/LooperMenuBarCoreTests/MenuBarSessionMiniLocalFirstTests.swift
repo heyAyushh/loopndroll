@@ -77,11 +77,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(fallbackSections.first?.rows.first?.threadId == "thread-main")
 
         let outboxStore = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let failingClient = RecordingMenuBarCommandClient(
-            promptError: ControlPlaneClientError.timeout
-        )
         let commandCenter = MenuBarSessionCommandCenter(
-            client: failingClient,
             localStore: outboxStore
         )
 
@@ -107,76 +103,63 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.clientMutationID == "mutation-offline")
         #expect(pendingCommands.first?.threadID == "thread-main")
         #expect(pendingCommands.first?.attemptCount == 2)
-        #expect(failingClient.promptRequests.map(\.clientMutationID) == [
-            "mutation-offline",
-            "mutation-offline",
-        ])
     }
 
-    @Test("optimistic menu actions use client mutation IDs without snapshot refresh")
-    func testOptimisticMenuActionsUseClientMutationIDsWithoutSnapshotRefresh() async throws {
+    @Test("menu actions enqueue durable Rust-core commands before transport")
+    func testMenuActionsEnqueueDurableRustCoreCommandsBeforeTransport() async throws {
         let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let client = RecordingMenuBarCommandClient()
-        let commandCenter = MenuBarSessionCommandCenter(client: client, localStore: store)
+        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
 
-        let mode = try await commandCenter.setSessionMode(
-            threadID: "thread-main",
-            preset: "await-reply",
-            clientMutationID: "mutation-mode"
-        )
-        let prompt = try await commandCenter.sendPrompt(
-            threadID: "thread-main",
-            prompt: "ship it",
-            assistantSurface: "codex",
-            clientMutationID: "mutation-prompt"
-        )
+        await expectThrows {
+            _ = try await commandCenter.setSessionMode(
+                threadID: "thread-main",
+                preset: "await-reply",
+                clientMutationID: "mutation-mode"
+            )
+        }
+        await expectThrows {
+            _ = try await commandCenter.sendPrompt(
+                threadID: "thread-main",
+                prompt: "ship it",
+                assistantSurface: "codex",
+                clientMutationID: "mutation-prompt"
+            )
+        }
 
-        #expect(mode.accepted)
-        #expect(mode.delivered)
-        #expect(mode.clientMutationID == "mutation-mode")
-        #expect(prompt.accepted)
-        #expect(prompt.delivered)
-        #expect(prompt.clientMutationID == "mutation-prompt")
-        #expect(client.modeRequests.map(\.clientMutationID) == ["mutation-mode"])
-        #expect(client.promptRequests.map(\.clientMutationID) == ["mutation-prompt"])
-        #expect(client.snapshotCalls == 0)
-        #expect(store.pendingCommands().isEmpty)
+        let pendingCommands = store.pendingCommands()
+        #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
+        #expect(pendingCommands.map(\.clientMutationID) == ["mutation-mode", "mutation-prompt"])
+        #expect(pendingCommands.map(\.threadID) == ["thread-main", "thread-main"])
+        #expect(pendingCommands.map(\.attemptCount) == [1, 1])
     }
 
-    @Test("notification replies use durable ACK commands without snapshot refresh")
-    func testNotificationRepliesUseDurableAckCommandsWithoutSnapshotRefresh() async throws {
+    @Test("notification replies enter durable Rust-core outbox before transport")
+    func testNotificationRepliesEnterDurableRustCoreOutboxBeforeTransport() async throws {
         let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let client = RecordingMenuBarCommandClient()
-        let commandCenter = MenuBarSessionCommandCenter(client: client, localStore: store)
+        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
 
-        let result = try await commandCenter.submitNotificationReply(
-            notificationID: "notif-main",
-            threadID: "thread-main",
-            prompt: "continue from notification",
-            assistantSurface: nil,
-            clientMutationID: "notification-reply:notif-main"
-        )
+        await expectThrows {
+            _ = try await commandCenter.submitNotificationReply(
+                notificationID: "notif-main",
+                threadID: "thread-main",
+                prompt: "continue from notification",
+                assistantSurface: nil,
+                clientMutationID: "notification-reply:notif-main"
+            )
+        }
 
-        #expect(result.accepted)
-        #expect(result.delivered)
-        #expect(result.notificationID == "notif-main")
-        #expect(result.clientMutationID == "notification-reply:notif-main")
-        #expect(client.notificationReplyRequests.map(\.clientMutationID) == [
-            "notification-reply:notif-main",
-        ])
-        #expect(client.notificationReplyRequests.map(\.notificationID) == ["notif-main"])
-        #expect(client.promptRequests.isEmpty)
-        #expect(client.snapshotCalls == 0)
-        #expect(store.pendingCommands().isEmpty)
+        let pendingCommands = store.pendingCommands()
+        #expect(pendingCommands.count == 1)
+        #expect(pendingCommands.first?.kind == .submitNotificationReply)
+        #expect(pendingCommands.first?.notificationID == "notif-main")
+        #expect(pendingCommands.first?.prompt == "continue from notification")
+        #expect(pendingCommands.first?.attemptCount == 1)
     }
 
     @Test("failed notification reply stays durable and dedupes retry")
     func testFailedNotificationReplyStaysDurableAndDedupesRetry() async throws {
         let store = try MenuBarSessionMiniLocalStore(fileURL: temporaryStoreFileURL())
-        let client = RecordingMenuBarCommandClient(
-            promptError: ControlPlaneClientError.timeout
-        )
-        let commandCenter = MenuBarSessionCommandCenter(client: client, localStore: store)
+        let commandCenter = MenuBarSessionCommandCenter(localStore: store)
 
         for _ in 0..<2 {
             await expectThrows {
@@ -198,10 +181,6 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.notificationID == "notif-offline")
         #expect(pendingCommands.first?.prompt == "offline reply")
         #expect(pendingCommands.first?.attemptCount == 2)
-        #expect(client.notificationReplyRequests.map(\.clientMutationID) == [
-            "notification-reply:notif-offline",
-            "notification-reply:notif-offline",
-        ])
     }
 
     private func temporaryStoreFileURL() -> URL {
@@ -344,203 +323,11 @@ private struct TestMiniMetadata: Encodable {
     let projectPath: String
 }
 
-private struct RecordedModeRequest: Sendable {
-    let threadID: String
-    let preset: String?
-    let clientMutationID: String
-}
-
-private struct RecordedPromptRequest: Sendable {
-    let threadID: String
-    let prompt: String
-    let assistantSurface: String?
-    let clientMutationID: String
-}
-
-private struct RecordedNotificationReplyRequest: Sendable {
-    let notificationID: String
-    let threadID: String
-    let prompt: String
-    let assistantSurface: String?
-    let clientMutationID: String
-}
-
-private final class RecordingMenuBarCommandClient: MenuBarSessionCommandClient, @unchecked Sendable {
-    private let lock = NSLock()
-    private let modeError: Error?
-    private let promptError: Error?
-    private var recordedModeRequests: [RecordedModeRequest] = []
-    private var recordedPromptRequests: [RecordedPromptRequest] = []
-    private var recordedNotificationReplyRequests: [RecordedNotificationReplyRequest] = []
-    private var recordedSnapshotCalls = 0
-
-    init(modeError: Error? = nil, promptError: Error? = nil) {
-        self.modeError = modeError
-        self.promptError = promptError
-    }
-
-    var modeRequests: [RecordedModeRequest] {
-        lock.withLock { recordedModeRequests }
-    }
-
-    var promptRequests: [RecordedPromptRequest] {
-        lock.withLock { recordedPromptRequests }
-    }
-
-    var notificationReplyRequests: [RecordedNotificationReplyRequest] {
-        lock.withLock { recordedNotificationReplyRequests }
-    }
-
-    var snapshotCalls: Int {
-        lock.withLock { recordedSnapshotCalls }
-    }
-
-    func submitClientCoreOutbox(
-        clientCore: LooperClientCore,
-        expectedClientMutationIDs: [String]
-    ) async throws -> LooperRealtimeSessionCommandBatchResponse {
-        let frames = try clientCore.takeExpectedOutbox(
-            expectedClientMutationIds: expectedClientMutationIDs
-        )
-        var envelopes: [LooperRealtimeCommandAckEnvelope] = []
-        for frame in frames {
-            switch frame.commandKind {
-            case .setSessionMode:
-                lock.withLock {
-                    recordedModeRequests.append(
-                        RecordedModeRequest(
-                            threadID: frame.threadId,
-                            preset: frame.preset.nilIfBlank,
-                            clientMutationID: frame.clientMutationId
-                        )
-                    )
-                }
-                if let modeError {
-                    throw modeError
-                }
-                envelopes.append(
-                    commandAckEnvelope(
-                        commandKind: "SetSessionMode",
-                        clientMutationID: frame.clientMutationId,
-                        ackSeq: 10,
-                        entityID: frame.threadId,
-                        revision: "rev-mode",
-                        preset: frame.preset.nilIfBlank,
-                        dispatchKind: nil,
-                        promptID: nil,
-                        notificationID: nil
-                    )
-                )
-
-            case .sendSessionPrompt:
-                lock.withLock {
-                    recordedPromptRequests.append(
-                        RecordedPromptRequest(
-                            threadID: frame.threadId,
-                            prompt: frame.prompt,
-                            assistantSurface: frame.assistantSurface.nilIfBlank,
-                            clientMutationID: frame.clientMutationId
-                        )
-                    )
-                }
-                if let promptError {
-                    throw promptError
-                }
-                envelopes.append(
-                    commandAckEnvelope(
-                        commandKind: "SendSessionPrompt",
-                        clientMutationID: frame.clientMutationId,
-                        ackSeq: 11,
-                        entityID: frame.threadId,
-                        revision: "rev-prompt",
-                        preset: nil,
-                        dispatchKind: "queued",
-                        promptID: "prompt-main",
-                        notificationID: nil
-                    )
-                )
-
-            case .submitNotificationReply:
-                lock.withLock {
-                    recordedNotificationReplyRequests.append(
-                        RecordedNotificationReplyRequest(
-                            notificationID: frame.notificationId,
-                            threadID: frame.threadId,
-                            prompt: frame.prompt,
-                            assistantSurface: frame.assistantSurface.nilIfBlank,
-                            clientMutationID: frame.clientMutationId
-                        )
-                    )
-                }
-                if let promptError {
-                    throw promptError
-                }
-                envelopes.append(
-                    commandAckEnvelope(
-                        commandKind: "SubmitNotificationReply",
-                        clientMutationID: frame.clientMutationId,
-                        ackSeq: 12,
-                        entityID: frame.threadId,
-                        revision: "rev-notification-reply",
-                        preset: nil,
-                        dispatchKind: "queued",
-                        promptID: "prompt-main",
-                        notificationID: frame.notificationId
-                    )
-                )
-
-            case .resume:
-                continue
-            }
-        }
-        return LooperRealtimeSessionCommandBatchResponse(
-            accepted: true,
-            commandAcks: envelopes
-        )
-    }
-
-    private func commandAckEnvelope(
-        commandKind: String,
-        clientMutationID: String,
-        ackSeq: Int64,
-        entityID: String,
-        revision: String,
-        preset: String?,
-        dispatchKind: String?,
-        promptID: String?,
-        notificationID: String?
-    ) -> LooperRealtimeCommandAckEnvelope {
-        LooperRealtimeCommandAckEnvelope(
-            commandKind: commandKind,
-            ack: LooperRealtimeCommandAck(
-                accepted: true,
-                clientMutationID: clientMutationID,
-                ackSeq: ackSeq,
-                entityID: entityID,
-                revision: revision,
-                serverTime: "now",
-                idempotentReplay: false
-            ),
-            preset: preset,
-            dispatchKind: dispatchKind,
-            promptID: promptID,
-            notificationID: notificationID
-        )
-    }
-}
-
 private final class NoNetworkControlPlaneClient: @unchecked Sendable {
     private let lock = NSLock()
     private var recordedSnapshotCalls = 0
 
     var snapshotCalls: Int {
         lock.withLock { recordedSnapshotCalls }
-    }
-}
-
-private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
