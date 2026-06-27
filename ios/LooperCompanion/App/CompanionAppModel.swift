@@ -29,6 +29,19 @@ enum CompanionLocalSessionReconcileReason: String {
     case sessionsPullRefresh = "sessions-pull-refresh"
     case searchPullRefresh = "search-pull-refresh"
     case unlockRecovery = "unlock-recovery"
+
+    var shouldReplayCachedSnapshotWhenLoaded: Bool {
+        switch self {
+        case .sessionsPullRefresh,
+             .searchPullRefresh:
+            return true
+        case .activeScene,
+             .fallbackTimer,
+             .continuationWithoutSession,
+             .unlockRecovery:
+            return false
+        }
+    }
 }
 
 @MainActor
@@ -527,7 +540,14 @@ final class CompanionAppModel {
 
     func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
         startSessionRuntimeSyncIfNeeded()
-        prepareSessionRuntimeInBackground()
+
+        if snapshotState.hasSnapshot, !reason.shouldReplayCachedSnapshotWhenLoaded {
+            promoteCachedSnapshotConnectionIfNeeded(reason: reason.rawValue)
+            CompanionDiagnostics.record(
+                "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
+            )
+            return
+        }
 
         if restoreCachedSessionMiniSnapshotIfAvailable(reason: reason.rawValue) {
             CompanionDiagnostics.record(
@@ -1526,8 +1546,7 @@ final class CompanionAppModel {
 
     private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {
         let visibleSnapshot = snapshotState.applySnapshot(
-            cachedSnapshot,
-            preferredSurface: cachedSnapshot.globalSettings.assistantSurface
+            cachedSnapshot
         )
         promoteCachedSnapshotConnectionIfNeeded(reason: reason)
         lastUpdatedAt = Date()

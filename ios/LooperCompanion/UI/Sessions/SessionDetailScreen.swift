@@ -34,6 +34,19 @@ struct SessionDetailScreen: View {
         detail?.title ?? session.title
     }
 
+    private var currentAssistantSurface: CompanionAssistantSurface? {
+        let detailSurface = detail
+            .flatMap { CompanionAssistantSurface(assistantClient: $0.assistantClient) }
+            ?? detail.flatMap { CompanionAssistantSurface(sessionSource: $0.metadata.source) }
+        return detailSurface
+            ?? CompanionAssistantSurface(assistantClient: session.assistantClient)
+            ?? CompanionAssistantSurface(sessionSource: session.metadata.source)
+    }
+
+    private var currentAssistantTitle: String {
+        currentAssistantSurface?.displayTitle ?? (detail?.assistantClient ?? session.assistantClient).displayTitle
+    }
+
     private var firstUserPromptText: String? {
         guard let prompt = detail?.firstUserPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
               !prompt.isEmpty
@@ -169,11 +182,16 @@ struct SessionDetailScreen: View {
         Section("Summary") {
             LabeledContent {
                 HStack(spacing: 8) {
-                    AssistantClientGlyph(
-                        client: detail?.assistantClient ?? session.assistantClient,
-                        isWorking: (detail?.status ?? session.status) == .active
-                    )
-                    Text((detail?.assistantClient ?? session.assistantClient).displayTitle)
+                    if let currentAssistantSurface {
+                        AssistantSurfaceLogoMark(surface: currentAssistantSurface)
+                            .frame(width: 28, height: 28)
+                    } else {
+                        AssistantClientGlyph(
+                            client: detail?.assistantClient ?? session.assistantClient,
+                            isWorking: (detail?.status ?? session.status) == .active
+                        )
+                    }
+                    Text(currentAssistantTitle)
                 }
             } label: {
                 Text("Assistant")
@@ -454,7 +472,7 @@ struct SessionDetailScreen: View {
         LooperSessionContextEngine.fallbackSuggestions(
             title: detail?.title ?? session.title,
             status: currentStatus,
-            assistantName: (detail?.assistantClient ?? session.assistantClient).displayTitle,
+            assistantName: currentAssistantTitle,
             taskKind: currentMetadata.taskKind
         )
     }

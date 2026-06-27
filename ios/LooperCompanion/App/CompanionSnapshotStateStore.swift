@@ -16,6 +16,7 @@ final class CompanionSnapshotStateStore {
     private(set) var sessionSections = SessionSections.empty
     private(set) var sessionIndex = SessionIndex.empty
 
+    @ObservationIgnored private var canonicalSnapshot: MobileSnapshot?
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
 
     var hasSnapshot: Bool {
@@ -32,6 +33,7 @@ final class CompanionSnapshotStateStore {
 
     func reset() {
         snapshot = nil
+        canonicalSnapshot = nil
         detailBySessionID = [:]
         selectedAssistantSurface = .defaultSurface
         sessionSections = .empty
@@ -46,7 +48,7 @@ final class CompanionSnapshotStateStore {
     @discardableResult
     func applyHostSyncTime(_ serverTime: String) -> Bool {
         let syncedAt = serverTime.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !syncedAt.isEmpty, var nextSnapshot = snapshot else {
+        guard !syncedAt.isEmpty, var nextSnapshot = sourceSnapshotForProjection() else {
             return false
         }
         guard nextSnapshot.host.lastSyncedAt != syncedAt else {
@@ -54,7 +56,11 @@ final class CompanionSnapshotStateStore {
         }
 
         nextSnapshot.host.lastSyncedAt = syncedAt
-        snapshot = nextSnapshot
+        canonicalSnapshot = nextSnapshot
+        if var visibleSnapshot = snapshot {
+            visibleSnapshot.host.lastSyncedAt = syncedAt
+            snapshot = visibleSnapshot
+        }
         return true
     }
 
@@ -67,6 +73,7 @@ final class CompanionSnapshotStateStore {
         _ nextSnapshot: MobileSnapshot,
         preferredSurface: CompanionAssistantSurface? = nil
     ) -> MobileSnapshot {
+        canonicalSnapshot = nextSnapshot
         let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
             snapshot: nextSnapshot,
             preferredSurface: preferredSurface,
@@ -83,7 +90,7 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) -> MobileSnapshot? {
-        guard let snapshot else {
+        guard let snapshot = sourceSnapshotForProjection() else {
             sessionSections = .empty
             sessionIndex = .empty
             selectedAssistantSurface = surface
@@ -121,7 +128,7 @@ final class CompanionSnapshotStateStore {
     }
 
     func sessions(for surface: CompanionAssistantSurface) -> [SessionSummary] {
-        snapshot?.sessions(for: surface) ?? []
+        sourceSnapshotForProjection()?.sessions(for: surface) ?? []
     }
 
     func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
@@ -180,7 +187,7 @@ final class CompanionSnapshotStateStore {
         sessionID: String,
         assistantSurface: CompanionAssistantSurface?
     ) -> MobileSnapshot? {
-        guard var nextSnapshot = snapshot else {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
             return nil
         }
         guard nextSnapshot.globalSettings.siriCurrentSessionId != sessionID ||
@@ -202,7 +209,7 @@ final class CompanionSnapshotStateStore {
         sessionID: String,
         assistantSurface: CompanionAssistantSurface?
     ) -> MobileSnapshot? {
-        guard var nextSnapshot = snapshot else {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
             return nil
         }
         guard nextSnapshot.globalSettings.siriDefaultSessionId != sessionID ||
@@ -218,7 +225,7 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applyDefaultPrompt(_ prompt: String) -> MobileSnapshot? {
-        guard var nextSnapshot = snapshot else {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
             return nil
         }
         guard nextSnapshot.globalSettings.defaultPrompt != prompt else {
@@ -234,7 +241,7 @@ final class CompanionSnapshotStateStore {
         sessionID: String,
         archived: Bool
     ) -> MobileSnapshot? {
-        guard var nextSnapshot = snapshot else {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
             return nil
         }
 
@@ -265,7 +272,7 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applySessionDeleted(sessionID: String) -> MobileSnapshot? {
-        guard var nextSnapshot = snapshot else {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
             return nil
         }
 
@@ -309,6 +316,10 @@ final class CompanionSnapshotStateStore {
             projection: projection.sessionIndex,
             snapshot: visibleSnapshot
         )
+    }
+
+    private func sourceSnapshotForProjection() -> MobileSnapshot? {
+        canonicalSnapshot ?? snapshot
     }
 
     private func updateSessionSummary(

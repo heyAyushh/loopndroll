@@ -1090,6 +1090,42 @@ enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sen
     }
 }
 
+extension CompanionAssistantSurface {
+    init?(assistantClient: AssistantClient) {
+        switch assistantClient {
+        case .codex:
+            self = .codex
+        case .claudeCode:
+            self = .claudeCode
+        case .devin:
+            self = .devin
+        case .grokBuild:
+            self = .grokBuild
+        case .zed:
+            self = .zed
+        case .unknown, .cursor, .superEngineering, .openclaw:
+            return nil
+        }
+    }
+
+    init?(sessionSource: String) {
+        switch sessionSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "vscode", "codex":
+            self = .codex
+        case "claude-code", "claude":
+            self = .claudeCode
+        case "devin-desktop", "devin":
+            self = .devin
+        case "grok-build", "grok":
+            self = .grokBuild
+        case "zed", "zed-agent-servers":
+            self = .zed
+        default:
+            return nil
+        }
+    }
+}
+
 struct LooperSessionEntityIdentifier: Hashable, Sendable {
     let assistantSurface: CompanionAssistantSurface
     let sessionID: String

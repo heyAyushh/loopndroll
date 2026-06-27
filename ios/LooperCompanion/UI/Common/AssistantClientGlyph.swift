@@ -35,20 +35,21 @@ struct AssistantClientGlyph: View {
 }
 
 private struct CodexLogoMark: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var asset: CodexLogoAsset.Variant {
-        CodexLogoAsset.variant(for: colorScheme)
-    }
-
     var body: some View {
-        CompanionCachedImage(
-            asset: asset.posterAsset,
-            fallbackSystemImage: "terminal"
-        )
-        .scaledToFill()
-        .clipShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
-        .contentShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
+        ZStack {
+            RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius)
+                .fill(CodexLogoPalette.background)
+            Text(CodexLogoMetrics.letter)
+                .font(.system(
+                    size: CodexLogoMetrics.letterSize,
+                    weight: .heavy,
+                    design: .rounded
+                ))
+                .foregroundStyle(CodexLogoPalette.foreground)
+                .minimumScaleFactor(CodexLogoMetrics.minimumScale)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
     }
 }
 
@@ -332,54 +333,14 @@ private enum GrokLogoPalette {
     static let lightModeTint = Color(red: 0.30, green: 0.30, blue: 0.32)
 }
 
-private enum CodexLogoAsset {
-    struct Variant {
-        let posterAsset: CompanionBundledImage
-        let videoName: String
-    }
-
-    static let light = Variant(
-        posterAsset: .codexLogoPoster,
-        videoName: "codex-logo"
-    )
-    static let dark = Variant(
-        posterAsset: .codexLogoDarkPoster,
-        videoName: "codex-logo-dark"
-    )
-    static let videoExtension = "mp4"
-
-    static func variant(for colorScheme: ColorScheme) -> Variant {
-        switch colorScheme {
-        case .dark:
-            return dark
-        case .light:
-            return light
-        @unknown default:
-            return light
-        }
-    }
+private enum CodexLogoPalette {
+    static let background = Color(red: 0.05, green: 0.31, blue: 0.24)
+    static let foreground = Color.white
 }
 
 private enum CodexLogoMetrics {
     static let cornerRadius: CGFloat = 7
-}
-
-private extension CompanionAssistantSurface {
-    init?(assistantClient: AssistantClient) {
-        switch assistantClient {
-        case .codex:
-            self = .codex
-        case .claudeCode:
-            self = .claudeCode
-        case .devin:
-            self = .devin
-        case .grokBuild:
-            self = .grokBuild
-        case .zed:
-            self = .zed
-        case .unknown, .cursor, .superEngineering, .openclaw:
-            return nil
-        }
-    }
-
+    static let letter = "C"
+    static let letterSize: CGFloat = 18
+    static let minimumScale: CGFloat = 0.7
 }

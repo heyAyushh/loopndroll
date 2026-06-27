@@ -445,6 +445,22 @@ struct SessionSummaryTimingTests {
 
         #expect(store.session(withID: "thread-main")?.effectiveMode == .awaitReply)
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
+
+        var refreshedDevinSession = devinSession
+        refreshedDevinSession.assistantPreview = "Devin refreshed"
+        var refreshedSnapshot = snapshot
+        refreshedSnapshot.revision = "revision-2"
+        refreshedSnapshot.globalSettings.assistantSurface = .codex
+        refreshedSnapshot.surfaceSessions[CompanionAssistantSurface.devin.rawValue] = [refreshedDevinSession]
+
+        store.applySnapshot(refreshedSnapshot)
+        #expect(store.selectedAssistantSurface == .devin)
+        #expect(store.sessionSections.active.map(\.ref) == ["S2"])
+        #expect(store.detail(for: "thread-main")?.assistantPreview == "Devin refreshed")
+
+        #expect(store.selectAssistantSurface(.codex))
+        #expect(store.selectedAssistantSurface == .codex)
+        #expect(store.sessionSections.active.map(\.ref) == ["S1"])
     }
 
     private func sessionSummary(

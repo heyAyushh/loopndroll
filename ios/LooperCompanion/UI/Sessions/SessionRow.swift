@@ -19,10 +19,9 @@ struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                AssistantClientGlyph(
-                    client: session.assistantClient,
-                    isWorking: session.status == .active
-                )
+                AssistantSurfaceLogoMark(surface: assistantSurface)
+                    .frame(width: 28, height: 28)
+                    .accessibilityLabel(assistantSurface.displayTitle)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(session.ref)

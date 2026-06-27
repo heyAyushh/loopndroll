@@ -84,7 +84,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testConnectedCardShowsStreamLivenessInsteadOfSnapshotAge() async throws {
+    func testConnectedCardDoesNotExposeStreamOrSnapshotAge() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -107,8 +107,8 @@ struct CompanionSessionMiniLocalFirstTests {
         model.realtimeLatestSeq = 10
         model.connectionState = .connected
 
-        #expect(model.viewState.lastSyncedAt == Constants.heartbeatTimestamp)
-        #expect(model.viewState.connectivitySummary.contains("stream live"))
+        #expect(model.realtimeServerTime == Constants.heartbeatTimestamp)
+        #expect(!model.viewState.connectivitySummary.localizedCaseInsensitiveContains("stream"))
         #expect(!model.viewState.connectivitySummary.contains("synced "))
         #expect(service.loadSnapshotCallCount == 0)
     }

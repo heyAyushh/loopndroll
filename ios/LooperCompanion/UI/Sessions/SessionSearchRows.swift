@@ -55,13 +55,11 @@ struct SearchSessionRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            AssistantClientGlyph(
-                client: session.assistantClient,
-                isWorking: session.status == .active
-            )
+            AssistantSurfaceLogoMark(surface: assistantSurface)
                 .frame(width: 18, height: 18)
                 .frame(width: 28, height: 28)
                 .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityLabel(assistantSurface.displayTitle)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title)

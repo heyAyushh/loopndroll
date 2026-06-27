@@ -2,8 +2,6 @@ import SwiftUI
 import UIKit
 
 enum CompanionBundledImage: String, CaseIterable {
-    case codexLogoPoster = "codex-logo-poster"
-    case codexLogoDarkPoster = "codex-logo-dark-poster"
     case devinLogo = "DevinLogo"
     case grokLogo = "GrokLogo"
     case zedLogo = "ZedLogo"
@@ -13,9 +11,7 @@ enum CompanionBundledImage: String, CaseIterable {
         switch self {
         case .notificationOrb:
             return "png"
-        case .codexLogoPoster,
-             .codexLogoDarkPoster,
-             .devinLogo,
+        case .devinLogo,
              .grokLogo,
              .zedLogo:
             return nil
