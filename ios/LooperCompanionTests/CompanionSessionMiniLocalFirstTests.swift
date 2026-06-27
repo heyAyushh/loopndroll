@@ -41,7 +41,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.viewState.activeSessions.map { $0.id } == [Constants.cachedThreadID])
         #expect(model.connectionState == .connecting)
-        #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
+        #expect(model.viewState.connectivityHeadline == "Connecting to your Mac")
         #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(model.viewState.connectionRoutePresentation == nil)
         #expect(service.loadSnapshotCallCount == 0)
@@ -69,14 +69,14 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         model.connectionState = .connecting
-        #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
+        #expect(model.viewState.connectivityHeadline == "Connecting to your Mac")
         #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(model.viewState.connectivitySummary == "Showing local sessions; live connection is not ready.")
         #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
         #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
 
         model.connectionState = .offline
-        #expect(model.viewState.connectivityHeadline != "Mac connection offline")
+        #expect(model.viewState.connectivityHeadline == "Mac connection offline")
         #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when Looper reconnects.")
         #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
@@ -240,7 +240,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.loadSnapshotCallCount == 0)
         #expect(model.connectionState == .connecting)
         #expect(model.errorMessage == nil)
-        #expect(model.viewState.connectivityHeadline != "Mac connection offline")
+        #expect(model.viewState.connectivityHeadline == "Connecting to your Mac")
     }
 
     @MainActor

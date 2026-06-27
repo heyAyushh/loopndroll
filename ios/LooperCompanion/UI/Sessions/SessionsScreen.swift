@@ -173,6 +173,10 @@ struct SessionsScreen: View {
     }
 
     private var connectionSubtitle: String {
+        if model.viewState.isShowingUsableLocalState {
+            return model.viewState.connectivitySummary
+        }
+
         if let assistantSurfaceSummary = model.viewState.assistantSurfaceConnectionSummary {
             return assistantSurfaceSummary
         }

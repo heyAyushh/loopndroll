@@ -114,7 +114,14 @@ struct CompanionAppViewState {
 
     var connectivityHeadline: String {
         if isShowingUsableLocalState {
-            return snapshotState.snapshot?.host.name ?? "Looper is ready"
+            switch model.connectionState {
+            case .connecting:
+                return "Connecting to your Mac"
+            case .offline:
+                return "Mac connection offline"
+            case .connected, .unauthorized, .locked, .unpaired:
+                break
+            }
         }
 
         switch model.connectionState {
