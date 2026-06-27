@@ -6,6 +6,10 @@ import Observation
 @MainActor
 @Observable
 final class CompanionSnapshotStateStore {
+    private enum Constants {
+        static let millisecondsPerSecond: TimeInterval = 1_000
+    }
+
     var snapshot: MobileSnapshot?
     var detailBySessionID: [String: SessionDetail] = [:]
     var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
@@ -154,6 +158,28 @@ final class CompanionSnapshotStateStore {
 
     func removeDetail(for sessionID: String) {
         detailBySessionID[sessionID] = nil
+    }
+
+    @discardableResult
+    func applyCurrentSiriSession(
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) -> MobileSnapshot? {
+        guard var nextSnapshot = snapshot else {
+            return nil
+        }
+        guard nextSnapshot.globalSettings.siriCurrentSessionId != sessionID ||
+            nextSnapshot.globalSettings.siriCurrentAssistantSurface != assistantSurface
+        else {
+            return nil
+        }
+
+        nextSnapshot.globalSettings.siriCurrentSessionId = sessionID
+        nextSnapshot.globalSettings.siriCurrentAssistantSurface = assistantSurface
+        nextSnapshot.globalSettings.siriCurrentUpdatedAtMs = Int64(
+            Date().timeIntervalSince1970 * Constants.millisecondsPerSecond
+        )
+        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
     }
 
     private func applyReducedVisibleSnapshot(

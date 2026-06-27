@@ -170,6 +170,30 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.healthCalls == 1)
     }
 
+    @Test("force refresh keeps SessionMini as menu truth when HTTP succeeds")
+    func forceRefreshKeepsSessionMiniAsMenuTruthWhenHTTPSucceeds() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 303,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient()
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .zero
+        )
+
+        let result = await coordinator.refresh(force: true)
+
+        #expect(result.succeeded)
+        #expect(result.didFetchHTTP)
+        #expect(result.snapshot != nil)
+        #expect(result.sessionMiniSnapshot?.latestSeq == 303)
+        #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        #expect(client.snapshotCalls == 1)
+    }
+
     @Test("cached SessionMini normal refresh does not fetch HTTP snapshot")
     func cachedSessionMiniNormalRefreshDoesNotFetchHTTPSnapshot() async throws {
         let runtime = try seededRuntime(

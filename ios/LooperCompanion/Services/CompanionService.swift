@@ -17,10 +17,6 @@ protocol CompanionService: Sendable {
         id: String?,
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> MobileSnapshot
-    func saveSiriCurrentSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot
     func registerPushDevice(_ request: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse
     func sendTestPush(installationID: String) async throws -> RemotePushTestResponse
 }

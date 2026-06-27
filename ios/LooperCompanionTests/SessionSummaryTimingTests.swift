@@ -593,13 +593,6 @@ private struct SnapshotOnlyCompanionService: CompanionService {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 
-    func saveSiriCurrentSession(
-        id _: String?,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
     func registerPushDevice(
         _: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

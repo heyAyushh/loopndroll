@@ -108,6 +108,10 @@ struct CompanionAppViewState {
     }
 
     var connectivityHeadline: String {
+        if isShowingUsableLocalState {
+            return model.snapshotState.snapshot?.host.name ?? "Looper is ready"
+        }
+
         switch model.connectionState {
         case .connected:
             return model.snapshotState.snapshot?.host.name ?? "Connected"
@@ -125,11 +129,39 @@ struct CompanionAppViewState {
     }
 
     var connectivitySummary: String {
-        if model.connectionState == .connected, hasSnapshot {
-            return connectedStatusSummary
+        if hasSnapshot {
+            switch model.connectionState {
+            case .connected:
+                return connectedStatusSummary
+            case .connecting:
+                return "Showing local sessions while the live stream catches up."
+            case .offline:
+                return "Showing local sessions; commands will retry when the stream returns."
+            case .unauthorized, .locked, .unpaired:
+                break
+            }
         }
 
         return model.connectionState.summary
+    }
+
+    var connectivityStatusLabel: String {
+        if isShowingUsableLocalState {
+            switch model.connectionState {
+            case .connecting:
+                return "Syncing"
+            case .offline:
+                return "Local"
+            case .connected, .unauthorized, .locked, .unpaired:
+                break
+            }
+        }
+
+        return model.connectionState.label
+    }
+
+    var isShowingUsableLocalState: Bool {
+        hasSnapshot && (model.connectionState == .connecting || model.connectionState == .offline)
     }
 
     var connectionRoutePresentation: CompanionConnectionRoutePresentation? {

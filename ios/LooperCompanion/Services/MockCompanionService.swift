@@ -184,18 +184,6 @@ actor MockCompanionStore {
         return publishSnapshot()
     }
 
-    func saveSiriCurrentSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) -> MobileSnapshot {
-        snapshot.globalSettings.siriCurrentSessionId = id
-        snapshot.globalSettings.siriCurrentAssistantSurface = id == nil ? nil : assistantSurface
-        snapshot.globalSettings.siriCurrentUpdatedAtMs = id == nil
-            ? nil
-            : Int64(Date().timeIntervalSince1970 * millisecondsPerSecond)
-        return publishSnapshot()
-    }
-
     @discardableResult
     private func publishSnapshot() -> MobileSnapshot {
         let surface = snapshot.globalSettings.assistantSurface
@@ -296,13 +284,6 @@ struct MockCompanionService: CompanionService {
         assistantSurface: CompanionAssistantSurface?
     ) async throws -> MobileSnapshot {
         await store.saveSiriDefaultSession(id: id, assistantSurface: assistantSurface)
-    }
-
-    func saveSiriCurrentSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        await store.saveSiriCurrentSession(id: id, assistantSurface: assistantSurface)
     }
 
     func registerPushDevice(

@@ -46,6 +46,68 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testConnectionCardUsesLocalStateWhileStreamCatchesUp() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 9,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        model.connectionState = .connecting
+        #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
+        #expect(model.viewState.connectivityStatusLabel == "Syncing")
+        #expect(model.viewState.connectivitySummary == "Showing local sessions while the live stream catches up.")
+
+        model.connectionState = .offline
+        #expect(model.viewState.connectivityHeadline != "Mac connection offline")
+        #expect(model.viewState.connectivityStatusLabel == "Local")
+        #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when the stream returns.")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testCurrentSiriSessionSelectionIsLocalOnly() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 10,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 10, revision: "mini-revision-10"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        model.markCurrentSiriSession(cachedSession)
+
+        #expect(model.snapshot?.globalSettings.siriCurrentSessionId == Constants.cachedThreadID)
+        #expect(model.snapshot?.globalSettings.siriCurrentAssistantSurface == .codex)
+        #expect(model.snapshot?.globalSettings.siriCurrentUpdatedAtMs != nil)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchIsLocalOnly() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -556,13 +618,6 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     }
 
     func saveSiriDefaultSession(
-        id _: String?,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        snapshot
-    }
-
-    func saveSiriCurrentSession(
         id _: String?,
         assistantSurface _: CompanionAssistantSurface?
     ) async throws -> MobileSnapshot {

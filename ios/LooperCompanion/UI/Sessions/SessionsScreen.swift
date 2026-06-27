@@ -132,8 +132,8 @@ struct SessionsScreen: View {
             SessionConnectionRow(
                 title: model.viewState.connectivityHeadline,
                 subtitle: connectionSubtitle,
-                statusText: model.connectionState.label,
-                statusTint: CompanionTint.tint(for: model.connectionState),
+                statusText: model.viewState.connectivityStatusLabel,
+                statusTint: connectionStatusTint,
                 routePresentation: model.viewState.connectionRoutePresentation,
                 openSettings: openSettings,
                 assistantPicker: {
@@ -178,6 +178,12 @@ struct SessionsScreen: View {
         }
 
         return model.viewState.connectivitySummary
+    }
+
+    private var connectionStatusTint: Color {
+        model.viewState.isShowingUsableLocalState
+            ? CompanionTint.tint(for: .connected)
+            : CompanionTint.tint(for: model.connectionState)
     }
 
     private func sessionSection(

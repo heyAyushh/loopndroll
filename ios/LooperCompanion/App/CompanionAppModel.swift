@@ -1078,36 +1078,18 @@ final class CompanionAppModel {
         }
     }
 
-    func markCurrentSiriSession(_ session: SessionSummary) async {
+    func markCurrentSiriSession(_ session: SessionSummary) {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
-        guard snapshot?.globalSettings.siriCurrentSessionId != sessionID ||
-            snapshot?.globalSettings.siriCurrentAssistantSurface != targetSurface
-        else {
+        guard let visibleSnapshot = snapshotState.applyCurrentSiriSession(
+            sessionID: sessionID,
+            assistantSurface: targetSurface
+        ) else {
             return
         }
 
-        let mutationRevision = connectionRevision
-        do {
-            let nextSnapshot = try await service.saveSiriCurrentSession(
-                id: sessionID,
-                assistantSurface: targetSurface
-            )
-            guard mutationRevision == connectionRevision else {
-                CompanionDiagnostics.record("siri-current:stale-skip sessionID=\(sessionID)")
-                return
-            }
-
-            await applySnapshot(nextSnapshot)
-        } catch {
-            guard !isCancellationError(error) else {
-                return
-            }
-
-            CompanionDiagnostics.record(
-                "siri-current:update-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
-            )
-        }
+        CompanionSnapshotCache.save(visibleSnapshot)
+        CompanionDiagnostics.record("siri-current:local sessionID=\(sessionID)")
     }
 
     func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {

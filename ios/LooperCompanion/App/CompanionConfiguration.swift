@@ -644,12 +644,6 @@ struct UnconfiguredCompanionService: CompanionService {
     ) async throws -> MobileSnapshot {
         throw error
     }
-    func saveSiriCurrentSession(
-        id _: String?,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        throw error
-    }
     func registerPushDevice(
         _: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

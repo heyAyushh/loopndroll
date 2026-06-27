@@ -1051,13 +1051,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         snapshot
     }
 
-    func saveSiriCurrentSession(
-        id _: String?,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        snapshot
-    }
-
     func registerPushDevice(_: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse {
         RemotePushRegistrationResponse(
             state: .storedAwaitingProvider,
