@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc};
 
 use tokio::{
     sync::mpsc,
@@ -21,7 +21,6 @@ use crate::model::{
     ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
     OutboundSessionFrameKind,
 };
-#[cfg(test)]
 use crate::session_transport::fetch_state_mini_snapshot;
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
 #[cfg(test)]
@@ -859,15 +858,21 @@ impl LooperClientCore {
 }
 
 impl LooperClientCore {
-    #[cfg(test)]
-    async fn recover_state_mini_snapshot(
+    pub(crate) fn recover_state_mini_snapshot(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let snapshot =
-            fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await?;
+        let (sender, receiver) = std_mpsc::sync_channel(1);
+        self.runtime.spawn(async move {
+            let result =
+                fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await;
+            let _ = sender.send(result);
+        });
+        let snapshot = receiver
+            .recv()
+            .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
         self.replace_state_minis(snapshot)
     }
 
@@ -2274,10 +2279,9 @@ mod tests {
     #[test]
     fn recover_state_mini_snapshot_rejects_missing_endpoint_without_state_change() {
         let core = LooperClientCore::new();
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = runtime
-            .block_on(core.recover_state_mini_snapshot(Vec::new(), String::new(), String::new()))
+        let error = core
+            .recover_state_mini_snapshot(Vec::new(), String::new(), String::new())
             .expect_err("missing endpoint rejects");
 
         assert_eq!(error, ClientCoreError::NoEndpoint);

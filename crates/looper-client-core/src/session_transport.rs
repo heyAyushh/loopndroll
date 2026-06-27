@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use http_body_util::{BodyExt, Empty};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
@@ -64,7 +64,28 @@ pub(crate) async fn fetch_state_mini_snapshot(
     bearer_token: String,
     mobile_session_header: String,
 ) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
-    let endpoint = select_client_endpoint(&endpoints)?;
+    let mut last_error = ClientCoreError::StateMiniSnapshotTransportFailed;
+    for endpoint in snapshot_recovery_endpoints(&endpoints)? {
+        match fetch_state_mini_snapshot_from_endpoint(
+            &endpoint,
+            bearer_token.as_str(),
+            mobile_session_header.as_str(),
+        )
+        .await
+        {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(error) => last_error = error,
+        }
+    }
+
+    Err(last_error)
+}
+
+async fn fetch_state_mini_snapshot_from_endpoint(
+    endpoint: &ClientEndpoint,
+    bearer_token: &str,
+    mobile_session_header: &str,
+) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
     let uri = state_mini_snapshot_uri(&endpoint.url)?;
     let connector = HttpsConnectorBuilder::new()
         .with_webpki_roots()
@@ -352,6 +373,30 @@ fn select_client_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint
         .or_else(|| endpoints.first())
         .cloned()
         .ok_or(ClientCoreError::NoEndpoint)
+}
+
+fn snapshot_recovery_endpoints(
+    endpoints: &[ClientEndpoint],
+) -> Result<Vec<ClientEndpoint>, ClientCoreError> {
+    if endpoints.is_empty() {
+        return Err(ClientCoreError::NoEndpoint);
+    }
+
+    let mut seen_urls = HashSet::new();
+    let mut ordered = Vec::with_capacity(endpoints.len());
+    for prefer_last_good in [true, false] {
+        for endpoint in endpoints
+            .iter()
+            .filter(|endpoint| endpoint.last_good == prefer_last_good)
+        {
+            let normalized_url = endpoint.url.trim().trim_end_matches('/').to_owned();
+            if seen_urls.insert(normalized_url) {
+                ordered.push(endpoint.clone());
+            }
+        }
+    }
+
+    Ok(ordered)
 }
 
 fn state_mini_snapshot_uri(endpoint_url: &str) -> Result<Uri, ClientCoreError> {
@@ -764,6 +809,42 @@ mod tests {
         assert_eq!(
             url.to_string(),
             "http://127.0.0.1:8766/base/api/mobile/session-minis/snapshot"
+        );
+    }
+
+    #[test]
+    fn snapshot_recovery_endpoints_keep_fallbacks_after_last_good() {
+        let endpoints = snapshot_recovery_endpoints(&[
+            ClientEndpoint {
+                url: "http://100.119.200.69:8765".to_owned(),
+                last_good: false,
+            },
+            ClientEndpoint {
+                url: "http://192.168.1.33:8765".to_owned(),
+                last_good: true,
+            },
+            ClientEndpoint {
+                url: "http://192.168.1.33:8765/".to_owned(),
+                last_good: false,
+            },
+            ClientEndpoint {
+                url: "http://127.0.0.1:8765".to_owned(),
+                last_good: false,
+            },
+        ])
+        .expect("endpoints");
+
+        let urls = endpoints
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "http://192.168.1.33:8765",
+                "http://100.119.200.69:8765",
+                "http://127.0.0.1:8765",
+            ]
         );
     }
 

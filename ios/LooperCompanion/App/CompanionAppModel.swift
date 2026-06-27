@@ -596,6 +596,12 @@ final class CompanionAppModel {
         guard reason.shouldRecoverStateMiniSnapshot else {
             return false
         }
+        if shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(reason: reason) {
+            CompanionDiagnostics.record(
+                "session-mini:recovery-skip reason=\(reason.rawValue) local-ready"
+            )
+            return false
+        }
         if reason == .activeScene {
             guard !didAttemptForegroundSessionMiniRecovery else {
                 return false
@@ -628,6 +634,26 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "session-mini:recovery-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
             )
+            return false
+        }
+    }
+
+    private func shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(
+        reason: CompanionLocalSessionReconcileReason
+    ) -> Bool {
+        guard snapshotState.hasSnapshot else {
+            return false
+        }
+
+        switch reason {
+        case .activeScene,
+             .sessionsPullRefresh,
+             .searchPullRefresh:
+            return true
+        case .unlockRecovery:
+            return realtimeStreamIsLive
+        case .fallbackTimer,
+             .continuationWithoutSession:
             return false
         }
     }
