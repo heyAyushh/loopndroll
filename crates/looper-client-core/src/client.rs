@@ -29,6 +29,7 @@ use crate::state_mini::{
     latest_state_mini_revision, normalize_state_minis, require_valid_sequence, same_state_mini_key,
     sort_state_minis, validate_state_minis,
 };
+#[cfg(test)]
 use crate::transport::validate_endpoint_url;
 
 const INITIAL_SEQUENCE: i64 = 0;
@@ -882,8 +883,7 @@ impl LooperClientCore {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let endpoint = select_endpoint(&endpoints)?;
-        validate_endpoint_url(&endpoint.url)?;
+        require_endpoints(&endpoints)?;
         let endpoints_identity = endpoints_identity(&endpoints);
         let (sender, receiver) = mpsc::channel(64);
         let (command_sender, command_receiver) = mpsc::channel(64);
@@ -899,13 +899,11 @@ impl LooperClientCore {
             .map(|stream| stream.endpoints_identity == endpoints_identity)
             .unwrap_or(false);
         if is_same_stream_configuration && has_running_stream {
-            state.phase = ConnectionPhase::Ready;
-            state.last_error.clear();
             return Ok(state.snapshot());
         }
 
-        state.phase = ConnectionPhase::Ready;
-        state.endpoint_url = endpoint.url;
+        state.phase = ConnectionPhase::Connecting;
+        state.endpoint_url.clear();
         state.last_error.clear();
         let after_seq = state.latest_seq;
         let task = self.runtime.spawn(run_state_mini_stream(
@@ -1585,6 +1583,7 @@ impl ClientCoreState {
     }
 }
 
+#[cfg(test)]
 fn select_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, ClientCoreError> {
     let endpoint = endpoints
         .iter()
@@ -1592,6 +1591,13 @@ fn select_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, Clien
         .or_else(|| endpoints.first())
         .ok_or(ClientCoreError::NoEndpoint)?;
     Ok(endpoint.clone())
+}
+
+fn require_endpoints(endpoints: &[ClientEndpoint]) -> Result<(), ClientCoreError> {
+    if endpoints.is_empty() {
+        return Err(ClientCoreError::NoEndpoint);
+    }
+    Ok(())
 }
 
 fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
@@ -2021,7 +2027,8 @@ mod tests {
             )
             .expect("replace finished stream");
 
-        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(snapshot.phase, ConnectionPhase::Connecting);
+        assert_eq!(snapshot.endpoint_url, "");
         assert!(
             core.lock_stream()
                 .expect("stream lock")

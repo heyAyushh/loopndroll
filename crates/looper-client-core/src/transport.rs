@@ -1,7 +1,10 @@
+#[cfg(test)]
 use tonic::transport::Endpoint;
 
+#[cfg(test)]
 use crate::ClientCoreError;
 
+#[cfg(test)]
 pub(crate) fn validate_endpoint_url(url: &str) -> Result<(), ClientCoreError> {
     if url.trim().is_empty() {
         return Err(ClientCoreError::InvalidEndpoint);

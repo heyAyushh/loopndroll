@@ -10,7 +10,7 @@ struct LooperClientCoreTests {
     private let serverTime = "2026-06-25T00:00:00Z"
 
     @Test
-    func configureSessionRuntimePrefersLastGoodEndpoint() throws {
+    func configureSessionRuntimeStartsConnectingUntilStreamProvesEndpoint() throws {
         let manager = try temporarySessionManager()
 
         let snapshot = try manager.start(
@@ -22,13 +22,13 @@ struct LooperClientCoreTests {
             mobileSessionHeader: "mobile-session"
         )
 
-        #expect(snapshot.phase == .ready)
-        #expect(snapshot.endpointUrl == lastGoodEndpoint)
+        #expect(snapshot.phase == .connecting)
+        #expect(snapshot.endpointUrl.isEmpty)
         #expect(snapshot.outboxDepth == 0)
     }
 
     @Test
-    func snapshotReflectsConfiguredRuntime() throws {
+    func snapshotReflectsConnectingRuntimeBeforeFirstHeartbeat() throws {
         let manager = try temporarySessionManager()
 
         _ = try manager.start(
@@ -38,8 +38,8 @@ struct LooperClientCoreTests {
         )
         let snapshot = try manager.stateSnapshot()
 
-        #expect(snapshot.phase == .ready)
-        #expect(snapshot.endpointUrl == primaryEndpoint)
+        #expect(snapshot.phase == .connecting)
+        #expect(snapshot.endpointUrl.isEmpty)
         #expect(snapshot.pendingMutations.isEmpty)
     }
 
