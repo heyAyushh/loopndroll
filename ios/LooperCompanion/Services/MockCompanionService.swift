@@ -92,7 +92,7 @@ actor MockCompanionStore {
 
     func sendPrompt(id: String, prompt: String) -> MobileSnapshot {
         let timestamp = Date().ISO8601Format()
-        let preview = "Queued prompt: \(prompt)"
+        let preview = "Prompt sent: \(prompt)"
 
         allSessions = allSessions.map {
             guard $0.id == id else { return $0 }

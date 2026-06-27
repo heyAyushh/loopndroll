@@ -171,7 +171,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         tapBackButton()
         XCTAssertTrue(
             waitForText(
-                "Queued prompt:",
+                "Prompt sent:",
                 timeout: ControlTapMetrics.promptQueueTimeout,
                 allowsPartial: true
             )
