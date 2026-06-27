@@ -1010,7 +1010,7 @@ fn save_default_prompt_command(
     )
 }
 
-fn set_session_archived_command(
+pub(crate) fn set_session_archived_command(
     control_plane: &ControlPlane,
     thread_id: String,
     archived: bool,
@@ -1053,7 +1053,7 @@ fn set_session_archived_command(
     )
 }
 
-fn delete_session_command(
+pub(crate) fn delete_session_command(
     control_plane: &ControlPlane,
     thread_id: String,
     client_mutation_id: &str,
@@ -1089,7 +1089,7 @@ fn delete_session_command(
     )
 }
 
-fn mute_session_command(
+pub(crate) fn mute_session_command(
     control_plane: &ControlPlane,
     thread_id: String,
     client_mutation_id: &str,

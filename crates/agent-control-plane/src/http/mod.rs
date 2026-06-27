@@ -17,6 +17,7 @@ use serde::Deserialize;
 use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
+use crate::control_plane::session_fsm::SessionReject;
 use crate::control_plane::{ControlPlane, HookMutationTarget};
 use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
@@ -32,6 +33,7 @@ use crate::mobile::push::MobilePushRegistrationRequest;
 use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, UpsertMobileNotificationRoute,
 };
+use tonic::{Code as GrpcCode, Status as GrpcStatus};
 
 mod handoff;
 mod mobile_access;
@@ -1222,7 +1224,7 @@ async fn desktop_session_archive(
     }
     match set_session_archived(&control_plane, &thread_id, input.archived) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1236,7 +1238,7 @@ async fn desktop_session_mute(
     }
     match mute_session_action(&control_plane, &thread_id) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1250,7 +1252,7 @@ async fn desktop_session_delete(
     }
     match delete_session_action(&control_plane, &thread_id) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1265,6 +1267,47 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }
 
+fn session_command_status_response(status: GrpcStatus) -> Response {
+    if let Some(reject) = SessionReject::from_status_message(status.message()) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": reject.code_str(),
+                "message": reject.wire_reason(),
+                "currentState": reject.current_state.label(),
+            })),
+        )
+            .into_response();
+    }
+
+    let http_status = match status.code() {
+        GrpcCode::InvalidArgument => StatusCode::BAD_REQUEST,
+        GrpcCode::NotFound => StatusCode::NOT_FOUND,
+        GrpcCode::AlreadyExists | GrpcCode::FailedPrecondition | GrpcCode::OutOfRange => {
+            StatusCode::CONFLICT
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        http_status,
+        Json(serde_json::json!({
+            "error": grpc_status_error_code(status.code()),
+            "message": status.message(),
+        })),
+    )
+        .into_response()
+}
+
+fn grpc_status_error_code(code: GrpcCode) -> &'static str {
+    match code {
+        GrpcCode::InvalidArgument => "invalid_argument",
+        GrpcCode::NotFound => "not_found",
+        GrpcCode::AlreadyExists => "already_exists",
+        GrpcCode::FailedPrecondition => "failed_precondition",
+        GrpcCode::OutOfRange => "out_of_range",
+        _ => "internal",
+    }
+}
 async fn sync_manifest(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     match control_plane.sync_manifest_response() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),

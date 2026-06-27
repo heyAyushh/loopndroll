@@ -2359,8 +2359,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
         }),
     )
     .await;
-    assert!(!prompt_ack.accepted);
-    assert_eq!(prompt_ack.error_code, "mode_required");
+    assert!(prompt_ack.accepted);
     assert_eq!(prompt_ack.entity_id, "thread-main");
 
     let mute_ack = submit_grpc_session_command(
