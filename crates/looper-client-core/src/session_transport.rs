@@ -4,7 +4,6 @@ use http_body_util::{BodyExt, Empty};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -30,6 +29,10 @@ const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
 const AUTHORIZATION_HEADER: &str = "authorization";
 const MOBILE_SESSION_HEADER: &str = "x-looper-mobile-session";
 const BEARER_PREFIX: &str = "Bearer ";
+const SESSION_ID_FIELD: &str = "sessionId";
+const SESSION_ID_ALIAS_FIELD: &str = "sessionID";
+const PAYLOAD_ID_FIELD: &str = "id";
+const ASSISTANT_SURFACE_FIELD: &str = "assistantSurface";
 
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
@@ -50,14 +53,6 @@ pub(crate) enum StateMiniStreamEvent {
         latest_seq: i64,
         error_description: String,
     },
-}
-
-#[derive(Debug, Deserialize)]
-struct StateMiniPayload {
-    #[serde(rename = "sessionId")]
-    session_id: String,
-    #[serde(rename = "assistantSurface", default)]
-    assistant_surface: String,
 }
 
 pub(crate) async fn fetch_state_mini_snapshot(
@@ -538,19 +533,25 @@ fn client_command_ack(ack: proto::CommandAck) -> ClientCommandAck {
 fn client_state_mini_delta(
     delta: proto::StateMiniDelta,
 ) -> Result<ClientStateMiniDelta, StateMiniTransportError> {
-    let payload =
-        serde_json::from_str::<StateMiniPayload>(&delta.payload_json).map_err(|error| {
-            StateMiniTransportError::Transport {
-                latest_seq: delta.seq,
-                error_description: format!("state mini payload json invalid: {error}"),
-            }
-        })?;
+    let payload = serde_json::from_str::<Value>(&delta.payload_json).ok();
+    let Some(payload) = payload else {
+        return Ok(seq_only_state_mini_delta(delta));
+    };
+    let Some(session_id) = state_mini_payload_session_id(&payload) else {
+        return Ok(seq_only_state_mini_delta(delta));
+    };
+    let assistant_surface = payload
+        .get(ASSISTANT_SURFACE_FIELD)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let payload_json = normalized_state_mini_payload_json(payload, &session_id);
     let session = ClientStateMini {
-        session_id: payload.session_id.clone(),
-        assistant_surface: payload.assistant_surface,
+        session_id: session_id.clone(),
+        assistant_surface,
         seq: delta.seq,
         revision: delta.revision.clone(),
-        payload_json: delta.payload_json,
+        payload_json,
     };
     Ok(ClientStateMiniDelta {
         seq: delta.seq,
@@ -563,6 +564,46 @@ fn client_state_mini_delta(
         session,
         sessions: Vec::new(),
     })
+}
+
+fn seq_only_state_mini_delta(delta: proto::StateMiniDelta) -> ClientStateMiniDelta {
+    ClientStateMiniDelta {
+        seq: delta.seq,
+        latest_seq: delta.seq,
+        entity_id: delta.entity_id,
+        kind: delta.kind,
+        revision: delta.revision,
+        server_time: delta.server_time,
+        has_session: false,
+        session: ClientStateMini {
+            session_id: String::new(),
+            assistant_surface: String::new(),
+            seq: delta.seq,
+            revision: String::new(),
+            payload_json: String::new(),
+        },
+        sessions: Vec::new(),
+    }
+}
+
+fn state_mini_payload_session_id(payload: &Value) -> Option<String> {
+    [SESSION_ID_FIELD, SESSION_ID_ALIAS_FIELD, PAYLOAD_ID_FIELD]
+        .into_iter()
+        .find_map(|field| payload.get(field).and_then(Value::as_str))
+        .filter(|session_id| !session_id.trim().is_empty())
+        .map(str::to_owned)
+}
+
+fn normalized_state_mini_payload_json(mut payload: Value, session_id: &str) -> String {
+    if let Some(object) = payload.as_object_mut() {
+        object
+            .entry(PAYLOAD_ID_FIELD.to_owned())
+            .or_insert_with(|| Value::String(session_id.to_owned()));
+        object
+            .entry(SESSION_ID_FIELD.to_owned())
+            .or_insert_with(|| Value::String(session_id.to_owned()));
+    }
+    serde_json::to_string(&payload).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -620,6 +661,46 @@ mod tests {
             url.to_string(),
             "http://127.0.0.1:8766/base/api/mobile/session-minis/snapshot"
         );
+    }
+
+    #[test]
+    fn state_mini_delta_without_mini_payload_advances_sequence_only() {
+        let delta = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 14,
+            entity_id: "thread-1".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-14".to_owned(),
+            server_time: "2026-06-27T00:00:14Z".to_owned(),
+            payload_json: r#"{"threadId":"thread-1","detail":"command-ack"}"#.to_owned(),
+        })
+        .expect("delta");
+
+        assert_eq!(delta.seq, 14);
+        assert_eq!(delta.latest_seq, 14);
+        assert!(!delta.has_session);
+        assert!(delta.sessions.is_empty());
+    }
+
+    #[test]
+    fn state_mini_delta_accepts_payload_id_alias_and_normalizes_session_id() {
+        let delta = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 15,
+            entity_id: "thread-2".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-15".to_owned(),
+            server_time: "2026-06-27T00:00:15Z".to_owned(),
+            payload_json: r#"{"id":"thread-2","assistantSurface":"codex","title":"Build"}"#
+                .to_owned(),
+        })
+        .expect("delta");
+
+        assert!(delta.has_session);
+        assert_eq!(delta.session.session_id, "thread-2");
+        assert_eq!(delta.session.assistant_surface, "codex");
+        let payload: Value =
+            serde_json::from_str(&delta.session.payload_json).expect("normalized payload");
+        assert_eq!(payload["id"], "thread-2");
+        assert_eq!(payload["sessionId"], "thread-2");
     }
 
     #[test]

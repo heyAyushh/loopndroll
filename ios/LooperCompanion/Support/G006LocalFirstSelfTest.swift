@@ -151,7 +151,7 @@ enum G006LocalFirstSelfTest {
         )
 
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
-        try require(!didSend, "failed prompt unexpectedly returned success")
+        try require(didSend, "failed prompt was not locally accepted")
 
         let pendingPrompt = try pendingCommand(in: runtime, kind: .sendSessionPrompt)
         try require(
@@ -182,18 +182,18 @@ enum G006LocalFirstSelfTest {
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.startSessionRuntimeSyncIfNeeded()
 
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         let promptTask = model.beginSendSessionPrompt("ship it", to: Constants.cachedThreadID)
         let didApplyMode = await modeTask.value
         let didSend = await promptTask.value
 
-        try require(!didApplyMode, "offline mode command unexpectedly returned success")
-        try require(!didSend, "offline prompt command unexpectedly returned success")
-        try require(
-            model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2,
-            "optimistic mode did not render from local state"
-        )
+        try require(didApplyMode, "offline mode command was not locally accepted")
+        try require(didSend, "offline prompt command was not locally accepted")
+        try await waitUntilFast("optimistic mode did not render from local state") {
+            model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2
+        }
         let modeCommand = try pendingCommand(in: runtime, kind: .setSessionMode)
         let promptCommand = try pendingCommand(in: runtime, kind: .sendSessionPrompt)
         let modeMutationID = modeCommand.clientMutationID
@@ -218,6 +218,7 @@ enum G006LocalFirstSelfTest {
             environment: CompanionEnvironment(service: handoffService),
             sessionRuntime: handoffRuntime
         )
+        handoffModel.startSessionRuntimeSyncIfNeeded()
 
         let firstHandoffModeTask = handoffModel.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
         let queuedModeTask = handoffModel.beginApplyMode(.maxTurns3, to: Constants.cachedThreadID)
@@ -226,9 +227,9 @@ enum G006LocalFirstSelfTest {
         let didAcceptQueuedMode = await queuedModeTask.value
         let didSendQueuedPrompt = await queuedPromptTask.value
 
-        try require(!didAcceptFirstHandoffMode, "first offline handoff mode unexpectedly succeeded")
-        try require(!didAcceptQueuedMode, "queued offline handoff mode unexpectedly succeeded")
-        try require(!didSendQueuedPrompt, "queued offline handoff prompt unexpectedly succeeded")
+        try require(didAcceptFirstHandoffMode, "first offline handoff mode was not locally accepted")
+        try require(didAcceptQueuedMode, "queued offline handoff mode was not locally accepted")
+        try require(didSendQueuedPrompt, "queued offline handoff prompt was not locally accepted")
         let handoffModeIDs = pendingCommands(in: handoffRuntime, kind: .setSessionMode)
             .map(\.clientMutationID)
         let handoffPromptID = try requireValue(
@@ -506,6 +507,7 @@ enum G006LocalFirstSelfTest {
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.startSessionRuntimeSyncIfNeeded()
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID) != nil,
             "latency cached mini did not hydrate before action"
@@ -513,12 +515,12 @@ enum G006LocalFirstSelfTest {
 
         let modeStartedAt = uptimeNanoseconds()
         let modeTask = model.beginApplyMode(.maxTurns2, to: Constants.cachedThreadID)
-        try require(
-            model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2,
-            "mode did not render from local state"
-        )
+        try await waitUntilFast("mode did not render from local state") {
+            model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2
+        }
         let uiModeMs = elapsedMilliseconds(since: modeStartedAt)
-        _ = await modeTask.value
+        let didApplyMode = await modeTask.value
+        try require(didApplyMode, "mode intent was not locally accepted")
         let modeAckMs = elapsedMilliseconds(since: modeStartedAt)
 
         let promptStartedAt = uptimeNanoseconds()
@@ -533,7 +535,7 @@ enum G006LocalFirstSelfTest {
         }
         let uiPromptMs = elapsedMilliseconds(since: promptStartedAt)
         let didSendPrompt = await promptTask.value
-        try require(!didSendPrompt, "offline latency prompt unexpectedly returned success")
+        try require(didSendPrompt, "latency prompt was not locally accepted")
         let promptAckMs = elapsedMilliseconds(since: promptStartedAt)
 
         let notificationStartedAt = uptimeNanoseconds()

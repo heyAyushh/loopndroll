@@ -25,11 +25,21 @@ struct CompanionSessionRuntimeCommandCoreTests {
             endpointProviderCalls += 1
             return []
         }
+        _ = try runtime.stop()
+        let restartedSnapshot = try await runtime.startIfNeeded(
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
+        ) {
+            endpointProviderCalls += 1
+            return [endpointURL]
+        }
 
         #expect(snapshot?.phase == .ready)
         #expect(snapshot?.endpointUrl == endpointURL.absoluteString)
         #expect(secondStart == nil)
-        #expect(endpointProviderCalls == 1)
+        #expect(restartedSnapshot?.phase == .ready)
+        #expect(restartedSnapshot?.endpointUrl == endpointURL.absoluteString)
+        #expect(endpointProviderCalls == 2)
     }
 
     @Test
@@ -79,12 +89,9 @@ struct CompanionSessionRuntimeCommandCoreTests {
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
-        let directoryURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent(
-                ".test-artifacts/session-runtime-command-core/\(UUID().uuidString)",
-                isDirectory: true
-            )
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looper-session-runtime-command-core", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return try CompanionSessionRuntime(
             fileURL: directoryURL.appendingPathComponent(

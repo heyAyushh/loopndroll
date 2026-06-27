@@ -63,6 +63,7 @@ pub(crate) struct LooperClientCore {
     stream: Mutex<Option<ClientCoreStream>>,
     local_updates: Mutex<Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>>,
     local_update_sender: mpsc::UnboundedSender<ClientStateMiniStreamUpdate>,
+    observe_updates: tokio::sync::Mutex<()>,
     command_flush: tokio::sync::Mutex<()>,
     notification_reply_drain: tokio::sync::Mutex<()>,
     runtime: tokio::runtime::Runtime,
@@ -76,6 +77,12 @@ struct ClientCoreStream {
     command_ack_receiver: Option<mpsc::Receiver<ClientCommandAck>>,
 }
 
+impl ClientCoreStream {
+    fn is_running(&self) -> bool {
+        !self.task.is_finished()
+    }
+}
+
 impl LooperClientCore {
     pub(crate) fn new() -> Arc<Self> {
         let (local_update_sender, local_updates) = mpsc::unbounded_channel();
@@ -87,6 +94,7 @@ impl LooperClientCore {
             stream: Mutex::new(None),
             local_updates: Mutex::new(Some(local_updates)),
             local_update_sender,
+            observe_updates: tokio::sync::Mutex::new(()),
             command_flush: tokio::sync::Mutex::new(()),
             notification_reply_drain: tokio::sync::Mutex::new(()),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
@@ -123,6 +131,7 @@ impl LooperClientCore {
     }
 
     pub(crate) async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
+        let _observe = self.observe_updates.lock().await;
         self.next_state_mini_stream_update().await
     }
 }
@@ -556,16 +565,25 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let endpoint = select_endpoint(&endpoints)?;
         validate_endpoint_url(&endpoint.url)?;
-        let after_seq = {
-            let mut state = self.lock_state()?;
-            state.phase = ConnectionPhase::Ready;
-            state.endpoint_url = endpoint.url;
-            state.last_error.clear();
-            state.latest_seq
-        };
         let (sender, receiver) = mpsc::channel(64);
         let (command_sender, command_receiver) = mpsc::channel(64);
         let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
+        let mut state = self.lock_state()?;
+        let mut stream = self.lock_stream()?;
+        let has_running_stream = stream
+            .as_ref()
+            .map(ClientCoreStream::is_running)
+            .unwrap_or(false);
+        if state.endpoint_url == endpoint.url && has_running_stream {
+            state.phase = ConnectionPhase::Ready;
+            state.last_error.clear();
+            return Ok(state.snapshot());
+        }
+
+        state.phase = ConnectionPhase::Ready;
+        state.endpoint_url = endpoint.url;
+        state.last_error.clear();
+        let after_seq = state.latest_seq;
         let task = self.runtime.spawn(run_state_mini_stream(
             endpoints,
             bearer_token,
@@ -575,13 +593,16 @@ impl LooperClientCore {
             sender,
             command_ack_sender,
         ));
-        self.replace_stream(ClientCoreStream {
+        if let Some(existing_stream) = stream.take() {
+            existing_stream.task.abort();
+        }
+        *stream = Some(ClientCoreStream {
             task,
             receiver: Some(receiver),
             command_sender,
             command_ack_receiver: Some(command_ack_receiver),
-        })?;
-        self.snapshot()
+        });
+        Ok(state.snapshot())
     }
 }
 
@@ -871,12 +892,6 @@ impl LooperClientCore {
         envelope: &ClientCommandAckEnvelope,
     ) -> Result<(), ClientCoreError> {
         local_store.mark_delivered(envelope.ack.client_mutation_id.clone())
-    }
-
-    fn replace_stream(&self, stream: ClientCoreStream) -> Result<(), ClientCoreError> {
-        self.replace_stream_none()?;
-        *self.lock_stream()? = Some(stream);
-        Ok(())
     }
 
     fn replace_stream_none(&self) -> Result<(), ClientCoreError> {
@@ -1260,6 +1275,7 @@ mod tests {
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
     const ENDPOINT_LAST_GOOD: &str = "http://100.64.0.2:8765";
     const SERVER_TIME: &str = "2026-06-25T00:00:02Z";
+    const OBSERVE_TEST_TIMEOUT: Duration = Duration::from_secs(1);
 
     fn install_test_session_stream(
         core: &Arc<LooperClientCore>,
@@ -1281,6 +1297,29 @@ mod tests {
         });
         drop(events_sender);
         (commands_receiver, acks_sender)
+    }
+
+    fn install_finished_test_session_stream(core: &Arc<LooperClientCore>) {
+        let (_events_sender, events_receiver) = mpsc::channel(1);
+        let (commands_sender, _commands_receiver) = mpsc::channel(2);
+        let (_acks_sender, acks_receiver) = mpsc::channel(2);
+        let (finished_sender, finished_receiver) = std::sync::mpsc::channel();
+        let task = core.runtime.spawn(async move {
+            let _ = finished_sender.send(());
+        });
+        core.runtime.block_on(async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        });
+        finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("finished stream task");
+        assert!(task.is_finished());
+        *core.lock_stream().expect("stream lock") = Some(ClientCoreStream {
+            task,
+            receiver: Some(events_receiver),
+            command_sender: commands_sender,
+            command_ack_receiver: Some(acks_receiver),
+        });
     }
 
     fn accepted_ack(client_mutation_id: &str, ack_seq: i64, revision: &str) -> ClientCommandAck {
@@ -1318,6 +1357,121 @@ mod tests {
         assert_eq!(snapshot.phase, ConnectionPhase::Ready);
         assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+    }
+
+    #[test]
+    fn start_state_mini_stream_keeps_running_stream_for_same_endpoint() {
+        let core = LooperClientCore::new();
+        let (mut commands_receiver, _acks_sender) = install_test_session_stream(&core);
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Ready;
+            state.endpoint_url = ENDPOINT_PRIMARY.to_owned();
+        }
+
+        let snapshot = core
+            .start_state_mini_stream(
+                vec![ClientEndpoint {
+                    url: ENDPOINT_PRIMARY.to_owned(),
+                    last_good: false,
+                }],
+                "token".to_owned(),
+                "mobile-session".to_owned(),
+            )
+            .expect("idempotent start");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(snapshot.endpoint_url, ENDPOINT_PRIMARY);
+
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let outbox = core.take_outbox().expect("outbox");
+            core.send_session_commands(outbox)
+                .await
+                .expect("send over retained stream");
+            let frame = commands_receiver
+                .recv()
+                .await
+                .expect("retained command frame");
+            assert_eq!(frame.client_mutation_id, "cmid-prompt");
+        });
+    }
+
+    #[test]
+    fn start_state_mini_stream_replaces_finished_stream_for_same_endpoint() {
+        let core = LooperClientCore::new();
+        install_finished_test_session_stream(&core);
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Ready;
+            state.endpoint_url = ENDPOINT_PRIMARY.to_owned();
+        }
+
+        let snapshot = core
+            .start_state_mini_stream(
+                vec![ClientEndpoint {
+                    url: ENDPOINT_PRIMARY.to_owned(),
+                    last_good: false,
+                }],
+                "token".to_owned(),
+                "mobile-session".to_owned(),
+            )
+            .expect("replace finished stream");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
+        assert!(
+            core.lock_stream()
+                .expect("stream lock")
+                .as_ref()
+                .expect("stream")
+                .is_running()
+        );
+    }
+
+    #[test]
+    fn concurrent_state_mini_observers_are_serialized() {
+        let core = LooperClientCore::new();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        runtime.block_on(async {
+            let first_core = core.clone();
+            let second_core = core.clone();
+            let first = tokio::spawn(async move { first_core.observe().await });
+            let second = tokio::spawn(async move { second_core.observe().await });
+
+            let first_snapshot = core.snapshot().expect("first snapshot");
+            core.emit_local_state_update(first_snapshot);
+            let second_snapshot = core.snapshot().expect("second snapshot");
+            core.emit_local_state_update(second_snapshot);
+
+            let (first_result, second_result) =
+                tokio::time::timeout(OBSERVE_TEST_TIMEOUT, async { tokio::join!(first, second) })
+                    .await
+                    .expect("serialized observers should both complete");
+
+            assert_eq!(
+                first_result
+                    .expect("first observer task")
+                    .expect("first observer")
+                    .reason,
+                ClientStateMiniStreamUpdateReason::Delta
+            );
+            assert_eq!(
+                second_result
+                    .expect("second observer task")
+                    .expect("second observer")
+                    .reason,
+                ClientStateMiniStreamUpdateReason::Delta
+            );
+        });
     }
 
     #[test]

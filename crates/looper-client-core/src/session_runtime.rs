@@ -80,6 +80,11 @@ impl LooperClientCoreSessionRuntime {
                 {
                     return self.local_state_stream_update(update);
                 }
+                ClientStateMiniStreamUpdateReason::Reconnecting
+                    if !update.error_description.is_empty() =>
+                {
+                    return self.local_state_stream_update(update);
+                }
                 ClientStateMiniStreamUpdateReason::Stopped => {
                     return self.local_state_stream_update(update);
                 }
@@ -384,16 +389,26 @@ fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
 }
 
 fn recovery_wait_debug_message(update: &ClientLocalStateStreamUpdate) -> String {
-    if update.reason == ClientStateMiniStreamUpdateReason::RecoveryRequired
-        && !update.did_change
-        && !update.error_description.is_empty()
-    {
-        format!(
-            "session-mini:client-core-stream-recovery-waiting error={}",
-            update.error_description
-        )
-    } else {
-        String::new()
+    if update.did_change || update.error_description.is_empty() {
+        return String::new();
+    }
+
+    match update.reason {
+        ClientStateMiniStreamUpdateReason::RecoveryRequired => {
+            format!(
+                "session-mini:client-core-stream-recovery-waiting error={}",
+                update.error_description
+            )
+        }
+        ClientStateMiniStreamUpdateReason::Reconnecting => {
+            format!(
+                "session-mini:client-core-stream-reconnecting error={}",
+                update.error_description
+            )
+        }
+        ClientStateMiniStreamUpdateReason::Delta
+        | ClientStateMiniStreamUpdateReason::Heartbeat
+        | ClientStateMiniStreamUpdateReason::Stopped => String::new(),
     }
 }
 
@@ -694,6 +709,33 @@ mod tests {
     }
 
     #[test]
+    fn runtime_reports_reconnecting_wait_without_swift_reason_logic() {
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("mobile-reconnecting"))
+            .expect("runtime");
+        let update = runtime
+            .mobile_snapshot_stream_update(ClientLocalStateStreamUpdate {
+                reason: ClientStateMiniStreamUpdateReason::Reconnecting,
+                snapshot: ClientLocalStateSnapshot {
+                    latest_seq: 9,
+                    sessions: Vec::new(),
+                    pending_commands: Vec::new(),
+                    server_time: String::new(),
+                },
+                did_change: false,
+                error_description: "transport unavailable".to_owned(),
+            })
+            .expect("mobile reconnecting update");
+
+        assert!(!update.has_snapshot);
+        assert_eq!(update.sync_reason, "delta");
+        assert!(!update.should_stop);
+        assert_eq!(
+            update.debug_message,
+            "session-mini:client-core-stream-reconnecting error=transport unavailable"
+        );
+    }
+
+    #[test]
     fn runtime_marks_stopped_mobile_stream_update() {
         let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("mobile-stopped"))
             .expect("runtime");
@@ -770,6 +812,32 @@ mod tests {
         assert_eq!(
             update.debug_message,
             "session-mini:client-core-stream-recovery-waiting error=seq_gap"
+        );
+    }
+
+    #[test]
+    fn runtime_reports_menu_reconnecting_wait_without_swift_reason_logic() {
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("menu-reconnecting"))
+            .expect("runtime");
+        let update = runtime
+            .menu_snapshot_stream_update(ClientLocalStateStreamUpdate {
+                reason: ClientStateMiniStreamUpdateReason::Reconnecting,
+                snapshot: ClientLocalStateSnapshot {
+                    latest_seq: 13,
+                    sessions: Vec::new(),
+                    pending_commands: Vec::new(),
+                    server_time: String::new(),
+                },
+                did_change: false,
+                error_description: "transport unavailable".to_owned(),
+            })
+            .expect("menu reconnecting update");
+
+        assert!(!update.has_snapshot);
+        assert_eq!(update.sync_reason, "delta");
+        assert_eq!(
+            update.debug_message,
+            "session-mini:client-core-stream-reconnecting error=transport unavailable"
         );
     }
 

@@ -341,12 +341,9 @@ struct CompanionSessionMiniLocalFirstTests {
     }
 
     private static func temporaryStoreFileURL() throws -> URL {
-        let directoryURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent(
-                ".test-artifacts/session-mini-local-first/\(UUID().uuidString)",
-                isDirectory: true
-            )
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looper-session-mini-local-first", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return directoryURL.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
     }

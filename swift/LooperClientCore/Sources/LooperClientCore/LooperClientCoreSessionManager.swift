@@ -46,7 +46,8 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     public func isRuntimeConfigured() throws -> Bool {
-        try !runtime.stateSnapshot().endpointUrl.isEmpty
+        let snapshot = try runtime.stateSnapshot()
+        return !snapshot.endpointUrl.isEmpty && snapshot.phase != .disconnected
     }
 
     public func localSnapshot() throws -> ClientLocalStateSnapshot {

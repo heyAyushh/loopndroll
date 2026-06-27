@@ -13,15 +13,17 @@ self-contained — do not rely on chat history or prior context.
 
 ## 0. Why this exists (the problem)
 
-Looper today carries **three transports** for the same control plane (HTTP routes, SSE event
-streams, and gRPC), and **three independent client reducers** (`ios/LooperCompanion`,
+Looper today carries **two live transports** for the same control plane (HTTP routes and gRPC)
+and still carries stale documentation about an SSE path that is no longer present in source.
+It also carries **three independent client reducers** (`ios/LooperCompanion`,
 `macos/LooperMenuBar`, and the Rust TUI). Clients race multiple URLs with serial timeouts and
 fall back between transports. The result:
 
 - Mode switch / prompt send take 15–20s on the phone (measured baseline, 2026-06-23).
 - "Edge cases" are really **unnamed illegal state transitions** and **reducer drift** between
   the three client copies.
-- Every change must be reconciled across three transports × three clients = nine surfaces.
+- Every change must be reconciled across hot gRPC, cold HTTP, and three clients unless the hot
+  command/state path is reduced to one Session stream.
 
 The gRPC contract in `crates/agent-control-plane/proto/looper/v1/control_plane.proto` already
 has the right primitives (`client_mutation_id`, `ack_seq`, `revision`, `idempotent_replay`,
@@ -43,10 +45,11 @@ UI. On the public internet, 10 ms is physically impossible; the floor is the wir
 
 ## ADR-001 — Transport: one bidirectional gRPC stream
 
-**Decision.** The single control channel between any client and the control plane is **one
-long-lived bidirectional gRPC stream**. HTTP survives only for (a) pairing/bootstrap and
-(b) health probes. **SSE is removed.** Unary command RPCs are removed in the same rewrite cut;
-there is no backward-compatibility mode for old command transports.
+**Decision.** The single hot control channel between any client and the control plane is **one
+long-lived bidirectional gRPC stream**. HTTP survives only for (a) pairing/bootstrap,
+(b) health probes, and (c) full snapshots for bootstrap/recovery. No source-level SSE transport
+exists; do not add one. Unary command RPCs are removed in the same rewrite cut; there is no
+backward-compatibility mode for old command transports.
 
 **The stream.** Add to the proto:
 
@@ -76,7 +79,7 @@ do not invent parallel ones.
 
 **Why.** A command becomes a frame on an already-open stream → **1 RTT, no per-call
 TCP/TLS/HTTP2 handshake**. Commands, acks, state, events, and text are sequenced on **one pipe**,
-so the snapshot-vs-SSE-vs-gRPC reconcile race cannot exist. Reconnect is `Resume{after_seq}`.
+so the snapshot-vs-hot-stream reconcile race cannot exist. Reconnect is `Resume{after_seq}`.
 
 **Network layer.** Tailscale is the transport. WireGuard gives one flat, authenticated,
 encrypted L3 network identical on LAN, P2P-remote, and DERP-relay; the same HTTP/2 channel works
@@ -92,14 +95,14 @@ wins, cancel the rest. No serial per-URL timeouts.
 - Keep one stream per client, kept warm with gRPC keepalive while foregrounded.
 - Persist the last-good endpoint (Keychain/UserDefaults) and connect to it first.
 - Delete obsolete transports instead of wrapping them. Rewrite clients to `Session`; do not keep
-  compatibility shims for previous HTTP/SSE command paths.
+  compatibility shims for previous HTTP command paths.
 
 **Don't**
 - Add a new socket/channel for any feature, including streaming text. Everything rides `Session`.
-- Reintroduce SSE. Do not add HTTP routes for session commands or state.
+- Add SSE or any second hot stream. Do not add HTTP routes for session commands or state.
 
 **Where.** Proto: `crates/agent-control-plane/proto/looper/v1/control_plane.proto`.
-Server: `crates/agent-control-plane/src/grpc/service.rs`, `src/grpc/events.rs`.
+Server: `crates/agent-control-plane/src/grpc/service.rs`.
 Client: rewrite client surfaces to the Rust client core (ADR-004); the former
 `swift/LooperRealtime` bridge is retired once clients compile against `swift/LooperClientCore`.
 
@@ -162,7 +165,8 @@ and undefined behavior into deterministic, testable rejections.
 - Branch on session status in route handlers or clients. They consume FSM output; they don't
   re-implement it.
 
-**Where.** New `crates/agent-control-plane/src/control_plane/session_fsm.rs`.
+**Where.** `crates/looper-session-core/src/lib.rs`, re-exported through
+`crates/agent-control-plane/src/control_plane/session_fsm.rs` for server callers.
 
 ---
 
@@ -300,8 +304,8 @@ client core (ADR-004).
 
 1. **Dependencies point inward:** clients → client core → control-plane core → agent adapters.
    Clients never touch the DB or agents; agents never touch clients.
-2. **The `Session` duplex stream is the only client↔core channel.** HTTP = pairing bootstrap +
-   health only. No SSE.
+2. **The `Session` duplex stream is the only hot client↔core channel.** HTTP = pairing bootstrap,
+   health, and full snapshot recovery only. No SSE.
 3. **The reducer exists once** (core) and is mirrored once (client core) — same Rust code.
 4. **Every agent integration is one `AgentHost` trait impl + one conformance test.** The dirty
    external-config patching (`~/.codex/hooks.json`, `~/.claude/settings.json`, `~/.grok/...`,
@@ -328,10 +332,10 @@ Target coupling graph:
 1. **ACK-first + cached delivery action** (ADR-006). Server-only, no client change. Unblocks
    latency immediately and proves the number. **Measure before/after.**
 2. **`Session` duplex stream** (ADR-001) becomes the only command/state transport. Rewrite iOS to
-   use it directly, delete SSE and unary command RPCs in the same cut, then fix macOS/TUI against
+   use it directly, delete unary command RPCs in the same cut, then fix macOS/TUI against
    the new contract.
 3. **Session FSM module** (ADR-003): extract implicit transitions from `control_plane.rs` into
-   `session_fsm.rs`; route commands through `next()`.
+   the shared FSM exposed through `session_fsm.rs`; route commands through `next()`.
 4. **Rust client core via UniFFI** (ADR-004): iOS first, then macOS, then retire the
    parallel Swift gRPC client.
 5. **Dependency lint in CI** (§8) to keep the graph honest.
@@ -341,8 +345,8 @@ Steps 1–2 alone hit the latency goal. Steps 3–5 remove the edginess permanen
 **Acceptance per step** (no "done" without this):
 - Step 1: p95 prompt-accept measured on the installed app, recorded in
   `docs/qa/mobile-realtime-latency.md`, with the exact server commands/output.
-- Step 2: iOS performs the full workflow over the duplex stream; SSE route deleted; unary command
-  RPCs deleted; no runtime compatibility flag remains; tests green.
+- Step 2: iOS performs the full workflow over the duplex stream; unary command RPCs deleted; no
+  runtime compatibility flag remains; tests green.
 - Step 3: an illegal command returns a typed reject with a test; no status branching remains in
   handlers/clients.
 - Step 4: `CompanionAppModel.swift` reduced to a view wrapper; one reducer in the repo.
@@ -355,7 +359,7 @@ Steps 1–2 alone hit the latency goal. Steps 3–5 remove the edginess permanen
 - Do **not** count server-only, model-only, or mock-only timings as app completion. Measure the
   installed app against a live server.
 - Do **not** remove auth checks, snapshot correctness, or event reliability to win latency.
-  Endpoint fallback is allowed for reachability; transport fallback to HTTP/SSE command paths is not.
+  Endpoint fallback is allowed for reachability; transport fallback to HTTP command paths is not.
 - Do **not** fake speed by hiding pending work without a reliable ack / eventual-consistency path.
 - Do **not** accept one lucky run; use p95 from ≥10 clean runs (≥3 if manual-only).
 - Do **not** mark complete while the app still does serial multi-second waits on a stale URL.
