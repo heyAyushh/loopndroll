@@ -1221,10 +1221,20 @@ fn mobile_session_mini_body_json(
     session_id: &str,
     assistant_surface: &str,
     seq: i64,
-    revision: &str,
+    _revision: &str,
 ) -> String {
     let mut body_json = body_json.clone();
     if let Some(body_json) = body_json.as_object_mut() {
+        body_json.remove("revision");
+        body_json.remove("globalSettings");
+        if let Some(metadata) = body_json
+            .get_mut("metadata")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            metadata.remove("spawn");
+            metadata.remove("sources");
+            metadata.remove("tags");
+        }
         body_json.insert("id".to_owned(), serde_json::json!(session_id));
         body_json.insert("sessionId".to_owned(), serde_json::json!(session_id));
         body_json.insert(
@@ -1232,7 +1242,6 @@ fn mobile_session_mini_body_json(
             serde_json::json!(assistant_surface),
         );
         body_json.insert("seq".to_owned(), serde_json::json!(seq));
-        body_json.insert("revision".to_owned(), serde_json::json!(revision));
     }
     body_json.to_string()
 }

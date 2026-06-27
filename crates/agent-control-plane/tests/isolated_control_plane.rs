@@ -20,7 +20,9 @@ use agent_control_plane::grpc::proto::{
     looper_realtime_client::LooperRealtimeClient, server_frame,
 };
 use agent_control_plane::http::build_router;
-use agent_control_plane::mobile::api::session_mini_projection_inputs;
+use agent_control_plane::mobile::api::{
+    latest_session_mini_revision, session_mini_projection_inputs,
+};
 use agent_control_plane::mobile::events::MobileEventKind;
 use agent_control_plane::mobile::prompt_delivery::prime_delivery_action_cache;
 use agent_control_plane::mobile::session::MobileHookPayload;
@@ -47,6 +49,7 @@ const GOAL_FIXTURE_TOKENS_USED: i64 = 42;
 const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
 const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
 const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
+const SESSION_COMMAND_ACK_POLL_LIMIT: usize = 8;
 
 #[path = "isolated_control_plane/acp_hosts/mod.rs"]
 mod acp_hosts;
@@ -1855,10 +1858,14 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
     .await;
     let initial_session = session_mini_snapshot_session(&initial, "thread-main");
     let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
-    let initial_revision = initial_session["revision"]
-        .as_str()
-        .expect("initial revision")
-        .to_owned();
+    assert!(initial_session.get("revision").is_none());
+    let initial_revision = latest_session_mini_revision(
+        &control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("initial mini records"),
+    )
+    .expect("initial revision");
 
     request_json_body_with_options(
         &router,
@@ -1914,12 +1921,15 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
 
     assert!(updated_seq > initial_seq);
     assert!(updated_session["seq"].as_i64().expect("session seq") >= updated_seq);
-    assert_ne!(
-        updated_session["revision"]
-            .as_str()
-            .expect("updated revision"),
-        initial_revision
-    );
+    assert!(updated_session.get("revision").is_none());
+    let updated_revision = latest_session_mini_revision(
+        &control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("updated mini records"),
+    )
+    .expect("updated revision");
+    assert_ne!(updated_revision, initial_revision);
     assert_eq!(updated_session["effectiveMode"], "await-reply");
     assert_eq!(updated_session["status"], "waiting");
 }
@@ -4047,16 +4057,18 @@ async fn submit_grpc_session_command(
         .await
         .expect("Session command stream")
         .into_inner();
-    let frame = stream
-        .message()
-        .await
-        .expect("Session command frame result")
-        .expect("Session command ACK frame");
-
-    match frame.frame {
-        Some(server_frame::Frame::Ack(ack)) => ack,
-        other => panic!("expected Session ACK frame, got {other:?}"),
+    for _ in 0..SESSION_COMMAND_ACK_POLL_LIMIT {
+        let frame = stream
+            .message()
+            .await
+            .expect("Session command frame result")
+            .expect("Session command ACK frame");
+        if let Some(server_frame::Frame::Ack(ack)) = frame.frame {
+            return ack;
+        }
     }
+
+    panic!("expected Session ACK frame before stream ended")
 }
 
 async fn set_mobile_assistant_surface(

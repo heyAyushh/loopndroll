@@ -10,7 +10,6 @@ use crate::mobile::session::{
 };
 
 use super::overrides::{is_deleted, session_override};
-use super::settings::mobile_global_settings;
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
@@ -29,8 +28,20 @@ const MINI_TITLE_MAX_CHARS: usize = 240;
 const MINI_PREVIEW_MAX_CHARS: usize = 600;
 const MINI_REASON_MAX_CHARS: usize = 240;
 const MINI_METADATA_TEXT_MAX_CHARS: usize = 320;
-const MINI_METADATA_TAG_MAX_CHARS: usize = 64;
-const MINI_METADATA_MAX_TAGS: usize = 8;
+const EMBEDDED_CONTROL_FIELDS: &[&str] = &["revision", "globalSettings"];
+const DETAIL_METADATA_FIELDS: &[&str] = &["spawn", "sources", "tags"];
+#[cfg(test)]
+const SESSION_MINI_CONTROL_FRAME_MAX_BYTES: usize = 512 * 1024;
+#[cfg(test)]
+const LEGACY_REPLAY_FIXTURE_SESSION_COUNT: usize = 260;
+#[cfg(test)]
+const LEGACY_REPLAY_REVISION_CHARS: usize = 6_000;
+#[cfg(test)]
+const LEGACY_REPLAY_DETAIL_CHARS: usize = 1_000;
+#[cfg(test)]
+const LEGACY_REPLAY_TAG_CHARS: usize = 100;
+#[cfg(test)]
+const METADATA_DETAIL_FIXTURE_TAG_COUNT: usize = 10;
 
 pub fn session_mini_projection_inputs(
     snapshot: &DesktopSnapshot,
@@ -211,6 +222,7 @@ fn mobile_session_mini_response(
     let sessions = records
         .iter()
         .filter_map(|record| serde_json::from_str::<Value>(&record.body_json).ok())
+        .filter_map(compact_session_mini_payload)
         .collect::<Vec<_>>();
     json!({
         "latest_seq": latest_seq,
@@ -263,7 +275,7 @@ fn session_mini_value(
     session_state: &MobileSessionState,
     queued_prompt_counts: &BTreeMap<String, i64>,
     seq: i64,
-    revision: &str,
+    _revision: &str,
 ) -> Value {
     let summary = session_summary(thread, index, session_state);
     let Some(summary) = summary.as_object() else {
@@ -282,7 +294,6 @@ fn session_mini_value(
     copy_summary_field(summary, &mut mini, "id");
     mini.insert("sessionId".to_owned(), json!(thread.thread_id));
     mini.insert("seq".to_owned(), json!(seq));
-    mini.insert("revision".to_owned(), json!(revision));
     mini.insert(
         "assistantSurface".to_owned(),
         summary
@@ -354,11 +365,20 @@ fn session_mini_value(
                 .unwrap_or(true),
         }),
     );
-    mini.insert(
-        "globalSettings".to_owned(),
-        mobile_global_settings(session_state),
-    );
     Value::Object(mini)
+}
+
+fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
+    let object = payload.as_object_mut()?;
+    for field in EMBEDDED_CONTROL_FIELDS {
+        object.remove(*field);
+    }
+    if let Some(metadata) = object.get_mut("metadata").and_then(Value::as_object_mut) {
+        for field in DETAIL_METADATA_FIELDS {
+            metadata.remove(*field);
+        }
+    }
+    Some(payload)
 }
 
 fn copy_summary_field(summary: &Map<String, Value>, mini: &mut Map<String, Value>, field: &str) {
@@ -484,15 +504,6 @@ fn bounded_metadata(metadata: Option<&Value>) -> Option<Value> {
     if let Some(git_repository) = bounded_git_repository(metadata.get("gitRepository")) {
         bounded.insert("gitRepository".to_owned(), git_repository);
     }
-    if let Some(spawn) = metadata.get("spawn") {
-        bounded.insert("spawn".to_owned(), spawn.clone());
-    }
-    if let Some(tags) = bounded_string_array(metadata.get("tags"), MINI_METADATA_TAG_MAX_CHARS) {
-        bounded.insert("tags".to_owned(), tags);
-    }
-    if let Some(sources) = bounded_sources(metadata.get("sources")) {
-        bounded.insert("sources".to_owned(), sources);
-    }
     bounded.insert("installedPlugins".to_owned(), Value::Array(Vec::new()));
     Some(Value::Object(bounded))
 }
@@ -509,38 +520,6 @@ fn bounded_git_repository(git_repository: Option<&Value>) -> Option<Value> {
         }
     }
     Some(Value::Object(bounded))
-}
-
-fn bounded_sources(sources: Option<&Value>) -> Option<Value> {
-    let sources = sources?.as_array()?;
-    let values = sources
-        .iter()
-        .take(MINI_METADATA_MAX_TAGS)
-        .filter_map(|source| {
-            let source = source.as_object()?;
-            let mut bounded = Map::new();
-            for field in ["kind", "label", "value", "url"] {
-                if let Some(value) = source.get(field) {
-                    bounded.insert(
-                        field.to_owned(),
-                        bounded_value(value, MINI_METADATA_TEXT_MAX_CHARS),
-                    );
-                }
-            }
-            Some(Value::Object(bounded))
-        })
-        .collect::<Vec<_>>();
-    Some(Value::Array(values))
-}
-
-fn bounded_string_array(value: Option<&Value>, max_chars: usize) -> Option<Value> {
-    let values = value?
-        .as_array()?
-        .iter()
-        .take(MINI_METADATA_MAX_TAGS)
-        .map(|value| bounded_value(value, max_chars))
-        .collect::<Vec<_>>();
-    Some(Value::Array(values))
 }
 
 fn bounded_value(value: &Value, max_chars: usize) -> Value {
@@ -612,7 +591,9 @@ mod tests {
             "source": "codex",
             "sourceDisplayName": "Codex",
             "projectPath": "/".to_owned() + &"project/".repeat(100),
-            "tags": vec!["tag".repeat(40); MINI_METADATA_MAX_TAGS + 2],
+            "tags": vec!["tag".repeat(40); METADATA_DETAIL_FIXTURE_TAG_COUNT],
+            "sources": vec![json!({"kind": "source", "label": "Transcript", "value": "value"})],
+            "spawn": {"rootThreadId": "thread-main"},
             "installedPlugins": vec![json!({"name": "plugin"})],
         });
 
@@ -626,20 +607,90 @@ mod tests {
                 .count()
                 <= MINI_METADATA_TEXT_MAX_CHARS
         );
-        assert_eq!(
-            bounded["tags"].as_array().expect("tags").len(),
-            MINI_METADATA_MAX_TAGS
-        );
-        assert!(
-            bounded["tags"][0].as_str().expect("tag").chars().count()
-                <= MINI_METADATA_TAG_MAX_CHARS
-        );
+        assert!(bounded.get("tags").is_none());
+        assert!(bounded.get("sources").is_none());
+        assert!(bounded.get("spawn").is_none());
         assert!(
             bounded["installedPlugins"]
                 .as_array()
                 .expect("installed plugins")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn compact_session_mini_payload_removes_embedded_control_fields() {
+        let payload = json!({
+            "sessionId": "thread-main",
+            "seq": 42,
+            "revision": "full-desktop-revision",
+            "globalSettings": {
+                "assistantSurface": "codex"
+            },
+            "metadata": {
+                "projectPath": "/Users/ay/Documents/looper",
+                "spawn": {"rootThreadId": "thread-main"},
+                "sources": [{"label": "Transcript", "value": "transcript"}],
+                "tags": ["codex"]
+            },
+            "title": "Main task",
+        });
+
+        let compacted = compact_session_mini_payload(payload).expect("compacted payload");
+
+        assert_eq!(compacted["sessionId"], "thread-main");
+        assert_eq!(compacted["seq"], 42);
+        assert_eq!(
+            compacted["metadata"]["projectPath"],
+            "/Users/ay/Documents/looper"
+        );
+        assert!(compacted.get("revision").is_none());
+        assert!(compacted.get("globalSettings").is_none());
+        assert!(compacted["metadata"].get("spawn").is_none());
+        assert!(compacted["metadata"].get("sources").is_none());
+        assert!(compacted["metadata"].get("tags").is_none());
+    }
+
+    #[test]
+    fn legacy_bloated_rows_replay_under_control_frame_cap() {
+        let records = (0..LEGACY_REPLAY_FIXTURE_SESSION_COUNT)
+            .map(|index| MobileSessionMiniRecord {
+                session_id: format!("thread-{index}"),
+                assistant_surface: "codex".to_owned(),
+                seq: 42,
+                revision: "r".repeat(LEGACY_REPLAY_REVISION_CHARS),
+                body_json: json!({
+                    "sessionId": format!("thread-{index}"),
+                    "assistantSurface": "codex",
+                    "seq": 42,
+                    "revision": "r".repeat(LEGACY_REPLAY_REVISION_CHARS),
+                    "globalSettings": {
+                        "assistantSurface": "codex",
+                        "defaultPrompt": "p".repeat(LEGACY_REPLAY_DETAIL_CHARS),
+                    },
+                    "metadata": {
+                        "projectPath": "/Users/ay/Documents/looper",
+                        "spawn": {"rootThreadId": "thread-main"},
+                        "sources": [{"label": "Transcript", "value": "s".repeat(LEGACY_REPLAY_DETAIL_CHARS)}],
+                        "tags": ["tag".repeat(LEGACY_REPLAY_TAG_CHARS)],
+                    },
+                    "title": "Main task",
+                    "status": "waiting",
+                    "canSendPrompt": true,
+                })
+                .to_string(),
+                updated_at_ms: 1_000,
+            })
+            .collect::<Vec<_>>();
+
+        let payload = mobile_session_mini_delta(42, &records, true).to_string();
+
+        assert!(payload.len() < SESSION_MINI_CONTROL_FRAME_MAX_BYTES);
+        assert!(!payload.contains("\"revision\""));
+        assert!(!payload.contains("globalSettings"));
+        assert!(!payload.contains("\"spawn\""));
+        assert!(!payload.contains("\"sources\""));
+        assert!(!payload.contains("\"tags\""));
     }
 
     #[test]
