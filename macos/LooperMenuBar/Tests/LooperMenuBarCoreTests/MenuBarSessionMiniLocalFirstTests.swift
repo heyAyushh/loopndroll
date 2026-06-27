@@ -106,8 +106,8 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(status.detail.contains("iPhone=ready"))
     }
 
-    @Test("malformed cache falls back and failed ACK stays in outbox")
-    func testMalformedMiniCacheFallsBackAndOutboxKeepsFailedCommand() async throws {
+    @Test("malformed cache falls back and offline prompt stays in outbox")
+    func testMalformedMiniCacheFallsBackAndOutboxKeepsOfflinePrompt() async throws {
         let malformedFileURL = temporaryStoreFileURL()
         try seedMalformedMiniCache(at: malformedFileURL)
         let malformedRuntime = try MenuBarSessionRuntime(fileURL: malformedFileURL)
@@ -124,20 +124,18 @@ struct MenuBarSessionMiniLocalFirstTests {
             sessionRuntime: outboxRuntime
         )
 
-        await expectThrows {
-            _ = try await commandCenter.sendPrompt(
-                threadID: "thread-main",
-                prompt: "continue",
-                assistantSurface: "codex"
-            )
-        }
-        await expectThrows {
-            _ = try await commandCenter.sendPrompt(
-                threadID: "thread-main",
-                prompt: "continue",
-                assistantSurface: "codex"
-            )
-        }
+        let firstPrompt = try await commandCenter.sendPrompt(
+            threadID: "thread-main",
+            prompt: "continue",
+            assistantSurface: "codex"
+        )
+        let secondPrompt = try await commandCenter.sendPrompt(
+            threadID: "thread-main",
+            prompt: "continue",
+            assistantSurface: "codex"
+        )
+        #expect(firstPrompt.accepted)
+        #expect(secondPrompt.accepted)
 
         let pendingCommands = outboxRuntime.pendingCommands()
         #expect(pendingCommands.count == 2)
@@ -151,19 +149,17 @@ struct MenuBarSessionMiniLocalFirstTests {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
-        await expectThrows {
-            _ = try await commandCenter.setSessionMode(
-                threadID: "thread-main",
-                preset: "await-reply"
-            )
-        }
-        await expectThrows {
-            _ = try await commandCenter.sendPrompt(
-                threadID: "thread-main",
-                prompt: "ship it",
-                assistantSurface: "codex"
-            )
-        }
+        let modeResult = try await commandCenter.setSessionMode(
+            threadID: "thread-main",
+            preset: "await-reply"
+        )
+        let promptResult = try await commandCenter.sendPrompt(
+            threadID: "thread-main",
+            prompt: "ship it",
+            assistantSurface: "codex"
+        )
+        #expect(modeResult.accepted)
+        #expect(promptResult.accepted)
 
         let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
@@ -178,19 +174,17 @@ struct MenuBarSessionMiniLocalFirstTests {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
-        await expectThrows {
-            _ = try await commandCenter.setSessionMode(
-                threadID: "thread-main",
-                preset: "await-reply"
-            )
-        }
-        await expectThrows {
-            _ = try await commandCenter.sendPrompt(
-                threadID: "thread-main",
-                prompt: "ship it",
-                assistantSurface: "codex"
-            )
-        }
+        let modeResult = try await commandCenter.setSessionMode(
+            threadID: "thread-main",
+            preset: "await-reply"
+        )
+        let promptResult = try await commandCenter.sendPrompt(
+            threadID: "thread-main",
+            prompt: "ship it",
+            assistantSurface: "codex"
+        )
+        #expect(modeResult.accepted)
+        #expect(promptResult.accepted)
 
         let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.map(\.kind) == [.setSessionMode, .sendSessionPrompt])
@@ -203,15 +197,14 @@ struct MenuBarSessionMiniLocalFirstTests {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
-        await expectThrows {
-            _ = try await commandCenter.submitNotificationReply(
-                notificationID: "notif-main",
-                threadID: "thread-main",
-                prompt: "continue from notification",
-                assistantSurface: nil,
-                clientMutationID: "notification-reply:notif-main"
-            )
-        }
+        let result = try await commandCenter.submitNotificationReply(
+            notificationID: "notif-main",
+            threadID: "thread-main",
+            prompt: "continue from notification",
+            assistantSurface: nil,
+            clientMutationID: "notification-reply:notif-main"
+        )
+        #expect(result.accepted)
 
         let pendingCommands = runtime.pendingCommands()
         #expect(pendingCommands.count == 1)
@@ -221,21 +214,20 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.attemptCount == 1)
     }
 
-    @Test("failed notification reply stays durable and dedupes retry")
-    func testFailedNotificationReplyStaysDurableAndDedupesRetry() async throws {
+    @Test("offline notification reply stays durable and dedupes retry")
+    func testOfflineNotificationReplyStaysDurableAndDedupesRetry() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
         let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
 
         for _ in 0..<2 {
-            await expectThrows {
-                _ = try await commandCenter.submitNotificationReply(
-                    notificationID: "notif-offline",
-                    threadID: "thread-main",
-                    prompt: "offline reply",
-                    assistantSurface: nil,
-                    clientMutationID: "notification-reply:notif-offline"
-                )
-            }
+            let result = try await commandCenter.submitNotificationReply(
+                notificationID: "notif-offline",
+                threadID: "thread-main",
+                prompt: "offline reply",
+                assistantSurface: nil,
+                clientMutationID: "notification-reply:notif-offline"
+            )
+            #expect(result.accepted)
         }
 
         let pendingCommands = runtime.pendingCommands()

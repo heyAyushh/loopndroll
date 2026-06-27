@@ -33,25 +33,23 @@ struct CompanionSessionRuntimeCommandCoreTests {
     }
 
     @Test
-    func failedCommandSubmissionsStayInOneClientCoreOutbox() async throws {
+    func localCommandAcceptanceUsesOneClientCoreOutbox() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        await #expect(throws: Error.self) {
-            _ = try await runtime.setMode(
-                threadID: "thread-1",
-                preset: .maxTurns2
-            )
-        }
+        let modeResult = try await runtime.setMode(
+            threadID: "thread-1",
+            preset: .maxTurns2
+        )
+        #expect(modeResult.accepted)
         #expect(try runtime.outboxDepth() == 1)
         #expect(runtime.pendingCommands().count == 1)
         #expect(runtime.pendingCommands().first?.attemptCount == 1)
 
-        await #expect(throws: Error.self) {
-            _ = try await runtime.sendPrompt(
-                threadID: "thread-1",
-                prompt: "continue",
-                assistantSurface: .codex
-            )
-        }
+        let promptResult = try await runtime.sendPrompt(
+            threadID: "thread-1",
+            prompt: "continue",
+            assistantSurface: .codex
+        )
+        #expect(promptResult.accepted)
 
         #expect(try runtime.outboxDepth() == 2)
         #expect(runtime.pendingCommands().count == 2)
@@ -63,19 +61,17 @@ struct CompanionSessionRuntimeCommandCoreTests {
     func generatedCommandMutationsComeFromRustCore() async throws {
         let runtime = try Self.temporarySessionRuntime()
 
-        await #expect(throws: Error.self) {
-            _ = try await runtime.setMode(
-                threadID: "thread-1",
-                preset: .maxTurns2
-            )
-        }
-        await #expect(throws: Error.self) {
-            _ = try await runtime.sendPrompt(
-                threadID: "thread-1",
-                prompt: "continue",
-                assistantSurface: .codex
-            )
-        }
+        let modeResult = try await runtime.setMode(
+            threadID: "thread-1",
+            preset: .maxTurns2
+        )
+        let promptResult = try await runtime.sendPrompt(
+            threadID: "thread-1",
+            prompt: "continue",
+            assistantSurface: .codex
+        )
+        #expect(modeResult.accepted)
+        #expect(promptResult.accepted)
 
         #expect(runtime.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
         #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))

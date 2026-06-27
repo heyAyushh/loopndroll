@@ -395,14 +395,13 @@ impl LooperClientCore {
         Ok(local_snapshot)
     }
 
-    pub(crate) async fn submit_set_mode_durable(
-        &self,
+    pub(crate) fn accept_set_mode_durable(
+        self: &Arc<Self>,
         local_store: Arc<LooperClientCoreLocalStore>,
         thread_id: String,
         preset: String,
         client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
+    ) -> Result<(), ClientCoreError> {
         self.queue_set_mode_durable(
             local_store.clone(),
             thread_id,
@@ -410,25 +409,18 @@ impl LooperClientCore {
             client_mutation_id.clone(),
         )?;
         local_store.mark_attempted(client_mutation_id.clone())?;
-        let envelope = self
-            .submit_pending_command_ack(ClientCommandKind::SetSessionMode, client_mutation_id)
-            .await?;
-        self.mark_durable_command_final(&local_store, &envelope)?;
-        let snapshot = self.snapshot()?;
-        persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
-        self.emit_local_state_update(snapshot);
-        Ok(envelope)
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
     }
 
-    pub(crate) async fn submit_send_prompt_durable(
-        &self,
+    pub(crate) fn accept_send_prompt_durable(
+        self: &Arc<Self>,
         local_store: Arc<LooperClientCoreLocalStore>,
         thread_id: String,
         prompt: String,
         assistant_surface: String,
         client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
+    ) -> Result<(), ClientCoreError> {
         self.send_prompt(
             thread_id.clone(),
             prompt.clone(),
@@ -443,33 +435,8 @@ impl LooperClientCore {
         )?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
-        let envelope = self
-            .submit_pending_command_ack(ClientCommandKind::SendSessionPrompt, client_mutation_id)
-            .await?;
-        self.mark_durable_command_final(&local_store, &envelope)?;
-        self.emit_local_state_update(self.snapshot()?);
-        Ok(envelope)
-    }
-
-    pub(crate) async fn submit_notification_reply_durable(
-        &self,
-        local_store: Arc<LooperClientCoreLocalStore>,
-        notification_id: String,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        let _flush = self.command_flush.lock().await;
-        self.submit_notification_reply_durable_without_flush_lock(
-            local_store,
-            notification_id,
-            thread_id,
-            prompt,
-            assistant_surface,
-            client_mutation_id,
-        )
-        .await
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
     }
 
     async fn submit_notification_reply_durable_without_flush_lock(
@@ -506,6 +473,35 @@ impl LooperClientCore {
         self.mark_durable_command_final(&local_store, &envelope)?;
         self.emit_local_state_update(self.snapshot()?);
         Ok(envelope)
+    }
+
+    pub(crate) fn accept_notification_reply_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        notification_id: String,
+        thread_id: String,
+        prompt: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.submit_notification_reply(
+            notification_id.clone(),
+            thread_id.clone(),
+            prompt.clone(),
+            assistant_surface.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue_notification_reply_command(
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
     }
 
     pub(crate) async fn drain_notification_reply_outbox_durable(
@@ -789,6 +785,53 @@ impl LooperClientCore {
             error_description: String::new(),
             snapshot,
         });
+    }
+
+    fn spawn_command_ack_flush(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        client_mutation_id: String,
+    ) {
+        let client_core = self.clone();
+        let handle = self.runtime.handle().clone();
+        self.runtime.spawn_blocking(move || {
+            let flush_result = handle.block_on(async {
+                let _flush = client_core.command_flush.lock().await;
+                let expected_client_mutation_ids =
+                    client_core.pending_outbox_client_mutation_ids()?;
+                if !expected_client_mutation_ids.contains(&client_mutation_id) {
+                    return Ok(());
+                }
+                let response = client_core
+                    .submit_pending_outbox(expected_client_mutation_ids)
+                    .await?;
+                let mut received_target_ack = false;
+                for envelope in &response.command_acks {
+                    received_target_ack |= envelope.ack.client_mutation_id == client_mutation_id;
+                    client_core.mark_durable_command_final(&local_store, envelope)?;
+                }
+                if !received_target_ack {
+                    return Err(ClientCoreError::MissingCommandAcknowledgement);
+                }
+                let snapshot = client_core.snapshot()?;
+                persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+                client_core.emit_local_state_update(snapshot);
+                Ok::<(), ClientCoreError>(())
+            });
+            if let Err(error) = flush_result {
+                let _ = client_core.emit_command_flush_error(error);
+            }
+        });
+    }
+
+    fn emit_command_flush_error(&self, error: ClientCoreError) -> Result<(), ClientCoreError> {
+        let snapshot = {
+            let mut state = self.lock_state()?;
+            state.last_error = error.to_string();
+            state.snapshot()
+        };
+        self.emit_local_state_update(snapshot);
+        Ok(())
     }
 
     async fn submit_next_notification_reply_durable_without_drain_lock(
@@ -1571,19 +1614,16 @@ mod tests {
         let store_path = temp_store_path("durable-prompt-retry");
         let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
             .expect("store");
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
         for _ in 0..2 {
-            let error = runtime
-                .block_on(core.submit_send_prompt_durable(
-                    store.clone(),
-                    "thread-1".to_owned(),
-                    "continue".to_owned(),
-                    "codex".to_owned(),
-                    "cmid-prompt".to_owned(),
-                ))
-                .expect_err("missing runtime config rejects");
-            assert_eq!(error, ClientCoreError::NoEndpoint);
+            core.accept_send_prompt_durable(
+                store.clone(),
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "cmid-prompt".to_owned(),
+            )
+            .expect("local prompt accepted");
         }
 
         let snapshot = store.snapshot().expect("store snapshot");
@@ -1624,18 +1664,14 @@ mod tests {
         let store_path = temp_store_path("durable-mode-missing-runtime");
         let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
             .expect("store");
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = runtime
-            .block_on(core.submit_set_mode_durable(
-                store.clone(),
-                "thread-1".to_owned(),
-                "await-reply".to_owned(),
-                "cmid-mode".to_owned(),
-            ))
-            .expect_err("missing runtime rejects");
-
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+        core.accept_set_mode_durable(
+            store.clone(),
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("local mode accepted");
         let snapshot = core.snapshot().expect("snapshot");
         assert_eq!(snapshot.outbox_depth, 1);
         assert_eq!(snapshot.pending_mutations.len(), 1);
@@ -1662,15 +1698,13 @@ mod tests {
         .expect("seed minis");
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = runtime
-            .block_on(core.submit_set_mode_durable(
-                store,
-                "thread-1".to_owned(),
-                "max-turns-2".to_owned(),
-                "cmid-mode".to_owned(),
-            ))
-            .expect_err("missing runtime rejects");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+        core.accept_set_mode_durable(
+            store,
+            "thread-1".to_owned(),
+            "max-turns-2".to_owned(),
+            "cmid-mode".to_owned(),
+        )
+        .expect("local mode accepted");
 
         let update = runtime
             .block_on(core.observe())
@@ -1692,16 +1726,14 @@ mod tests {
             .expect("store");
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = runtime
-            .block_on(core.submit_send_prompt_durable(
-                store,
-                "thread-1".to_owned(),
-                "continue".to_owned(),
-                "codex".to_owned(),
-                "cmid-prompt".to_owned(),
-            ))
-            .expect_err("missing runtime rejects");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+        core.accept_send_prompt_durable(
+            store,
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("local prompt accepted");
 
         let update = runtime
             .block_on(core.observe())
@@ -1724,17 +1756,15 @@ mod tests {
             .expect("store");
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = runtime
-            .block_on(core.submit_notification_reply_durable(
-                store,
-                "notification-1".to_owned(),
-                "thread-1".to_owned(),
-                "continue".to_owned(),
-                "codex".to_owned(),
-                "cmid-reply".to_owned(),
-            ))
-            .expect_err("missing runtime rejects");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+        core.accept_notification_reply_durable(
+            store,
+            "notification-1".to_owned(),
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "cmid-reply".to_owned(),
+        )
+        .expect("local reply accepted");
 
         let update = runtime
             .block_on(core.observe())

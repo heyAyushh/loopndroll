@@ -9,15 +9,12 @@ struct LooperClientCoreSessionManagerTests {
             filePath: localStorePath(named: "durable-mode")
         )
 
-        do {
-            _ = try await manager.setMode(
-                threadID: "thread-main",
-                preset: "await-reply"
-            )
-            Issue.record("expected missing runtime config")
-        } catch let error as ClientCoreError {
-            #expect(error == .NoEndpoint)
-        }
+        let result = try await manager.setMode(
+            threadID: "thread-main",
+            preset: "await-reply"
+        )
+        #expect(result.accepted)
+        #expect(result.preset == "await-reply")
 
         let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
@@ -35,16 +32,13 @@ struct LooperClientCoreSessionManagerTests {
             filePath: localStorePath(named: "durable-prompt")
         )
 
-        do {
-            _ = try await manager.sendPrompt(
-                threadID: "thread-main",
-                prompt: "ship it",
-                assistantSurface: "codex"
-            )
-            Issue.record("expected missing runtime config")
-        } catch let error as ClientCoreError {
-            #expect(error == .NoEndpoint)
-        }
+        let result = try await manager.sendPrompt(
+            threadID: "thread-main",
+            prompt: "ship it",
+            assistantSurface: "codex"
+        )
+        #expect(result.accepted)
+        #expect(result.dispatchKind == "queued")
 
         let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
@@ -63,17 +57,14 @@ struct LooperClientCoreSessionManagerTests {
         )
 
         for _ in 0..<2 {
-            do {
-                _ = try await manager.submitNotificationReplyWithGeneratedMutation(
-                    notificationID: "notification-main",
-                    threadID: "thread-main",
-                    prompt: "continue",
-                    assistantSurface: "codex"
-                )
-                Issue.record("expected missing runtime config")
-            } catch let error as ClientCoreError {
-                #expect(error == .NoEndpoint)
-            }
+            let result = try await manager.submitNotificationReplyWithGeneratedMutation(
+                notificationID: "notification-main",
+                threadID: "thread-main",
+                prompt: "continue",
+                assistantSurface: "codex"
+            )
+            #expect(result.accepted)
+            #expect(result.dispatchKind == "queued")
         }
 
         let snapshot = try manager.localSnapshot()
@@ -92,16 +83,12 @@ struct LooperClientCoreSessionManagerTests {
             filePath: localStorePath(named: "session-manager-command-boundary")
         )
 
-        do {
-            _ = try await manager.sendPrompt(
-                threadID: "thread-main",
-                prompt: "continue",
-                assistantSurface: "codex"
-            )
-            Issue.record("expected missing runtime config")
-        } catch let error as ClientCoreError {
-            #expect(error == .NoEndpoint)
-        }
+        let result = try await manager.sendPrompt(
+            threadID: "thread-main",
+            prompt: "continue",
+            assistantSurface: "codex"
+        )
+        #expect(result.accepted)
 
         let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
@@ -116,15 +103,11 @@ struct LooperClientCoreSessionManagerTests {
             filePath: localStorePath(named: "session-manager-mode-local")
         )
 
-        do {
-            _ = try await manager.setMode(
-                threadID: "thread-main",
-                preset: "max-turns-2"
-            )
-            Issue.record("expected missing runtime config")
-        } catch let error as ClientCoreError {
-            #expect(error == .NoEndpoint)
-        }
+        let result = try await manager.setMode(
+            threadID: "thread-main",
+            preset: "max-turns-2"
+        )
+        #expect(result.accepted)
 
         let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
@@ -140,16 +123,12 @@ struct LooperClientCoreSessionManagerTests {
         )
 
         for prompt in ["first", "second"] {
-            do {
-                _ = try await manager.sendPrompt(
-                    threadID: "thread-main",
-                    prompt: prompt,
-                    assistantSurface: "codex"
-                )
-                Issue.record("expected missing runtime config")
-            } catch let error as ClientCoreError {
-                #expect(error == .NoEndpoint)
-            }
+            let result = try await manager.sendPrompt(
+                threadID: "thread-main",
+                prompt: prompt,
+                assistantSurface: "codex"
+            )
+            #expect(result.accepted)
         }
 
         let snapshot = try manager.localSnapshot()

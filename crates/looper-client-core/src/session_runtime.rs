@@ -23,6 +23,7 @@ const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
 const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
+const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "queued";
 
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreSessionRuntime {
@@ -117,10 +118,16 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         preset: String,
     ) -> Result<ClientSessionModeIntentResult, ClientCoreError> {
-        let envelope = self.submit_set_mode_envelope(thread_id, preset).await?;
+        let client_mutation_id = generated_client_mutation_id(MODE_MUTATION_PREFIX);
+        self.client_core.accept_set_mode_durable(
+            self.local_store.clone(),
+            thread_id,
+            preset.clone(),
+            client_mutation_id,
+        )?;
         Ok(ClientSessionModeIntentResult {
-            accepted: envelope.ack.accepted,
-            preset: envelope.preset,
+            accepted: true,
+            preset,
         })
     }
 
@@ -130,13 +137,18 @@ impl LooperClientCoreSessionRuntime {
         prompt: String,
         assistant_surface: String,
     ) -> Result<ClientSessionPromptIntentResult, ClientCoreError> {
-        let envelope = self
-            .submit_send_prompt_envelope(thread_id, prompt, assistant_surface)
-            .await?;
+        let client_mutation_id = generated_client_mutation_id(PROMPT_MUTATION_PREFIX);
+        self.client_core.accept_send_prompt_durable(
+            self.local_store.clone(),
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id,
+        )?;
         Ok(ClientSessionPromptIntentResult {
-            accepted: envelope.ack.accepted,
-            dispatch_kind: envelope.dispatch_kind,
-            prompt_id: envelope.prompt_id,
+            accepted: true,
+            dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
+            prompt_id: String::new(),
         })
     }
 
@@ -148,16 +160,26 @@ impl LooperClientCoreSessionRuntime {
         assistant_surface: String,
         client_mutation_id: String,
     ) -> Result<ClientNotificationReplyIntentResult, ClientCoreError> {
-        let envelope = self
-            .submit_notification_reply_envelope(
-                notification_id,
-                thread_id,
-                prompt,
-                assistant_surface,
-                client_mutation_id,
-            )
-            .await?;
-        Ok(ClientNotificationReplyIntentResult::from(envelope))
+        self.client_core.accept_notification_reply_durable(
+            self.local_store.clone(),
+            notification_id.clone(),
+            thread_id.clone(),
+            prompt,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientNotificationReplyIntentResult {
+            accepted: true,
+            dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
+            prompt_id: String::new(),
+            server_time: String::new(),
+            client_mutation_id,
+            ack_seq: 0,
+            entity_id: thread_id,
+            revision: String::new(),
+            idempotent_replay: false,
+            notification_id,
+        })
     }
 
     pub async fn submit_notification_reply_with_generated_mutation(
@@ -231,58 +253,6 @@ impl LooperClientCoreSessionRuntime {
 }
 
 impl LooperClientCoreSessionRuntime {
-    async fn submit_set_mode_envelope(
-        &self,
-        thread_id: String,
-        preset: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_set_mode_durable(
-                self.local_store.clone(),
-                thread_id,
-                preset,
-                generated_client_mutation_id(MODE_MUTATION_PREFIX),
-            )
-            .await
-    }
-
-    async fn submit_send_prompt_envelope(
-        &self,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_send_prompt_durable(
-                self.local_store.clone(),
-                thread_id,
-                prompt,
-                assistant_surface,
-                generated_client_mutation_id(PROMPT_MUTATION_PREFIX),
-            )
-            .await
-    }
-
-    async fn submit_notification_reply_envelope(
-        &self,
-        notification_id: String,
-        thread_id: String,
-        prompt: String,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
-        self.client_core
-            .submit_notification_reply_durable(
-                self.local_store.clone(),
-                notification_id,
-                thread_id,
-                prompt,
-                assistant_surface,
-                client_mutation_id,
-            )
-            .await
-    }
-
     async fn drain_notification_reply_outbox_envelope(
         &self,
     ) -> Result<ClientCommandAckEnvelope, ClientCoreError> {
@@ -483,14 +453,15 @@ mod tests {
         let runtime =
             LooperClientCoreSessionRuntime::new(temp_store_path("prompt")).expect("runtime");
 
-        let error = test_runtime
+        let result = test_runtime
             .block_on(runtime.send_prompt(
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
             ))
-            .expect_err("missing runtime config should fail transport");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+            .expect("local prompt accepted before transport");
+        assert!(result.accepted);
+        assert_eq!(result.dispatch_kind, LOCAL_ACCEPTED_DISPATCH_KIND);
 
         let snapshot = runtime.local_snapshot().expect("snapshot");
         assert_eq!(snapshot.pending_commands.len(), 1);
@@ -517,10 +488,11 @@ mod tests {
         let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("generated-mode"))
             .expect("runtime");
 
-        let error = test_runtime
+        let result = test_runtime
             .block_on(runtime.set_mode("thread-main".to_owned(), "max-turns-2".to_owned()))
-            .expect_err("missing runtime config should fail transport");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+            .expect("local mode accepted before transport");
+        assert!(result.accepted);
+        assert_eq!(result.preset, "max-turns-2");
 
         let snapshot = runtime.local_snapshot().expect("snapshot");
         assert_eq!(snapshot.pending_commands.len(), 1);
@@ -542,14 +514,15 @@ mod tests {
         let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("generated-prompt"))
             .expect("runtime");
 
-        let error = test_runtime
+        let result = test_runtime
             .block_on(runtime.send_prompt(
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
             ))
-            .expect_err("missing runtime config should fail transport");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+            .expect("local prompt accepted before transport");
+        assert!(result.accepted);
+        assert_eq!(result.dispatch_kind, LOCAL_ACCEPTED_DISPATCH_KIND);
 
         let snapshot = runtime.local_snapshot().expect("snapshot");
         assert_eq!(snapshot.pending_commands.len(), 1);
@@ -585,10 +558,11 @@ mod tests {
             },
         );
 
-        let error = test_runtime
+        let result = test_runtime
             .block_on(runtime.set_mode("thread-main".to_owned(), "max-turns-2".to_owned()))
-            .expect_err("missing runtime config should fail transport");
-        assert_eq!(error, ClientCoreError::NoEndpoint);
+            .expect("local mode accepted before transport");
+        assert!(result.accepted);
+        assert_eq!(result.preset, "max-turns-2");
 
         let snapshot = runtime.local_snapshot().expect("snapshot");
         assert_eq!(snapshot.pending_commands.len(), 1);
