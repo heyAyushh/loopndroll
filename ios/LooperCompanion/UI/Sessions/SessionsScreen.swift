@@ -181,9 +181,7 @@ struct SessionsScreen: View {
     }
 
     private var connectionStatusTint: Color {
-        model.viewState.isShowingUsableLocalState
-            ? CompanionTint.tint(for: .connected)
-            : CompanionTint.tint(for: model.connectionState)
+        CompanionTint.tint(for: model.connectionState)
     }
 
     private func sessionSection(

@@ -68,7 +68,8 @@ final class CompanionSessionMiniController {
                         reason: CompanionSessionMiniControllerRetry.restartReason,
                         latestSeq: localSnapshot.latestSeq,
                         serverTime: localSnapshot.serverTime,
-                        isLive: false
+                        isLive: false,
+                        endpointURL: nil
                     ),
                     connectionRevision
                 )

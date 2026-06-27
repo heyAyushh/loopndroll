@@ -40,8 +40,10 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.viewState.activeSessions.map { $0.id } == [Constants.cachedThreadID])
-        #expect(model.connectionState == .connected)
+        #expect(model.connectionState == .connecting)
         #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
+        #expect(model.viewState.connectivityStatusLabel == "Local")
+        #expect(model.viewState.connectionRoutePresentation == nil)
         #expect(service.loadSnapshotCallCount == 0)
     }
 
@@ -68,15 +70,15 @@ struct CompanionSessionMiniLocalFirstTests {
 
         model.connectionState = .connecting
         #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
-        #expect(model.viewState.connectivityStatusLabel == "Syncing")
-        #expect(model.viewState.connectivitySummary == "Showing local sessions while the live stream catches up.")
-        #expect(model.viewState.deviceHubAccessStatusLabel == "Syncing")
-        #expect(model.viewState.deviceHubAPIStatusLabel == "Syncing")
+        #expect(model.viewState.connectivityStatusLabel == "Local")
+        #expect(model.viewState.connectivitySummary == "Showing local sessions; live connection is not ready.")
+        #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
+        #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
 
         model.connectionState = .offline
         #expect(model.viewState.connectivityHeadline != "Mac connection offline")
         #expect(model.viewState.connectivityStatusLabel == "Local")
-        #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when the stream returns.")
+        #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when Looper reconnects.")
         #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
         #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
         #expect(service.loadSnapshotCallCount == 0)
@@ -106,6 +108,7 @@ struct CompanionSessionMiniLocalFirstTests {
         model.realtimeServerTime = Constants.heartbeatTimestamp
         model.realtimeLatestSeq = 10
         model.connectionState = .connected
+        model.activeSessionRouteBaseURL = URL(string: "http://192.168.2.10:8766")
 
         #expect(model.realtimeServerTime == Constants.heartbeatTimestamp)
         #expect(!model.viewState.connectivitySummary.localizedCaseInsensitiveContains("stream"))
@@ -203,9 +206,77 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(model.connectionState == .connected)
+        #expect(model.connectionState == .connecting)
         #expect(model.errorMessage == nil)
         #expect(model.viewState.connectivityHeadline != "Mac connection offline")
+    }
+
+    @MainActor
+    @Test
+    func testConfiguredRouteDoesNotRenderAsConnectedBeforeLiveSessionEndpoint() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 9,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.configuredBaseURL = "http://100.95.2.4:8765"
+        model.reachedBaseURL = URL(string: "http://192.168.2.10:8765")
+        model.connectionState = .connected
+
+        #expect(model.viewState.connectionRoutePresentation == nil)
+
+        model.activeSessionRouteBaseURL = URL(string: "http://100.95.2.4:8766")
+
+        let presentation = try #require(model.viewState.connectionRoutePresentation)
+        #expect(presentation.route == .tailscale)
+        #expect(presentation.title == "Tailscale")
+    }
+
+    @MainActor
+    @Test
+    func testLiveSessionStreamWinsOverSnapshotTimeout() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 9,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        service.loadSnapshotError = URLError(.timedOut)
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let liveRoute = try #require(URL(string: "http://100.95.2.4:8766"))
+        model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.activeSessionRouteBaseURL = liveRoute
+
+        await model.loadSnapshot()
+
+        #expect(model.connectionState == .connected)
+        #expect(model.errorMessage == nil)
+        #expect(model.activeConnectionRouteBaseURL == liveRoute)
+        #expect(model.viewState.connectionRoutePresentation?.route == .tailscale)
+        #expect(service.loadSnapshotCallCount == 1)
     }
 
     @MainActor
@@ -643,6 +714,7 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     private let lock = NSLock()
     private let snapshot: MobileSnapshot
+    var loadSnapshotError: Error?
     private(set) var loadSnapshotCallCount = 0
 
     init(snapshot: MobileSnapshot) {
@@ -660,6 +732,10 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     func loadSnapshot() async throws -> MobileSnapshot {
         incrementLoadSnapshotCallCount()
+        if let loadSnapshotError {
+            throw loadSnapshotError
+        }
+
         return snapshot
     }
 

@@ -394,6 +394,8 @@ enum G006LocalFirstSelfTest {
         )
         model.snapshot = appliedSnapshot
         model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.activeSessionRouteBaseURL = URL(string: "http://192.168.2.10:8766")
 
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Synced Mini",
@@ -468,6 +470,8 @@ enum G006LocalFirstSelfTest {
         )
         model.snapshot = appliedSnapshot
         model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.activeSessionRouteBaseURL = URL(string: "http://192.168.2.10:8766")
 
         service.snapshotError = URLError(.timedOut)
         await model.refresh()
@@ -581,6 +585,8 @@ enum G006LocalFirstSelfTest {
         )
         model.snapshot = appliedSnapshot
         model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.activeSessionRouteBaseURL = URL(string: "http://192.168.2.10:8766")
         try require(
             model.snapshot?.session(withID: Constants.cachedThreadID)?.title == syncedSession.title,
             "stream delta did not render locally"

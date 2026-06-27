@@ -25,6 +25,7 @@ struct CompanionClientCoreMobileSnapshotStreamResult: Sendable {
 struct CompanionSessionMiniSyncUpdate: Sendable {
     let reason: String
     let latestSeq: Int64
+    let endpointURL: URL?
     let snapshot: MobileSnapshot
 }
 
@@ -33,6 +34,7 @@ struct CompanionSessionMiniLivenessUpdate: Sendable {
     let latestSeq: Int64
     let serverTime: String
     let isLive: Bool
+    let endpointURL: URL?
 }
 
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
@@ -253,7 +255,11 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         async throws -> CompanionClientCoreMobileSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMobileSnapshotChange()
-        let livenessUpdate = Self.livenessUpdate(from: streamUpdate)
+        let endpointURL = Self.endpointURL(from: try? sessionManager.stateSnapshot())
+        let livenessUpdate = Self.livenessUpdate(
+            from: streamUpdate,
+            endpointURL: endpointURL
+        )
         guard streamUpdate.hasSnapshot else {
             return CompanionClientCoreMobileSnapshotStreamResult(
                 update: nil,
@@ -271,6 +277,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             update: CompanionSessionMiniSyncUpdate(
                 reason: streamUpdate.syncReason,
                 latestSeq: streamUpdate.latestSeq,
+                endpointURL: endpointURL,
                 snapshot: snapshot
             ),
             liveness: livenessUpdate,
@@ -597,7 +604,8 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     private static func livenessUpdate(
-        from streamUpdate: ClientMobileSnapshotStreamUpdate
+        from streamUpdate: ClientMobileSnapshotStreamUpdate,
+        endpointURL: URL?
     ) -> CompanionSessionMiniLivenessUpdate? {
         return CompanionSessionMiniLivenessUpdate(
             reason: streamUpdate.syncReason,
@@ -606,8 +614,17 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             isLive: !streamUpdate.shouldStop && (
                 streamUpdate.syncReason == CompanionSessionMiniSyncReason.delta ||
                     streamUpdate.syncReason == CompanionSessionMiniSyncReason.heartbeat
-            )
+            ),
+            endpointURL: endpointURL
         )
+    }
+
+    private static func endpointURL(from snapshot: ClientStateSnapshot?) -> URL? {
+        guard let endpointURLString = nonEmpty(snapshot?.endpointUrl ?? "") else {
+            return nil
+        }
+
+        return URL(string: endpointURLString)
     }
 }
 

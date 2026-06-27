@@ -26,6 +26,8 @@ const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
+const DEFAULT_HTTP_API_PORT: u16 = 8765;
+const DEFAULT_REALTIME_GRPC_PORT: u16 = 8766;
 const AUTHORIZATION_HEADER: &str = "authorization";
 const MOBILE_SESSION_HEADER: &str = "x-looper-mobile-session";
 const BEARER_PREFIX: &str = "Bearer ";
@@ -404,9 +406,31 @@ fn state_mini_snapshot_uri(endpoint_url: &str) -> Result<Uri, ClientCoreError> {
     if endpoint_url.is_empty() {
         return Err(ClientCoreError::InvalidEndpoint);
     }
-    format!("{endpoint_url}{STATE_MINI_SNAPSHOT_PATH}")
+    let recovery_base_url = state_mini_snapshot_base_url(endpoint_url)?;
+    format!("{recovery_base_url}{STATE_MINI_SNAPSHOT_PATH}")
         .parse::<Uri>()
         .map_err(|_| ClientCoreError::InvalidEndpoint)
+}
+
+fn state_mini_snapshot_base_url(endpoint_url: &str) -> Result<String, ClientCoreError> {
+    let uri = endpoint_url
+        .parse::<Uri>()
+        .map_err(|_| ClientCoreError::InvalidEndpoint)?;
+    let scheme = uri.scheme_str().ok_or(ClientCoreError::InvalidEndpoint)?;
+    let authority = uri.authority().ok_or(ClientCoreError::InvalidEndpoint)?;
+    let path = uri.path().trim_end_matches('/');
+    let path = if path == "/" { "" } else { path };
+    let authority = snapshot_recovery_authority(scheme, authority.as_str());
+    Ok(format!("{scheme}://{authority}{path}"))
+}
+
+fn snapshot_recovery_authority(scheme: &str, authority: &str) -> String {
+    let realtime_port_suffix = format!(":{DEFAULT_REALTIME_GRPC_PORT}");
+    if scheme == "http" && authority.ends_with(&realtime_port_suffix) {
+        let host = authority.trim_end_matches(&realtime_port_suffix);
+        return format!("{host}:{DEFAULT_HTTP_API_PORT}");
+    }
+    authority.to_owned()
 }
 
 fn apply_metadata(
@@ -803,12 +827,22 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_snapshot_url_appends_recovery_path() {
+    fn state_mini_snapshot_url_uses_http_api_port_for_realtime_endpoint() {
         let url = state_mini_snapshot_uri("http://127.0.0.1:8766/base/").expect("snapshot url");
 
         assert_eq!(
             url.to_string(),
-            "http://127.0.0.1:8766/base/api/mobile/session-minis/snapshot"
+            "http://127.0.0.1:8765/base/api/mobile/session-minis/snapshot"
+        );
+    }
+
+    #[test]
+    fn state_mini_snapshot_url_keeps_non_realtime_ports() {
+        let url = state_mini_snapshot_uri("https://100.119.200.69:8781/").expect("snapshot url");
+
+        assert_eq!(
+            url.to_string(),
+            "https://100.119.200.69:8781/api/mobile/session-minis/snapshot"
         );
     }
 

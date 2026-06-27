@@ -139,9 +139,9 @@ struct CompanionAppViewState {
             case .connected:
                 return connectedStatusSummary
             case .connecting:
-                return "Showing local sessions while the live stream catches up."
+                return "Showing local sessions; live connection is not ready."
             case .offline:
-                return "Showing local sessions; commands will retry when the stream returns."
+                return "Showing local sessions; commands will retry when Looper reconnects."
             case .unauthorized, .locked, .unpaired:
                 break
             }
@@ -153,9 +153,7 @@ struct CompanionAppViewState {
     var connectivityStatusLabel: String {
         if isShowingUsableLocalState {
             switch model.connectionState {
-            case .connecting:
-                return "Syncing"
-            case .offline:
+            case .connecting, .offline:
                 return "Local"
             case .connected, .unauthorized, .locked, .unpaired:
                 break
