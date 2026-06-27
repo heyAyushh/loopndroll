@@ -243,12 +243,13 @@ struct RootTabView: View {
         }
 
         CompanionDiagnostics.lifecycle.info(
-            "Root refresh starting scenePhase=\(String(describing: scenePhase), privacy: .public) onboarding=\(shouldShowOnboarding, privacy: .public)"
+            "Root active-state prepare starting scenePhase=\(String(describing: scenePhase), privacy: .public) onboarding=\(shouldShowOnboarding, privacy: .public)"
         )
         CompanionDiagnostics.record(
-            "root:refresh-start scenePhase=\(String(describing: scenePhase)) onboarding=\(shouldShowOnboarding)"
+            "root:active-prepare-start scenePhase=\(String(describing: scenePhase)) onboarding=\(shouldShowOnboarding)"
         )
         await model.prepareForActiveState()
+        await model.reconcileLocalSessionState(reason: .activeScene)
         await model.sendLaunchVerificationAlertIfRequested()
 
         while !Task.isCancelled {
@@ -270,7 +271,7 @@ struct RootTabView: View {
                 continue
             }
 
-            await model.refreshFromFallbackTimer()
+            await model.reconcileLocalSessionState(reason: .fallbackTimer)
         }
     }
 }

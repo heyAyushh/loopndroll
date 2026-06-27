@@ -41,7 +41,7 @@ struct SessionSearchScreen: View {
                 searchToolbar
             }
             .refreshable {
-                await model.refresh()
+                await model.reconcileLocalSessionState(reason: .searchPullRefresh)
             }
             .overlay {
                 overlayState

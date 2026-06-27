@@ -22,6 +22,15 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
+enum CompanionLocalSessionReconcileReason: String {
+    case activeScene = "active-scene"
+    case fallbackTimer = "fallback-timer"
+    case continuationWithoutSession = "continuation-without-session"
+    case sessionsPullRefresh = "sessions-pull-refresh"
+    case searchPullRefresh = "search-pull-refresh"
+    case unlockRecovery = "unlock-recovery"
+}
+
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -516,18 +525,28 @@ final class CompanionAppModel {
         await loadSnapshot()
     }
 
-    func refreshFromFallbackTimer() async {
-        guard !snapshotState.hasSnapshot else {
-            CompanionDiagnostics.record("root:refresh-skip local-session-minis-ready")
+    func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
+        startSessionRuntimeSyncIfNeeded()
+        prepareSessionRuntimeInBackground()
+
+        if restoreCachedSessionMiniSnapshotIfAvailable(reason: reason.rawValue) {
+            CompanionDiagnostics.record(
+                "session-mini:local-reconcile-applied reason=\(reason.rawValue)"
+            )
             return
         }
 
-        guard !sessionMiniController.isSyncing else {
-            CompanionDiagnostics.record("root:refresh-skip session-sync-active")
+        if snapshotState.hasSnapshot {
+            promoteCachedSnapshotConnectionIfNeeded(reason: reason.rawValue)
+            CompanionDiagnostics.record(
+                "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
+            )
             return
         }
 
-        await refresh()
+        CompanionDiagnostics.record(
+            "session-mini:local-reconcile-wait reason=\(reason.rawValue)"
+        )
     }
 
     private func adoptServerHealthBaseURLsIfNeeded(
@@ -636,9 +655,9 @@ final class CompanionAppModel {
         }
 
         guard let sessionID = LooperContinuationActivity.sessionID(from: activity) else {
-            CompanionDiagnostics.lifecycle.info("Continuation activity had no session id; refreshing snapshot")
-            CompanionDiagnostics.record("continuation:model-refresh-no-session")
-            await refresh()
+            CompanionDiagnostics.lifecycle.info("Continuation activity had no session id; reconciling local state")
+            CompanionDiagnostics.record("continuation:model-local-reconcile-no-session")
+            await reconcileLocalSessionState(reason: .continuationWithoutSession)
             return
         }
 

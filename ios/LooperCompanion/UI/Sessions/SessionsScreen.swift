@@ -93,7 +93,7 @@ struct SessionsScreen: View {
                 }
             }
             .refreshable {
-                await model.refresh()
+                await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
             }
             .onChange(of: model.pendingOpenSessionID) {
                 openPendingSessionIfNeeded()
@@ -272,7 +272,7 @@ struct SessionsScreen: View {
             return
         }
 
-        await model.refresh()
+        await model.reconcileLocalSessionState(reason: .unlockRecovery)
     }
 
     private func openPendingSessionIfNeeded() {
