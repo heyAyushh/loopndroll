@@ -844,37 +844,25 @@ final class CompanionAppModel {
             Haptics.error()
             return false
         }
-        let targetRevision = connectionRevision
 
         do {
             let result = try await targetRuntime.setMode(
                 threadID: sessionID,
                 preset: preset
             )
-            guard targetRevision == connectionRevision else {
-                CompanionDiagnostics.record("mode:mutation-stale-skip sessionID=\(sessionID)")
-                return false
-            }
-            await applyModeResult(result, sessionID: sessionID)
+            recordModeAccepted(result, sessionID: sessionID)
             return true
         } catch {
-            guard targetRevision == connectionRevision else {
-                CompanionDiagnostics.record(
-                    "mode:mutation-stale-error-skip sessionID=\(sessionID) error=\(error.localizedDescription)"
-                )
-                return false
-            }
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
             Haptics.error()
             return false
         }
     }
 
-    private func applyModeResult(
+    private func recordModeAccepted(
         _ result: ClientSessionModeIntentResult,
         sessionID: String
-    ) async {
-        connectionState = .connected
+    ) {
         errorMessage = nil
         lastUpdatedAt = Date()
         let acceptedMode = result.preset.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -897,7 +885,6 @@ final class CompanionAppModel {
             Haptics.error()
             return false
         }
-        let targetRevision = connectionRevision
 
         do {
             let result = try await targetRuntime.sendPrompt(
@@ -905,23 +892,12 @@ final class CompanionAppModel {
                 prompt: trimmedPrompt,
                 assistantSurface: targetSurface
             )
-            guard targetRevision == connectionRevision else {
-                CompanionDiagnostics.record("prompt:mutation-stale-skip sessionID=\(sessionID)")
-                return false
-            }
-            await applyPromptSendResult(
+            recordPromptAccepted(
                 result,
-                sessionID: sessionID,
-                assistantSurface: targetSurface
+                sessionID: sessionID
             )
             return true
         } catch {
-            guard targetRevision == connectionRevision else {
-                CompanionDiagnostics.record(
-                    "prompt:mutation-stale-error-skip sessionID=\(sessionID) error=\(error.localizedDescription)"
-                )
-                return false
-            }
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
             Haptics.error()
             return false
@@ -945,14 +921,10 @@ final class CompanionAppModel {
             return false
         }
 
-        let targetSurface = snapshotState.assistantSurface(containingSessionID: sessionID)
-            ?? selectedAssistantSurface
-
         return await submitNotificationReplyCommand(
             notificationID: trimmedNotificationID,
             sessionID: sessionID,
-            prompt: trimmedPrompt,
-            targetSurface: targetSurface
+            prompt: trimmedPrompt
         )
     }
 
@@ -978,8 +950,7 @@ final class CompanionAppModel {
     private func submitNotificationReplyCommand(
         notificationID: String,
         sessionID: String,
-        prompt: String,
-        targetSurface: CompanionAssistantSurface
+        prompt: String
     ) async -> Bool {
         guard let sessionRuntime = sessionMiniController.sessionRuntime else {
             applyNotificationReplyFailure(
@@ -998,11 +969,10 @@ final class CompanionAppModel {
                 prompt: prompt,
                 assistantSurface: nil
             )
-            await applyNotificationReplyAccepted(
+            recordNotificationReplyAccepted(
                 response,
                 sessionID: sessionID,
-                notificationID: notificationID,
-                targetSurface: targetSurface
+                notificationID: notificationID
             )
             return true
         } catch {
@@ -1025,22 +995,10 @@ final class CompanionAppModel {
 
         do {
             let response = try await sessionRuntime.submitPendingNotificationReply()
-            guard let acceptedSessionID = Self.nonEmptyText(response.entityId),
-                  let acceptedNotificationID = Self.nonEmptyText(response.notificationId)
-            else {
-                CompanionDiagnostics.record(
-                    "notification-reply:pending-drain-missing-ack-target"
-                )
-                return false
-            }
-
-            let acceptedSurface = snapshotState.assistantSurface(containingSessionID: acceptedSessionID)
-                ?? selectedAssistantSurface
-            await applyNotificationReplyAccepted(
+            recordNotificationReplyAccepted(
                 response,
-                sessionID: acceptedSessionID,
-                notificationID: acceptedNotificationID,
-                targetSurface: acceptedSurface
+                sessionID: Self.nonEmptyText(response.entityId) ?? "unknown",
+                notificationID: Self.nonEmptyText(response.notificationId) ?? "unknown"
             )
             return true
         } catch {
@@ -1056,21 +1014,16 @@ final class CompanionAppModel {
         Haptics.warning()
     }
 
-    private func applyNotificationReplyAccepted(
+    private func recordNotificationReplyAccepted(
         _ response: ClientNotificationReplyIntentResult,
         sessionID: String,
-        notificationID: String,
-        targetSurface: CompanionAssistantSurface
-    ) async {
-        connectionState = .connected
+        notificationID: String
+    ) {
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
             "notification-reply:accepted sessionID=\(sessionID) notificationID=\(notificationID) kind=\(response.dispatchKind)"
         )
-        if snapshotState.hasDetail(for: sessionID) {
-            await refreshSessionDetail(id: sessionID, assistantSurface: targetSurface)
-        }
     }
 
     private func applyNotificationReplyFailure(
@@ -1255,20 +1208,15 @@ final class CompanionAppModel {
         return await mutateSnapshot(operation)
     }
 
-    private func applyPromptSendResult(
+    private func recordPromptAccepted(
         _ result: ClientSessionPromptIntentResult,
-        sessionID: String,
-        assistantSurface: CompanionAssistantSurface
-    ) async {
-        connectionState = .connected
+        sessionID: String
+    ) {
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
             "prompt:accepted sessionID=\(sessionID) kind=\(Self.nonEmptyText(result.dispatchKind) ?? "unknown")"
         )
-        if snapshotState.hasDetail(for: sessionID) {
-            await refreshSessionDetail(id: sessionID, assistantSurface: assistantSurface)
-        }
     }
 
     @discardableResult

@@ -44,7 +44,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testMalformedMiniCacheFallsBackAndOutboxKeepsFailedCommand() async throws {
+    func testMalformedMiniCacheFallsBackAndOutboxKeepsOfflinePrompt() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let storeFileURL = try Self.temporaryStoreFileURL()
         try Self.seedMalformedMiniCache(at: storeFileURL)
@@ -61,7 +61,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
 
-        #expect(!didSend)
+        #expect(didSend)
         let pendingCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
         #expect(pendingCommand.threadID == Constants.fallbackThreadID)
         #expect(pendingCommand.prompt == "continue")
@@ -95,8 +95,8 @@ struct CompanionSessionMiniLocalFirstTests {
         let didApplyMode = await modeTask.value
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(!didApplyMode)
-        #expect(!didSend)
+        #expect(didApplyMode)
+        #expect(didSend)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.effectiveMode == .maxTurns2)
         #expect(service.loadSnapshotCallCount == 0)
         let modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
@@ -136,8 +136,8 @@ struct CompanionSessionMiniLocalFirstTests {
         let didSendPrompt = await promptTask.value
         let didApplyMode = await modeTask.value
 
-        #expect(!didSendPrompt)
-        #expect(!didApplyMode)
+        #expect(didSendPrompt)
+        #expect(didApplyMode)
         #expect(service.loadSnapshotCallCount == 0)
         var modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
         let promptCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
@@ -153,7 +153,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testFailedPromptBehindModeDoesNotFallbackToSnapshotRefresh() async throws {
+    func testOfflinePromptBehindModeDoesNotFallbackToSnapshotRefresh() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -179,8 +179,8 @@ struct CompanionSessionMiniLocalFirstTests {
         let didSendPrompt = await promptTask.value
         let didApplyMode = await modeTask.value
 
-        #expect(!didSendPrompt)
-        #expect(!didApplyMode)
+        #expect(didSendPrompt)
+        #expect(didApplyMode)
         #expect(service.loadSnapshotCallCount == 0)
         let modeCommand = try Self.pendingCommand(in: runtime, kind: .setSessionMode)
         let promptCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
