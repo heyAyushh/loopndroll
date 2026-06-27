@@ -134,7 +134,7 @@ struct SettingsScreen: View {
 
     private var connectionSection: some View {
         Section {
-            LabeledContent("Status", value: model.connectionState.label)
+            LabeledContent("Status", value: model.viewState.connectivityStatusLabel)
             LabeledContent("Linked Mac", value: model.viewState.hostName ?? "Not Connected")
 
             Picker("Route", selection: connectionRoutePreference) {

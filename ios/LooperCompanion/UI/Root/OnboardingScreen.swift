@@ -60,7 +60,7 @@ struct OnboardingScreen: View {
 
     private var macLoginSection: some View {
         Section {
-            LabeledContent("Status", value: model.connectionState.label)
+            LabeledContent("Status", value: model.viewState.connectivityStatusLabel)
             LabeledContent("Linked Mac", value: model.viewState.hostName ?? "Not Connected")
 
             TextField("Enter device code", text: $draftConnectionCode)

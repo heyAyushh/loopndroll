@@ -93,31 +93,6 @@ struct SessionsDeviceHubSheet: View {
         "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)"
     }
 
-    private var loginStatusLabel: String {
-        switch model.connectionState {
-        case .connected:
-            return "Approved"
-        case .connecting:
-            return "Checking"
-        case .offline:
-            return "Offline"
-        case .unauthorized:
-            return "Needs Approval"
-        case .locked:
-            return "Locked"
-        case .unpaired:
-            return "Not Linked"
-        }
-    }
-
-    private var serverStatusLabel: String {
-        guard let serverHealth = model.serverHealth else {
-            return model.connectionState == .connected ? "Unknown" : "Offline"
-        }
-
-        return serverHealth.ok ? "Running" : "Unavailable"
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -125,13 +100,13 @@ struct SessionsDeviceHubSheet: View {
                     LabeledContent("This iPhone", value: personalDeviceName)
                     LabeledContent("Software", value: deviceSoftwareLabel)
                     LabeledContent("Mac", value: model.viewState.hostName ?? "No Mac Connected")
-                    LabeledContent("API", value: serverStatusLabel)
+                    LabeledContent("API", value: model.viewState.deviceHubAPIStatusLabel)
                     if let routePresentation = model.viewState.connectionRoutePresentation {
                         ConnectionRouteSummaryRow(title: "Current Route", presentation: routePresentation)
                     } else if let baseURL = model.viewState.activeConnectionRouteBaseURLString {
                         LabeledContent("Current Route", value: baseURL)
                     }
-                    LabeledContent("Access", value: loginStatusLabel)
+                    LabeledContent("Access", value: model.viewState.deviceHubAccessStatusLabel)
                     LabeledContent("Last Sync", value: syncLabel)
                 }
                 .listRowBackground(Color.clear)

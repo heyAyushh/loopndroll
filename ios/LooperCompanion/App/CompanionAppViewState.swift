@@ -160,6 +160,72 @@ struct CompanionAppViewState {
         return model.connectionState.label
     }
 
+    var sessionsUnavailableTitle: String {
+        if !shouldUseSessionListEmptyState {
+            switch model.connectionState {
+            case .connecting:
+                return "Connecting to Your Mac"
+            case .offline:
+                return "Mac Offline"
+            case .unauthorized:
+                return "Connection Needs Approval"
+            case .locked:
+                return "Unlock Required"
+            case .unpaired:
+                return "Set Up Your Mac Link"
+            case .connected:
+                return selectedSurfaceEmptyTitle
+            }
+        }
+
+        return selectedSurfaceEmptyTitle
+    }
+
+    var sessionsUnavailableSystemImage: String {
+        shouldUseSessionListEmptyState ? "tray" : model.connectionState.symbolName
+    }
+
+    var sessionsEmptyDescription: String {
+        guard shouldUseSessionListEmptyState else {
+            return connectivitySummary
+        }
+
+        return selectedSurfaceEmptyDescription
+    }
+
+    var deviceHubAccessStatusLabel: String {
+        if isShowingUsableLocalState {
+            return connectivityStatusLabel
+        }
+
+        switch model.connectionState {
+        case .connected:
+            return "Approved"
+        case .connecting:
+            return "Checking"
+        case .offline:
+            return "Offline"
+        case .unauthorized:
+            return "Needs Approval"
+        case .locked:
+            return "Locked"
+        case .unpaired:
+            return "Not Linked"
+        }
+    }
+
+    var deviceHubAPIStatusLabel: String {
+        guard let serverHealth = model.serverHealth else {
+            if isShowingUsableLocalState {
+                return connectivityStatusLabel
+            }
+
+            return model.connectionState == .connected ? "Unknown" : "Offline"
+        }
+
+        return serverHealth.ok ? "Running" : "Unavailable"
+    }
+
     var isShowingUsableLocalState: Bool {
         hasSnapshot && (model.connectionState == .connecting || model.connectionState == .offline)
     }
@@ -271,5 +337,42 @@ struct CompanionAppViewState {
         }
 
         return parts.isEmpty ? "Connected and ready to monitor sessions." : "\(parts.joined(separator: " · "))."
+    }
+
+    private var shouldUseSessionListEmptyState: Bool {
+        model.connectionState == .connected || isShowingUsableLocalState
+    }
+
+    private var selectedSurfaceEmptyTitle: String {
+        switch selectedAssistantSurface {
+        case .claudeCode:
+            return "No Claude Code Sessions"
+        case .zed:
+            return "No Zed Sessions"
+        case .grokBuild:
+            return "No Grok Build Sessions"
+        case .devin:
+            return "No Devin Sessions"
+        case .codex:
+            return "No Sessions"
+        }
+    }
+
+    private var selectedSurfaceEmptyDescription: String {
+        switch selectedAssistantSurface {
+        case .claudeCode:
+            return "Claude Code sessions appear here separately from Codex when Claude is running on your Mac."
+        case .zed:
+            return "Zed ACP targets are read-only in Looper. Zed session import is not available yet."
+        case .grokBuild:
+            return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
+        case .devin:
+            if let devinEmptyStateDescription {
+                return devinEmptyStateDescription
+            }
+            return "Devin Desktop sessions appear here when Devin is running on your Mac."
+        case .codex:
+            return connectivitySummary
+        }
     }
 }

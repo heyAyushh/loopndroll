@@ -69,11 +69,51 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.connectivityHeadline != "Connecting to your Mac")
         #expect(model.viewState.connectivityStatusLabel == "Syncing")
         #expect(model.viewState.connectivitySummary == "Showing local sessions while the live stream catches up.")
+        #expect(model.viewState.deviceHubAccessStatusLabel == "Syncing")
+        #expect(model.viewState.deviceHubAPIStatusLabel == "Syncing")
 
         model.connectionState = .offline
         #expect(model.viewState.connectivityHeadline != "Mac connection offline")
         #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when the stream returns.")
+        #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
+        #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testSurfaceEmptyStateUsesLocalSnapshotDuringReconnect() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 13,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 13, revision: "mini-revision-13"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        model.selectAssistantSurface(.claudeCode)
+        model.connectionState = .connecting
+        #expect(model.viewState.sessionsUnavailableTitle == "No Claude Code Sessions")
+        #expect(model.viewState.sessionsUnavailableSystemImage == "tray")
+        #expect(
+            model.viewState.sessionsEmptyDescription ==
+                "Claude Code sessions appear here separately from Codex when Claude is running on your Mac."
+        )
+
+        model.connectionState = .offline
+        #expect(model.viewState.sessionsUnavailableTitle == "No Claude Code Sessions")
+        #expect(model.viewState.sessionsUnavailableSystemImage == "tray")
         #expect(service.loadSnapshotCallCount == 0)
     }
 

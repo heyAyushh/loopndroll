@@ -120,9 +120,9 @@ struct SessionsScreen: View {
             ProgressView("Loading Looper")
         } else if !hasVisibleSessions {
             ContentUnavailableView(
-                unavailableStateTitle,
-                systemImage: model.connectionState.symbolName,
-                description: Text(emptyStateDescription)
+                model.viewState.sessionsUnavailableTitle,
+                systemImage: model.viewState.sessionsUnavailableSystemImage,
+                description: Text(model.viewState.sessionsEmptyDescription)
             )
         }
     }
@@ -289,56 +289,6 @@ struct SessionsScreen: View {
 
     private func updateAssistantSurface(_ surface: CompanionAssistantSurface) {
         model.selectAssistantSurface(surface)
-    }
-
-    private var emptyStateDescription: String {
-        guard model.connectionState == .connected else {
-            return model.viewState.connectivitySummary
-        }
-
-        switch model.viewState.selectedAssistantSurface {
-        case .claudeCode:
-            return "Claude Code sessions appear here separately from Codex when Claude is running on your Mac."
-        case .zed:
-            return "Zed ACP targets are read-only in Looper. Zed session import is not available yet."
-        case .grokBuild:
-            return "Start a Grok Build session on your Mac or install the Grok CLI. Looper reads sessions from ~/.grok/sessions/ and hooks at ~/.grok/hooks/looper.json."
-        case .devin:
-            if let devinEmptyStateDescription = model.viewState.devinEmptyStateDescription {
-                return devinEmptyStateDescription
-            }
-            return "Devin Desktop sessions appear here when Devin is running on your Mac."
-        case .codex:
-            return model.viewState.connectivitySummary
-        }
-    }
-
-    private var unavailableStateTitle: String {
-        switch model.connectionState {
-        case .connected:
-            switch model.viewState.selectedAssistantSurface {
-            case .claudeCode:
-                return "No Claude Code Sessions"
-            case .zed:
-                return "No Zed Sessions"
-            case .grokBuild:
-                return "No Grok Build Sessions"
-            case .devin:
-                return "No Devin Sessions"
-            case .codex:
-                return "No Sessions"
-            }
-        case .connecting:
-            return "Connecting to Your Mac"
-        case .offline:
-            return "Mac Offline"
-        case .unauthorized:
-            return "Connection Needs Approval"
-        case .locked:
-            return "Unlock Required"
-        case .unpaired:
-            return "Set Up Your Mac Link"
-        }
     }
 }
 
