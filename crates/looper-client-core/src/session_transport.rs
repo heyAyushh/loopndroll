@@ -366,8 +366,8 @@ async fn drive_state_mini_stream_session(
 
                 match frame.frame {
                     Some(proto::server_frame::Frame::Ack(ack)) => {
+                        latest_seq = state_mini_data_cursor_after_ack(latest_seq, ack.ack_seq);
                         let ack = client_command_ack(ack);
-                        latest_seq = latest_seq.max(ack.ack_seq);
                         command_acks
                             .send(ack)
                             .await
@@ -377,7 +377,7 @@ async fn drive_state_mini_stream_session(
                             })?;
                     }
                     Some(proto::server_frame::Frame::StateDelta(delta)) => {
-                        latest_seq = latest_seq.max(delta.seq);
+                        latest_seq = state_mini_data_cursor_after_delta(latest_seq, delta.seq);
                         events
                             .send(StateMiniStreamEvent::Delta(client_state_mini_delta(delta)?))
                             .await
@@ -387,10 +387,11 @@ async fn drive_state_mini_stream_session(
                             })?;
                     }
                     Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
-                        latest_seq = latest_seq.max(heartbeat.latest_seq);
+                        latest_seq =
+                            state_mini_data_cursor_after_heartbeat(latest_seq, heartbeat.latest_seq);
                         events
                             .send(StateMiniStreamEvent::Heartbeat {
-                                latest_seq,
+                                latest_seq: heartbeat.latest_seq,
                                 server_time: heartbeat.server_time,
                                 endpoint_url: endpoint_url.clone(),
                             })
@@ -405,6 +406,18 @@ async fn drive_state_mini_stream_session(
             }
         }
     }
+}
+
+fn state_mini_data_cursor_after_ack(current_seq: i64, _ack_seq: i64) -> i64 {
+    current_seq
+}
+
+fn state_mini_data_cursor_after_delta(current_seq: i64, delta_seq: i64) -> i64 {
+    current_seq.max(delta_seq)
+}
+
+fn state_mini_data_cursor_after_heartbeat(current_seq: i64, _heartbeat_seq: i64) -> i64 {
+    current_seq
 }
 
 fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
@@ -1048,6 +1061,25 @@ mod tests {
         assert_eq!(delta.sessions.len(), 2);
         assert_eq!(delta.sessions[0].session_id, "thread-1");
         assert_eq!(delta.sessions[1].session_id, "thread-2");
+    }
+
+    #[test]
+    fn state_mini_replay_cursor_advances_only_on_deltas() {
+        let current_seq = 10;
+
+        assert_eq!(
+            state_mini_data_cursor_after_ack(current_seq, 20),
+            current_seq
+        );
+        assert_eq!(
+            state_mini_data_cursor_after_heartbeat(current_seq, 30),
+            current_seq
+        );
+        assert_eq!(
+            state_mini_data_cursor_after_delta(current_seq, 9),
+            current_seq
+        );
+        assert_eq!(state_mini_data_cursor_after_delta(current_seq, 11), 11);
     }
 
     #[test]
