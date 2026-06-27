@@ -112,6 +112,7 @@ const CLAUDE_CODE_HOOKS_CONNECTION_ACTION_HINT: &str =
 enum SnapshotInspectionMode {
     Live,
     CachedMenu,
+    Mobile,
 }
 
 const MOBILE_CONNECTION_KIND: &str = "mobile";
@@ -1345,10 +1346,10 @@ impl ControlPlane {
 
     pub fn desktop_mobile_snapshot(&self) -> Result<DesktopSnapshot> {
         self.desktop_snapshot_with_limits(
-            Some(DESKTOP_MENU_THREAD_LIMIT),
+            None,
             DESKTOP_MENU_COMPACTION_LIMIT,
             DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
-            SnapshotInspectionMode::Live,
+            SnapshotInspectionMode::Mobile,
         )
     }
 
@@ -1359,8 +1360,8 @@ impl ControlPlane {
         compaction_file_scan_limit: usize,
         inspection_mode: SnapshotInspectionMode,
     ) -> Result<DesktopSnapshot> {
-        let bounded_snapshot = thread_limit.is_some();
-        let control_plane_status = if bounded_snapshot {
+        let prune_diagnostic_details = inspection_mode != SnapshotInspectionMode::Live;
+        let control_plane_status = if prune_diagnostic_details {
             bounded_control_plane_status(self.status())
         } else {
             self.status()
@@ -1474,7 +1475,7 @@ impl ControlPlane {
         });
         let visible_codex_threads = snapshot_codex_threads;
 
-        let compactions = if bounded_snapshot {
+        let compactions = if prune_diagnostic_details {
             Vec::new()
         } else {
             read_recent_compaction_events(
@@ -1513,7 +1514,7 @@ impl ControlPlane {
         );
         let goals = read_goals(&self.config.codex_home, &known_thread_ids)?;
         attach_goals_to_desktop_threads(&mut desktop_threads, &goals);
-        if bounded_snapshot {
+        if prune_diagnostic_details {
             thin_desktop_threads_for_bounded_snapshot(&mut desktop_threads);
         }
         let automations = read_automations(&self.config.codex_home)?
@@ -1539,7 +1540,7 @@ impl ControlPlane {
             + devin_acp_active_thread_count
             + zed_acp_active_thread_count;
         let archived_thread_count = codex_archived_thread_count + devin_archived_thread_count;
-        let sync_manifest = if bounded_snapshot {
+        let sync_manifest = if prune_diagnostic_details {
             SyncManifest::metadata_only(&control_plane_status, &[], &[], &[], &BTreeMap::new())?
         } else {
             SyncManifest::metadata_only(
@@ -1551,9 +1552,10 @@ impl ControlPlane {
             )?
         };
 
-        let assistant_adapters = match thread_limit {
-            Some(_) => static_adapter_capabilities(),
-            None => adapter_capabilities(),
+        let assistant_adapters = if prune_diagnostic_details {
+            static_adapter_capabilities()
+        } else {
+            adapter_capabilities()
         };
         let (devin_desktop, zed) = self.desktop_snapshot_inspections(inspection_mode);
         let mut acp_targets = devin_acp_targets(&devin_desktop);
@@ -1575,7 +1577,7 @@ impl ControlPlane {
             archived_thread_count,
             threads: desktop_threads,
             automations,
-            automation_runs: if bounded_snapshot {
+            automation_runs: if prune_diagnostic_details {
                 Vec::new()
             } else {
                 self.store.automation_runs()?
@@ -1603,7 +1605,7 @@ impl ControlPlane {
                 inspect_devin_desktop_for_home(&self.config.home_path),
                 self.inspect_zed_status(),
             ),
-            SnapshotInspectionMode::CachedMenu => {
+            SnapshotInspectionMode::CachedMenu | SnapshotInspectionMode::Mobile => {
                 (self.cached_devin_desktop_status(), self.cached_zed_status())
             }
         }

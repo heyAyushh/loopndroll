@@ -1589,7 +1589,7 @@ async fn mobile_snapshot_uses_rust_auth_and_codex_threads() {
 }
 
 #[tokio::test]
-async fn mobile_snapshot_caps_initial_thread_list() {
+async fn mobile_snapshot_includes_full_recent_thread_list() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.append_state_threads(EXTRA_MOBILE_SNAPSHOT_THREADS);
@@ -1606,13 +1606,27 @@ async fn mobile_snapshot_caps_initial_thread_list() {
     .await;
 
     let sessions = snapshot["sessions"].as_array().expect("sessions");
-    assert_eq!(sessions.len(), MOBILE_SNAPSHOT_VISIBLE_THREAD_LIMIT);
-    assert!(sessions.iter().all(|session| {
-        session["id"]
-            .as_str()
-            .expect("session id")
-            .starts_with("thread-extra-")
-    }));
+    assert_eq!(sessions.len(), EXTRA_MOBILE_SNAPSHOT_THREADS + 2);
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session["id"] == "thread-main")
+    );
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session["id"] == "thread-child")
+    );
+    assert_eq!(
+        sessions
+            .iter()
+            .filter(|session| session["id"]
+                .as_str()
+                .expect("session id")
+                .starts_with("thread-extra-"))
+            .count(),
+        EXTRA_MOBILE_SNAPSHOT_THREADS
+    );
 }
 
 #[tokio::test]
