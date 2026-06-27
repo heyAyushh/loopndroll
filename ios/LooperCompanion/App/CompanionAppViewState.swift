@@ -327,14 +327,6 @@ struct CompanionAppViewState {
             parts.append("API running at \(serverHealth.baseURL)")
         }
 
-        if let workSummary = snapshotState.snapshot?.workStatus.displaySummary {
-            parts.append(workSummary)
-        }
-
-        if let coverageSummary = snapshotState.snapshot?.workStatus.coverageSummary {
-            parts.append(coverageSummary)
-        }
-
         return parts.isEmpty ? "Connected." : "\(parts.joined(separator: " · "))."
     }
 

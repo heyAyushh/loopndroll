@@ -99,11 +99,34 @@ struct CompanionSessionMiniLocalFirstTests {
                 Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
             ]
         )
-        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        var networkSnapshot = Self.networkSnapshot()
+        networkSnapshot.workStatus = MobileWorkStatusSummary(
+            goalCount: 1,
+            runningGoalCount: 1,
+            automationCount: 0,
+            activeAutomationCount: 0,
+            coveredAutomationCount: 0,
+            runningGoals: [
+                MobileWorkStatusGoal(
+                    id: "goal-1",
+                    title: "Keep realtime honest",
+                    status: "running",
+                    targetThreadId: Constants.cachedThreadID,
+                    targetKnown: true,
+                    updatedAtMs: nil,
+                    tokensUsed: nil,
+                    tokenBudget: nil,
+                    timeUsedSeconds: nil
+                ),
+            ],
+            activeAutomations: []
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: networkSnapshot)
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
+        model.snapshotState.applySnapshot(networkSnapshot)
 
         model.realtimeServerTime = Constants.heartbeatTimestamp
         model.realtimeLatestSeq = 10
@@ -113,6 +136,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.realtimeServerTime == Constants.heartbeatTimestamp)
         #expect(!model.viewState.connectivitySummary.localizedCaseInsensitiveContains("stream"))
         #expect(!model.viewState.connectivitySummary.contains("synced "))
+        #expect(!model.viewState.connectivitySummary.contains("running goal"))
         #expect(service.loadSnapshotCallCount == 0)
     }
 
