@@ -10,63 +10,68 @@ struct CompanionAppViewState {
         self.model = model
     }
 
+    private var snapshotState: CompanionSnapshotStateStore {
+        model.observeSnapshotRenderRevision()
+        return model.snapshotState
+    }
+
     var activeSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.active
+        snapshotState.sessionSections.active
     }
 
     var runningSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.running
+        snapshotState.sessionSections.running
     }
 
     var waitingSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.waiting
+        snapshotState.sessionSections.waiting
     }
 
     var stoppedSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.stopped
+        snapshotState.sessionSections.stopped
     }
 
     var needsAttentionSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.needsAttention
+        snapshotState.sessionSections.needsAttention
     }
 
     var archivedSessions: [SessionSummary] {
-        model.snapshotState.sessionSections.archived
+        snapshotState.sessionSections.archived
     }
 
     var sessionsBadgeCount: Int {
-        model.snapshotState.sessionSections.needsAttentionCount
+        snapshotState.sessionSections.needsAttentionCount
     }
 
     var canSwitchAssistantSurface: Bool {
-        model.snapshotState.hasSnapshot || model.connectionState == .connected
+        snapshotState.hasSnapshot || model.connectionState == .connected
     }
 
     var hasSnapshot: Bool {
-        model.snapshotState.hasSnapshot
+        snapshotState.hasSnapshot
     }
 
     var selectedAssistantSurface: CompanionAssistantSurface {
-        model.snapshotState.selectedAssistantSurface
+        snapshotState.selectedAssistantSurface
     }
 
     var sessionIndexIdentity: String {
-        model.snapshotState.sessionIndexIdentity
+        snapshotState.sessionIndexIdentity
     }
 
     var allSessions: [SessionSummary] {
-        model.snapshotState.allSessions
+        snapshotState.allSessions
     }
 
     var assistantSurfaceConnectionSummary: String? {
         switch selectedAssistantSurface {
         case .grokBuild:
-            guard let grokBuild = model.snapshotState.snapshot?.grokBuild else {
+            guard let grokBuild = snapshotState.snapshot?.grokBuild else {
                 return nil
             }
             return "Grok hooks \(grokBuild.hooksHealthTitle.lowercased()) · \(grokBuild.activeSessionCount) active / \(grokBuild.sessionCount) total"
         case .devin:
-            guard let devinDesktop = model.snapshotState.snapshot?.devinDesktop else {
+            guard let devinDesktop = snapshotState.snapshot?.devinDesktop else {
                 return nil
             }
             return "Devin \(devinDesktop.connectionTitle) · \(devinDesktop.activeSessionCount) active / \(devinDesktop.sessionCount) total · \(devinDesktop.enabledAgentCount) agents"
@@ -76,7 +81,7 @@ struct CompanionAppViewState {
     }
 
     var devinEmptyStateDescription: String? {
-        guard let devinDesktop = model.snapshotState.snapshot?.devinDesktop else {
+        guard let devinDesktop = snapshotState.snapshot?.devinDesktop else {
             return nil
         }
 
@@ -84,22 +89,22 @@ struct CompanionAppViewState {
     }
 
     var defaultPrompt: String {
-        model.snapshotState.snapshot?.globalSettings.defaultPrompt ?? ""
+        snapshotState.snapshot?.globalSettings.defaultPrompt ?? ""
     }
 
     var availableNotifications: [NotificationDestination] {
-        model.snapshotState.snapshot?.notifications ?? []
+        snapshotState.snapshot?.notifications ?? []
     }
 
     var availableCompletionChecks: [CompletionCheckSummary] {
-        model.snapshotState.snapshot?.completionChecks ?? []
+        snapshotState.snapshot?.completionChecks ?? []
     }
 
     var lastSyncedAt: String? {
         if let realtimeServerTime = model.realtimeServerTime, !realtimeServerTime.isEmpty {
             return realtimeServerTime
         }
-        return model.snapshotState.snapshot?.host.lastSyncedAt
+        return snapshotState.snapshot?.host.lastSyncedAt
     }
 
     var deviceHubSyncStatusLabel: String {
@@ -115,21 +120,21 @@ struct CompanionAppViewState {
     }
 
     var hostName: String? {
-        model.snapshotState.snapshot?.host.name
+        snapshotState.snapshot?.host.name
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
-        model.snapshotState.session(withID: sessionID)
+        snapshotState.session(withID: sessionID)
     }
 
     var connectivityHeadline: String {
         if isShowingUsableLocalState {
-            return model.snapshotState.snapshot?.host.name ?? "Looper is ready"
+            return snapshotState.snapshot?.host.name ?? "Looper is ready"
         }
 
         switch model.connectionState {
         case .connected:
-            return model.snapshotState.snapshot?.host.name ?? "Connected"
+            return snapshotState.snapshot?.host.name ?? "Connected"
         case .connecting:
             return "Connecting to your Mac"
         case .offline:
@@ -327,7 +332,7 @@ struct CompanionAppViewState {
     }
 
     func detail(for sessionID: String) -> SessionDetail? {
-        model.snapshotState.detail(for: sessionID)
+        snapshotState.detail(for: sessionID)
     }
 
     private var connectedStatusSummary: String {
@@ -339,17 +344,17 @@ struct CompanionAppViewState {
             parts.append("API running at \(serverHealth.baseURL)")
         }
 
-        if let workSummary = model.snapshotState.snapshot?.workStatus.displaySummary {
+        if let workSummary = snapshotState.snapshot?.workStatus.displaySummary {
             parts.append(workSummary)
         }
 
-        if let coverageSummary = model.snapshotState.snapshot?.workStatus.coverageSummary {
+        if let coverageSummary = snapshotState.snapshot?.workStatus.coverageSummary {
             parts.append(coverageSummary)
         }
 
         if model.realtimeStreamIsLive {
             parts.append("stream live")
-        } else if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+        } else if let lastSyncedAt = snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
             parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
         }
 

@@ -1,5 +1,10 @@
 import Foundation
 
+private enum CompanionSessionMiniControllerRetry {
+    static let delay: Duration = .milliseconds(750)
+    static let restartReason = "runtime-restart"
+}
+
 @MainActor
 final class CompanionSessionMiniController {
     typealias SyncUpdateHandler = @MainActor @Sendable (
@@ -39,18 +44,37 @@ final class CompanionSessionMiniController {
             defer {
                 self?.syncTask = nil
             }
-            await sessionRuntime.prepareSessionRuntime()
-            await sessionRuntime.runStateMiniSync(
-                onUpdate: { update in
-                    onUpdate(update, connectionRevision)
-                },
-                onLiveness: { liveness in
-                    onLiveness(liveness, connectionRevision)
-                },
-                onDebugMessage: { message in
-                    CompanionDiagnostics.record(message)
+            while !Task.isCancelled {
+                await sessionRuntime.prepareSessionRuntime()
+                await sessionRuntime.runStateMiniSync(
+                    onUpdate: { update in
+                        onUpdate(update, connectionRevision)
+                    },
+                    onLiveness: { liveness in
+                        onLiveness(liveness, connectionRevision)
+                    },
+                    onDebugMessage: { message in
+                        CompanionDiagnostics.record(message)
+                    }
+                )
+
+                guard !Task.isCancelled else {
+                    return
                 }
-            )
+
+                let localSnapshot = sessionRuntime.currentStateMiniSnapshot()
+                onLiveness(
+                    CompanionSessionMiniLivenessUpdate(
+                        reason: CompanionSessionMiniControllerRetry.restartReason,
+                        latestSeq: localSnapshot.latestSeq,
+                        serverTime: localSnapshot.serverTime,
+                        isLive: false
+                    ),
+                    connectionRevision
+                )
+                CompanionDiagnostics.record("session-mini:sync-restarting")
+                try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
+            }
         }
     }
 

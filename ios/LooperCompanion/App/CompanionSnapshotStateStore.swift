@@ -43,6 +43,21 @@ final class CompanionSnapshotStateStore {
         detailBySessionID = [:]
     }
 
+    @discardableResult
+    func applyHostSyncTime(_ serverTime: String) -> Bool {
+        let syncedAt = serverTime.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !syncedAt.isEmpty, var nextSnapshot = snapshot else {
+            return false
+        }
+        guard nextSnapshot.host.lastSyncedAt != syncedAt else {
+            return false
+        }
+
+        nextSnapshot.host.lastSyncedAt = syncedAt
+        snapshot = nextSnapshot
+        return true
+    }
+
     func shouldSkipCachedRestore(onlyWhenSnapshotMissing: Bool) -> Bool {
         onlyWhenSnapshotMissing && hasSnapshot
     }

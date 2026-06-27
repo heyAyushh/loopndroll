@@ -29,6 +29,7 @@ final class CompanionAppModel {
     var serverHealth: CompanionServerHealth?
     var reachedBaseURL: URL?
     var snapshotState = CompanionSnapshotStateStore()
+    private(set) var snapshotRenderRevision = 0
     var connectionState: ConnectivityState = .connecting
     var errorMessage: String?
     var isLoading = false
@@ -116,6 +117,14 @@ final class CompanionAppModel {
         CompanionAppViewState(model: self)
     }
 
+    func observeSnapshotRenderRevision() {
+        _ = snapshotRenderRevision
+    }
+
+    private func publishSnapshotStateChange(reason _: String) {
+        snapshotRenderRevision += 1
+    }
+
     var snapshot: MobileSnapshot? {
         get {
             snapshotState.snapshot
@@ -129,6 +138,7 @@ final class CompanionAppModel {
             } else {
                 snapshotState.reset()
             }
+            publishSnapshotStateChange(reason: "snapshot-property-set")
         }
     }
 
@@ -138,6 +148,7 @@ final class CompanionAppModel {
         }
         set {
             snapshotState.detailBySessionID = newValue
+            publishSnapshotStateChange(reason: "details-property-set")
         }
     }
 
@@ -151,6 +162,7 @@ final class CompanionAppModel {
         }
         set {
             snapshotState.applyVisibleAssistantSurface(newValue)
+            publishSnapshotStateChange(reason: "assistant-surface-property-set")
         }
     }
 
@@ -284,6 +296,9 @@ final class CompanionAppModel {
     ) {
         if !serverTime.isEmpty {
             realtimeServerTime = serverTime
+            if snapshotState.applyHostSyncTime(serverTime) {
+                publishSnapshotStateChange(reason: "session-mini-liveness")
+            }
         }
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
         realtimeStreamIsLive = isLive
@@ -382,6 +397,7 @@ final class CompanionAppModel {
         }
 
         snapshotState.reset()
+        publishSnapshotStateChange(reason: "snapshot-reset")
     }
 
     func refreshLocalNotificationStatus() async {
@@ -744,6 +760,7 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "siri-open:surface-match sessionID=\(sessionID) surface=\(requestedSurface.rawValue)"
         )
+        publishSnapshotStateChange(reason: "siri-open-surface-match")
         return requestedSurface
     }
 
@@ -838,8 +855,13 @@ final class CompanionAppModel {
     }
 
     private func applySessionDetailLoadOutcome(_ outcome: CompanionSessionDetailLoadOutcome) {
-        if case .failed(let lastError) = outcome {
+        switch outcome {
+        case .loaded:
+            publishSnapshotStateChange(reason: "session-detail-loaded")
+        case .failed(let lastError):
             errorMessage = lastError.localizedDescription
+        case .skipped, .stale:
+            break
         }
     }
 
@@ -866,6 +888,7 @@ final class CompanionAppModel {
             archived: archived
         ) {
             CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "session-archived")
         }
 
         do {
@@ -890,6 +913,7 @@ final class CompanionAppModel {
 
         if let visibleSnapshot = snapshotState.applySessionDeleted(sessionID: sessionID) {
             CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "session-deleted")
         }
 
         do {
@@ -1136,7 +1160,9 @@ final class CompanionAppModel {
             return
         }
 
-        _ = snapshotState.applySessionMuted(sessionID: sessionID)
+        if snapshotState.applySessionMuted(sessionID: sessionID) != nil {
+            publishSnapshotStateChange(reason: "session-muted")
+        }
 
         do {
             try await targetRuntime.muteSession(threadID: sessionID)
@@ -1157,6 +1183,7 @@ final class CompanionAppModel {
             assistantSurface: targetSurface
         ) {
             CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "siri-default-session")
         }
 
         do {
@@ -1204,6 +1231,7 @@ final class CompanionAppModel {
         }
 
         CompanionSnapshotCache.save(visibleSnapshot)
+        publishSnapshotStateChange(reason: "siri-current-session")
         CompanionDiagnostics.record("siri-current:local sessionID=\(sessionID)")
         Task { @MainActor [weak self] in
             do {
@@ -1294,6 +1322,7 @@ final class CompanionAppModel {
 
         if let visibleSnapshot = snapshotState.applyDefaultPrompt(defaultPrompt) {
             CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "default-prompt")
         }
 
         do {
@@ -1310,6 +1339,7 @@ final class CompanionAppModel {
             return
         }
 
+        publishSnapshotStateChange(reason: "assistant-surface-selected")
         CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
         Task { @MainActor [weak self] in
             do {
@@ -1487,6 +1517,7 @@ final class CompanionAppModel {
         promoteCachedSnapshotConnectionIfNeeded(reason: reason)
         lastUpdatedAt = Date()
         spotlightCoordinator.clearForCachedSnapshotIfNeeded()
+        publishSnapshotStateChange(reason: reason)
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1499,6 +1530,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
         spotlightCoordinator.sync(with: snapshotState.allSessions)
+        publishSnapshotStateChange(reason: "snapshot-load")
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
@@ -1534,6 +1566,7 @@ final class CompanionAppModel {
 
     private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
         snapshotState.applyVisibleAssistantSurface(surface)
+        publishSnapshotStateChange(reason: "visible-assistant-surface")
     }
 
     private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) -> CompanionAssistantSurface? {
@@ -1545,6 +1578,7 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "continuation:surface-match sessionID=\(sessionID) surface=\(surface.rawValue)"
         )
+        publishSnapshotStateChange(reason: "continuation-surface-match")
         return surface
     }
 
