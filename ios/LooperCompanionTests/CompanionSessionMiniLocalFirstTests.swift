@@ -281,6 +281,62 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testRoutePreferenceSwitchKeepsLiveSessionTruthUntilCoreReportsReplacement() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 9,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let liveLANRoute = try #require(URL(string: "http://192.168.2.10:8766"))
+        let previousBaseURL = UserDefaults.standard.object(
+            forKey: CompanionConfiguration.apiBaseURLOverrideKey
+        )
+        let previousRoutePreference = UserDefaults.standard.object(
+            forKey: CompanionConfiguration.connectionRoutePreferenceKey
+        )
+        defer {
+            Self.restoreUserDefaultsValue(previousBaseURL, key: CompanionConfiguration.apiBaseURLOverrideKey)
+            Self.restoreUserDefaultsValue(
+                previousRoutePreference,
+                key: CompanionConfiguration.connectionRoutePreferenceKey
+            )
+            model.stopSessionRuntimeSync()
+        }
+
+        CompanionConfiguration.storeBaseURLString(
+            """
+            http://192.168.2.10:8765
+            http://100.95.2.4:8765
+            """
+        )
+        CompanionConfiguration.storeConnectionRoutePreference(.tailscale)
+        model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.activeSessionRouteBaseURL = liveLANRoute
+
+        await model.connectionCoordinatorApplyRoutePreference()
+
+        #expect(model.connectionState == .connected)
+        #expect(model.realtimeStreamIsLive)
+        #expect(model.activeConnectionRouteBaseURL == liveLANRoute)
+        #expect(model.viewState.connectivityStatusLabel == "Connected")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testMalformedMiniCacheFallsBackAndOutboxKeepsOfflinePrompt() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let storeFileURL = try Self.temporaryStoreFileURL()
@@ -602,6 +658,14 @@ struct CompanionSessionMiniLocalFirstTests {
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         try data.write(to: fileURL, options: .atomic)
+    }
+
+    private static func restoreUserDefaultsValue(_ value: Any?, key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     private static func seedMiniCache(

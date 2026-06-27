@@ -439,13 +439,21 @@ final class CompanionAppModel {
         errorMessage = nil
         serverHealth = nil
         reachedBaseURL = nil
-        activeSessionRouteBaseURL = nil
-        realtimeServerTime = nil
-        realtimeLatestSeq = 0
-        realtimeStreamIsLive = false
-        connectionState = .connecting
 
-        await stopSessionRuntimeSyncAndWait()
+        if !realtimeStreamIsLive {
+            activeSessionRouteBaseURL = nil
+            realtimeServerTime = nil
+            realtimeLatestSeq = 0
+            connectionState = .connecting
+        }
+
+        await restartSessionRuntimeSyncPreservingViewState()
+    }
+
+    private func restartSessionRuntimeSyncPreservingViewState() async {
+        if sessionMiniController.isSyncing {
+            await sessionMiniController.stopSyncAndWait()
+        }
         startSessionRuntimeSyncIfNeeded()
     }
 
