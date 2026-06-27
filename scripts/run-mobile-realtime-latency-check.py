@@ -28,9 +28,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 IOS_DIR = ROOT_DIR / "ios"
 PROJECT_PATH = IOS_DIR / "LooperCompanion.xcodeproj"
 PROJECT_SPEC = IOS_DIR / "project.yml"
-LEGACY_REALTIME_CONTROLLER_PATH = (
-    IOS_DIR / "LooperCompanion" / "Services" / "CompanionRealtimeController.swift"
-)
+SESSION_MINI_STORE_PATH = IOS_DIR / "LooperCompanion" / "Services" / "CompanionSessionMiniLocalStore.swift"
 COMPANION_APP_MODEL_PATH = IOS_DIR / "LooperCompanion" / "App" / "CompanionAppModel.swift"
 CARGO_MANIFEST = ROOT_DIR / "crates" / "agent-control-plane" / "Cargo.toml"
 SERVER_BINARY = ROOT_DIR / "crates" / "agent-control-plane" / "target" / "debug" / "looper-server"
@@ -566,38 +564,46 @@ def build_current_red_evidence(
 
 
 def detect_current_snapshot_evidence() -> dict:
-    realtime_path = LEGACY_REALTIME_CONTROLLER_PATH
+    session_mini_store_path = SESSION_MINI_STORE_PATH
     app_model_path = COMPANION_APP_MODEL_PATH
-    realtime_source = realtime_path.read_text(encoding="utf-8") if realtime_path.exists() else ""
+    session_mini_store_source = session_mini_store_path.read_text(encoding="utf-8")
     app_model_source = app_model_path.read_text(encoding="utf-8")
-    schedule_refresh_count = realtime_source.count("scheduleRealtimeRefresh(")
-    delegate_refresh_count = realtime_source.count("refreshRealtimeSnapshotAndLoadedDetails")
-    service_snapshot_count = app_model_source.count("service.loadSnapshot()")
-    positive_counts = [
-        count
-        for count in (schedule_refresh_count, delegate_refresh_count, service_snapshot_count)
-        if count > 0
+    command_reconciliation_tokens = [
+        "applyModeResult",
+        "applyPromptSendResult",
+        "applyNotificationReplyAccepted",
+        "targetRevision",
     ]
-    snapshot_count = min(positive_counts) if positive_counts else 0
+    command_reconciliation_count = sum(
+        app_model_source.count(token) for token in command_reconciliation_tokens
+    )
+    rust_core_command_counts = {
+        "sessionManager.setMode(": session_mini_store_source.count("sessionManager.setMode("),
+        "sessionManager.sendPrompt(": session_mini_store_source.count("sessionManager.sendPrompt("),
+        "sessionManager.submitNotificationReply(": session_mini_store_source.count(
+            "sessionManager.submitNotificationReply("
+        ),
+    }
+    service_snapshot_count = app_model_source.count("service.loadSnapshot()")
+    snapshot_count = command_reconciliation_count
     return {
         "snapshotOnTapCount": snapshot_count,
         "sourceEvidence": [
             {
-                "path": project_relative(realtime_path),
-                "observable": "scheduleRealtimeRefresh(",
-                "count": schedule_refresh_count,
-                "retired": not realtime_path.exists(),
-            },
-            {
-                "path": project_relative(realtime_path),
-                "observable": "refreshRealtimeSnapshotAndLoadedDetails",
-                "count": delegate_refresh_count,
-                "retired": not realtime_path.exists(),
+                "path": project_relative(app_model_path),
+                "observable": "+".join(command_reconciliation_tokens),
+                "count": command_reconciliation_count,
             },
             {
                 "path": project_relative(app_model_path),
                 "observable": "service.loadSnapshot()",
                 "count": service_snapshot_count,
+            },
+            {
+                "path": project_relative(session_mini_store_path),
+                "observable": "Rust-core command manager calls",
+                "count": sum(rust_core_command_counts.values()),
+                "breakdown": rust_core_command_counts,
             },
         ],
     }
