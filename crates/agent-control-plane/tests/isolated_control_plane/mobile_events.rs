@@ -14,6 +14,7 @@ const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
 const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
+const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
 const PROMPT_DELIVERY_WAIT_ATTEMPTS: usize = 200;
 const PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS: u64 = 100;
 
@@ -732,11 +733,15 @@ async fn grpc_session_stream_acks_mode_command_before_state_deltas() {
     })
     .await;
     assert_eq!(delta.entity_id, "thread-main");
-    assert_eq!(state_delta_detail(&delta).as_deref(), Some("command-ack"));
+    assert_eq!(
+        state_delta_control_reason(&delta).as_deref(),
+        Some("projection-missing")
+    );
+    assert_eq!(state_delta_detail(&delta), None);
 }
 
 #[tokio::test]
-async fn grpc_session_stream_replays_state_deltas_after_resume_seq() {
+async fn grpc_session_stream_replays_unprojected_state_as_control_markers() {
     let fixture = IsolatedCodexFixture::new();
     let control_plane = fixture.control_plane();
     let first = control_plane
@@ -767,17 +772,19 @@ async fn grpc_session_stream_replays_state_deltas_after_resume_seq() {
     assert_eq!(replayed_second.seq, second.seq);
     assert_eq!(replayed_second.revision, second.revision);
     assert_eq!(
-        state_delta_payload_delta(&replayed_second).as_deref(),
-        Some("second")
+        state_delta_control_reason(&replayed_second).as_deref(),
+        Some("projection-missing")
     );
+    assert_eq!(state_delta_payload_delta(&replayed_second).as_deref(), None);
 
     let replayed_third = next_session_state_delta(&mut stream, "third replayed state delta").await;
     assert_eq!(replayed_third.seq, third.seq);
     assert_eq!(replayed_third.revision, third.revision);
     assert_eq!(
-        state_delta_payload_delta(&replayed_third).as_deref(),
-        Some("third")
+        state_delta_control_reason(&replayed_third).as_deref(),
+        Some("projection-missing")
     );
+    assert_eq!(state_delta_payload_delta(&replayed_third).as_deref(), None);
 }
 
 #[tokio::test]
@@ -869,6 +876,39 @@ async fn grpc_session_stream_prompt_rejects_without_mode_with_fsm_code() {
     assert_eq!(ack.ack_seq, 0);
     assert_eq!(ack.error_code, "mode_required");
     assert!(ack.reject_reason.contains("current_state=idle"));
+    assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_rejects_oversized_prompt_as_control_frame() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    seed_promptable_session_mini_without_mode(&control_plane, "mini-revision-oversized-prompt");
+    let event_count_before = mobile_state_event_count(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let oversized_prompt = "x".repeat(SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST + 1);
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![send_prompt_session_frame_with_intent(
+            &oversized_prompt,
+            "session-stream-oversized-prompt",
+            "queue",
+        )],
+    )
+    .await;
+
+    let ack = next_session_ack_frame(&mut stream, "oversized prompt rejected ack").await;
+    assert!(!ack.accepted);
+    assert_eq!(ack.client_mutation_id, "session-stream-oversized-prompt");
+    assert_eq!(ack.entity_id, "thread-main");
+    assert_eq!(ack.ack_seq, 0);
+    assert_eq!(ack.error_code, "resource_exhausted");
+    assert!(ack.reject_reason.contains("control-frame cap"));
     assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
 }
 
@@ -1115,6 +1155,12 @@ async fn next_session_mobile_event_matching(
 
 fn state_delta_detail(delta: &agent_control_plane::grpc::proto::StateMiniDelta) -> Option<String> {
     state_delta_payload_string(delta, "detail")
+}
+
+fn state_delta_control_reason(
+    delta: &agent_control_plane::grpc::proto::StateMiniDelta,
+) -> Option<String> {
+    state_delta_payload_string(delta, "reason")
 }
 
 fn state_delta_payload_delta(

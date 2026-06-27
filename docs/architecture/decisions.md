@@ -213,25 +213,49 @@ reconnect + mutation tracking — three reducers, three drift sources. One Rust 
 
 ---
 
-## ADR-005 — Streaming assistant output rides the same pipe
+## ADR-005 — Session stream is control plane; content is data plane
 
-**Decision.** Assistant text streams as `TextChunk` frames on the **same `Session` stream**. No
-second socket.
+**Decision.** The `Session` stream is the hot control plane. It carries only compact frames:
+`CommandAck`, command intent, mode changes, `StateMiniDelta`, `SessionMini`, bounded live
+`TextChunk` hints, `MobileEvent`, and `Heartbeat`. Full transcript/log/output content is not
+state and never rides as one blob on the stream.
+
+**Content data plane.** Full transcript, logs, attachments, and search context stay on the Mac.
+Clients ask for visible slices only:
+
+- latest tail
+- page before/after cursor
+- search result context
+- attachment/blob by id
+
+Transfer content in bounded chunks, not whole files. A content chunk carries `session_id`,
+`revision`, `offset`, `length`, `checksum`, and `next_cursor`. Use chunk sizes in the
+64 KiB–512 KiB range based on content type and network class.
 
 Rules:
 1. **Server fan-out.** The Mac reads agent output **once** and broadcasts to all open streams
    (phone, macOS UI, TUI). No per-client tailing of the same source.
 2. **Append-only, seq-numbered.** Each chunk carries a `seq`. Late join / reconnect →
-   `Resume{after_seq}` replays missed chunks; clients never lose the middle of a message.
+   `Resume{after_seq}` replays missed control frames; content gaps resume from the last verified
+   data-plane cursor.
 3. **Coalesce.** Batch tokens into one frame every **~50–100 ms**. Do not emit a frame per token
    (battery, UI thrash). Humans cannot perceive faster.
 4. **Backpressure honest.** On a slow client, rely on HTTP/2 flow control; collapse to "latest
    state of the message so far" rather than buffering unboundedly on the Mac.
-5. **Text is not state.** `TextChunk` is ephemeral and replay-recoverable; `StateMiniDelta` /
+5. **Hard caps.** Every `Session` frame has a byte cap. If a payload exceeds the cap, the sender
+   rejects it or asks the client to recover through snapshot/data-plane fetch. No truncation can
+   create false state.
+6. **Text is not state.** `TextChunk` is ephemeral and replay-recoverable; `StateMiniDelta` /
    `MobileEvent` are durable and live in the event log. Same pipe, different durability rules.
+7. **Local cache.** iOS/macOS persist fetched content chunks. Detail screens render cached chunks
+   first, then fill gaps. Home/cards render only `SessionMini` and never wait for content.
+8. **Search is indexed separately.** Rust indexes huge sessions server-side. Search returns hit
+   ranges/cursors, not full text. Opening a hit fetches surrounding context through the data plane.
+9. **Recovery snapshot stays small.** Snapshot contains minis, cursors, and revisions. If content is
+   needed, clients resume chunk fetch from the last verified offset.
 
 **Where.** `crates/agent-control-plane/src/grpc/service.rs`, `src/grpc/events.rs`,
-`src/transcript_preview.rs`.
+`src/transcript_preview.rs`, and the future content chunk service.
 
 ---
 

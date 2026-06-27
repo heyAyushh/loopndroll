@@ -56,8 +56,13 @@ const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
 const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+const SESSION_FRAME_PAYLOAD_MAX_BYTES: usize = 512 * 1024;
+const SESSION_COMMAND_TEXT_MAX_BYTES: usize = 64 * 1024;
+const SESSION_CONTROL_TEXT_MAX_CHARS: usize = 512;
 const REJECT_ERROR_CODE_EMPTY_FRAME: &str = "empty_client_frame";
 const REJECT_ERROR_CODE_EMPTY_COMMAND: &str = "empty_command";
+const STATE_DELTA_NO_PROJECTION_REASON: &str = "projection-missing";
+const STATE_DELTA_PROJECTION_READ_FAILED_REASON: &str = "projection-read-failed";
 
 type SessionFrameStream =
     Pin<Box<dyn Stream<Item = Result<proto::ServerFrame, Status>> + Send + 'static>>;
@@ -279,18 +284,14 @@ fn handle_session_command(
             last_seq,
             request.client_mutation_id.clone(),
             request.thread_id.clone(),
-            submit_notification_reply_command(
+            submit_notification_reply_session_command(
                 control_plane,
-                SubmitNotificationReplyInput {
-                    notification_id: &request.notification_id,
-                    thread_id: &request.thread_id,
-                    prompt: &request.prompt,
-                    assistant_surface: Some(&request.assistant_surface),
-                    client_mutation_id: &request.client_mutation_id,
-                },
-            )
-            .map_err(realtime_command_status)
-            .map(notification_reply_ack_from_command),
+                &request.notification_id,
+                &request.thread_id,
+                &request.prompt,
+                Some(&request.assistant_surface),
+                &request.client_mutation_id,
+            ),
         ),
         Some(proto::command::Command::SetAssistantSurface(request)) => session_command_frames(
             control_plane,
@@ -448,7 +449,7 @@ fn replay_state_delta_frames(
     let mut frames = Vec::with_capacity(records.len());
     for record in records {
         *last_seq = (*last_seq).max(record.seq);
-        frames.push(state_delta_frame(control_plane, &record));
+        frames.push(state_delta_frame(control_plane, &record)?);
     }
     *last_seq = (*last_seq).max(after_seq);
     Ok(frames)
@@ -492,15 +493,17 @@ fn rejected_command_ack(
         server_time: mobile_event_now(),
         idempotent_replay: false,
         error_code: error_code.to_owned(),
-        reject_reason: reject_reason.to_owned(),
+        reject_reason: truncate_control_text(reject_reason),
     }
 }
 
 fn state_delta_frame(
     control_plane: &ControlPlane,
     record: &MobileStateEventRecord,
-) -> proto::ServerFrame {
-    proto::ServerFrame {
+) -> Result<proto::ServerFrame, Status> {
+    let payload_json = state_delta_payload_json(control_plane, record);
+    ensure_frame_payload_size("StateMiniDelta", &payload_json)?;
+    Ok(proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::StateDelta(
             proto::StateMiniDelta {
                 seq: record.seq,
@@ -508,10 +511,10 @@ fn state_delta_frame(
                 kind: proto_event_name(record.kind).to_owned(),
                 revision: record.revision.clone(),
                 server_time: record.server_time.clone(),
-                payload_json: state_delta_payload_json(control_plane, record),
+                payload_json,
             },
         )),
-    }
+    })
 }
 
 fn state_delta_payload_json(
@@ -522,16 +525,37 @@ fn state_delta_payload_json(
         .store()
         .mobile_session_minis_at_seq(record.seq)
     else {
-        return record.payload_json.clone();
+        return state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON);
     };
     if minis.is_empty() {
-        return record.payload_json.clone();
+        return state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON);
     }
     let replace = record.entity_id == MOBILE_STATE_ENTITY_ID;
     if !replace && minis.len() == 1 {
         return minis[0].body_json.clone();
     }
     mobile_session_mini_delta(record.seq, &minis, replace).to_string()
+}
+
+fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {
+    serde_json::json!({
+        "controlOnly": true,
+        "reason": reason,
+        "entityId": record.entity_id,
+        "kind": proto_event_name(record.kind),
+        "latestSeq": record.seq,
+    })
+    .to_string()
+}
+
+fn ensure_frame_payload_size(frame_name: &str, payload: &str) -> Result<(), Status> {
+    let byte_count = payload.len();
+    if byte_count > SESSION_FRAME_PAYLOAD_MAX_BYTES {
+        return Err(Status::resource_exhausted(format!(
+            "{frame_name} payload exceeded {SESSION_FRAME_PAYLOAD_MAX_BYTES} byte control-frame cap"
+        )));
+    }
+    Ok(())
 }
 
 fn mobile_event_record_frame(
@@ -543,7 +567,7 @@ fn mobile_event_record_frame(
         event_name: proto_event_name(record.event_type).to_owned(),
         thread_id: record.thread_id.clone().unwrap_or_default(),
         prompt_id: record.prompt_id.clone().unwrap_or_default(),
-        detail: record.detail.clone().unwrap_or_default(),
+        detail: truncate_control_text(&record.detail.clone().unwrap_or_default()),
         server_time: mobile_event_now(),
         revision: control_plane.mobile_snapshot_revision().unwrap_or_default(),
     })
@@ -561,10 +585,34 @@ fn proto_mobile_event_from_event(event: &MobileEvent) -> proto::MobileEvent {
         event_name: proto_event_name(event.event_type).to_owned(),
         thread_id: event.thread_id.clone().unwrap_or_default(),
         prompt_id: event.prompt_id.clone().unwrap_or_default(),
-        detail: event.detail.clone().unwrap_or_default(),
+        detail: truncate_control_text(&event.detail.clone().unwrap_or_default()),
         server_time: event.server_time.clone(),
         revision: event.revision.clone().unwrap_or_default(),
     }
+}
+
+fn truncate_control_text(value: &str) -> String {
+    truncate_chars(value, SESSION_CONTROL_TEXT_MAX_CHARS)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.char_indices();
+    let Some((end, _)) = chars.nth(max_chars) else {
+        return value.to_owned();
+    };
+    let mut truncated = value[..end].to_owned();
+    truncated.push_str("...");
+    truncated
+}
+
+fn ensure_command_text_size(field_name: &str, value: &str) -> Result<(), Status> {
+    let byte_count = value.len();
+    if byte_count > SESSION_COMMAND_TEXT_MAX_BYTES {
+        return Err(Status::resource_exhausted(format!(
+            "{field_name} exceeded {SESSION_COMMAND_TEXT_MAX_BYTES} byte control-frame cap"
+        )));
+    }
+    Ok(())
 }
 
 fn heartbeat_frame(control_plane: &ControlPlane) -> proto::ServerFrame {
@@ -754,6 +802,7 @@ fn send_session_prompt_command(
 ) -> Result<proto::CommandAck, Status> {
     let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
     let assistant_surface = normalized_assistant_surface(&assistant_surface)?;
+    ensure_command_text_size("prompt", &prompt)?;
     let prompt_intent = prompt_intent_from_str(&prompt_intent).map_err(mobile_session_status)?;
     let prompt_intent_value = match prompt_intent {
         PromptIntent::Queue => "queue",
@@ -1415,6 +1464,29 @@ fn notification_reply_ack_from_command(
         error_code: String::new(),
         reject_reason: String::new(),
     }
+}
+
+fn submit_notification_reply_session_command(
+    control_plane: &ControlPlane,
+    notification_id: &str,
+    thread_id: &str,
+    prompt: &str,
+    assistant_surface: Option<&str>,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    ensure_command_text_size("prompt", prompt)?;
+    submit_notification_reply_command(
+        control_plane,
+        SubmitNotificationReplyInput {
+            notification_id,
+            thread_id,
+            prompt,
+            assistant_surface,
+            client_mutation_id,
+        },
+    )
+    .map_err(realtime_command_status)
+    .map(notification_reply_ack_from_command)
 }
 
 fn realtime_command_status(error: RealtimeCommandError) -> Status {
