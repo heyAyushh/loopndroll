@@ -313,6 +313,29 @@ async fn grpc_mobile_events_streams_authenticated_prompt_resumed_event() {
 }
 
 #[tokio::test]
+async fn grpc_session_stream_sends_initial_liveness_frame() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    prime_state_mini_cache(&control_plane);
+    let expected_latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+
+    let (_session_sender, mut event_stream) =
+        open_live_session_stream(&mut client, &authorization, Vec::new()).await;
+
+    let heartbeat = next_session_heartbeat_frame(&mut event_stream, "initial liveness").await;
+    assert_eq!(heartbeat.latest_seq, expected_latest_seq);
+    assert!(!heartbeat.server_time.is_empty());
+}
+
+#[tokio::test]
 async fn grpc_prompt_ack_returns_before_codex_resume_delivery_completes() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -1015,10 +1038,23 @@ async fn next_session_ack_frame(
     stream: &mut tonic::codec::Streaming<ServerFrame>,
     label: &str,
 ) -> agent_control_plane::grpc::proto::CommandAck {
+    for _ in 0..SESSION_FRAME_SCAN_LIMIT {
+        let frame = next_session_frame(stream, label).await;
+        if let Some(server_frame::Frame::Ack(ack)) = frame.frame {
+            return ack;
+        }
+    }
+    panic!("timed out scanning session stream for ACK as {label}");
+}
+
+async fn next_session_heartbeat_frame(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+) -> agent_control_plane::grpc::proto::Heartbeat {
     let frame = next_session_frame(stream, label).await;
     match frame.frame {
-        Some(server_frame::Frame::Ack(ack)) => ack,
-        other => panic!("expected ACK as {label}, got {other:?}"),
+        Some(server_frame::Frame::Heartbeat(heartbeat)) => heartbeat,
+        other => panic!("expected heartbeat as {label}, got {other:?}"),
     }
 }
 
