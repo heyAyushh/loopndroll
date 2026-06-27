@@ -1608,7 +1608,15 @@ final class CompanionAppModel {
                 hasReachedBaseUrl: hasReachedBaseURL
             )
         } catch {
-            fatalError("Connection state projection failed: \(error)")
+            CompanionDiagnostics.record(
+                "connection:snapshot-load-projection-failed error=\(error.localizedDescription)"
+            )
+            return ClientSnapshotLoadFailureProjection(
+                connectionState: mappedErrorState.rawValue,
+                preservedConnectedState: false,
+                shouldClearRouteState: mappedErrorState != .connected,
+                shouldSuppressError: hasUsableSnapshot
+            )
         }
     }
 
@@ -1624,13 +1632,21 @@ final class CompanionAppModel {
                 suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
             )
         } catch {
-            fatalError("Connection failure projection failed: \(error)")
+            CompanionDiagnostics.record(
+                "connection:failure-projection-failed error=\(error.localizedDescription)"
+            )
+            return ClientConnectionFailureProjection(
+                connectionState: mappedErrorState.rawValue,
+                shouldClearRouteState: mappedErrorState != .connected,
+                shouldSuppressError: hasUsableSnapshot && suppressErrorWhenSnapshotUsable
+            )
         }
     }
 
     private func connectionState(rawValue: String) -> ConnectivityState {
         guard let state = ConnectivityState(rawValue: rawValue) else {
-            fatalError("Connection projection returned unknown state: \(rawValue)")
+            CompanionDiagnostics.record("connection:projection-unknown-state state=\(rawValue)")
+            return .offline
         }
         return state
     }
