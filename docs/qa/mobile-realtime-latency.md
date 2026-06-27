@@ -49,6 +49,39 @@ Command:
 PATH=/opt/homebrew/Cellar/xcodegen/2.44.1/bin:$PATH LOOPER_IOS_DEVICE_ID=D7749DEB-F9A8-5FD6-B33B-BF715B8B2F7C /Users/ay/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/run-mobile-realtime-latency-check.py --samples 20 --strict-local-first-targets --assert-budget-contract --app-selftest --physical-device
 ```
 
+## Installed App Route-Filtered Proof
+
+- Observed at: 2026-06-27 02:34:37Z
+- Commit: `abf07cd2`
+- Measurement layer: DEBUG app-internal selftest from installed physical iPhone app.
+- Device platform: `physical-ios`
+- Classification: `strict-pass`
+- Sample count: 20
+- Percentile: p95
+- UI mode p95: 5 ms (target 30 ms)
+- UI prompt p95: 2 ms (target 30 ms)
+- Mode ACK p95: 5 ms (target 30 ms)
+- Prompt ACK p95: 2 ms (target 30 ms)
+- Notification persistence p95: 1 ms (target 30 ms)
+- Stream apply p95: 1 ms (target 30 ms)
+- Stream resume p95: 1 ms (target 30 ms)
+- Snapshot-on-tap count: 0
+- Full snapshot calls on action path: 0
+- Route proof: final installed-app diagnostic window after `2026-06-27T02:32:18Z` has no `baseURL=http://127.0.0.1` attempts; HTTP attempts use `http://192.168.1.33:8765`.
+
+Command:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun devicectl device process launch --device D7749DEB-F9A8-5FD6-B33B-BF715B8B2F7C --console --terminate-existing --timeout 90 dev.looper.app.ios --g006-local-first-selftest c007 --g006-local-first-selftest-samples 20
+```
+
+Relevant physical-device output:
+
+```text
+G006_SELFTEST_PASS c007 {"classification":"strict-pass","platform":"physical-ios","sampleCount":20,"promptAckMs":2,"modeAckMs":5,"snapshotOnTapCount":0,"fullSnapshotCallsOnTap":0}
+The app terminated with the exit code 0.
+```
+
 ## Step 1 ACK-first server proof
 
 Server/control-plane verification commands:
