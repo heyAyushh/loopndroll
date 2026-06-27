@@ -6,6 +6,10 @@ final class CompanionSessionMiniController {
         CompanionSessionMiniSyncUpdate,
         Int
     ) -> Void
+    typealias LivenessUpdateHandler = @MainActor @Sendable (
+        CompanionSessionMiniLivenessUpdate,
+        Int
+    ) -> Void
     typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
     typealias NotificationReplySubmitter = @MainActor @Sendable () async -> Bool
 
@@ -24,7 +28,8 @@ final class CompanionSessionMiniController {
 
     func startSyncIfNeeded(
         connectionRevision: Int,
-        onUpdate: @escaping SyncUpdateHandler
+        onUpdate: @escaping SyncUpdateHandler,
+        onLiveness: @escaping LivenessUpdateHandler
     ) {
         guard syncTask == nil, let sessionRuntime else {
             return
@@ -38,6 +43,9 @@ final class CompanionSessionMiniController {
             await sessionRuntime.runStateMiniSync(
                 onUpdate: { update in
                     onUpdate(update, connectionRevision)
+                },
+                onLiveness: { liveness in
+                    onLiveness(liveness, connectionRevision)
                 },
                 onDebugMessage: { message in
                     CompanionDiagnostics.record(message)

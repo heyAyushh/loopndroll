@@ -33,6 +33,8 @@ final class CompanionAppModel {
     var errorMessage: String?
     var isLoading = false
     var lastUpdatedAt: Date?
+    var realtimeServerTime: String?
+    var realtimeLatestSeq: Int64 = 0
     var localNotificationStatus: UNAuthorizationStatus = .notDetermined
     var remotePushRegistration: RemotePushRegistrationResponse?
     var remotePushFailureMessage: String?
@@ -222,6 +224,11 @@ final class CompanionAppModel {
                 update,
                 connectionRevision: connectionRevision
             )
+        } onLiveness: { [weak self] liveness, connectionRevision in
+            self?.applySessionMiniLivenessUpdate(
+                liveness,
+                connectionRevision: connectionRevision
+            )
         }
     }
 
@@ -235,11 +242,45 @@ final class CompanionAppModel {
         }
 
         applyCachedSnapshot(update.snapshot, reason: "session-mini-sync-\(update.reason)")
+        applyRealtimeStreamLiveness(
+            serverTime: update.snapshot.host.lastSyncedAt,
+            latestSeq: update.latestSeq
+        )
         connectionState = .connected
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
             "session-mini:sync-applied reason=\(update.reason) seq=\(update.latestSeq)"
         )
+    }
+
+    private func applySessionMiniLivenessUpdate(
+        _ update: CompanionSessionMiniLivenessUpdate,
+        connectionRevision: Int
+    ) {
+        guard connectionRevision == self.connectionRevision else {
+            CompanionDiagnostics.record("session-mini:liveness-stale-skip")
+            return
+        }
+
+        applyRealtimeStreamLiveness(
+            serverTime: update.serverTime,
+            latestSeq: update.latestSeq
+        )
+        connectionState = .connected
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "session-mini:liveness-applied reason=\(update.reason) seq=\(update.latestSeq)"
+        )
+    }
+
+    private func applyRealtimeStreamLiveness(
+        serverTime: String,
+        latestSeq: Int64
+    ) {
+        if !serverTime.isEmpty {
+            realtimeServerTime = serverTime
+        }
+        realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
     }
 
     private func prepareSessionRuntimeInBackground() {

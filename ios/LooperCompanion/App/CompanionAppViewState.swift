@@ -96,7 +96,10 @@ struct CompanionAppViewState {
     }
 
     var lastSyncedAt: String? {
-        model.snapshotState.snapshot?.host.lastSyncedAt
+        if let realtimeServerTime = model.realtimeServerTime, !realtimeServerTime.isEmpty {
+            return realtimeServerTime
+        }
+        return model.snapshotState.snapshot?.host.lastSyncedAt
     }
 
     var hostName: String? {
@@ -332,7 +335,9 @@ struct CompanionAppViewState {
             parts.append(coverageSummary)
         }
 
-        if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
+        if let realtimeServerTime = model.realtimeServerTime, !realtimeServerTime.isEmpty {
+            parts.append("stream live")
+        } else if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
             parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
         }
 

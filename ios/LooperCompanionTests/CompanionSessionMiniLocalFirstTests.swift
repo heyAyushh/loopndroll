@@ -9,6 +9,7 @@ struct CompanionSessionMiniLocalFirstTests {
         static let cachedThreadID = "cached-thread"
         static let fallbackThreadID = "fallback-thread"
         static let timestamp = "2026-06-24T00:00:00Z"
+        static let heartbeatTimestamp = "2026-06-24T00:00:15Z"
         static let preAckLocalPaintProbeNanoseconds: UInt64 = 20_000_000
         static let delayedModeDrainProbeNanoseconds: UInt64 = 300_000_000
         static let slowQuickActionHandlerNanoseconds: UInt64 = 250_000_000
@@ -78,6 +79,37 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.connectivitySummary == "Showing local sessions; commands will retry when the stream returns.")
         #expect(model.viewState.deviceHubAccessStatusLabel == "Local")
         #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testConnectedCardShowsStreamLivenessInsteadOfSnapshotAge() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 9,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 9, revision: "mini-revision-9"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        model.realtimeServerTime = Constants.heartbeatTimestamp
+        model.realtimeLatestSeq = 10
+        model.connectionState = .connected
+
+        #expect(model.viewState.lastSyncedAt == Constants.heartbeatTimestamp)
+        #expect(model.viewState.connectivitySummary.contains("stream live"))
+        #expect(!model.viewState.connectivitySummary.contains("synced "))
         #expect(service.loadSnapshotCallCount == 0)
     }
 

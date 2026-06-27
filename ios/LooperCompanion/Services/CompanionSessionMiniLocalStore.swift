@@ -12,6 +12,7 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
 
 struct CompanionClientCoreMobileSnapshotStreamResult: Sendable {
     let update: CompanionSessionMiniSyncUpdate?
+    let liveness: CompanionSessionMiniLivenessUpdate?
     let shouldStop: Bool
     let debugMessage: String
 }
@@ -22,8 +23,18 @@ struct CompanionSessionMiniSyncUpdate: Sendable {
     let snapshot: MobileSnapshot
 }
 
+struct CompanionSessionMiniLivenessUpdate: Sendable {
+    let reason: String
+    let latestSeq: Int64
+    let serverTime: String
+}
+
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
     CompanionSessionMiniSyncUpdate
+) -> Void
+
+typealias CompanionSessionMiniLivenessUpdateHandler = @MainActor @Sendable (
+    CompanionSessionMiniLivenessUpdate
 ) -> Void
 
 typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -> Void
@@ -218,9 +229,11 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         async throws -> CompanionClientCoreMobileSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMobileSnapshotChange()
+        let livenessUpdate = Self.livenessUpdate(from: streamUpdate)
         guard streamUpdate.hasSnapshot else {
             return CompanionClientCoreMobileSnapshotStreamResult(
                 update: nil,
+                liveness: livenessUpdate,
                 shouldStop: streamUpdate.shouldStop,
                 debugMessage: streamUpdate.debugMessage
             )
@@ -236,6 +249,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
                 latestSeq: streamUpdate.latestSeq,
                 snapshot: snapshot
             ),
+            liveness: livenessUpdate,
             shouldStop: streamUpdate.shouldStop,
             debugMessage: streamUpdate.debugMessage
         )
@@ -243,6 +257,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     func runStateMiniSync(
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
+        onLiveness: @escaping CompanionSessionMiniLivenessUpdateHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async {
         defer {
@@ -252,6 +267,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         do {
             try await drainStateMiniSync(
                 onUpdate: onUpdate,
+                onLiveness: onLiveness,
                 onDebugMessage: onDebugMessage
             )
         } catch {
@@ -387,10 +403,14 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     private func drainStateMiniSync(
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
+        onLiveness: @escaping CompanionSessionMiniLivenessUpdateHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async throws {
         while !Task.isCancelled {
             let result = try await nextMobileSnapshotStreamResult()
+            if let liveness = result.liveness {
+                await onLiveness(liveness)
+            }
             if let update = result.update {
                 await onUpdate(update)
             }
@@ -445,6 +465,20 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     private static func nonEmpty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func livenessUpdate(
+        from streamUpdate: ClientMobileSnapshotStreamUpdate
+    ) -> CompanionSessionMiniLivenessUpdate? {
+        guard let serverTime = nonEmpty(streamUpdate.serverTime) else {
+            return nil
+        }
+
+        return CompanionSessionMiniLivenessUpdate(
+            reason: streamUpdate.syncReason,
+            latestSeq: streamUpdate.latestSeq,
+            serverTime: serverTime
+        )
     }
 }
 

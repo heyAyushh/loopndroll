@@ -19,6 +19,7 @@ use crate::{
 };
 
 const MOBILE_SYNC_REASON_DELTA: &str = "delta";
+const MOBILE_SYNC_REASON_HEARTBEAT: &str = "heartbeat";
 const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
@@ -60,7 +61,7 @@ impl LooperClientCoreSessionRuntime {
 
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let update = self.client_core.observe().await?;
-        if update.did_change {
+        if update.did_change || update.reason == ClientStateMiniStreamUpdateReason::Heartbeat {
             self.persist_core_snapshot(&update.snapshot)?;
         }
         Ok(update)
@@ -85,12 +86,17 @@ impl LooperClientCoreSessionRuntime {
                 {
                     return self.local_state_stream_update(update);
                 }
+                ClientStateMiniStreamUpdateReason::Heartbeat
+                    if !update.snapshot.server_time.is_empty() =>
+                {
+                    return self.local_state_stream_update(update);
+                }
                 ClientStateMiniStreamUpdateReason::Stopped => {
                     return self.local_state_stream_update(update);
                 }
                 ClientStateMiniStreamUpdateReason::Delta
-                | ClientStateMiniStreamUpdateReason::Heartbeat
                 | ClientStateMiniStreamUpdateReason::Reconnecting
+                | ClientStateMiniStreamUpdateReason::Heartbeat
                 | ClientStateMiniStreamUpdateReason::RecoveryRequired => {}
             }
         }
@@ -380,8 +386,8 @@ fn notification_reply_client_mutation_id(notification_id: &str) -> String {
 fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
     match reason {
         ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
+        ClientStateMiniStreamUpdateReason::Heartbeat => MOBILE_SYNC_REASON_HEARTBEAT,
         ClientStateMiniStreamUpdateReason::Delta
-        | ClientStateMiniStreamUpdateReason::Heartbeat
         | ClientStateMiniStreamUpdateReason::Reconnecting
         | ClientStateMiniStreamUpdateReason::Stopped => MOBILE_SYNC_REASON_DELTA,
     }
@@ -733,6 +739,31 @@ mod tests {
             update.debug_message,
             "session-mini:client-core-stream-reconnecting error=transport unavailable"
         );
+    }
+
+    #[test]
+    fn runtime_reports_heartbeat_liveness_without_projecting_snapshot() {
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("mobile-heartbeat"))
+            .expect("runtime");
+        let update = runtime
+            .mobile_snapshot_stream_update(ClientLocalStateStreamUpdate {
+                reason: ClientStateMiniStreamUpdateReason::Heartbeat,
+                snapshot: ClientLocalStateSnapshot {
+                    latest_seq: 11,
+                    sessions: Vec::new(),
+                    pending_commands: Vec::new(),
+                    server_time: "2026-06-26T00:00:11Z".to_owned(),
+                },
+                did_change: false,
+                error_description: String::new(),
+            })
+            .expect("mobile heartbeat update");
+
+        assert!(!update.has_snapshot);
+        assert_eq!(update.sync_reason, "heartbeat");
+        assert_eq!(update.latest_seq, 11);
+        assert_eq!(update.server_time, "2026-06-26T00:00:11Z");
+        assert!(update.debug_message.is_empty());
     }
 
     #[test]
