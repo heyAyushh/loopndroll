@@ -65,7 +65,7 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func cachedSnapshot() throws -> MobileSnapshot? {
-        let localSnapshot = currentStateMiniSnapshot()
+        let localSnapshot = try currentStateMiniSnapshot()
         return try mobileSnapshot(
             latestSeq: localSnapshot.latestSeq,
             sessions: localSnapshot.sessions,
@@ -194,8 +194,8 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         try localStore.cachedSnapshot()
     }
 
-    func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
-        localStore.currentStateMiniSnapshot()
+    func currentStateMiniSnapshot() throws -> ClientLocalStateSnapshot {
+        try localStore.currentStateMiniSnapshot()
     }
 
     func recoverStateMiniSnapshot() async throws -> MobileSnapshot? {
@@ -656,20 +656,8 @@ private extension CompanionSessionMiniPendingCommand {
 }
 
 extension CompanionSessionMiniLocalStore {
-    func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
-        do {
-            return try sessionManager.localSnapshot()
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:client-core-snapshot-failed error=\(error.localizedDescription)"
-            )
-            return ClientLocalStateSnapshot(
-                latestSeq: 0,
-                sessions: [],
-                pendingCommands: [],
-                serverTime: ""
-            )
-        }
+    func currentStateMiniSnapshot() throws -> ClientLocalStateSnapshot {
+        try sessionManager.localSnapshot()
     }
 }
 

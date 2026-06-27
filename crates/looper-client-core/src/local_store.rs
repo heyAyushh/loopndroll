@@ -960,9 +960,13 @@ mod tests {
     }
 
     fn temp_store_path(name: &str) -> PathBuf {
-        std::env::temp_dir()
+        let path = std::env::temp_dir()
             .join("looper-client-core-local-store-tests")
             .join(format!("{name}-{}", std::process::id()))
-            .join(DEFAULT_LOCAL_STORE_FILE_NAME)
+            .join(DEFAULT_LOCAL_STORE_FILE_NAME);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+        path
     }
 }

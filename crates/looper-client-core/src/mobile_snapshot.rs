@@ -8,6 +8,7 @@ use crate::model::ClientStateMini;
 
 const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 const DEFAULT_PROMPT: &str = "Continue";
+const DEFAULT_SESSION_STATUS: &str = "stopped";
 const GLOBAL_SCOPE: &str = "global";
 const HOST_ID: &str = "local-session-mini-cache";
 const HOST_NAME: &str = "Looper";
@@ -120,17 +121,75 @@ fn global_settings(settings: Option<Value>, selected_surface: &str) -> Value {
 }
 
 fn decode_session_payload(mini: &ClientStateMini) -> Result<Value, ClientCoreError> {
-    let session: Value = serde_json::from_str(&mini.payload_json)
+    let mut session: Value = serde_json::from_str(&mini.payload_json)
         .map_err(|_| ClientCoreError::InvalidStateMiniPayloadJson)?;
-    let session_id = session
-        .get("id")
-        .and_then(Value::as_str)
+    let session = session
+        .as_object_mut()
         .ok_or(ClientCoreError::InvalidStateMiniPayloadJson)?;
-    if session_id != mini.session_id {
-        return Err(ClientCoreError::StateMiniSessionIdMismatch);
-    }
 
-    Ok(session)
+    reject_mismatched_session_id(session.get("id"), &mini.session_id)?;
+    reject_mismatched_session_id(session.get("sessionId"), &mini.session_id)?;
+    session.insert("id".to_owned(), Value::String(mini.session_id.clone()));
+    session.insert(
+        "sessionId".to_owned(),
+        Value::String(mini.session_id.clone()),
+    );
+    insert_string_default(
+        session,
+        "assistantSurface",
+        fallback_assistant_surface(&mini.assistant_surface),
+    );
+    insert_string_default(session, "ref", &mini.session_id);
+    insert_string_default(session, "title", &mini.session_id);
+    insert_string_default(session, "status", DEFAULT_SESSION_STATUS);
+    insert_string_default(session, "lastUpdatedAt", "");
+    insert_string_default(session, "lastActivityAt", "");
+    insert_bool_default(session, "isArchived", false);
+    insert_bool_default(session, "canSendPrompt", true);
+    session
+        .entry("metadata".to_owned())
+        .or_insert_with(|| json!({}));
+
+    Ok(Value::Object(session.clone()))
+}
+
+fn reject_mismatched_session_id(
+    value: Option<&Value>,
+    session_id: &str,
+) -> Result<(), ClientCoreError> {
+    let Some(value) = value.and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if value == session_id {
+        Ok(())
+    } else {
+        Err(ClientCoreError::StateMiniSessionIdMismatch)
+    }
+}
+
+fn insert_string_default(session: &mut serde_json::Map<String, Value>, key: &str, fallback: &str) {
+    let needs_default = session
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true);
+    if needs_default {
+        session.insert(key.to_owned(), Value::String(fallback.to_owned()));
+    }
+}
+
+fn insert_bool_default(session: &mut serde_json::Map<String, Value>, key: &str, fallback: bool) {
+    if !session.get(key).is_some_and(Value::is_boolean) {
+        session.insert(key.to_owned(), Value::Bool(fallback));
+    }
+}
+
+fn fallback_assistant_surface(surface: &str) -> &str {
+    if surface.trim().is_empty() {
+        DEFAULT_ASSISTANT_SURFACE
+    } else {
+        surface
+    }
 }
 
 fn selected_surface(sessions: &[ClientStateMini]) -> String {
@@ -297,6 +356,41 @@ mod tests {
         .expect_err("mismatch");
 
         assert_eq!(err, ClientCoreError::StateMiniSessionIdMismatch);
+    }
+
+    #[test]
+    fn mobile_snapshot_accepts_compact_minis_with_model_defaults() {
+        let projection = reduce_state_minis_mobile_snapshot(
+            21,
+            vec![ClientStateMini {
+                session_id: "thread-compact".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                seq: 21,
+                revision: "rev-21".to_owned(),
+                payload_json: json!({
+                    "sessionId": "thread-compact",
+                    "assistantSurface": "codex",
+                    "effectiveMode": "await-reply",
+                })
+                .to_string(),
+            }],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("compact projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let session = &snapshot["sessions"][0];
+
+        assert!(projection.has_snapshot);
+        assert_eq!(session["id"], "thread-compact");
+        assert_eq!(session["sessionId"], "thread-compact");
+        assert_eq!(session["assistantSurface"], "codex");
+        assert_eq!(session["ref"], "thread-compact");
+        assert_eq!(session["title"], "thread-compact");
+        assert_eq!(session["status"], DEFAULT_SESSION_STATUS);
+        assert_eq!(session["lastUpdatedAt"], "");
+        assert_eq!(session["lastActivityAt"], "");
+        assert_eq!(session["isArchived"], false);
+        assert_eq!(session["canSendPrompt"], true);
     }
 
     fn mini(

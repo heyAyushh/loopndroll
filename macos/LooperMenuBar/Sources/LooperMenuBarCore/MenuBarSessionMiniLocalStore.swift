@@ -122,7 +122,7 @@ private final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
-        let snapshot = currentStateMiniSnapshot()
+        let snapshot = try currentStateMiniSnapshot()
         guard !snapshot.sessions.isEmpty else {
             return nil
         }
@@ -183,16 +183,12 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         try localStore.cachedSnapshot()
     }
 
-    public func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
-        localStore.currentStateMiniSnapshot()
+    public func currentStateMiniSnapshot() throws -> ClientLocalStateSnapshot {
+        try localStore.currentStateMiniSnapshot()
     }
 
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
         localStore.pendingCommands()
-    }
-
-    private func isConfigured() -> Bool {
-        (try? sessionManager.isRuntimeConfigured()) == true
     }
 
     @discardableResult
@@ -201,9 +197,6 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         mobileSessionHeader: String = "",
         preferredRealtimeEndpointURLs: @MainActor () async throws -> [URL]
     ) async throws -> ClientStateSnapshot? {
-        if isConfigured() {
-            return nil
-        }
         let endpoints = try await preferredRealtimeEndpointURLs().map {
             ClientEndpoint(url: $0.absoluteString, lastGood: false)
         }
@@ -387,17 +380,8 @@ private extension MenuBarSessionMiniPendingCommand {
 }
 
 private extension MenuBarSessionMiniLocalStore {
-    func currentStateMiniSnapshot() -> ClientLocalStateSnapshot {
-        do {
-            return try sessionManager.localSnapshot()
-        } catch {
-            return ClientLocalStateSnapshot(
-                latestSeq: 0,
-                sessions: [],
-                pendingCommands: [],
-                serverTime: ""
-            )
-        }
+    func currentStateMiniSnapshot() throws -> ClientLocalStateSnapshot {
+        try sessionManager.localSnapshot()
     }
 
 }

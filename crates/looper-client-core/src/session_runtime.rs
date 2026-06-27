@@ -59,9 +59,15 @@ impl LooperClientCoreSessionRuntime {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        self.seed_core_from_local_store()?;
-        self.client_core
-            .start(endpoints, bearer_token, mobile_session_header)
+        let restored_client_mutation_ids = self.seed_core_from_local_store()?;
+        let snapshot = self
+            .client_core
+            .start(endpoints, bearer_token, mobile_session_header)?;
+        self.client_core.spawn_restored_command_ack_flush(
+            self.local_store.clone(),
+            restored_client_mutation_ids,
+        );
+        Ok(snapshot)
     }
 
     pub fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
@@ -423,11 +429,12 @@ impl LooperClientCoreSessionRuntime {
             .await
     }
 
-    fn seed_core_from_local_store(&self) -> Result<(), ClientCoreError> {
+    fn seed_core_from_local_store(&self) -> Result<Vec<String>, ClientCoreError> {
         let snapshot = self.local_store.snapshot()?;
         self.client_core
-            .replace_state_minis(ClientStateMiniSnapshot::from(snapshot))?;
-        Ok(())
+            .replace_state_minis(ClientStateMiniSnapshot::from(snapshot.clone()))?;
+        self.client_core
+            .restore_pending_commands(snapshot.pending_commands)
     }
 
     fn persist_core_snapshot(
@@ -654,6 +661,34 @@ mod tests {
         assert_eq!(runtime.outbox_depth().expect("outbox depth"), 1);
         drop(runtime);
         drop(test_runtime);
+    }
+
+    #[test]
+    fn runtime_restores_durable_pending_commands_into_core_outbox() {
+        let path = temp_store_path("restore-pending-outbox");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+        runtime
+            .local_store
+            .enqueue_set_assistant_surface_command(
+                "devin".to_owned(),
+                "assistant-surface-restore".to_owned(),
+            )
+            .expect("enqueue assistant surface command");
+        runtime
+            .local_store
+            .mark_attempted("assistant-surface-restore".to_owned())
+            .expect("mark attempted");
+        drop(runtime);
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let snapshot = reopened.local_snapshot().expect("local snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetAssistantSurface
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
+        assert_eq!(reopened.outbox_depth().expect("outbox depth"), 1);
     }
 
     #[test]

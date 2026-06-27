@@ -16,10 +16,10 @@ use crate::model::ClientStateDelta;
 use crate::model::ClientStateMiniDeltaApplyResult;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientLocalStateSnapshot, ClientPendingMutation, ClientStateMini,
-    ClientStateMiniDelta, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
-    ClientStateMiniStreamUpdateReason, ClientStateSnapshot, ConnectionPhase, OutboundSessionFrame,
-    OutboundSessionFrameKind,
+    ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
+    ClientPendingMutation, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
+    ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
 };
 use crate::session_transport::fetch_state_mini_snapshot;
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
@@ -492,6 +492,20 @@ impl LooperClientCore {
     fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
         let state = self.lock_state()?;
         Ok(state.pending_outbox_client_mutation_ids())
+    }
+
+    pub(crate) fn restore_pending_commands(
+        &self,
+        pending_commands: Vec<ClientPendingCommand>,
+    ) -> Result<Vec<String>, ClientCoreError> {
+        let mut restored_client_mutation_ids = Vec::new();
+        let mut state = self.lock_state()?;
+        for command in pending_commands {
+            let frame = restored_outbound_frame(command)?;
+            restored_client_mutation_ids.push(frame.client_mutation_id.clone());
+            state.queue_command(frame);
+        }
+        Ok(restored_client_mutation_ids)
     }
 
     #[cfg(test)]
@@ -1156,6 +1170,66 @@ impl LooperClientCore {
         });
     }
 
+    pub(crate) fn spawn_restored_command_ack_flush(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        restored_client_mutation_ids: Vec<String>,
+    ) {
+        let restored_client_mutation_ids = non_empty_unique(restored_client_mutation_ids);
+        if restored_client_mutation_ids.is_empty() {
+            return;
+        }
+
+        let client_core = self.clone();
+        let handle = self.runtime.handle().clone();
+        self.runtime.spawn_blocking(move || {
+            let flush_result = handle.block_on(async {
+                let _flush = client_core.command_flush.lock().await;
+                let expected_client_mutation_ids =
+                    client_core.pending_outbox_client_mutation_ids()?;
+                let restored_ids_still_pending = restored_client_mutation_ids
+                    .iter()
+                    .filter(|id| expected_client_mutation_ids.contains(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if restored_ids_still_pending.is_empty() {
+                    return Ok(());
+                }
+
+                for client_mutation_id in &restored_ids_still_pending {
+                    local_store.mark_attempted(client_mutation_id.clone())?;
+                }
+
+                let response = client_core
+                    .submit_pending_outbox(expected_client_mutation_ids)
+                    .await?;
+                for envelope in &response.command_acks {
+                    client_core.mark_durable_command_final(&local_store, envelope)?;
+                }
+
+                let acknowledged_ids = response
+                    .command_acks
+                    .iter()
+                    .map(|envelope| envelope.ack.client_mutation_id.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                if restored_ids_still_pending
+                    .iter()
+                    .any(|id| !acknowledged_ids.contains(id.as_str()))
+                {
+                    return Err(ClientCoreError::MissingCommandAcknowledgement);
+                }
+
+                let snapshot = client_core.snapshot()?;
+                persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+                client_core.emit_local_state_update(snapshot);
+                Ok::<(), ClientCoreError>(())
+            });
+            if let Err(error) = flush_result {
+                let _ = client_core.emit_command_flush_error(error);
+            }
+        });
+    }
+
     fn emit_command_flush_error(&self, error: ClientCoreError) -> Result<(), ClientCoreError> {
         let snapshot = {
             let mut state = self.lock_state()?;
@@ -1415,7 +1489,7 @@ impl ClientCoreState {
             .iter()
             .position(|current| same_state_mini_key(current, &session))
         {
-            self.state_minis[index] = session;
+            self.state_minis[index] = merged_state_mini(&self.state_minis[index], session);
         } else {
             self.state_minis.push(session);
         }
@@ -1532,6 +1606,148 @@ fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn restored_outbound_frame(
+    command: ClientPendingCommand,
+) -> Result<OutboundSessionFrame, ClientCoreError> {
+    require_present(
+        &command.client_mutation_id,
+        ClientCoreError::EmptyMutationId,
+    )?;
+    validate_restored_command(&command)?;
+    let command_kind = restored_command_kind(command.kind);
+    let thread_id = restored_thread_id(&command)?;
+    let prompt_intent = if command.kind == ClientPendingCommandKind::SendSessionPrompt {
+        normalized_prompt_intent(command.prompt_intent)?
+    } else {
+        String::new()
+    };
+
+    Ok(OutboundSessionFrame {
+        frame_kind: OutboundSessionFrameKind::Command,
+        command_kind,
+        thread_id,
+        preset: command.preset,
+        prompt: command.prompt,
+        prompt_intent,
+        assistant_surface: command.assistant_surface,
+        notification_id: command.notification_id,
+        archived: command.archived,
+        client_mutation_id: command.client_mutation_id,
+        after_seq: EMPTY_SEQUENCE,
+    })
+}
+
+fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), ClientCoreError> {
+    match command.kind {
+        ClientPendingCommandKind::SendSessionPrompt => {
+            require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
+        }
+        ClientPendingCommandKind::SubmitNotificationReply => {
+            require_present(
+                &command.notification_id,
+                ClientCoreError::EmptyNotificationId,
+            )?;
+            require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
+        }
+        ClientPendingCommandKind::SetAssistantSurface => {
+            require_present(&command.assistant_surface, ClientCoreError::EmptySessionId)?;
+        }
+        ClientPendingCommandKind::SaveDefaultPrompt => {
+            require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
+        }
+        ClientPendingCommandKind::SetSessionMode
+        | ClientPendingCommandKind::SetSiriCurrentSession
+        | ClientPendingCommandKind::SetSiriDefaultSession
+        | ClientPendingCommandKind::SetSessionArchived
+        | ClientPendingCommandKind::DeleteSession
+        | ClientPendingCommandKind::MuteSession => {}
+    }
+    Ok(())
+}
+
+fn restored_command_kind(kind: ClientPendingCommandKind) -> ClientCommandKind {
+    match kind {
+        ClientPendingCommandKind::SetSessionMode => ClientCommandKind::SetSessionMode,
+        ClientPendingCommandKind::SendSessionPrompt => ClientCommandKind::SendSessionPrompt,
+        ClientPendingCommandKind::SubmitNotificationReply => {
+            ClientCommandKind::SubmitNotificationReply
+        }
+        ClientPendingCommandKind::SetAssistantSurface => ClientCommandKind::SetAssistantSurface,
+        ClientPendingCommandKind::SetSiriCurrentSession => ClientCommandKind::SetSiriCurrentSession,
+        ClientPendingCommandKind::SetSiriDefaultSession => ClientCommandKind::SetSiriDefaultSession,
+        ClientPendingCommandKind::SaveDefaultPrompt => ClientCommandKind::SaveDefaultPrompt,
+        ClientPendingCommandKind::SetSessionArchived => ClientCommandKind::SetSessionArchived,
+        ClientPendingCommandKind::DeleteSession => ClientCommandKind::DeleteSession,
+        ClientPendingCommandKind::MuteSession => ClientCommandKind::MuteSession,
+    }
+}
+
+fn restored_thread_id(command: &ClientPendingCommand) -> Result<String, ClientCoreError> {
+    match command.kind {
+        ClientPendingCommandKind::SetAssistantSurface
+        | ClientPendingCommandKind::SaveDefaultPrompt => Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned()),
+        ClientPendingCommandKind::SetSiriCurrentSession
+        | ClientPendingCommandKind::SetSiriDefaultSession => Ok(command.thread_id.clone()),
+        ClientPendingCommandKind::SetSessionMode
+        | ClientPendingCommandKind::SendSessionPrompt
+        | ClientPendingCommandKind::SubmitNotificationReply
+        | ClientPendingCommandKind::SetSessionArchived
+        | ClientPendingCommandKind::DeleteSession
+        | ClientPendingCommandKind::MuteSession => {
+            require_present(&command.thread_id, ClientCoreError::EmptyThreadId)?;
+            Ok(command.thread_id.clone())
+        }
+    }
+}
+
+fn non_empty_unique(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn merged_state_mini(current: &ClientStateMini, incoming: ClientStateMini) -> ClientStateMini {
+    ClientStateMini {
+        session_id: incoming.session_id,
+        assistant_surface: non_empty_or_current(
+            incoming.assistant_surface,
+            &current.assistant_surface,
+        ),
+        seq: incoming.seq.max(current.seq),
+        revision: non_empty_or_current(incoming.revision, &current.revision),
+        payload_json: merged_payload_json(&current.payload_json, &incoming.payload_json),
+    }
+}
+
+fn non_empty_or_current(incoming: String, current: &str) -> String {
+    if incoming.trim().is_empty() {
+        current.to_owned()
+    } else {
+        incoming
+    }
+}
+
+fn merged_payload_json(current: &str, incoming: &str) -> String {
+    let Ok(mut current_value) = serde_json::from_str::<Value>(current) else {
+        return incoming.to_owned();
+    };
+    let Ok(incoming_value) = serde_json::from_str::<Value>(incoming) else {
+        return incoming.to_owned();
+    };
+    let (Some(current_object), Some(incoming_object)) =
+        (current_value.as_object_mut(), incoming_value.as_object())
+    else {
+        return incoming.to_owned();
+    };
+    for (key, value) in incoming_object {
+        current_object.insert(key.clone(), value.clone());
+    }
+    serde_json::to_string(&current_value).unwrap_or_else(|_| incoming.to_owned())
 }
 
 fn update_server_time_if_newer(current: &mut String, candidate: String) {
@@ -2369,6 +2585,51 @@ mod tests {
     }
 
     #[test]
+    fn state_mini_stream_merges_compact_delta_into_cached_mini() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 5,
+            sessions: vec![ClientStateMini {
+                session_id: "thread-1".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                seq: 5,
+                revision: "rev-5".to_owned(),
+                payload_json: r#"{"id":"thread-1","sessionId":"thread-1","assistantSurface":"codex","ref":"T1","title":"Reduce latency","status":"waiting","lastUpdatedAt":"2026-06-25T00:00:00Z"}"#.to_owned(),
+            }],
+            server_time: String::new(),
+        })
+        .expect("seed minis");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 6,
+                latest_seq: 6,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-6".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: ClientStateMini {
+                    session_id: "thread-1".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 6,
+                    revision: "rev-6".to_owned(),
+                    payload_json: r#"{"sessionId":"thread-1","assistantSurface":"codex","effectiveMode":"max-turns-1"}"#.to_owned(),
+                },
+                sessions: Vec::new(),
+            }))
+            .expect("stream update");
+
+        let payload: Value =
+            serde_json::from_str(&update.snapshot.state_minis[0].payload_json).expect("payload");
+        assert!(update.did_change);
+        assert_eq!(payload["title"], "Reduce latency");
+        assert_eq!(payload["ref"], "T1");
+        assert_eq!(payload["status"], "waiting");
+        assert_eq!(payload["effectiveMode"], "max-turns-1");
+    }
+
+    #[test]
     fn state_mini_stream_ignores_stale_delta_then_applies_fresh_delta() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
@@ -2875,9 +3136,13 @@ mod tests {
     }
 
     fn temp_store_path(name: &str) -> PathBuf {
-        std::env::temp_dir()
+        let path = std::env::temp_dir()
             .join("looper-client-core-client-tests")
             .join(format!("{name}-{}", std::process::id()))
-            .join(crate::local_store::DEFAULT_LOCAL_STORE_FILE_NAME)
+            .join(crate::local_store::DEFAULT_LOCAL_STORE_FILE_NAME);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+        path
     }
 }

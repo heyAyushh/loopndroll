@@ -62,17 +62,25 @@ final class CompanionSessionMiniController {
                     return
                 }
 
-                let localSnapshot = sessionRuntime.currentStateMiniSnapshot()
-                onLiveness(
-                    CompanionSessionMiniLivenessUpdate(
-                        reason: CompanionSessionMiniControllerRetry.restartReason,
-                        latestSeq: localSnapshot.latestSeq,
-                        serverTime: localSnapshot.serverTime,
-                        isLive: false,
-                        endpointURL: nil
-                    ),
-                    connectionRevision
-                )
+                do {
+                    let localSnapshot = try sessionRuntime.currentStateMiniSnapshot()
+                    onLiveness(
+                        CompanionSessionMiniLivenessUpdate(
+                            reason: CompanionSessionMiniControllerRetry.restartReason,
+                            latestSeq: localSnapshot.latestSeq,
+                            serverTime: localSnapshot.serverTime,
+                            isLive: false,
+                            endpointURL: nil
+                        ),
+                        connectionRevision
+                    )
+                } catch {
+                    CompanionDiagnostics.record(
+                        "session-mini:restart-snapshot-failed error=\(error.localizedDescription)"
+                    )
+                    try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
+                    continue
+                }
                 CompanionDiagnostics.record("session-mini:sync-restarting")
                 try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
             }
