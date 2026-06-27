@@ -121,6 +121,19 @@ public enum CompanionBaseURLRouting {
         return components.url ?? baseURL
     }
 
+    public static func canonicalRealtimeGRPCBaseURL(for baseURL: URL) -> URL {
+        guard baseURL.port == defaultHTTPAPIPort,
+              baseURL.usesCompanionHTTP,
+              isOwnedRealtimePortRepairRoute(route(for: baseURL)),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else {
+            return baseURL
+        }
+
+        components.port = defaultRealtimeGRPCPort
+        return components.url ?? baseURL
+    }
+
     private static func isOwnedRealtimePortRepairRoute(_ route: CompanionBaseURLRoute) -> Bool {
         switch route {
         case .tailscale, .lan, .loopback:

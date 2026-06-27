@@ -262,6 +262,11 @@ final class CompanionAppModel {
         realtimeStreamIsLive = false
     }
 
+    private func stopSessionRuntimeSyncAndWait() async {
+        await sessionMiniController.stopSyncAndWait()
+        realtimeStreamIsLive = false
+    }
+
     func startSessionRuntimeSyncIfNeeded() {
         sessionMiniController.startSyncIfNeeded(
             connectionRevision: connectionRevision
@@ -391,7 +396,7 @@ final class CompanionAppModel {
         connectionRevision += 1
         snapshotLoads.cancelCachedSnapshotRestore()
         snapshotLoads.cancelSnapshotLoad()
-        stopSessionRuntimeSync()
+        await stopSessionRuntimeSyncAndWait()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         stopNotificationReplyOutboxDrain()
         serverHealth = nil
@@ -417,6 +422,22 @@ final class CompanionAppModel {
         }
         prepareSessionRuntimeInBackground()
         return shouldRestartSessionRuntimeSync
+    }
+
+    private func applyStoredConnectionRoutePreference() async {
+        let shouldRestartSessionRuntimeSync = sessionMiniController.isSyncing
+        connectionRevision += 1
+        configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
+        applyLiveEnvironmentFromSessionCore()
+        activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
+        errorMessage = nil
+
+        await stopSessionRuntimeSyncAndWait()
+        if shouldRestartSessionRuntimeSync {
+            startSessionRuntimeSyncIfNeeded()
+        } else {
+            prepareSessionRuntimeInBackground()
+        }
     }
 
     private func resetSnapshotState(cachedSnapshotRestoreReason: String?) {
@@ -695,7 +716,7 @@ final class CompanionAppModel {
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         applyLiveEnvironmentFromSessionCore()
         prepareSessionRuntimeInBackground()
-        restartSessionRuntimeSyncIfActive()
+        await restartSessionRuntimeSyncIfActive()
         CompanionDiagnostics.record(
             "health:base-urls-adopted count=\(nextBaseURLs.count) primary=\(configuredBaseURL)"
         )
@@ -937,12 +958,12 @@ final class CompanionAppModel {
         CompanionDiagnostics.record("handoff:base-url-adopted baseURL=\(handoffBaseURL.absoluteString)")
     }
 
-    private func restartSessionRuntimeSyncIfActive() {
+    private func restartSessionRuntimeSyncIfActive() async {
         guard sessionMiniController.isSyncing else {
             return
         }
 
-        stopSessionRuntimeSync()
+        await stopSessionRuntimeSyncAndWait()
         startSessionRuntimeSyncIfNeeded()
     }
 
@@ -1790,6 +1811,10 @@ extension CompanionAppModel: CompanionConnectionCoordinatorDelegate {
 
     func connectionCoordinatorReloadConnection() async {
         await reloadConnection()
+    }
+
+    func connectionCoordinatorApplyRoutePreference() async {
+        await applyStoredConnectionRoutePreference()
     }
 }
 

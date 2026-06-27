@@ -54,8 +54,8 @@ struct CompanionConnectionRoutePresentationTests {
         #expect(CompanionConnectionRoutePresentation(baseURL: unsupportedBaseURL) == nil)
     }
 
-    @Test("Reached URL wins over configured URL for the displayed route")
-    func reachedURLWinsOverConfiguredURLForDisplayedRoute() throws {
+    @Test("Configured URL wins over stale reached URL for the displayed route")
+    func configuredURLWinsOverStaleReachedURLForDisplayedRoute() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
                 reachedBaseURL: url(lanURL),
@@ -67,17 +67,17 @@ struct CompanionConnectionRoutePresentationTests {
         )
         let presentation = try #require(CompanionConnectionRoutePresentation(baseURL: selectedBaseURL))
 
-        #expect(selectedBaseURL.absoluteString == lanURL)
-        #expect(presentation.route == .lan)
-        #expect(presentation.title == "LAN")
+        #expect(selectedBaseURL.absoluteString == remoteURL)
+        #expect(presentation.route == .remote)
+        #expect(presentation.title == "Remote")
     }
 
-    @Test("Reached Tailscale URL stays visible even when health has not caught up")
-    func reachedTailscaleURLStaysVisibleEvenWhenHealthHasNotCaughtUp() throws {
+    @Test("Configured Tailscale URL stays visible even when health has not caught up")
+    func configuredTailscaleURLStaysVisibleEvenWhenHealthHasNotCaughtUp() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
-                reachedBaseURL: url(tailscaleURL),
-                configuredBaseURL: url(lanURL),
+                reachedBaseURL: url(lanURL),
+                configuredBaseURL: url(tailscaleURL),
                 healthBaseURL: url(lanURL),
                 tailscaleHealthBaseURL: nil,
                 isTailscaleRunning: false
@@ -90,8 +90,8 @@ struct CompanionConnectionRoutePresentationTests {
         #expect(presentation.title == "Tailscale")
     }
 
-    @Test("Stopped configured Tailscale URL falls back to the reached LAN route")
-    func stoppedConfiguredTailscaleURLFallsBackToReachedLANRoute() throws {
+    @Test("Configured Tailscale URL wins over reached LAN route")
+    func configuredTailscaleURLWinsOverReachedLANRoute() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
                 reachedBaseURL: url(lanURL),
@@ -103,12 +103,12 @@ struct CompanionConnectionRoutePresentationTests {
         )
         let presentation = try #require(CompanionConnectionRoutePresentation(baseURL: selectedBaseURL))
 
-        #expect(selectedBaseURL.absoluteString == lanURL)
-        #expect(presentation.route == .lan)
+        #expect(selectedBaseURL.absoluteString == tailscaleURL)
+        #expect(presentation.route == .tailscale)
     }
 
-    @Test("Stopped configured Tailscale URL falls back to health when nothing was reached")
-    func stoppedConfiguredTailscaleURLFallsBackToHealthWhenNothingWasReached() throws {
+    @Test("Configured Tailscale URL wins over health when nothing was reached")
+    func configuredTailscaleURLWinsOverHealthWhenNothingWasReached() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
                 reachedBaseURL: nil,
@@ -120,8 +120,8 @@ struct CompanionConnectionRoutePresentationTests {
         )
         let presentation = try #require(CompanionConnectionRoutePresentation(baseURL: selectedBaseURL))
 
-        #expect(selectedBaseURL.absoluteString == remoteURL)
-        #expect(presentation.route == .remote)
+        #expect(selectedBaseURL.absoluteString == tailscaleURL)
+        #expect(presentation.route == .tailscale)
     }
 
     @Test("Active Tailscale health is not hidden by a loopback health primary")

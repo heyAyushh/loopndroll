@@ -179,6 +179,17 @@ struct CompanionBaseURLSelectionTests {
         ])
     }
 
+    @Test("Default HTTP API port is repaired to realtime gRPC port")
+    func defaultHTTPAPIPortIsRepairedToRealtimeGRPCPort() throws {
+        let urls = try urls(advertisedTailscaleURL, advertisedLANURL)
+            .map(CompanionBaseURLRouting.canonicalRealtimeGRPCBaseURL)
+
+        #expect(urls.map(\.absoluteString) == [
+            advertisedTailscaleRealtimeURL,
+            advertisedLANRealtimeURL,
+        ])
+    }
+
     @Test("Custom pinned ports are not rewritten")
     func customPinnedPortsAreNotRewritten() throws {
         let urls = try urls(advertisedLANPinnedPortURL, advertisedTailscalePinnedPortURL)
@@ -197,6 +208,15 @@ struct CompanionBaseURLSelectionTests {
         )
 
         #expect(url.absoluteString == remoteHTTPSRealtimePortURL)
+    }
+
+    @Test("Remote HTTPS URLs on HTTP port are not rewritten to realtime")
+    func remoteHTTPSHTTPPortIsNotRewrittenToRealtime() throws {
+        let url = CompanionBaseURLRouting.canonicalRealtimeGRPCBaseURL(
+            for: try url(advertisedRemoteURL)
+        )
+
+        #expect(url.absoluteString == advertisedRemoteURL)
     }
 
     private func urls(_ values: String...) throws -> [URL] {

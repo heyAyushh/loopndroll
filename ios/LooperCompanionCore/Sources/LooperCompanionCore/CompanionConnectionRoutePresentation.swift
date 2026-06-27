@@ -61,26 +61,17 @@ public enum CompanionConnectionRoutePresentationSelection {
         isTailscaleRunning: Bool
     ) -> URL? {
         firstDisplayableBaseURL(in: [
+            displayableConfiguredBaseURL(configuredBaseURL),
             reachedBaseURL,
-            displayableConfiguredBaseURL(
-                configuredBaseURL,
-                isTailscaleRunning: isTailscaleRunning
-            ),
             healthBaseURL,
             isTailscaleRunning ? tailscaleHealthBaseURL : nil,
         ])
     }
 
     private static func displayableConfiguredBaseURL(
-        _ baseURL: URL?,
-        isTailscaleRunning: Bool
+        _ baseURL: URL?
     ) -> URL? {
         guard let baseURL else {
-            return nil
-        }
-
-        let route = CompanionBaseURLRouting.route(for: baseURL)
-        guard route != .tailscale || isTailscaleRunning else {
             return nil
         }
 

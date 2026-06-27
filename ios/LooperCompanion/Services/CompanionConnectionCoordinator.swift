@@ -22,6 +22,7 @@ protocol CompanionConnectionCoordinatorDelegate: AnyObject {
     var connectionCoordinatorConfiguredBaseURL: String { get }
 
     func connectionCoordinatorReloadConnection() async
+    func connectionCoordinatorApplyRoutePreference() async
 }
 
 @MainActor
@@ -47,17 +48,12 @@ final class CompanionConnectionCoordinator {
 
     func setRoutePreference(_ preference: CompanionConnectionRoutePreference) async {
         let currentConnection = CompanionConfiguration.resolvedConnection()
-        let currentPreference = CompanionConfiguration.connectionRoutePreference()
-        guard preference != currentPreference else {
-            return
-        }
-
         CompanionConfiguration.storeConnectionRoutePreference(preference)
         CompanionConfiguration.storeConnection(
             currentConnection,
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
-        await delegate?.connectionCoordinatorReloadConnection()
+        await delegate?.connectionCoordinatorApplyRoutePreference()
         let primaryBaseURL = delegate?.connectionCoordinatorConfiguredBaseURL ?? ""
         CompanionDiagnostics.record(
             "connection:route-preference preference=\(preference.rawValue) primary=\(primaryBaseURL)"

@@ -79,8 +79,18 @@ final class CompanionSessionMiniController {
     }
 
     func stopSync() {
-        syncTask?.cancel()
+        let task = syncTask
         syncTask = nil
+        task?.cancel()
+        sessionRuntime?.stopStateMiniStream()
+    }
+
+    func stopSyncAndWait() async {
+        let task = syncTask
+        syncTask = nil
+        task?.cancel()
+        sessionRuntime?.stopStateMiniStream()
+        await task?.value
     }
 
     @discardableResult

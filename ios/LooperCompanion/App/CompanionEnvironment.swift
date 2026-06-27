@@ -1,4 +1,6 @@
 import Foundation
+import LooperCompanionCore
+
 struct CompanionEnvironment {
     let service: any CompanionService
     let sessionRuntime: CompanionSessionRuntime?
@@ -36,7 +38,9 @@ struct CompanionEnvironment {
                 CompanionSessionRuntimeStartConfiguration(
                     bearerToken: connection.bearerToken,
                     endpointResolver: {
-                        CompanionConfiguration.uniqueAttemptableBaseURLs(baseURLs)
+                        CompanionConfiguration.uniqueAttemptableBaseURLs(
+                            baseURLs.map(CompanionBaseURLRouting.canonicalRealtimeGRPCBaseURL)
+                        )
                     }
                 )
             )
