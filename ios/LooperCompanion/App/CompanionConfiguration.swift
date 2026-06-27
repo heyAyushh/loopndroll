@@ -21,12 +21,6 @@ enum CompanionMobileSessionStoragePolicy {
     case preserveIfBearerTokenUnchanged
 }
 
-enum CompanionBaseURLFiltering {
-    static func uniqueAttemptableBaseURLs(_ urls: [URL]) -> [URL] {
-        CompanionConfiguration.uniqueAttemptableBaseURLs(urls)
-    }
-}
-
 enum CompanionConfiguration {
     static let apiBaseURLOverrideKey = "looper.apiBaseURLOverride"
     static let connectionRoutePreferenceKey = "looper.connectionRoutePreference"
@@ -117,7 +111,7 @@ enum CompanionConfiguration {
     }
 
     static func uniqueAttemptableBaseURLs(_ urls: [URL]) -> [URL] {
-        uniqueURLs(urls)
+        LooperCompanionCore.CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(urls)
     }
 
     private static func resolvedBundledConnection() -> CompanionConnection {

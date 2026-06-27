@@ -38,7 +38,7 @@ struct CompanionEnvironment {
                     endpointResolver: {
                         let resolvedHealth = try await service.resolveServerHealth()
                         let health = resolvedHealth.health
-                        return CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(
+                        return CompanionConfiguration.uniqueAttemptableBaseURLs(
                             ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
                         )
                     }

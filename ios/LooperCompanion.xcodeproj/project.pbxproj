@@ -47,6 +47,7 @@
 		698E7359AA9B92B96EAC79B7 /* SessionDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95DECA57A9C3520B2610DF89 /* SessionDetailScreen.swift */; };
 		6AF9C85549D436BC7ED2A3A8 /* codex-logo-dark.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 8612A4DB482A88E8AD59D972 /* codex-logo-dark.mp4 */; };
 		71037DCDA89369D211A5CB58 /* SessionQuickActionCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD83527C256675DC251E3F3A /* SessionQuickActionCenter.swift */; };
+		721D5DDC5C89F7446E53ED4C /* CompanionBaseURLFilteringBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D852FD14FA660B33E52239F /* CompanionBaseURLFilteringBridgeTests.swift */; };
 		762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26E5665E69C8705992001B8 /* SessionSearchModel.swift */; };
 		7CDF49AAA7F79DA10FFF49A7 /* SessionEntityAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */; };
 		7CF55F2E1584299679B29C56 /* CompanionSessionRuntimeCommandCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B355BAA6B42FB373A6E055 /* CompanionSessionRuntimeCommandCoreTests.swift */; };
@@ -123,6 +124,7 @@
 		2489ABFC353256268974517A /* MockCompanionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockCompanionService.swift; sourceTree = "<group>"; };
 		2884BCEA8553EAA5C67C7968 /* LooperCompanionControlFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperCompanionControlFlowUITests.swift; sourceTree = "<group>"; };
 		2B3093E7EB74B9D6D47A41A0 /* LooperCompanion.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LooperCompanion.Release.entitlements; sourceTree = "<group>"; };
+		2D852FD14FA660B33E52239F /* CompanionBaseURLFilteringBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionBaseURLFilteringBridgeTests.swift; sourceTree = "<group>"; };
 		2E6662FF1A21320CE35B28AF /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		33D26D1804CDCE3146E4985A /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		35C19CC05AA65A93F86B2A2E /* CompanionSessionMiniLocalFirstTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSessionMiniLocalFirstTests.swift; sourceTree = "<group>"; };
@@ -304,6 +306,7 @@
 		6FBDD0A0DB1F2E386DBB1019 /* LooperCompanionTests */ = {
 			isa = PBXGroup;
 			children = (
+				2D852FD14FA660B33E52239F /* CompanionBaseURLFilteringBridgeTests.swift */,
 				35C19CC05AA65A93F86B2A2E /* CompanionSessionMiniLocalFirstTests.swift */,
 				A8B355BAA6B42FB373A6E055 /* CompanionSessionRuntimeCommandCoreTests.swift */,
 				5B3A507B08DC6CAC38D29A39 /* NotificationDestinationPresentationTests.swift */,
@@ -617,6 +620,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				721D5DDC5C89F7446E53ED4C /* CompanionBaseURLFilteringBridgeTests.swift in Sources */,
 				1270ADEE5E5FD12CDE8FF534 /* CompanionSessionMiniLocalFirstTests.swift in Sources */,
 				7CF55F2E1584299679B29C56 /* CompanionSessionRuntimeCommandCoreTests.swift in Sources */,
 				1C888B1B6FDC51811EFF8999 /* NotificationDestinationPresentationTests.swift in Sources */,

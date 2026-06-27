@@ -101,7 +101,7 @@ struct CompanionHTTPPasskeyAuthenticationClient: CompanionPasskeyAuthenticationC
         }
 
         var lastError: Error?
-        for baseURL in CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(connection.baseURLs) {
+        for baseURL in CompanionConfiguration.uniqueAttemptableBaseURLs(connection.baseURLs) {
             do {
                 let data = try await responseData(
                     baseURL: baseURL,

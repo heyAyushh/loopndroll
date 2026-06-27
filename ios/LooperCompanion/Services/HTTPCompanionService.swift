@@ -304,7 +304,7 @@ struct HTTPCompanionService: CompanionService {
         body: [String: Any]? = nil,
         includesAuthentication: Bool = true
     ) async throws -> HTTPCompanionResponseData {
-        let candidateBaseURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(resolvedBaseURLs)
+        let candidateBaseURLs = CompanionConfiguration.uniqueAttemptableBaseURLs(resolvedBaseURLs)
         guard !candidateBaseURLs.isEmpty else {
             throw HTTPCompanionServiceError.invalidResponse
         }
@@ -724,7 +724,7 @@ private final class BonjourServiceResolver: NSObject, NetServiceBrowserDelegate,
             service.delegate = nil
         }
         continuation.resume(
-            returning: CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(resolvedBaseURLs)
+            returning: CompanionConfiguration.uniqueAttemptableBaseURLs(resolvedBaseURLs)
         )
     }
 
