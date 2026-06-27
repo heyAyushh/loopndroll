@@ -255,7 +255,7 @@ struct SessionDetailScreen: View {
             LabeledContent("Last Active") {
                 Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
             }
-            LabeledContent("Sync", value: model.viewState.deviceHubSyncStatusLabel)
+            LabeledContent("Connection", value: model.viewState.deviceHubConnectionStatusLabel)
             LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
         }
     }

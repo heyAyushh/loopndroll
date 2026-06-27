@@ -99,7 +99,7 @@ struct SessionsDeviceHubSheet: View {
                         LabeledContent("Current Route", value: baseURL)
                     }
                     LabeledContent("Access", value: model.viewState.deviceHubAccessStatusLabel)
-                    LabeledContent("Sync", value: model.viewState.deviceHubSyncStatusLabel)
+                    LabeledContent("Connection", value: model.viewState.deviceHubConnectionStatusLabel)
                 }
                 .listRowBackground(Color.clear)
 

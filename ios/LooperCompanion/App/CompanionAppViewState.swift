@@ -100,23 +100,8 @@ struct CompanionAppViewState {
         snapshotState.snapshot?.completionChecks ?? []
     }
 
-    var lastSyncedAt: String? {
-        if let realtimeServerTime = model.realtimeServerTime, !realtimeServerTime.isEmpty {
-            return realtimeServerTime
-        }
-        return snapshotState.snapshot?.host.lastSyncedAt
-    }
-
-    var deviceHubSyncStatusLabel: String {
-        if model.realtimeStreamIsLive {
-            return "Live via Session stream"
-        }
-
-        guard let lastSyncedAt else {
-            return "Waiting for first sync"
-        }
-
-        return ModelFormatting.relativeTimestamp(lastSyncedAt)
+    var deviceHubConnectionStatusLabel: String {
+        connectivityStatusLabel
     }
 
     var hostName: String? {
@@ -352,13 +337,7 @@ struct CompanionAppViewState {
             parts.append(coverageSummary)
         }
 
-        if model.realtimeStreamIsLive {
-            parts.append("stream live")
-        } else if let lastSyncedAt = snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
-            parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")
-        }
-
-        return parts.isEmpty ? "Connected and ready to monitor sessions." : "\(parts.joined(separator: " · "))."
+        return parts.isEmpty ? "Connected." : "\(parts.joined(separator: " · "))."
     }
 
     private var shouldUseSessionListEmptyState: Bool {

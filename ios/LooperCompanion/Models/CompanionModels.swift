@@ -526,7 +526,7 @@ enum ConnectivityState: String, Sendable {
         case .connecting:
             return "Trying the configured Mac endpoint."
         case .connected:
-            return "Live session state is flowing from your Mac."
+            return "Connected."
         case .offline:
             return "The iPhone cannot reach your Mac right now."
         case .unauthorized:
