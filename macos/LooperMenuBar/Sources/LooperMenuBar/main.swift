@@ -176,9 +176,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
+    applyHTTPRefreshStateIfPresent(result)
     if let snapshot = result.snapshot {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
         snapshot: snapshot
@@ -191,8 +190,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: nil
       )
     } else {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
       replaceMenu(
@@ -227,16 +224,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
+    applyHTTPRefreshStateIfPresent(result)
     if let snapshot = result.snapshot {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
         snapshot: snapshot
       )
     } else {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       if latestSessionMiniSnapshot == nil {
         continuationPublisher.publishFallbackIfIdle(
           LooperContinuationActivityBuilder.genericDescriptor())
@@ -289,6 +283,18 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     mobileState = state
     self.pushDevices = pushDevices
     updateMobileHealth(health)
+  }
+
+  private func applyHTTPRefreshStateIfPresent(_ result: MenuRefreshResult) {
+    guard result.didFetchHTTP else {
+      return
+    }
+
+    updateMobileState(
+      result.mobileState,
+      pushDevices: result.pushDevices,
+      health: result.mobileHealth
+    )
   }
 
   private func openContinuationActivity(_ activity: NSUserActivity) async {
@@ -355,8 +361,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
     if let snapshot = result.snapshot {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
+      applyHTTPRefreshStateIfPresent(result)
       _ = openThread(
         openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: snapshot)
       )
@@ -1575,9 +1580,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     cacheMenuEnrichmentIfAvailable(result)
     cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(fallback: result.sessionMiniSnapshot)
+    applyHTTPRefreshStateIfPresent(result)
     if let snapshot = result.snapshot {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
         snapshot: snapshot
@@ -1590,8 +1594,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: nil
       )
     } else {
-      updateMobileState(
-        result.mobileState, pushDevices: result.pushDevices, health: result.mobileHealth)
       replaceMenu(
         snapshot: nil,
         sessionMiniSnapshot: latestSessionMiniSnapshot,

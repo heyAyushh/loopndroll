@@ -159,6 +159,7 @@ struct MenuRefreshCoordinatorTests {
         let result = await coordinator.refresh(force: true)
 
         #expect(result.succeeded)
+        #expect(result.didFetchHTTP)
         #expect(result.snapshot == nil)
         #expect(result.sessionMiniSnapshot?.latestSeq == 301)
         #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
@@ -167,6 +168,33 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
+    }
+
+    @Test("cached SessionMini normal refresh does not fetch HTTP snapshot")
+    func cachedSessionMiniNormalRefreshDoesNotFetchHTTPSnapshot() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 302,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient(snapshotDelay: .seconds(5))
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .zero
+        )
+
+        let result = await coordinator.refresh()
+
+        #expect(result.succeeded)
+        #expect(!result.didFetchHTTP)
+        #expect(result.snapshot == nil)
+        #expect(result.sessionMiniSnapshot?.latestSeq == 302)
+        #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        #expect(client.snapshotCalls == 0)
+        #expect(client.mobileStateCalls == 0)
+        #expect(client.pushDeviceCalls == 0)
+        #expect(client.healthCalls == 0)
     }
 
     @Test("failed refresh replaces prior success cache during reuse window")

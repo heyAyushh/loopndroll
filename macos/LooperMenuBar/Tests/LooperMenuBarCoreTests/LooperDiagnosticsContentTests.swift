@@ -7,6 +7,7 @@ struct LooperDiagnosticsContentTests {
     func rendersAcpTimingRoutesAndClassification() {
         let report = LooperDiagnosticsContent.report(
             from: MenuRefreshResult(
+                didFetchHTTP: true,
                 sessionMiniSnapshot: nil,
                 snapshot: snapshot(),
                 connections: nil,
@@ -52,6 +53,7 @@ struct LooperDiagnosticsContentTests {
     @Test
     func rendersUnavailableRefreshError() {
         let report = LooperDiagnosticsContent.report(from: MenuRefreshResult(
+            didFetchHTTP: true,
             sessionMiniSnapshot: nil,
             snapshot: nil,
             connections: nil,

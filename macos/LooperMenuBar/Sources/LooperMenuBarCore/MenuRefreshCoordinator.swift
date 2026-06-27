@@ -9,6 +9,7 @@ public struct MenuRefreshError: Error, Equatable, Sendable {
 }
 
 public struct MenuRefreshResult: Equatable, Sendable {
+    public let didFetchHTTP: Bool
     public let sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
     public let snapshot: DesktopSnapshotResponse?
     public let connections: DesktopConnectionsResponse?
@@ -91,10 +92,15 @@ public actor MenuRefreshCoordinator {
 
         let client = self.client
         let sessionRuntime = self.sessionRuntime
+        let shouldFetchHTTP = bypassingCache
         let refreshID = nextRefreshID
         nextRefreshID += 1
         let task = Task {
-            await Self.fetch(client: client, sessionRuntime: sessionRuntime)
+            await Self.fetch(
+                client: client,
+                sessionRuntime: sessionRuntime,
+                shouldFetchHTTP: shouldFetchHTTP
+            )
         }
         inFlight = InFlightRefresh(id: refreshID, task: task, bypassesCache: bypassingCache)
         let result = await task.value
@@ -107,9 +113,24 @@ public actor MenuRefreshCoordinator {
 
     private static func fetch(
         client: any ControlPlaneClient,
-        sessionRuntime: MenuBarSessionRuntime?
+        sessionRuntime: MenuBarSessionRuntime?,
+        shouldFetchHTTP: Bool
     ) async -> MenuRefreshResult {
         let sessionMiniSnapshot = fetchSessionMiniSnapshot(sessionRuntime)
+        if sessionMiniSnapshot != nil, !shouldFetchHTTP {
+            return MenuRefreshResult(
+                didFetchHTTP: false,
+                sessionMiniSnapshot: sessionMiniSnapshot,
+                snapshot: nil,
+                connections: nil,
+                acpClientHosts: nil,
+                mobileState: nil,
+                pushDevices: nil,
+                mobileHealth: nil,
+                error: nil
+            )
+        }
+
         async let snapshotResult = fetchSnapshot(client: client)
         async let connections = fetchDesktopConnections(client: client)
         async let acpClientHosts = fetchAcpClientHosts(client: client)
@@ -120,6 +141,7 @@ public actor MenuRefreshCoordinator {
         switch await snapshotResult {
         case let .success(snapshot):
             return MenuRefreshResult(
+                didFetchHTTP: true,
                 sessionMiniSnapshot: sessionMiniSnapshot,
                 snapshot: snapshot,
                 connections: await connections,
@@ -131,6 +153,7 @@ public actor MenuRefreshCoordinator {
             )
         case let .failure(error):
             return MenuRefreshResult(
+                didFetchHTTP: true,
                 sessionMiniSnapshot: sessionMiniSnapshot,
                 snapshot: nil,
                 connections: await connections,
