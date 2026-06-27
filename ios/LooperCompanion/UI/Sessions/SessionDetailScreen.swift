@@ -72,9 +72,7 @@ struct SessionDetailScreen: View {
             summarySection
             assistantReplySection
             promptSection
-            if draftPromptIntent == .queue {
-                modeSection
-            }
+            modeSection
             notificationsSection
             completionCheckSection
             manageSection
@@ -434,7 +432,9 @@ struct SessionDetailScreen: View {
 
         switch draftPromptIntent {
         case .steer:
-            return "Send now to the running agent when live steering is available."
+            return selectedPromptMode == nil
+                ? "Send now to the running agent."
+                : "Apply this mode, then steer the running agent."
         case .queue:
             return selectedPromptMode == nil
                 ? "Choose a continuation mode before queueing."
@@ -534,7 +534,8 @@ struct SessionDetailScreen: View {
         let prompt = trimmedPrompt
         let promptIntent = draftPromptIntent
         let modeToApply = draftMode
-        let shouldApplyDraftMode = promptIntent == .queue && needsDraftModeApplyBeforePrompt
+        let shouldApplyDraftMode = needsDraftModeApplyBeforePrompt
+        let didSelectDraftMode = hasDraftModeSelection
         draftPrompt = ""
         focusedInput = nil
         let sendTask = Task { @MainActor in
@@ -554,7 +555,7 @@ struct SessionDetailScreen: View {
                     draftPrompt = prompt
                     focusedInput = .prompt
                 } else {
-                    if promptIntent == .queue {
+                    if didSelectDraftMode {
                         hasDraftModeSelection = false
                         draftMode = modeToApply
                     }
