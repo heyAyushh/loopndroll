@@ -75,6 +75,7 @@ struct ClientCoreStream {
     receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
     command_sender: mpsc::Sender<OutboundSessionFrame>,
     command_ack_receiver: Option<mpsc::Receiver<ClientCommandAck>>,
+    endpoints_identity: String,
 }
 
 impl ClientCoreStream {
@@ -101,27 +102,12 @@ impl LooperClientCore {
         })
     }
 
-    pub(crate) fn configure_session_runtime(
-        &self,
-        endpoints: Vec<ClientEndpoint>,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let endpoint = select_endpoint(&endpoints)?;
-        validate_endpoint_url(&endpoint.url)?;
-
-        let mut state = self.lock_state()?;
-        state.phase = ConnectionPhase::Ready;
-        state.endpoint_url = endpoint.url;
-        state.last_error.clear();
-        Ok(state.snapshot())
-    }
-
     pub(crate) fn start(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        self.configure_session_runtime(endpoints.clone())?;
         self.start_state_mini_stream(endpoints, bearer_token, mobile_session_header)
     }
 
@@ -884,6 +870,7 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let endpoint = select_endpoint(&endpoints)?;
         validate_endpoint_url(&endpoint.url)?;
+        let endpoints_identity = endpoints_identity(&endpoints);
         let (sender, receiver) = mpsc::channel(64);
         let (command_sender, command_receiver) = mpsc::channel(64);
         let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
@@ -893,7 +880,11 @@ impl LooperClientCore {
             .as_ref()
             .map(ClientCoreStream::is_running)
             .unwrap_or(false);
-        if state.endpoint_url == endpoint.url && has_running_stream {
+        let is_same_stream_configuration = stream
+            .as_ref()
+            .map(|stream| stream.endpoints_identity == endpoints_identity)
+            .unwrap_or(false);
+        if is_same_stream_configuration && has_running_stream {
             state.phase = ConnectionPhase::Ready;
             state.last_error.clear();
             return Ok(state.snapshot());
@@ -920,6 +911,7 @@ impl LooperClientCore {
             receiver: Some(receiver),
             command_sender,
             command_ack_receiver: Some(command_ack_receiver),
+            endpoints_identity,
         });
         Ok(state.snapshot())
     }
@@ -1240,10 +1232,15 @@ impl LooperClientCore {
             StateMiniStreamEvent::Heartbeat {
                 latest_seq,
                 server_time,
+                endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
+                state.latest_seq = state.latest_seq.max(latest_seq);
                 if !server_time.is_empty() {
                     state.server_time = server_time;
+                }
+                if !endpoint_url.is_empty() {
+                    state.endpoint_url = endpoint_url;
                 }
                 (
                     ClientStateMiniStreamUpdateReason::Heartbeat,
@@ -1533,6 +1530,20 @@ fn select_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, Clien
     Ok(endpoint.clone())
 }
 
+fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
+    endpoints
+        .iter()
+        .map(|endpoint| {
+            format!(
+                "{}#{}",
+                endpoint.url.trim().trim_end_matches('/'),
+                endpoint.last_good
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn reject_message(ack: &ClientCommandAck) -> String {
     match (ack.error_code.is_empty(), ack.reject_reason.is_empty()) {
         (false, false) => format!("{}: {}", ack.error_code, ack.reject_reason),
@@ -1616,6 +1627,10 @@ mod tests {
         mpsc::Receiver<OutboundSessionFrame>,
         mpsc::Sender<ClientCommandAck>,
     ) {
+        let endpoints_identity = endpoints_identity(&[ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: false,
+        }]);
         let (events_sender, events_receiver) = mpsc::channel(1);
         let (commands_sender, commands_receiver) = mpsc::channel(2);
         let (acks_sender, acks_receiver) = mpsc::channel(2);
@@ -1627,12 +1642,17 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
+            endpoints_identity,
         });
         drop(events_sender);
         (commands_receiver, acks_sender)
     }
 
     fn install_finished_test_session_stream(core: &Arc<LooperClientCore>) {
+        let endpoints_identity = endpoints_identity(&[ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: false,
+        }]);
         let (_events_sender, events_receiver) = mpsc::channel(1);
         let (commands_sender, _commands_receiver) = mpsc::channel(2);
         let (_acks_sender, acks_receiver) = mpsc::channel(2);
@@ -1652,6 +1672,7 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
+            endpoints_identity,
         });
     }
 
@@ -1740,6 +1761,31 @@ mod tests {
     }
 
     #[test]
+    fn start_keeps_live_endpoint_for_retained_stream_configuration() {
+        let core = LooperClientCore::new();
+        let (_commands_receiver, _acks_sender) = install_test_session_stream(&core);
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Ready;
+            state.endpoint_url = ENDPOINT_LAST_GOOD.to_owned();
+        }
+
+        let snapshot = core
+            .start(
+                vec![ClientEndpoint {
+                    url: ENDPOINT_PRIMARY.to_owned(),
+                    last_good: false,
+                }],
+                "token".to_owned(),
+                "mobile-session".to_owned(),
+            )
+            .expect("idempotent start");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+    }
+
+    #[test]
     fn start_state_mini_stream_replaces_finished_stream_for_same_endpoint() {
         let core = LooperClientCore::new();
         install_finished_test_session_stream(&core);
@@ -1768,6 +1814,29 @@ mod tests {
                 .expect("stream")
                 .is_running()
         );
+    }
+
+    #[test]
+    fn heartbeat_updates_displayed_endpoint_to_live_session_route() {
+        let core = LooperClientCore::new();
+        core.connect(vec![ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: true,
+        }])
+        .expect("connect primary");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 12,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("heartbeat");
+
+        assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+        assert_eq!(update.snapshot.latest_seq, 12);
+        assert_eq!(update.snapshot.server_time, SERVER_TIME);
     }
 
     #[test]
@@ -2130,28 +2199,6 @@ mod tests {
         );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 2);
         assert_eq!(core.snapshot().expect("core snapshot").outbox_depth, 1);
-    }
-
-    #[test]
-    fn configure_session_runtime_records_last_good_endpoint() {
-        let core = LooperClientCore::new();
-
-        let snapshot = core
-            .configure_session_runtime(vec![
-                ClientEndpoint {
-                    url: ENDPOINT_PRIMARY.to_owned(),
-                    last_good: false,
-                },
-                ClientEndpoint {
-                    url: ENDPOINT_LAST_GOOD.to_owned(),
-                    last_good: true,
-                },
-            ])
-            .expect("configure runtime");
-
-        assert_eq!(snapshot.phase, ConnectionPhase::Ready);
-        assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
-        assert!(snapshot.last_error.is_empty());
     }
 
     #[test]

@@ -281,6 +281,38 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testLiveSessionStreamWinsOverSuccessfulHttpSnapshot() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 11,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 11, revision: "mini-revision-11"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.connectionState = .connected
+        model.realtimeStreamIsLive = true
+        model.realtimeLatestSeq = 11
+
+        await model.loadSnapshot()
+
+        #expect(model.connectionState == .connected)
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
+        #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
+        #expect(service.loadSnapshotCallCount == 1)
+    }
+
+    @MainActor
+    @Test
     func testRoutePreferenceSwitchKeepsLiveSessionTruthUntilCoreReportsReplacement() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

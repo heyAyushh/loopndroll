@@ -533,6 +533,12 @@ final class CompanionAppModel {
                 CompanionDiagnostics.record("snapshot:load-stale-skip")
                 return
             }
+            guard shouldApplyNetworkSnapshot(nextSnapshot) else {
+                CompanionDiagnostics.record(
+                    "snapshot:load-live-session-wins realtimeSeq=\(realtimeLatestSeq)"
+                )
+                return
+            }
             CompanionDiagnostics.lifecycle.info(
                 "Snapshot load succeeded sessions=\(nextSnapshot.sessions.count, privacy: .public)"
             )
@@ -1706,6 +1712,16 @@ final class CompanionAppModel {
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
         )
+    }
+
+    private func shouldApplyNetworkSnapshot(_ nextSnapshot: MobileSnapshot) -> Bool {
+        if snapshot == nil || !snapshotState.hasSnapshot {
+            return true
+        }
+        if !realtimeStreamIsLive || realtimeLatestSeq <= 0 {
+            return true
+        }
+        return snapshotState.allSessions.isEmpty && !nextSnapshot.sessions.isEmpty
     }
 
     private func markCachedSnapshotReadyIfNeeded(reason: String) {

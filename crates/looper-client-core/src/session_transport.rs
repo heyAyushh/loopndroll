@@ -50,6 +50,7 @@ pub(crate) enum StateMiniStreamEvent {
     Heartbeat {
         latest_seq: i64,
         server_time: String,
+        endpoint_url: String,
     },
     Reconnecting {
         latest_seq: i64,
@@ -233,52 +234,101 @@ async fn run_state_mini_stream_session(
     events: mpsc::Sender<StateMiniStreamEvent>,
     command_acks: mpsc::Sender<ClientCommandAck>,
 ) -> Result<i64, StateMiniTransportError> {
-    let endpoint = select_transport_endpoint(endpoints).map_err(|error| {
+    let candidates = session_transport_endpoints(endpoints).map_err(|error| {
         StateMiniTransportError::Transport {
             latest_seq: after_seq,
             error_description: error.to_string(),
         }
     })?;
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
-        .await
+    let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
+    for endpoint in candidates {
+        let endpoint_url = normalized_endpoint_url(&endpoint.url);
+        let endpoint = match Endpoint::from_shared(endpoint.url) {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                last_transport_error = error.to_string();
+                continue;
+            }
+        };
+        let mut client =
+            match proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint).await {
+                Ok(client) => client,
+                Err(error) => {
+                    last_transport_error = error.to_string();
+                    continue;
+                }
+            };
+        let (request_sender, request_receiver) = mpsc::channel(64);
+        request_sender
+            .send(resume_client_frame(after_seq))
+            .await
+            .map_err(|error| StateMiniTransportError::Transport {
+                latest_seq: after_seq,
+                error_description: error.to_string(),
+            })?;
+        let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
+        apply_metadata(
+            request.metadata_mut(),
+            bearer_token.to_owned(),
+            mobile_session_header.to_owned(),
+        )
         .map_err(|error| StateMiniTransportError::Transport {
             latest_seq: after_seq,
             error_description: error.to_string(),
         })?;
-    let (request_sender, request_receiver) = mpsc::channel(64);
-    request_sender
-        .send(resume_client_frame(after_seq))
-        .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
-    let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-    apply_metadata(
-        request.metadata_mut(),
-        bearer_token.to_owned(),
-        mobile_session_header.to_owned(),
-    )
-    .map_err(|error| StateMiniTransportError::Transport {
-        latest_seq: after_seq,
-        error_description: error.to_string(),
-    })?;
 
-    let response = client.session(request).await.map_err(|status| {
-        if status.code() == tonic::Code::OutOfRange {
-            StateMiniTransportError::RecoveryRequired {
-                latest_seq: after_seq,
-                error_description: status.message().to_owned(),
+        let response = match client.session(request).await {
+            Ok(response) => response,
+            Err(status) if status.code() == tonic::Code::OutOfRange => {
+                return Err(StateMiniTransportError::RecoveryRequired {
+                    latest_seq: after_seq,
+                    error_description: status.message().to_owned(),
+                });
             }
-        } else {
-            StateMiniTransportError::Transport {
-                latest_seq: after_seq,
-                error_description: status.to_string(),
+            Err(status) => {
+                last_transport_error = status.to_string();
+                continue;
             }
-        }
-    })?;
-    let mut stream = response.into_inner();
+        };
+        return drive_state_mini_stream_session(
+            response.into_inner(),
+            request_sender,
+            commands,
+            events,
+            command_acks,
+            after_seq,
+            endpoint_url,
+        )
+        .await;
+    }
+
+    Err(StateMiniTransportError::Transport {
+        latest_seq: after_seq,
+        error_description: last_transport_error,
+    })
+}
+
+async fn drive_state_mini_stream_session(
+    mut stream: tonic::Streaming<proto::ServerFrame>,
+    request_sender: mpsc::Sender<proto::ClientFrame>,
+    commands: &mut mpsc::Receiver<OutboundSessionFrame>,
+    events: mpsc::Sender<StateMiniStreamEvent>,
+    command_acks: mpsc::Sender<ClientCommandAck>,
+    after_seq: i64,
+    endpoint_url: String,
+) -> Result<i64, StateMiniTransportError> {
     let mut latest_seq = after_seq;
+    events
+        .send(StateMiniStreamEvent::Heartbeat {
+            latest_seq,
+            server_time: String::new(),
+            endpoint_url: endpoint_url.clone(),
+        })
+        .await
+        .map_err(|error| StateMiniTransportError::Transport {
+            latest_seq,
+            error_description: error.to_string(),
+        })?;
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -342,6 +392,7 @@ async fn run_state_mini_stream_session(
                             .send(StateMiniStreamEvent::Heartbeat {
                                 latest_seq,
                                 server_time: heartbeat.server_time,
+                                endpoint_url: endpoint_url.clone(),
                             })
                             .await
                             .map_err(|error| StateMiniTransportError::Transport {
@@ -363,21 +414,19 @@ fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
     }
 }
 
-fn select_transport_endpoint(endpoints: &[ClientEndpoint]) -> Result<Endpoint, ClientCoreError> {
-    let endpoint = select_client_endpoint(endpoints)?;
-    Endpoint::from_shared(endpoint.url).map_err(|_| ClientCoreError::InvalidEndpoint)
-}
-
-fn select_client_endpoint(endpoints: &[ClientEndpoint]) -> Result<ClientEndpoint, ClientCoreError> {
-    endpoints
-        .iter()
-        .find(|endpoint| endpoint.last_good)
-        .or_else(|| endpoints.first())
-        .cloned()
-        .ok_or(ClientCoreError::NoEndpoint)
+fn session_transport_endpoints(
+    endpoints: &[ClientEndpoint],
+) -> Result<Vec<ClientEndpoint>, ClientCoreError> {
+    ordered_client_endpoints(endpoints)
 }
 
 fn snapshot_recovery_endpoints(
+    endpoints: &[ClientEndpoint],
+) -> Result<Vec<ClientEndpoint>, ClientCoreError> {
+    ordered_client_endpoints(endpoints)
+}
+
+fn ordered_client_endpoints(
     endpoints: &[ClientEndpoint],
 ) -> Result<Vec<ClientEndpoint>, ClientCoreError> {
     if endpoints.is_empty() {
@@ -399,6 +448,10 @@ fn snapshot_recovery_endpoints(
     }
 
     Ok(ordered)
+}
+
+fn normalized_endpoint_url(endpoint_url: &str) -> String {
+    endpoint_url.trim().trim_end_matches('/').to_owned()
 }
 
 fn state_mini_snapshot_uri(endpoint_url: &str) -> Result<Uri, ClientCoreError> {
@@ -878,6 +931,42 @@ mod tests {
                 "http://192.168.1.33:8765",
                 "http://100.119.200.69:8765",
                 "http://127.0.0.1:8765",
+            ]
+        );
+    }
+
+    #[test]
+    fn session_transport_endpoints_keep_fallbacks_after_last_good() {
+        let endpoints = session_transport_endpoints(&[
+            ClientEndpoint {
+                url: "http://100.119.200.69:8766".to_owned(),
+                last_good: false,
+            },
+            ClientEndpoint {
+                url: "http://192.168.1.33:8766".to_owned(),
+                last_good: true,
+            },
+            ClientEndpoint {
+                url: "http://192.168.1.33:8766/".to_owned(),
+                last_good: false,
+            },
+            ClientEndpoint {
+                url: "http://127.0.0.1:8766".to_owned(),
+                last_good: false,
+            },
+        ])
+        .expect("endpoints");
+
+        let urls = endpoints
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "http://192.168.1.33:8766",
+                "http://100.119.200.69:8766",
+                "http://127.0.0.1:8766",
             ]
         );
     }
