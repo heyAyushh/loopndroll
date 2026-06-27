@@ -905,7 +905,7 @@ final class CompanionAppModel {
     @discardableResult
     func sendSessionPrompt(
         _ prompt: String,
-        intent: CompanionPromptIntent = .queue,
+        intent: CompanionPromptIntent = .steer,
         to sessionID: String
     ) async -> Bool {
         await sendPromptIntent(prompt, intent: intent, to: sessionID)
@@ -914,7 +914,7 @@ final class CompanionAppModel {
     @discardableResult
     func beginSendSessionPrompt(
         _ prompt: String,
-        intent: CompanionPromptIntent = .queue,
+        intent: CompanionPromptIntent = .steer,
         to sessionID: String
     ) -> Task<Bool, Never> {
         Task { @MainActor [weak self] in

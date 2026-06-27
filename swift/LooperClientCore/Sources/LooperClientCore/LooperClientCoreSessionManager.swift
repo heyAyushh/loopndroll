@@ -74,7 +74,7 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: String,
-        promptIntent: String = "queue"
+        promptIntent: String = "steer"
     ) async throws -> ClientSessionPromptIntentResult {
         try await runtime.sendPrompt(
             threadId: threadID,

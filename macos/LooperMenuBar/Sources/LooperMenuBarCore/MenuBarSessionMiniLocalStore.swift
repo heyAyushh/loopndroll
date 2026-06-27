@@ -291,7 +291,8 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
-            assistantSurface: assistantSurface
+            assistantSurface: assistantSurface,
+            promptIntent: "steer"
         )
     }
 

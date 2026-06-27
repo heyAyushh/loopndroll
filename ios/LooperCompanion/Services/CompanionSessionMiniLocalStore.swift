@@ -315,7 +315,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         threadID: String,
         prompt: String,
         assistantSurface: CompanionAssistantSurface?,
-        promptIntent: CompanionPromptIntent = .queue
+        promptIntent: CompanionPromptIntent = .steer
     ) async throws -> ClientSessionPromptIntentResult {
         let result = try await sessionManager.sendPrompt(
             threadID: threadID,
