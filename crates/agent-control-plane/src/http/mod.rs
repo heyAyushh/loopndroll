@@ -61,7 +61,7 @@ use self::requests::{
     MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
     MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
-    MobileSiriCurrentSessionRequest, MobileSiriDefaultSessionRequest,
+    MobileSiriDefaultSessionRequest,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -327,10 +327,6 @@ fn mobile_routes() -> Router<ControlPlane> {
         .route(
             "/api/mobile/settings/siri-default-session",
             post(mobile_siri_default_session),
-        )
-        .route(
-            "/api/mobile/settings/siri-current-session",
-            post(mobile_siri_current_session),
         )
         .route(
             "/api/mobile/passkeys/registration-challenge",
@@ -1730,53 +1726,6 @@ async fn mobile_siri_default_session(
     }
 
     emit_mobile_session_changed(&control_plane, None, Some("siri-default-session-updated"));
-    mobile_snapshot_response(&control_plane, &headers)
-}
-
-async fn mobile_siri_current_session(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Json(input): Json<MobileSiriCurrentSessionRequest>,
-) -> Response {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-
-    let snapshot = match mobile_desktop_snapshot(&control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return internal_mobile_error_response(error.to_string()),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return mobile_session_error_response(error),
-    };
-
-    match validate_mobile_siri_target(
-        &snapshot,
-        &session_state,
-        input.session_id.as_deref(),
-        input.assistant_surface.as_deref(),
-    ) {
-        Ok(Some((session_id, assistant_surface))) => {
-            if let Err(error) = control_plane
-                .mobile_session_service()
-                .set_siri_current_session(Some(session_id), Some(assistant_surface))
-            {
-                return mobile_session_error_response(error);
-            }
-        }
-        Ok(None) => {
-            if let Err(error) = control_plane
-                .mobile_session_service()
-                .set_siri_current_session(None, None)
-            {
-                return mobile_session_error_response(error);
-            }
-        }
-        Err(error) => return mobile_session_error_response(error),
-    }
-
-    emit_mobile_session_changed(&control_plane, None, Some("siri-current-session-updated"));
     mobile_snapshot_response(&control_plane, &headers)
 }
 

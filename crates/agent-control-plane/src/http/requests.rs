@@ -102,13 +102,6 @@ pub(super) struct MobileSiriDefaultSessionRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct MobileSiriCurrentSessionRequest {
-    pub(super) session_id: Option<String>,
-    pub(super) assistant_surface: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct DesktopGlobalNotificationRequest {
     pub(super) notification_id: Option<String>,
 }
