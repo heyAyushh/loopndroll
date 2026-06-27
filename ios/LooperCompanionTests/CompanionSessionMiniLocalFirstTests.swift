@@ -345,7 +345,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testRoutePreferenceSwitchKeepsLiveSessionTruthUntilCoreReportsReplacement() async throws {
+    func testRoutePreferenceSwitchClearsStaleRouteUntilCoreReportsReplacement() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -392,10 +392,11 @@ struct CompanionSessionMiniLocalFirstTests {
 
         await model.connectionCoordinatorApplyRoutePreference()
 
-        #expect(model.connectionState == .connected)
-        #expect(model.realtimeStreamIsLive)
-        #expect(model.activeConnectionRouteBaseURL == liveLANRoute)
-        #expect(model.viewState.connectivityStatusLabel == "Connected")
+        #expect(model.connectionState == .connecting)
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.activeConnectionRouteBaseURL == nil)
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
+        #expect(model.viewState.connectivityStatusLabel == "Connecting")
         #expect(service.loadSnapshotCallCount == 0)
     }
 
