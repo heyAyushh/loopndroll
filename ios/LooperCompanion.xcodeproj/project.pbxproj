@@ -56,6 +56,7 @@
 		83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64992FB2DA134F019F69163E /* RootTabView.swift */; };
 		83D0C5873A613A55B9CAEB88 /* notification-orb.png in Resources */ = {isa = PBXBuildFile; fileRef = 9FCDE85806224DF019E36874 /* notification-orb.png */; };
 		8524708890E94F68FD81CFEC /* CompanionSnapshotCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A83C6002A487F6E039D22B0 /* CompanionSnapshotCache.swift */; };
+		85272440FD1D8663E48F4286 /* CompanionImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF290C41DFAC259BDB19AA7D /* CompanionImageCache.swift */; };
 		8690578148653BB37BE2A2E2 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 33D26D1804CDCE3146E4985A /* AppIntents.framework */; };
 		87806A0E76460378123DBCAD /* LiveOrbCameraScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F45BF02832653F4817CA280 /* LiveOrbCameraScannerView.swift */; };
 		8B6CB0A811613F054EFD021B /* OnboardingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7038F1ECA616F6FCCCBB27BF /* OnboardingScreen.swift */; };
@@ -199,6 +200,7 @@
 		F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummaryTimingTests.swift; sourceTree = "<group>"; };
 		FC260B4728D2B8FA011C6F93 /* codex-logo-dark-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "codex-logo-dark-poster.png"; sourceTree = "<group>"; };
 		FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkAccessMonitor.swift; sourceTree = "<group>"; };
+		FF290C41DFAC259BDB19AA7D /* CompanionImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionImageCache.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -473,6 +475,7 @@
 			isa = PBXGroup;
 			children = (
 				49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */,
+				FF290C41DFAC259BDB19AA7D /* CompanionImageCache.swift */,
 				6EC1A0190D9046B11D3FCC6B /* CompanionTheme.swift */,
 				0E8C880C3A1B330FEE7D46C5 /* G006LocalFirstSelfTest.swift */,
 				2E6662FF1A21320CE35B28AF /* Haptics.swift */,
@@ -641,6 +644,7 @@
 				5F253CAD2F69E839F4AC07E3 /* CompanionConnectionCoordinator.swift in Sources */,
 				B17C9F2AEA6D0C42142A0661 /* CompanionDevicePasskeyStore.swift in Sources */,
 				8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */,
+				85272440FD1D8663E48F4286 /* CompanionImageCache.swift in Sources */,
 				DC1CD73D168047D3DB4ED4C4 /* CompanionMobileSessionStore.swift in Sources */,
 				98570EE0A02C19145C52A031 /* CompanionModels.swift in Sources */,
 				C92208423C54AA12BD80295D /* CompanionNotificationCoordinator.swift in Sources */,

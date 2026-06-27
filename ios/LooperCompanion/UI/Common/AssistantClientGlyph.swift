@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Leading badge for session rows: native SF Symbol in a fixed metric (HIG-aligned list accessory).
 struct AssistantClientGlyph: View {
@@ -10,7 +9,7 @@ struct AssistantClientGlyph: View {
 
     var body: some View {
         if client == .codex {
-            CodexLogoMark()
+            AssistantSurfaceLogoMark(surface: .codex)
                 .frame(width: Self.size, height: Self.size)
                 .accessibilityLabel(client.displayTitle)
         } else if client == .claudeCode {
@@ -43,23 +42,13 @@ private struct CodexLogoMark: View {
     }
 
     var body: some View {
-        CodexLogoPoster(resourceName: asset.posterName)
+        CompanionCachedImage(
+            asset: asset.posterAsset,
+            fallbackSystemImage: "terminal"
+        )
+        .scaledToFill()
         .clipShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
         .contentShape(RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius))
-    }
-}
-
-private struct CodexLogoPoster: View {
-    let resourceName: String
-
-    var body: some View {
-        if let image = UIImage(named: resourceName) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            AssistantSurfaceLogoMark(surface: .codex)
-        }
     }
 }
 
@@ -130,10 +119,7 @@ struct AssistantSurfaceLogoMark: View {
     var body: some View {
         switch surface {
         case .codex:
-            AssistantMonogramLogoMark(
-                monogram: "C",
-                gradientColors: AssistantSurfaceLogoPalette.codexGradient
-            )
+            CodexLogoMark()
         case .claudeCode:
             ClaudeLogoMark()
         case .devin:
@@ -146,40 +132,12 @@ struct AssistantSurfaceLogoMark: View {
     }
 }
 
-private struct AssistantMonogramLogoMark: View {
-    let monogram: String
-    let gradientColors: [Color]
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: AssistantSurfaceLogoMetrics.cornerRadius)
-                .fill(
-                    LinearGradient(
-                        colors: gradientColors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            Text(monogram)
-                .font(
-                    .system(
-                        size: AssistantSurfaceLogoMetrics.fontSize,
-                        weight: .black,
-                        design: .rounded
-                    )
-                )
-                .foregroundStyle(.white)
-        }
-        .aspectRatio(1, contentMode: .fit)
-    }
-}
-
 private struct ZedLogoMark: View {
     var body: some View {
-        Image(ZedLogoAsset.name)
-            .renderingMode(.original)
-            .resizable()
+        CompanionCachedImage(
+            asset: .zedLogo,
+            fallbackSystemImage: "bolt.square"
+        )
             .scaledToFit()
             .aspectRatio(1, contentMode: .fit)
     }
@@ -189,9 +147,11 @@ private struct GrokLogoMark: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Image(GrokLogoAsset.name)
-            .renderingMode(.template)
-            .resizable()
+        CompanionCachedImage(
+            asset: .grokLogo,
+            renderingMode: .template,
+            fallbackSystemImage: "sparkle"
+        )
             .scaledToFit()
             .foregroundStyle(tintColor)
             .padding(GrokLogoMetrics.symbolInset)
@@ -214,9 +174,11 @@ private struct DevinLogoMark: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Image(DevinLogoAsset.name)
-            .renderingMode(.template)
-            .resizable()
+        CompanionCachedImage(
+            asset: .devinLogo,
+            renderingMode: .template,
+            fallbackSystemImage: "d.square"
+        )
             .scaledToFit()
             .foregroundStyle(tintColor)
             .aspectRatio(1, contentMode: .fit)
@@ -256,18 +218,6 @@ private struct ClaudeLogoShape: Shape {
     }
 }
 
-private enum AssistantSurfaceLogoPalette {
-    static let codexGradient = [
-        Color(red: 0.05, green: 0.12, blue: 0.10),
-        Color(red: 0.11, green: 0.42, blue: 0.32)
-    ]
-}
-
-private enum AssistantSurfaceLogoMetrics {
-    static let cornerRadius: CGFloat = 7
-    static let fontSize: CGFloat = 13
-}
-
 private enum AssistantSurfacePickerMetrics {
     static let itemSpacing: CGFloat = 6
     static let contentSpacing: CGFloat = 5
@@ -275,18 +225,6 @@ private enum AssistantSurfacePickerMetrics {
     static let horizontalPadding: CGFloat = 9
     static let height: CGFloat = 32
     static let iconSize: CGFloat = 18
-}
-
-private enum GrokLogoAsset {
-    static let name = "GrokLogo"
-}
-
-private enum DevinLogoAsset {
-    static let name = "DevinLogo"
-}
-
-private enum ZedLogoAsset {
-    static let name = "ZedLogo"
 }
 
 private enum DevinLogoPalette {
@@ -396,16 +334,16 @@ private enum GrokLogoPalette {
 
 private enum CodexLogoAsset {
     struct Variant {
-        let posterName: String
+        let posterAsset: CompanionBundledImage
         let videoName: String
     }
 
     static let light = Variant(
-        posterName: "codex-logo-poster",
+        posterAsset: .codexLogoPoster,
         videoName: "codex-logo"
     )
     static let dark = Variant(
-        posterName: "codex-logo-dark-poster",
+        posterAsset: .codexLogoDarkPoster,
         videoName: "codex-logo-dark"
     )
     static let videoExtension = "mp4"

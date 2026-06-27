@@ -1,21 +1,4 @@
 import SwiftUI
-import UIKit
-
-private enum ToolbarOrbAsset {
-    static let resourceName = "notification-orb"
-    static let fileExtension = "png"
-
-    static var image: UIImage? {
-        if let resourceURL = Bundle.main.url(
-            forResource: resourceName,
-            withExtension: fileExtension
-        ) {
-            return UIImage(contentsOfFile: resourceURL.path)
-        }
-
-        return UIImage(named: resourceName)
-    }
-}
 
 struct SessionsToolbarOrbButton: View {
     private let orbButtonSize: CGFloat = 32
@@ -33,14 +16,10 @@ struct SessionsToolbarOrbButton: View {
 
     @ViewBuilder
     private var toolbarImage: some View {
-        if let image = ToolbarOrbAsset.image {
-            Image(uiImage: image)
-                .resizable()
-        } else {
-            Image(systemName: "circle")
-                .resizable()
-                .foregroundStyle(.secondary)
-        }
+        CompanionCachedImage(
+            asset: .notificationOrb,
+            fallbackSystemImage: "circle"
+        )
     }
 }
 

@@ -22,6 +22,8 @@ struct LooperApp: App {
     @State private var model: CompanionAppModel
 
     init() {
+        CompanionImageCache.shared.prewarm()
+
         #if DEBUG
         let isRunningUnitTests = UnitTestRuntime.isRunning
         let g006SelfTestCase = G006LocalFirstSelfTest.requestedCase
