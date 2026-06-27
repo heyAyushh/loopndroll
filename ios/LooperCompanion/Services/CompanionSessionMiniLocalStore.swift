@@ -269,10 +269,23 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             )
         }
 
-        let snapshot = try decoder.decode(
-            MobileSnapshot.self,
-            from: Data(streamUpdate.snapshotJson.utf8)
-        )
+        let snapshotData = Data(streamUpdate.snapshotJson.utf8)
+        let snapshot: MobileSnapshot
+        do {
+            snapshot = try decoder.decode(MobileSnapshot.self, from: snapshotData)
+        } catch {
+            let debugMessage = Self.joinDebugMessages(
+                streamUpdate.debugMessage,
+                "session-mini:mobile-snapshot-decode-failed error=\(error.localizedDescription)"
+            )
+            CompanionDiagnostics.record(debugMessage)
+            return CompanionClientCoreMobileSnapshotStreamResult(
+                update: nil,
+                liveness: livenessUpdate,
+                shouldStop: streamUpdate.shouldStop,
+                debugMessage: debugMessage
+            )
+        }
         return CompanionClientCoreMobileSnapshotStreamResult(
             update: CompanionSessionMiniSyncUpdate(
                 reason: streamUpdate.syncReason,
@@ -601,6 +614,13 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     private static func nonEmpty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func joinDebugMessages(_ lhs: String, _ rhs: String) -> String {
+        guard let left = nonEmpty(lhs) else {
+            return rhs
+        }
+        return "\(left); \(rhs)"
     }
 
     private static func livenessUpdate(
