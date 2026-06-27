@@ -23,6 +23,7 @@ pub(crate) mod proto {
 }
 
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
@@ -249,7 +250,8 @@ async fn run_state_mini_stream_session(
                 last_transport_error = error.to_string();
                 continue;
             }
-        };
+        }
+        .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
         let mut client =
             match proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint).await {
                 Ok(client) => client,
