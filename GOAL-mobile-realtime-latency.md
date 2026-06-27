@@ -24,8 +24,8 @@ Current repo state:
 
 - The Rust control plane under `crates/agent-control-plane` is the backend source
   of truth.
-- iOS uses `ios/LooperCompanion` plus the shared Swift realtime package under
-  `swift/LooperRealtime`.
+- iOS uses `ios/LooperCompanion` plus the shared Rust client-core Swift package
+  under `swift/LooperClientCore`.
 - The current working tree already contains uncommitted latency-path edits for
   gRPC keepalive, warmed Swift realtime connections, route racing, fast HTTP
   fallback timeouts, and prompt ACK-first behavior.
@@ -89,7 +89,7 @@ Run the relevant checks for every touched surface:
 cargo fmt --manifest-path crates/agent-control-plane/Cargo.toml --check
 cargo test --manifest-path crates/agent-control-plane/Cargo.toml grpc_mobile -- --nocapture
 cargo check --manifest-path crates/agent-control-plane/Cargo.toml
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperRealtime
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperClientCore
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios/LooperCompanionCore
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/check-ios.sh
 git diff --check

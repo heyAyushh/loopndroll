@@ -102,6 +102,18 @@ struct CompanionAppViewState {
         return model.snapshotState.snapshot?.host.lastSyncedAt
     }
 
+    var deviceHubSyncStatusLabel: String {
+        if model.realtimeStreamIsLive {
+            return "Live via Session stream"
+        }
+
+        guard let lastSyncedAt else {
+            return "Waiting for first sync"
+        }
+
+        return ModelFormatting.relativeTimestamp(lastSyncedAt)
+    }
+
     var hostName: String? {
         model.snapshotState.snapshot?.host.name
     }
@@ -335,7 +347,7 @@ struct CompanionAppViewState {
             parts.append(coverageSummary)
         }
 
-        if model.realtimeLatestSeq > 0 || model.realtimeServerTime?.isEmpty == false {
+        if model.realtimeStreamIsLive {
             parts.append("stream live")
         } else if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
             parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")

@@ -32,6 +32,7 @@ SESSION_MINI_STORE_PATH = IOS_DIR / "LooperCompanion" / "Services" / "CompanionS
 COMPANION_APP_MODEL_PATH = IOS_DIR / "LooperCompanion" / "App" / "CompanionAppModel.swift"
 CARGO_MANIFEST = ROOT_DIR / "crates" / "agent-control-plane" / "Cargo.toml"
 SERVER_BINARY = ROOT_DIR / "crates" / "agent-control-plane" / "target" / "debug" / "looper-server"
+CLI_BINARY = ROOT_DIR / "crates" / "agent-control-plane" / "target" / "debug" / "looper"
 ARTIFACT_ROOT = ROOT_DIR / ".build" / "mobile-realtime-latency"
 DERIVED_DATA_CACHE_ROOT = ARTIFACT_ROOT / "DerivedData"
 LIVE_CONFIG_PATH = ARTIFACT_ROOT / "live-config.json"
@@ -192,11 +193,7 @@ def main() -> int:
         xcodegen_project()
         sample_results = []
         for sample_index in range(requested_sample_count):
-            reset_latency_session_mode(
-                base_url,
-                credentials["bearer_token"],
-                credentials["mobile_session"],
-            )
+            reset_latency_session_mode(base_url)
             sample_label = str(sample_index + 1).zfill(SAMPLE_INDEX_PADDING)
             result_path = run_dir / f"mobile-realtime-latency-{sample_label}.json"
             xcodebuild_log = run_dir / f"xcodebuild-{sample_label}.log"
@@ -1065,7 +1062,6 @@ def start_server(run_dir: Path, codex_stub: Path, http_port: int, grpc_port: int
             "CODEX_HOME": str(run_dir / "codex-home"),
             "HOME": str(run_dir / "home"),
             "LOOPER_CODEX_EXECUTABLE": str(codex_stub),
-            "LOOPER_LEGACY_BUN_DB_PATH": str(run_dir / "legacy-bun.sqlite"),
             "LOOPER_LATENCY_CODEX_STUB_LOG": str(run_dir / "codex-resume-stub.log"),
         }
     )
@@ -1094,12 +1090,16 @@ def build_server_binary() -> None:
             str(CARGO_MANIFEST),
             "--bin",
             "looper-server",
+            "--bin",
+            "looper",
         ],
         cwd=ROOT_DIR,
         env=os.environ.copy(),
     )
     if not SERVER_BINARY.is_file():
         raise RuntimeError(f"missing built server binary at {SERVER_BINARY}")
+    if not CLI_BINARY.is_file():
+        raise RuntimeError(f"missing built CLI binary at {CLI_BINARY}")
 
 
 def wait_for_health(base_url: str, server: subprocess.Popen, log_path: Path) -> None:
@@ -1159,14 +1159,21 @@ def assert_mobile_snapshot(base_url: str, bearer_token: str, mobile_session: str
         raise RuntimeError(f"mobile snapshot did not include {SESSION_TITLE!r}: {sorted(titles)}")
 
 
-def reset_latency_session_mode(base_url: str, bearer_token: str, mobile_session: str) -> None:
-    encoded_session_id = urllib.parse.quote(SESSION_ID, safe="")
-    http_json(
-        f"{base_url}/api/mobile/sessions/{encoded_session_id}/mode",
-        method="POST",
-        headers=mobile_headers(bearer_token, mobile_session),
-        payload={"preset": None},
+def reset_latency_session_mode(base_url: str) -> None:
+    env = os.environ.copy()
+    env["AGENT_CONTROL_PLANE_LISTEN"] = listen_address_for_base_url(base_url)
+    run_command(
+        [str(CLI_BINARY), "--json", "sessions", "mode", SESSION_ID, "off"],
+        cwd=ROOT_DIR,
+        env=env,
     )
+
+
+def listen_address_for_base_url(base_url: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.hostname is None or parsed.port is None:
+        raise RuntimeError(f"base URL has no host/port: {base_url}")
+    return f"{parsed.hostname}:{parsed.port}"
 
 
 def write_live_latency_config(

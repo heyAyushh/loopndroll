@@ -61,7 +61,7 @@ Run a final beta 2 proof pack that demonstrates the selected changes with local 
 ```sh
 PATH="/opt/homebrew/bin:$PATH" DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/check-ios.sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios/LooperCompanionCore
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperRealtime
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path swift/LooperClientCore
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'generic/platform=iOS' build
 git diff --check
 ```

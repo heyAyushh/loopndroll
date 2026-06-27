@@ -422,7 +422,7 @@ Exact OS-process attribution is usually only possible for sessions observed live
 - `GET /threads/:thread_id` returns the merged thread record plus source-specific raw facts.
 - `GET /threads/:thread_id/events` returns canonical normalized events ordered by timestamp and source cursor.
 - `GET /threads/:thread_id/attribution` returns the derived attribution record plus evidence used.
-- `GET /events/tail` streams normalized events over SSE.
+- `GET /events/tail` streams normalized diagnostic events over the diagnostics HTTP boundary.
 
 ### API security
 

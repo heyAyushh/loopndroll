@@ -166,7 +166,7 @@ def main() -> int:
     parser.add_argument(
         "--strict-runtime",
         action="store_true",
-        help="Also fail on repo-wide no-SSE/no-unary runtime surfaces after E/F/G integration.",
+        help="Also fail on repo-wide no-event-stream/no-unary runtime surfaces after E/F/G integration.",
     )
     args = parser.parse_args()
 

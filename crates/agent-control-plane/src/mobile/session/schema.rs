@@ -12,7 +12,6 @@ pub(super) const MOBILE_SESSION_NOTIFICATIONS_TABLE: &str = "mobile_session_noti
 pub(super) const MOBILE_DEFAULT_NOTIFICATION_TARGETS_TABLE: &str =
     "mobile_default_notification_targets";
 pub(super) const MOBILE_SESSION_LIFECYCLE_TABLE: &str = "mobile_session_lifecycle";
-pub(super) const MOBILE_LEGACY_IMPORTS_TABLE: &str = "mobile_legacy_imports";
 
 const DEFAULT_NOTIFICATION_TARGET_MACOS: &str = "macos";
 
@@ -79,11 +78,6 @@ create table if not exists mobile_telegram_delivery_receipts (
 
 create index if not exists mobile_telegram_delivery_receipts_message_idx
   on mobile_telegram_delivery_receipts(bot_token, chat_id, telegram_message_id, created_at desc);
-
-create table if not exists mobile_legacy_imports (
-  source_path text primary key,
-  imported_at text not null
-);
 
 create table if not exists mobile_remote_prompts (
   id text primary key,
@@ -269,18 +263,6 @@ pub(super) fn table_columns(
     statement
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(MobileSessionError::Store)
-}
-
-pub(super) fn table_exists(connection: &Connection, table_name: &str) -> MobileSessionResult<bool> {
-    connection
-        .query_row(
-            "select name from sqlite_master where type = 'table' and name = ?1",
-            [table_name],
-            |_row| Ok(()),
-        )
-        .optional()
-        .map(|row| row.is_some())
         .map_err(MobileSessionError::Store)
 }
 

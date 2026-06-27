@@ -13,8 +13,8 @@ self-contained — do not rely on chat history or prior context.
 
 ## 0. Why this exists (the problem)
 
-Looper today carries **two live transports** for the same control plane (HTTP routes and gRPC)
-and still carries stale documentation about an SSE path that is no longer present in source.
+Looper today carries **two control paths** for the same control plane: HTTP for
+bootstrap/recovery and gRPC for the hot Session stream.
 It also carries **three independent client reducers** (`ios/LooperCompanion`,
 `macos/LooperMenuBar`, and the Rust TUI). Clients race multiple URLs with serial timeouts and
 fall back between transports. The result:
@@ -47,8 +47,8 @@ UI. On the public internet, 10 ms is physically impossible; the floor is the wir
 
 **Decision.** The single hot control channel between any client and the control plane is **one
 long-lived bidirectional gRPC stream**. HTTP survives only for (a) pairing/bootstrap,
-(b) health probes, and (c) full snapshots for bootstrap/recovery. No source-level SSE transport
-exists; do not add one. Unary command RPCs are removed in the same rewrite cut; there is no
+(b) health probes, and (c) full snapshots for bootstrap/recovery. No source-level event-stream
+transport exists; do not add one. Unary command RPCs are removed in the same rewrite cut; there is no
 backward-compatibility mode for old command transports.
 
 **The stream.** Add to the proto:
@@ -99,12 +99,12 @@ wins, cancel the rest. No serial per-URL timeouts.
 
 **Don't**
 - Add a new socket/channel for any feature, including streaming text. Everything rides `Session`.
-- Add SSE or any second hot stream. Do not add HTTP routes for session commands or state.
+- Add any second hot stream. Do not add HTTP routes for session commands or state.
 
 **Where.** Proto: `crates/agent-control-plane/proto/looper/v1/control_plane.proto`.
 Server: `crates/agent-control-plane/src/grpc/service.rs`.
-Client: rewrite client surfaces to the Rust client core (ADR-004); the former
-`swift/LooperRealtime` bridge is retired once clients compile against `swift/LooperClientCore`.
+Client: rewrite client surfaces to the Rust client core (ADR-004). The former
+`swift/LooperRealtime` bridge is retired; use `swift/LooperClientCore`.
 
 ---
 
@@ -216,7 +216,7 @@ reconnect + mutation tracking — three reducers, three drift sources. One Rust 
 ## ADR-005 — Streaming assistant output rides the same pipe
 
 **Decision.** Assistant text streams as `TextChunk` frames on the **same `Session` stream**. No
-second socket, no SSE.
+second socket.
 
 Rules:
 1. **Server fan-out.** The Mac reads agent output **once** and broadcasts to all open streams
@@ -305,7 +305,7 @@ client core (ADR-004).
 1. **Dependencies point inward:** clients → client core → control-plane core → agent adapters.
    Clients never touch the DB or agents; agents never touch clients.
 2. **The `Session` duplex stream is the only hot client↔core channel.** HTTP = pairing bootstrap,
-   health, and full snapshot recovery only. No SSE.
+   health, and full snapshot recovery only.
 3. **The reducer exists once** (core) and is mirrored once (client core) — same Rust code.
 4. **Every agent integration is one `AgentHost` trait impl + one conformance test.** The dirty
    external-config patching (`~/.codex/hooks.json`, `~/.claude/settings.json`, `~/.grok/...`,

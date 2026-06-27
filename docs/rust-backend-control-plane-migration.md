@@ -3,7 +3,7 @@
 ## Direction
 
 Rust is the backend and control-plane source of truth. Native macOS, native iOS,
-the Rust CLI, and the Rust TUI are clients of the Rust HTTP/SSE API.
+the Rust CLI, and the Rust TUI are clients of the Rust HTTP/bootstrap and gRPC Session APIs.
 
 ## Rust Owns
 

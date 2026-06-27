@@ -22,6 +22,7 @@ use crate::{
 const MOBILE_SYNC_REASON_DELTA: &str = "delta";
 const MOBILE_SYNC_REASON_HEARTBEAT: &str = "heartbeat";
 const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
+const MOBILE_SYNC_REASON_RECONNECTING: &str = "reconnecting";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
 const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
@@ -520,9 +521,10 @@ fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
     match reason {
         ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
         ClientStateMiniStreamUpdateReason::Heartbeat => MOBILE_SYNC_REASON_HEARTBEAT,
-        ClientStateMiniStreamUpdateReason::Delta
-        | ClientStateMiniStreamUpdateReason::Reconnecting
-        | ClientStateMiniStreamUpdateReason::Stopped => MOBILE_SYNC_REASON_DELTA,
+        ClientStateMiniStreamUpdateReason::Reconnecting => MOBILE_SYNC_REASON_RECONNECTING,
+        ClientStateMiniStreamUpdateReason::Delta | ClientStateMiniStreamUpdateReason::Stopped => {
+            MOBILE_SYNC_REASON_DELTA
+        }
     }
     .to_owned()
 }
@@ -866,7 +868,7 @@ mod tests {
             .expect("mobile reconnecting update");
 
         assert!(!update.has_snapshot);
-        assert_eq!(update.sync_reason, "delta");
+        assert_eq!(update.sync_reason, "reconnecting");
         assert!(!update.should_stop);
         assert_eq!(
             update.debug_message,
@@ -998,7 +1000,7 @@ mod tests {
             .expect("menu reconnecting update");
 
         assert!(!update.has_snapshot);
-        assert_eq!(update.sync_reason, "delta");
+        assert_eq!(update.sync_reason, "reconnecting");
         assert_eq!(
             update.debug_message,
             "session-mini:client-core-stream-reconnecting error=transport unavailable"

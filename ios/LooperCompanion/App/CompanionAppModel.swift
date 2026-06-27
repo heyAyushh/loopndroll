@@ -35,6 +35,7 @@ final class CompanionAppModel {
     var lastUpdatedAt: Date?
     var realtimeServerTime: String?
     var realtimeLatestSeq: Int64 = 0
+    var realtimeStreamIsLive = false
     var localNotificationStatus: UNAuthorizationStatus = .notDetermined
     var remotePushRegistration: RemotePushRegistrationResponse?
     var remotePushFailureMessage: String?
@@ -214,6 +215,7 @@ final class CompanionAppModel {
 
     func stopSessionRuntimeSync() {
         sessionMiniController.stopSync()
+        realtimeStreamIsLive = false
     }
 
     func startSessionRuntimeSyncIfNeeded() {
@@ -244,7 +246,8 @@ final class CompanionAppModel {
         applyCachedSnapshot(update.snapshot, reason: "session-mini-sync-\(update.reason)")
         applyRealtimeStreamLiveness(
             serverTime: update.snapshot.host.lastSyncedAt,
-            latestSeq: update.latestSeq
+            latestSeq: update.latestSeq,
+            isLive: true
         )
         connectionState = .connected
         lastUpdatedAt = Date()
@@ -264,7 +267,8 @@ final class CompanionAppModel {
 
         applyRealtimeStreamLiveness(
             serverTime: update.serverTime,
-            latestSeq: update.latestSeq
+            latestSeq: update.latestSeq,
+            isLive: update.isLive
         )
         connectionState = .connected
         lastUpdatedAt = Date()
@@ -275,12 +279,14 @@ final class CompanionAppModel {
 
     private func applyRealtimeStreamLiveness(
         serverTime: String,
-        latestSeq: Int64
+        latestSeq: Int64,
+        isLive: Bool
     ) {
         if !serverTime.isEmpty {
             realtimeServerTime = serverTime
         }
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
+        realtimeStreamIsLive = isLive
     }
 
     private func prepareSessionRuntimeInBackground() {
@@ -343,6 +349,9 @@ final class CompanionAppModel {
         stopNotificationReplyOutboxDrain()
         serverHealth = nil
         reachedBaseURL = nil
+        realtimeServerTime = nil
+        realtimeLatestSeq = 0
+        realtimeStreamIsLive = false
         snapshotState.clearDetails()
         pendingOpenSessionID = nil
         errorMessage = nil

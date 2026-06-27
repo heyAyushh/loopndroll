@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod completion_checks;
-mod legacy;
 mod normalization;
 mod notifications;
 mod presets;

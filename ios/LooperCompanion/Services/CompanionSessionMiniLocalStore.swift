@@ -1,6 +1,11 @@
 import Foundation
 import LooperClientCore
 
+private enum CompanionSessionMiniSyncReason {
+    static let delta = "delta"
+    static let heartbeat = "heartbeat"
+}
+
 struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let kind: ClientPendingCommandKind
     let clientMutationID: String
@@ -27,6 +32,7 @@ struct CompanionSessionMiniLivenessUpdate: Sendable {
     let reason: String
     let latestSeq: Int64
     let serverTime: String
+    let isLive: Bool
 }
 
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
@@ -573,14 +579,14 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     private static func livenessUpdate(
         from streamUpdate: ClientMobileSnapshotStreamUpdate
     ) -> CompanionSessionMiniLivenessUpdate? {
-        guard let serverTime = nonEmpty(streamUpdate.serverTime) else {
-            return nil
-        }
-
         return CompanionSessionMiniLivenessUpdate(
             reason: streamUpdate.syncReason,
             latestSeq: streamUpdate.latestSeq,
-            serverTime: serverTime
+            serverTime: nonEmpty(streamUpdate.serverTime) ?? "",
+            isLive: !streamUpdate.shouldStop && (
+                streamUpdate.syncReason == CompanionSessionMiniSyncReason.delta ||
+                    streamUpdate.syncReason == CompanionSessionMiniSyncReason.heartbeat
+            )
         )
     }
 }

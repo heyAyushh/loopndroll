@@ -36,14 +36,14 @@ crates/agent-control-plane/
 - Preserve the Rust module split. Add files under the matching domain folder instead of expanding facade files.
 - Keep `looper` user-facing; treat `looper-cli` as compatibility.
 - Use explicit manifest commands because there is no repo-root Cargo workspace.
-- Keep legacy Bun/mobile import code isolated and named as migration compatibility; do not spread it into new paths.
+- Legacy Bun/mobile import code was intentionally removed. Do not reintroduce startup migration paths without a new migration plan and proof.
 - When mobile response models change, update iOS Swift models/tests in the same slice.
 
 ## ANTI-PATTERNS
 
 - Do not put route logic, SQL queries, hook behavior, or session-control state in macOS/iOS clients.
 - Do not handwave large `api.rs`, `http/mod.rs`, `cli/mod.rs`, or `control_plane.rs` growth; split by route/domain.
-- Do not delete legacy import tests unless the migration path is intentionally removed and verified.
+- Do not revive deleted compatibility routes, importers, or client transport paths to make a behavior pass.
 - Do not weaken `isolated_control_plane` fixtures to make a behavior pass.
 
 ## COMMANDS
@@ -60,4 +60,4 @@ cargo build --manifest-path crates/agent-control-plane/Cargo.toml --bin looper -
 - `tests/isolated_control_plane.rs`: broad route/session/mobile/hook/ACP coverage.
 - `tests/isolated_control_plane/acp_hosts/`: Zed/Devin/probe/websocket/remote-control assertions.
 - `src/mobile/api/*_tests.rs`: iPhone-facing snapshot/status/prompt behavior.
-- `src/mobile/session/tests.rs`: prompt modes, lifecycle, completion, legacy import.
+- `src/mobile/session/tests.rs`: prompt modes, lifecycle, completion.

@@ -40,7 +40,7 @@ organization pass.
 
 - `crates/agent-control-plane/src/http/mod.rs` now keeps `build_router` as
   route-group composition instead of one long route chain.
-- `http/events.rs` owns desktop/mobile SSE streams and the automation tail
+- `grpc/service.rs` owns desktop/mobile Session streams and `http/events.rs` owns the automation tail
   stream constants.
 - `http/handoff.rs` owns the handoff HTML/deep-link renderer and escaping tests.
 - `http/mobile_state.rs` owns shared mobile snapshot/state responses and mobile

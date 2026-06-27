@@ -12,5 +12,5 @@ The generated Swift sources live under `Sources/LooperClientCore/Generated`.
 The binary target lives at `Frameworks/LooperClientCoreFFI.xcframework`.
 
 This package should stay a view wrapper over the Rust client core. Do not add
-HTTP command routes, SSE clients, SQLite ownership, or session-control truth in
+HTTP command routes, event-stream clients, SQLite ownership, or session-control truth in
 Swift.

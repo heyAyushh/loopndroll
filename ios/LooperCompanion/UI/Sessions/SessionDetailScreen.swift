@@ -254,11 +254,7 @@ struct SessionDetailScreen: View {
             LabeledContent("Last Active") {
                 Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
             }
-            if let lastSyncedAt = model.viewState.lastSyncedAt, !lastSyncedAt.isEmpty {
-                LabeledContent("Last Synced") {
-                    Text(ModelFormatting.relativeTimestamp(lastSyncedAt))
-                }
-            }
+            LabeledContent("Sync", value: model.viewState.deviceHubSyncStatusLabel)
             LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
         }
     }

@@ -51,14 +51,6 @@ struct SessionsDeviceHubSheet: View {
     @Environment(\.openURL) private var openURL
     @State private var isOrbScannerPresented = false
 
-    private var syncLabel: String {
-        guard let lastSyncedAt = model.viewState.lastSyncedAt else {
-            return "Waiting for first sync"
-        }
-
-        return ModelFormatting.relativeTimestamp(lastSyncedAt)
-    }
-
     private var alertActionTitle: String {
         if model.viewState.areLocalNotificationsDenied {
             return "Open Notification Settings"
@@ -107,7 +99,7 @@ struct SessionsDeviceHubSheet: View {
                         LabeledContent("Current Route", value: baseURL)
                     }
                     LabeledContent("Access", value: model.viewState.deviceHubAccessStatusLabel)
-                    LabeledContent("Last Sync", value: syncLabel)
+                    LabeledContent("Sync", value: model.viewState.deviceHubSyncStatusLabel)
                 }
                 .listRowBackground(Color.clear)
 

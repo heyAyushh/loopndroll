@@ -20,12 +20,10 @@ use crate::scheduler::AutomationRunner;
 
 const DEFAULT_STORE_RELATIVE_PATH: &str =
     "Library/Application Support/looper/agent-control-plane.sqlite";
-const DEFAULT_LEGACY_BUN_STORE_RELATIVE_PATH: &str = "Library/Application Support/looper/app.db";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const HOME_ENV: &str = "HOME";
 const LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_LISTEN";
 const STORE_ENV: &str = "AGENT_CONTROL_PLANE_STORE";
-const LEGACY_BUN_STORE_ENV: &str = "LOOPER_LEGACY_BUN_DB_PATH";
 const AUTOMATION_TICK_SECONDS: u64 = 30;
 const TELEGRAM_BRIDGE_TICK_SECONDS: u64 = 5;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
@@ -35,7 +33,6 @@ const STOP_HOOK_EVENT: &str = "Stop";
 
 pub async fn run_server() -> Result<()> {
     let control_plane = default_control_plane()?;
-    import_legacy_bun_mobile_config(&control_plane);
     spawn_automation_runner(control_plane.clone());
     spawn_telegram_bridge(control_plane.clone());
 
@@ -311,37 +308,10 @@ fn hook_executable_path(current_executable: PathBuf) -> PathBuf {
     }
 }
 
-fn default_legacy_bun_database_path() -> PathBuf {
-    home_dir().join(DEFAULT_LEGACY_BUN_STORE_RELATIVE_PATH)
-}
-
 fn home_dir() -> PathBuf {
     std::env::var(HOME_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn import_legacy_bun_mobile_config(control_plane: &ControlPlane) {
-    let Some(legacy_path) = legacy_bun_database_path() else {
-        return;
-    };
-    if let Err(error) = control_plane
-        .mobile_session_service()
-        .import_legacy_bun_mobile_config(&legacy_path)
-    {
-        eprintln!(
-            "legacy Bun mobile config import failed from {}: {error}",
-            legacy_path.display()
-        );
-    }
-}
-
-fn legacy_bun_database_path() -> Option<PathBuf> {
-    match std::env::var(LEGACY_BUN_STORE_ENV) {
-        Ok(value) if value.trim().is_empty() => None,
-        Ok(value) => Some(PathBuf::from(value)),
-        Err(_) => Some(default_legacy_bun_database_path()),
-    }
 }
 
 fn spawn_automation_runner(control_plane: ControlPlane) {
