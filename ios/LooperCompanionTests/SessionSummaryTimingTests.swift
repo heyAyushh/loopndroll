@@ -435,13 +435,9 @@ struct SessionSummaryTimingTests {
         #expect(store.detail(for: "thread-main")?.effectiveMode == .maxTurns1)
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Codex ready")
         #expect(!store.selectAssistantSurface(.codex))
-        #expect(!store.hasPendingAssistantSurfaceSave)
 
         #expect(store.selectAssistantSurface(.devin))
         #expect(store.selectedAssistantSurface == .devin)
-        #expect(store.hasPendingAssistantSurfaceSave)
-        #expect(store.dequeuePendingAssistantSurfaceSave() == .devin)
-        #expect(!store.hasPendingAssistantSurfaceSave)
         #expect(store.sessionSections.active.map(\.ref) == ["S2"])
         #expect(store.session(withID: "thread-main")?.ref == "S2")
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
@@ -587,10 +583,6 @@ private struct SnapshotOnlyCompanionService: CompanionService {
     }
 
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot {
-        throw SnapshotOnlyCompanionServiceError.unimplemented
-    }
-
-    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot {
         throw SnapshotOnlyCompanionServiceError.unimplemented
     }
 

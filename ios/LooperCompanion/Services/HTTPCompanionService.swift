@@ -153,14 +153,6 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot {
-        try await request(
-            path: "/api/mobile/settings/assistant-surface",
-            method: HTTPMethod.post,
-            body: ["assistantSurface": surface.rawValue]
-        )
-    }
-
     func saveSiriDefaultSession(
         id: String?,
         assistantSurface: CompanionAssistantSurface?

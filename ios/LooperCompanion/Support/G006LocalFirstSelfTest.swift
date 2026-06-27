@@ -1044,10 +1044,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         snapshot
     }
 
-    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot {
-        snapshot
-    }
-
     func saveSiriDefaultSession(
         id _: String?,
         assistantSurface _: CompanionAssistantSurface?

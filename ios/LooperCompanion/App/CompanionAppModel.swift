@@ -994,6 +994,8 @@ final class CompanionAppModel {
                 notificationID: Self.nonEmptyText(response.notificationId) ?? "unknown"
             )
             return true
+        } catch ClientCoreError.NoPendingNotificationReply {
+            return true
         } catch {
             CompanionDiagnostics.record(
                 "notification-reply:pending-drain-failed error=\(error.localizedDescription)"
@@ -1191,7 +1193,7 @@ final class CompanionAppModel {
             return
         }
 
-        startAssistantSurfaceSaveIfNeeded()
+        CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
     }
 
     private func mutateSessionSnapshot(
@@ -1439,43 +1441,6 @@ final class CompanionAppModel {
 
     private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
         snapshotState.applyVisibleAssistantSurface(surface)
-    }
-
-    private func startAssistantSurfaceSaveIfNeeded() {
-        guard snapshotState.beginAssistantSurfaceSaveIfNeeded() else {
-            return
-        }
-
-        Task { @MainActor in
-            await persistPendingAssistantSurfaces()
-        }
-    }
-
-    private func persistPendingAssistantSurfaces() async {
-        while let nextAssistantSurface = snapshotState.dequeuePendingAssistantSurfaceSave() {
-            do {
-                let nextSnapshot = try await service.saveAssistantSurface(nextAssistantSurface)
-                await applySnapshot(nextSnapshot)
-            } catch {
-                guard !isCancellationError(error) else {
-                    continue
-                }
-
-                handleAssistantSurfaceSaveFailure(error)
-            }
-        }
-
-        snapshotState.finishAssistantSurfaceSave()
-        if snapshotState.hasPendingAssistantSurfaceSave {
-            startAssistantSurfaceSaveIfNeeded()
-        }
-    }
-
-    private func handleAssistantSurfaceSaveFailure(_ error: Error) {
-        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-        CompanionDiagnostics.record(
-            "assistant-surface:save-failed surface=\(selectedAssistantSurface.rawValue) state=\(connectionState.rawValue) error=\(error.localizedDescription)"
-        )
     }
 
     private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) -> CompanionAssistantSurface? {

@@ -6,6 +6,8 @@ struct SessionDetailScreen: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draftPrompt = ""
+    @State private var draftMode: SessionMode?
+    @State private var hasDraftModeSelection = false
     @State private var contextualPromptSuggestions: [String] = []
     @State private var isSendingPrompt = false
     @State private var showingDeleteConfirmation = false
@@ -91,6 +93,15 @@ struct SessionDetailScreen: View {
             )
         )
         .scrollDismissesKeyboard(.interactively)
+        .onAppear {
+            syncDraftModeFromCurrentModeIfNeeded()
+        }
+        .onChange(of: session.id) {
+            resetDraftMode()
+        }
+        .onChange(of: currentMode) {
+            syncDraftModeFromCurrentModeIfNeeded()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -292,7 +303,7 @@ struct SessionDetailScreen: View {
         Section {
             ForEach(SessionMode.allCases, id: \.rawValue) { mode in
                 Button {
-                    model.beginApplyMode(mode, to: session.id)
+                    selectDraftMode(mode)
                 } label: {
                     HStack(spacing: 12) {
                         Label(mode.label, systemImage: mode.symbolName)
@@ -300,7 +311,7 @@ struct SessionDetailScreen: View {
 
                         Spacer()
 
-                        if currentMode == mode {
+                        if selectedPromptMode == mode {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(.tint)
                         }
@@ -310,12 +321,12 @@ struct SessionDetailScreen: View {
             }
 
             Button {
-                model.beginApplyMode(nil, to: session.id)
+                selectDraftMode(nil)
             } label: {
                 HStack {
                     Label("Use Global Default", systemImage: "dial.low")
                     Spacer()
-                    if currentMode == nil {
+                    if selectedPromptMode == nil {
                         Image(systemName: "checkmark")
                             .foregroundStyle(.tint)
                     }
@@ -325,7 +336,7 @@ struct SessionDetailScreen: View {
         } header: {
             Text("Mode")
         } footer: {
-            Text(currentMode?.summary ?? "This session follows the global Looper default.")
+            Text(selectedPromptMode?.summary ?? "This session follows the global Looper default.")
         }
     }
 
@@ -403,7 +414,7 @@ struct SessionDetailScreen: View {
         !isSendingPrompt &&
             !trimmedPrompt.isEmpty &&
             promptDeliveryIsAvailable &&
-            currentMode != nil &&
+            selectedPromptMode != nil &&
             !(detail?.isArchived ?? session.isArchived)
     }
 
@@ -412,7 +423,7 @@ struct SessionDetailScreen: View {
             return promptDeliveryUnavailableReason ?? "This session cannot receive prompts from Looper."
         }
 
-        return currentMode == nil
+        return selectedPromptMode == nil
             ? "Set a mode before sending a prompt."
             : "Prompt is queued for this session mode."
     }
@@ -445,6 +456,14 @@ struct SessionDetailScreen: View {
         focusedInput == .prompt ? promptSuggestions : []
     }
 
+    private var selectedPromptMode: SessionMode? {
+        hasDraftModeSelection ? draftMode : currentMode
+    }
+
+    private var needsDraftModeApplyBeforePrompt: Bool {
+        hasDraftModeSelection && draftMode != currentMode
+    }
+
     private var promptSuggestionContextKey: String {
         [
             session.id,
@@ -475,15 +494,43 @@ struct SessionDetailScreen: View {
         focusedInput = .prompt
     }
 
+    private func selectDraftMode(_ mode: SessionMode?) {
+        draftMode = mode
+        hasDraftModeSelection = true
+    }
+
+    private func resetDraftMode() {
+        draftMode = currentMode
+        hasDraftModeSelection = false
+    }
+
+    private func syncDraftModeFromCurrentModeIfNeeded() {
+        guard !hasDraftModeSelection else {
+            return
+        }
+
+        draftMode = currentMode
+    }
+
     private func sendPrompt() {
         guard canSendPrompt else {
             return
         }
 
         let prompt = trimmedPrompt
+        let modeToApply = draftMode
+        let shouldApplyDraftMode = needsDraftModeApplyBeforePrompt
         draftPrompt = ""
         focusedInput = nil
-        let sendTask = model.beginSendSessionPrompt(prompt, to: session.id)
+        let sendTask = Task { @MainActor in
+            if shouldApplyDraftMode {
+                guard await model.beginApplyMode(modeToApply, to: session.id).value else {
+                    return false
+                }
+            }
+
+            return await model.sendSessionPrompt(prompt, to: session.id)
+        }
         isSendingPrompt = true
         Task {
             let didSend = await sendTask.value
@@ -491,6 +538,9 @@ struct SessionDetailScreen: View {
                 if !didSend {
                     draftPrompt = prompt
                     focusedInput = .prompt
+                } else {
+                    hasDraftModeSelection = false
+                    draftMode = modeToApply
                 }
                 isSendingPrompt = false
             }

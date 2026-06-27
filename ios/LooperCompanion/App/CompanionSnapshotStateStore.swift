@@ -13,8 +13,6 @@ final class CompanionSnapshotStateStore {
     private(set) var sessionIndex = SessionIndex.empty
 
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
-    @ObservationIgnored private var pendingAssistantSurfaceSave: CompanionAssistantSurface?
-    @ObservationIgnored private var isSavingAssistantSurface = false
 
     var hasSnapshot: Bool {
         snapshot != nil
@@ -28,10 +26,6 @@ final class CompanionSnapshotStateStore {
         sessionIndex.identity
     }
 
-    var hasPendingAssistantSurfaceSave: Bool {
-        pendingAssistantSurfaceSave != nil
-    }
-
     func reset() {
         snapshot = nil
         detailBySessionID = [:]
@@ -39,8 +33,6 @@ final class CompanionSnapshotStateStore {
         sessionSections = .empty
         sessionIndex = .empty
         hasUserSelectedAssistantSurface = false
-        pendingAssistantSurfaceSave = nil
-        isSavingAssistantSurface = false
     }
 
     func clearDetails() {
@@ -97,30 +89,8 @@ final class CompanionSnapshotStateStore {
             from: selection.selectedAssistantSurface
         )
         hasUserSelectedAssistantSurface = selection.hasUserSelectedAssistantSurface
-        pendingAssistantSurfaceSave = selection.hasPendingAssistantSurfaceSave
-            ? SnapshotProjectionCodec.assistantSurface(from: selection.pendingAssistantSurface)
-            : nil
         applyVisibleAssistantSurface(selectedSurface)
         return true
-    }
-
-    func beginAssistantSurfaceSaveIfNeeded() -> Bool {
-        guard !isSavingAssistantSurface else {
-            return false
-        }
-
-        isSavingAssistantSurface = true
-        return true
-    }
-
-    func dequeuePendingAssistantSurfaceSave() -> CompanionAssistantSurface? {
-        let nextAssistantSurface = pendingAssistantSurfaceSave
-        pendingAssistantSurfaceSave = nil
-        return nextAssistantSurface
-    }
-
-    func finishAssistantSurfaceSave() {
-        isSavingAssistantSurface = false
     }
 
     func session(withID sessionID: String) -> SessionSummary? {

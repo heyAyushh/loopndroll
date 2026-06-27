@@ -46,7 +46,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testAssistantSurfaceSaveFailurePreservesLocalReadyState() async throws {
+    func testAssistantSurfaceSwitchIsLocalOnly() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -59,18 +59,16 @@ struct CompanionSessionMiniLocalFirstTests {
                 Self.miniRecord(session: cachedSession, seq: 8, revision: "mini-revision-8"),
             ]
         )
-        let service = SessionMiniLocalFirstServiceSpy(
-            snapshot: Self.networkSnapshot(),
-            assistantSurfaceSaveError: SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
-        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let model = CompanionAppModel(
             environment: CompanionEnvironment(service: service),
             sessionRuntime: runtime
         )
 
         model.selectAssistantSurface(.devin)
-        try await Task.sleep(for: .milliseconds(50))
 
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(service.loadSnapshotCallCount == 0)
         #expect(model.connectionState == .connected)
         #expect(model.errorMessage == nil)
         #expect(model.viewState.connectivityHeadline != "Mac connection offline")
@@ -511,15 +509,10 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     private let lock = NSLock()
     private let snapshot: MobileSnapshot
-    private let assistantSurfaceSaveError: Error?
     private(set) var loadSnapshotCallCount = 0
 
-    init(
-        snapshot: MobileSnapshot,
-        assistantSurfaceSaveError: Error? = nil
-    ) {
+    init(snapshot: MobileSnapshot) {
         self.snapshot = snapshot
-        self.assistantSurfaceSaveError = assistantSurfaceSaveError
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
@@ -560,14 +553,6 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
 
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot {
         snapshot
-    }
-
-    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot {
-        if let assistantSurfaceSaveError {
-            throw assistantSurfaceSaveError
-        }
-
-        return snapshot
     }
 
     func saveSiriDefaultSession(

@@ -13,7 +13,6 @@ protocol CompanionService: Sendable {
     func deleteSession(id: String) async throws -> MobileSnapshot
     func muteSession(id: String) async throws -> MobileSnapshot
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot
     func saveSiriDefaultSession(
         id: String?,
         assistantSurface: CompanionAssistantSurface?

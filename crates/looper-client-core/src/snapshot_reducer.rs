@@ -44,8 +44,6 @@ pub struct ClientAssistantSurfaceSelection {
     pub did_change: bool,
     pub has_user_selected_assistant_surface: bool,
     pub selected_assistant_surface: String,
-    pub has_pending_assistant_surface_save: bool,
-    pub pending_assistant_surface: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, uniffi::Record)]
@@ -296,17 +294,13 @@ pub fn reduce_assistant_surface_selection(
             did_change: false,
             has_user_selected_assistant_surface,
             selected_assistant_surface: current_selected_assistant_surface,
-            has_pending_assistant_surface_save: false,
-            pending_assistant_surface: String::new(),
         };
     }
 
     ClientAssistantSurfaceSelection {
         did_change: true,
         has_user_selected_assistant_surface: true,
-        selected_assistant_surface: requested_assistant_surface.clone(),
-        has_pending_assistant_surface_save: true,
-        pending_assistant_surface: requested_assistant_surface,
+        selected_assistant_surface: requested_assistant_surface,
     }
 }
 
@@ -1037,34 +1031,29 @@ mod tests {
     }
 
     #[test]
-    fn assistant_surface_selection_noops_without_pending_save() {
+    fn assistant_surface_selection_noops_without_remote_save() {
         let selection =
             reduce_assistant_surface_selection(CODEX.to_owned(), CODEX.to_owned(), false);
 
         assert!(!selection.did_change);
         assert!(!selection.has_user_selected_assistant_surface);
         assert_eq!(selection.selected_assistant_surface, CODEX);
-        assert!(!selection.has_pending_assistant_surface_save);
-        assert!(selection.pending_assistant_surface.is_empty());
 
         let user_selected_selection =
             reduce_assistant_surface_selection(CODEX.to_owned(), CODEX.to_owned(), true);
 
         assert!(!user_selected_selection.did_change);
         assert!(user_selected_selection.has_user_selected_assistant_surface);
-        assert!(!user_selected_selection.has_pending_assistant_surface_save);
     }
 
     #[test]
-    fn assistant_surface_selection_marks_pending_save_on_change() {
+    fn assistant_surface_selection_changes_visible_projection_only() {
         let selection =
             reduce_assistant_surface_selection(CODEX.to_owned(), DEVIN.to_owned(), false);
 
         assert!(selection.did_change);
         assert!(selection.has_user_selected_assistant_surface);
         assert_eq!(selection.selected_assistant_surface, DEVIN);
-        assert!(selection.has_pending_assistant_surface_save);
-        assert_eq!(selection.pending_assistant_surface, DEVIN);
     }
 
     #[test]

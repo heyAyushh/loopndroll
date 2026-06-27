@@ -922,17 +922,13 @@ public struct ClientAssistantSurfaceSelection: Equatable, Hashable {
     public var didChange: Bool
     public var hasUserSelectedAssistantSurface: Bool
     public var selectedAssistantSurface: String
-    public var hasPendingAssistantSurfaceSave: Bool
-    public var pendingAssistantSurface: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(didChange: Bool, hasUserSelectedAssistantSurface: Bool, selectedAssistantSurface: String, hasPendingAssistantSurfaceSave: Bool, pendingAssistantSurface: String) {
+    public init(didChange: Bool, hasUserSelectedAssistantSurface: Bool, selectedAssistantSurface: String) {
         self.didChange = didChange
         self.hasUserSelectedAssistantSurface = hasUserSelectedAssistantSurface
         self.selectedAssistantSurface = selectedAssistantSurface
-        self.hasPendingAssistantSurfaceSave = hasPendingAssistantSurfaceSave
-        self.pendingAssistantSurface = pendingAssistantSurface
     }
 
 
@@ -953,9 +949,7 @@ public struct FfiConverterTypeClientAssistantSurfaceSelection: FfiConverterRustB
             try ClientAssistantSurfaceSelection(
                 didChange: FfiConverterBool.read(from: &buf),
                 hasUserSelectedAssistantSurface: FfiConverterBool.read(from: &buf),
-                selectedAssistantSurface: FfiConverterString.read(from: &buf),
-                hasPendingAssistantSurfaceSave: FfiConverterBool.read(from: &buf),
-                pendingAssistantSurface: FfiConverterString.read(from: &buf)
+                selectedAssistantSurface: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -963,8 +957,6 @@ public struct FfiConverterTypeClientAssistantSurfaceSelection: FfiConverterRustB
         FfiConverterBool.write(value.didChange, into: &buf)
         FfiConverterBool.write(value.hasUserSelectedAssistantSurface, into: &buf)
         FfiConverterString.write(value.selectedAssistantSurface, into: &buf)
-        FfiConverterBool.write(value.hasPendingAssistantSurfaceSave, into: &buf)
-        FfiConverterString.write(value.pendingAssistantSurface, into: &buf)
     }
 }
 

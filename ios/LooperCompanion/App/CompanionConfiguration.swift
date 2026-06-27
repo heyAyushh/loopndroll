@@ -638,7 +638,6 @@ struct UnconfiguredCompanionService: CompanionService {
     func deleteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func muteSession(id _: String) async throws -> MobileSnapshot { throw error }
     func saveDefaultPrompt(_: String) async throws -> MobileSnapshot { throw error }
-    func saveAssistantSurface(_: CompanionAssistantSurface) async throws -> MobileSnapshot { throw error }
     func saveSiriDefaultSession(
         id _: String?,
         assistantSurface _: CompanionAssistantSurface?

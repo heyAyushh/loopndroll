@@ -175,11 +175,6 @@ actor MockCompanionStore {
         return publishSnapshot()
     }
 
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) -> MobileSnapshot {
-        snapshot.globalSettings.assistantSurface = surface
-        return publishSnapshot()
-    }
-
     func saveSiriDefaultSession(
         id: String?,
         assistantSurface: CompanionAssistantSurface?
@@ -294,10 +289,6 @@ struct MockCompanionService: CompanionService {
 
     func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot {
         await store.savePrompt(prompt)
-    }
-
-    func saveAssistantSurface(_ surface: CompanionAssistantSurface) async throws -> MobileSnapshot {
-        await store.saveAssistantSurface(surface)
     }
 
     func saveSiriDefaultSession(
