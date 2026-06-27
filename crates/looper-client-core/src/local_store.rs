@@ -20,6 +20,8 @@ const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
 const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
+const LEGACY_CONTROL_PAYLOAD_REVISION_FIELD: &str = "\"revision\"";
+const LEGACY_CONTROL_PAYLOAD_GLOBAL_SETTINGS_FIELD: &str = "globalSettings";
 
 #[derive(Debug)]
 pub(crate) struct LooperClientCoreLocalStore {
@@ -406,6 +408,22 @@ impl LooperClientCoreLocalStore {
 }
 
 impl StoredState {
+    fn repair_legacy_control_payload_cursor(&mut self) {
+        if self.sessions.is_empty() || !has_legacy_control_payload(&self.sessions) {
+            return;
+        }
+
+        let latest_materialized_seq = self
+            .sessions
+            .iter()
+            .map(|session| session.seq)
+            .max()
+            .unwrap_or_default();
+        if self.latest_seq > latest_materialized_seq {
+            self.latest_seq = latest_materialized_seq;
+        }
+    }
+
     fn snapshot(&self) -> ClientLocalStateSnapshot {
         ClientLocalStateSnapshot {
             latest_seq: self.latest_seq,
@@ -487,7 +505,10 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
 
 fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     match load(file_path) {
-        Ok(state) => Ok(state),
+        Ok(mut state) => {
+            state.repair_legacy_control_payload_cursor();
+            Ok(state)
+        }
         Err(ClientCoreError::InvalidSnapshotJson) => {
             let _ = std::fs::remove_file(file_path);
             Ok(StoredState::default())
@@ -549,6 +570,17 @@ fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> boo
         ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
     )
+}
+
+fn has_legacy_control_payload(sessions: &[ClientStateMini]) -> bool {
+    sessions.iter().any(|session| {
+        session
+            .payload_json
+            .contains(LEGACY_CONTROL_PAYLOAD_GLOBAL_SETTINGS_FIELD)
+            || session
+                .payload_json
+                .contains(LEGACY_CONTROL_PAYLOAD_REVISION_FIELD)
+    })
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -713,6 +745,42 @@ mod tests {
             reopened_snapshot.pending_commands[0].client_mutation_id,
             "mutation-pending"
         );
+    }
+
+    #[test]
+    fn local_store_clamps_legacy_control_payload_cursor_on_load() {
+        let path = temp_store_path("legacy-control-payload-cursor");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 5246,
+                "serverTime": "2026-06-27T15:35:48Z",
+                "sessions": [{
+                    "sessionID": "thread-old",
+                    "assistantSurface": "codex",
+                    "seq": 5206,
+                    "revision": "rev-5206",
+                    "payloadJSON": json!({
+                        "sessionId": "thread-old",
+                        "assistantSurface": "codex",
+                        "title": "Old",
+                        "revision": "rev-5206",
+                        "globalSettings": {}
+                    }).to_string()
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write legacy cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let snapshot = store.snapshot().expect("snapshot");
+
+        assert_eq!(snapshot.latest_seq, 5206);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].seq, 5206);
     }
 
     #[test]

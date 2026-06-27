@@ -1235,10 +1235,7 @@ impl LooperClientCore {
                 endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
-                state.latest_seq = state.latest_seq.max(latest_seq);
-                if !server_time.is_empty() {
-                    state.server_time = server_time;
-                }
+                update_server_time_if_newer(&mut state.server_time, server_time);
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
                 }
@@ -1396,14 +1393,7 @@ impl ClientCoreState {
             .iter()
             .find(|mutation| mutation.client_mutation_id == ack.client_mutation_id)
             .map(|mutation| mutation.command_kind);
-        let advances_sequence = ack.ack_seq >= self.latest_seq;
-        self.latest_seq = self.latest_seq.max(ack.ack_seq);
-        if advances_sequence && !ack.revision.is_empty() {
-            self.revision = ack.revision;
-        }
-        if advances_sequence {
-            self.server_time = ack.server_time.clone();
-        }
+        update_server_time_if_newer(&mut self.server_time, ack.server_time.clone());
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
         if command_kind == Some(ClientCommandKind::SetSessionMode) && !ack.accepted {
@@ -1542,6 +1532,15 @@ fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn update_server_time_if_newer(current: &mut String, candidate: String) {
+    if candidate.trim().is_empty() {
+        return;
+    }
+    if current.is_empty() || candidate > *current {
+        *current = candidate;
+    }
 }
 
 fn reject_message(ack: &ClientCommandAck) -> String {
@@ -1835,7 +1834,8 @@ mod tests {
 
         assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
         assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
-        assert_eq!(update.snapshot.latest_seq, 12);
+        assert_eq!(update.latest_seq, 12);
+        assert_eq!(update.snapshot.latest_seq, INITIAL_SEQUENCE);
         assert_eq!(update.snapshot.server_time, SERVER_TIME);
     }
 
@@ -2108,8 +2108,9 @@ mod tests {
         let snapshot = core.snapshot().expect("snapshot");
         assert_eq!(snapshot.outbox_depth, 0);
         assert!(snapshot.pending_mutations.is_empty());
-        assert_eq!(snapshot.latest_seq, 42);
-        assert_eq!(snapshot.revision, "rev-42");
+        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.server_time, "2026-06-25T00:00:42Z");
     }
 
     #[test]
@@ -2167,8 +2168,8 @@ mod tests {
         let snapshot = core.snapshot().expect("snapshot");
         assert_eq!(snapshot.outbox_depth, 0);
         assert!(snapshot.pending_mutations.is_empty());
-        assert_eq!(snapshot.latest_seq, 43);
-        assert_eq!(snapshot.revision, "rev-43");
+        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert!(snapshot.revision.is_empty());
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:43Z");
     }
 
@@ -2551,8 +2552,9 @@ mod tests {
             })
             .expect("ack");
 
-        assert_eq!(snapshot.latest_seq, 42);
-        assert_eq!(snapshot.revision, "rev-42");
+        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.server_time, "2026-06-25T00:00:00Z");
         assert!(snapshot.pending_mutations.is_empty());
         assert!(snapshot.last_error.is_empty());
     }
@@ -2584,7 +2586,7 @@ mod tests {
             })
             .expect("ack");
 
-        assert_eq!(snapshot.latest_seq, 43);
+        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
         assert!(snapshot.pending_mutations.is_empty());
         assert_eq!(
             snapshot.last_error,
@@ -2709,8 +2711,9 @@ mod tests {
             })
             .expect("batch ack");
 
-        assert_eq!(snapshot.latest_seq, 42);
-        assert_eq!(snapshot.revision, "rev-42");
+        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.server_time, "2026-06-25T00:00:01Z");
         assert!(snapshot.pending_mutations.is_empty());
         assert_eq!(
             snapshot.last_error,
