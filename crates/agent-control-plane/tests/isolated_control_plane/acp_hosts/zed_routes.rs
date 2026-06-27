@@ -139,6 +139,7 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
             prompt: "Continue from iPhone.".to_owned(),
             assistant_surface: "zed".to_owned(),
             client_mutation_id: "zed-stale-mobile-prompt".to_owned(),
+            prompt_intent: "steer".to_owned(),
         }),
     )
     .await;

@@ -175,6 +175,7 @@ impl LooperClientCore {
             thread_id: thread_id.clone(),
             preset: preset.clone(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -190,10 +191,12 @@ impl LooperClientCore {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
+        prompt_intent: String,
         client_mutation_id: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_present(&thread_id, ClientCoreError::EmptyThreadId)?;
         require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+        let prompt_intent = normalized_prompt_intent(prompt_intent)?;
         require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
 
         let mut state = self.lock_state()?;
@@ -203,6 +206,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt,
+            prompt_intent,
             assistant_surface,
             notification_id: String::new(),
             archived: false,
@@ -232,6 +236,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt,
+            prompt_intent: String::new(),
             assistant_surface,
             notification_id,
             archived: false,
@@ -256,6 +261,7 @@ impl LooperClientCore {
             thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
             preset: String::new(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface,
             notification_id: String::new(),
             archived: false,
@@ -308,6 +314,7 @@ impl LooperClientCore {
             thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
             preset: String::new(),
             prompt,
+            prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -333,6 +340,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface,
             notification_id: String::new(),
             archived: false,
@@ -358,6 +366,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
             archived,
@@ -382,6 +391,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -406,6 +416,7 @@ impl LooperClientCore {
             thread_id,
             preset: String::new(),
             prompt: String::new(),
+            prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -606,18 +617,21 @@ impl LooperClientCore {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
+        prompt_intent: String,
         client_mutation_id: String,
     ) -> Result<(), ClientCoreError> {
         self.send_prompt(
             thread_id.clone(),
             prompt.clone(),
             assistant_surface.clone(),
+            prompt_intent.clone(),
             client_mutation_id.clone(),
         )?;
         local_store.enqueue_send_prompt_command(
             thread_id,
             prompt,
             assistant_surface,
+            prompt_intent,
             client_mutation_id.clone(),
         )?;
         self.emit_local_state_update(self.snapshot()?);
@@ -1566,6 +1580,18 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
     }
 }
 
+fn normalized_prompt_intent(value: String) -> Result<String, ClientCoreError> {
+    match value.trim() {
+        "" | "queue" => Ok(default_prompt_intent()),
+        "steer" => Ok("steer".to_owned()),
+        _ => Err(ClientCoreError::InvalidPromptIntent),
+    }
+}
+
+fn default_prompt_intent() -> String {
+    "queue".to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1687,6 +1713,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -1866,6 +1893,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -1899,6 +1927,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -1918,6 +1947,7 @@ mod tests {
             "thread-1".to_owned(),
             "first".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue first");
@@ -1925,6 +1955,7 @@ mod tests {
             "thread-1".to_owned(),
             "second".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("replace retry");
@@ -1946,6 +1977,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -1970,6 +2002,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -2016,6 +2049,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -2075,6 +2109,7 @@ mod tests {
                 "thread-1".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
+                "queue".to_owned(),
                 "cmid-prompt".to_owned(),
             )
             .expect("local prompt accepted");
@@ -2185,6 +2220,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("local prompt accepted");
@@ -2397,6 +2433,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");
@@ -2523,6 +2560,7 @@ mod tests {
             "thread-1".to_owned(),
             "continue".to_owned(),
             "codex".to_owned(),
+            "queue".to_owned(),
             "cmid-prompt".to_owned(),
         )
         .expect("queue prompt");

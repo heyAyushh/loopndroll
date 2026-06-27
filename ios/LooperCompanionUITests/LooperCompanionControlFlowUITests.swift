@@ -152,6 +152,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         XCTAssertTrue(waitForButton("Use with Siri"))
         XCTAssertTrue(waitForText("Goal blocked"))
         recordSurfaceEvidence("ios-session-detail")
+        tapVisibleControl(named: "Queue")
 
         let promptEditor = app.textViews["session-detail.prompt-editor"].firstMatch
         scrollToElementFrame(promptEditor)
@@ -184,6 +185,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
     func testSessionModeControls() throws {
         launchApp()
         openPrimarySessionDetail()
+        tapVisibleControl(named: "Queue")
         for modeLabel in [
             "Await Reply",
             "Completion Checks",
@@ -411,6 +413,7 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
         app.staticTexts[configuration.sessionTitle].firstMatch.tap()
         XCTAssertTrue(pollForButton("Use with Siri", timeout: LiveLatencyMetrics.detailTimeout))
+        tapVisibleControl(named: "Queue")
 
         let modeControl = app.buttons[LiveLatencyMetrics.awaitReplyModeIdentifier].firstMatch
         scrollToElement(modeControl)

@@ -33,7 +33,7 @@ const DEFAULT_PROMPT_MUTATION_PREFIX: &str = "default-prompt";
 const ARCHIVE_MUTATION_PREFIX: &str = "archive";
 const DELETE_MUTATION_PREFIX: &str = "delete";
 const MUTE_MUTATION_PREFIX: &str = "mute";
-const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "queued";
+const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "accepted";
 
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreSessionRuntime {
@@ -156,6 +156,7 @@ impl LooperClientCoreSessionRuntime {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
+        prompt_intent: String,
     ) -> Result<ClientSessionPromptIntentResult, ClientCoreError> {
         let client_mutation_id = generated_client_mutation_id(PROMPT_MUTATION_PREFIX);
         self.client_core.accept_send_prompt_durable(
@@ -163,6 +164,7 @@ impl LooperClientCoreSessionRuntime {
             thread_id,
             prompt,
             assistant_surface,
+            prompt_intent,
             client_mutation_id,
         )?;
         Ok(ClientSessionPromptIntentResult {
@@ -614,6 +616,7 @@ mod tests {
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
+                "queue".to_owned(),
             ))
             .expect("local prompt accepted before transport");
         assert!(result.accepted);
@@ -675,6 +678,7 @@ mod tests {
                 "thread-main".to_owned(),
                 "continue".to_owned(),
                 "codex".to_owned(),
+                "queue".to_owned(),
             ))
             .expect("local prompt accepted before transport");
         assert!(result.accepted);

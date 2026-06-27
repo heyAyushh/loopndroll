@@ -314,12 +314,14 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     func sendPrompt(
         threadID: String,
         prompt: String,
-        assistantSurface: CompanionAssistantSurface?
+        assistantSurface: CompanionAssistantSurface?,
+        promptIntent: CompanionPromptIntent = .queue
     ) async throws -> ClientSessionPromptIntentResult {
         let result = try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
-            assistantSurface: assistantSurface?.rawValue ?? ""
+            assistantSurface: assistantSurface?.rawValue ?? "",
+            promptIntent: promptIntent.rawValue
         )
         guard result.accepted else {
             CompanionDiagnostics.record("prompt:grpc-invalid id=\(threadID)")

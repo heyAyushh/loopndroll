@@ -50,6 +50,8 @@ struct StoredPendingCommand {
     preset: Option<String>,
     #[serde(rename = "assistantSurface", default)]
     assistant_surface: Option<String>,
+    #[serde(rename = "promptIntent", default)]
+    prompt_intent: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
     #[serde(rename = "notificationID", default)]
@@ -116,6 +118,9 @@ impl LooperClientCoreLocalStore {
             existing.assistant_surface = command
                 .assistant_surface
                 .or_else(|| existing.assistant_surface.clone());
+            existing.prompt_intent = command
+                .prompt_intent
+                .or_else(|| existing.prompt_intent.clone());
             existing.prompt = command.prompt.or_else(|| existing.prompt.clone());
             existing.notification_id = command
                 .notification_id
@@ -140,6 +145,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset,
             assistant_surface: String::new(),
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -152,9 +158,11 @@ impl LooperClientCoreLocalStore {
         thread_id: String,
         prompt: String,
         assistant_surface: String,
+        prompt_intent: String,
         client_mutation_id: String,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+        let prompt_intent = normalized_prompt_intent(prompt_intent)?;
 
         self.enqueue(ClientPendingCommand {
             kind: ClientPendingCommandKind::SendSessionPrompt,
@@ -162,6 +170,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface,
+            prompt_intent,
             prompt,
             notification_id: String::new(),
             archived: false,
@@ -186,6 +195,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface,
+            prompt_intent: String::new(),
             prompt,
             notification_id,
             archived: false,
@@ -206,6 +216,7 @@ impl LooperClientCoreLocalStore {
             thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
             preset: String::new(),
             assistant_surface,
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -225,6 +236,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface,
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -244,6 +256,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface,
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -264,6 +277,7 @@ impl LooperClientCoreLocalStore {
             thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
             preset: String::new(),
             assistant_surface: String::new(),
+            prompt_intent: String::new(),
             prompt,
             notification_id: String::new(),
             archived: false,
@@ -283,6 +297,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface: String::new(),
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived,
@@ -301,6 +316,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface: String::new(),
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -319,6 +335,7 @@ impl LooperClientCoreLocalStore {
             thread_id,
             preset: String::new(),
             assistant_surface: String::new(),
+            prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
             archived: false,
@@ -442,6 +459,7 @@ impl From<ClientPendingCommand> for StoredPendingCommand {
             thread_id: command.thread_id,
             preset: non_empty(command.preset),
             assistant_surface: non_empty(command.assistant_surface),
+            prompt_intent: non_empty(command.prompt_intent),
             prompt: non_empty(command.prompt),
             notification_id: non_empty(command.notification_id),
             archived: command.archived,
@@ -458,6 +476,7 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
             thread_id: command.thread_id,
             preset: command.preset.unwrap_or_default(),
             assistant_surface: command.assistant_surface.unwrap_or_default(),
+            prompt_intent: command.prompt_intent.unwrap_or_else(default_prompt_intent),
             prompt: command.prompt.unwrap_or_default(),
             notification_id: command.notification_id.unwrap_or_default(),
             archived: command.archived,
@@ -510,6 +529,18 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
     } else {
         Ok(())
     }
+}
+
+fn normalized_prompt_intent(value: String) -> Result<String, ClientCoreError> {
+    match value.trim() {
+        "" | "queue" => Ok(default_prompt_intent()),
+        "steer" => Ok("steer".to_owned()),
+        _ => Err(ClientCoreError::InvalidPromptIntent),
+    }
+}
+
+fn default_prompt_intent() -> String {
+    "queue".to_owned()
 }
 
 fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> bool {
@@ -567,6 +598,7 @@ mod tests {
                 thread_id: "thread-main".to_owned(),
                 preset: String::new(),
                 assistant_surface: "codex".to_owned(),
+                prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
                 archived: false,
@@ -580,6 +612,7 @@ mod tests {
                 thread_id: "thread-main".to_owned(),
                 preset: String::new(),
                 assistant_surface: "codex".to_owned(),
+                prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
                 archived: false,
@@ -639,6 +672,7 @@ mod tests {
                 thread_id: "thread-old".to_owned(),
                 preset: String::new(),
                 assistant_surface: "codex".to_owned(),
+                prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
                 archived: false,

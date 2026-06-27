@@ -6,6 +6,7 @@ struct SessionDetailScreen: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draftPrompt = ""
+    @State private var draftPromptIntent = CompanionPromptIntent.steer
     @State private var draftMode: SessionMode?
     @State private var hasDraftModeSelection = false
     @State private var contextualPromptSuggestions: [String] = []
@@ -71,7 +72,9 @@ struct SessionDetailScreen: View {
             summarySection
             assistantReplySection
             promptSection
-            modeSection
+            if draftPromptIntent == .queue {
+                modeSection
+            }
             notificationsSection
             completionCheckSection
             manageSection
@@ -273,6 +276,15 @@ struct SessionDetailScreen: View {
 
     private var promptSection: some View {
         Section {
+            Picker("Prompt Action", selection: $draftPromptIntent) {
+                ForEach(CompanionPromptIntent.allCases) { intent in
+                    Text(intent.label)
+                        .tag(intent)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("session-detail.prompt-intent")
+
             TextEditor(text: $draftPrompt)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
                 .focused($focusedInput, equals: .prompt)
@@ -284,7 +296,7 @@ struct SessionDetailScreen: View {
                 if isSendingPrompt {
                     ProgressView()
                 } else {
-                    Label("Send Prompt", systemImage: "paperplane")
+                    Label(draftPromptIntent.sendButtonTitle, systemImage: draftPromptIntent.symbolName)
                 }
             }
             .disabled(!canSendPrompt)
@@ -411,7 +423,7 @@ struct SessionDetailScreen: View {
         !isSendingPrompt &&
             !trimmedPrompt.isEmpty &&
             promptDeliveryIsAvailable &&
-            selectedPromptMode != nil &&
+            (draftPromptIntent == .steer || selectedPromptMode != nil) &&
             !(detail?.isArchived ?? session.isArchived)
     }
 
@@ -420,9 +432,14 @@ struct SessionDetailScreen: View {
             return promptDeliveryUnavailableReason ?? "This session cannot receive prompts from Looper."
         }
 
-        return selectedPromptMode == nil
-            ? "Set a mode before sending a prompt."
-            : "Prompt is queued for this session mode."
+        switch draftPromptIntent {
+        case .steer:
+            return "Send now to the running agent when live steering is available."
+        case .queue:
+            return selectedPromptMode == nil
+                ? "Choose a continuation mode before queueing."
+                : "Queue this prompt for the selected continuation mode."
+        }
     }
 
     private var promptDeliveryIsAvailable: Bool {
@@ -515,8 +532,9 @@ struct SessionDetailScreen: View {
         }
 
         let prompt = trimmedPrompt
+        let promptIntent = draftPromptIntent
         let modeToApply = draftMode
-        let shouldApplyDraftMode = needsDraftModeApplyBeforePrompt
+        let shouldApplyDraftMode = promptIntent == .queue && needsDraftModeApplyBeforePrompt
         draftPrompt = ""
         focusedInput = nil
         let sendTask = Task { @MainActor in
@@ -526,7 +544,7 @@ struct SessionDetailScreen: View {
                 }
             }
 
-            return await model.sendSessionPrompt(prompt, to: session.id)
+            return await model.sendSessionPrompt(prompt, intent: promptIntent, to: session.id)
         }
         isSendingPrompt = true
         Task {
@@ -536,8 +554,10 @@ struct SessionDetailScreen: View {
                     draftPrompt = prompt
                     focusedInput = .prompt
                 } else {
-                    hasDraftModeSelection = false
-                    draftMode = modeToApply
+                    if promptIntent == .queue {
+                        hasDraftModeSelection = false
+                        draftMode = modeToApply
+                    }
                 }
                 isSendingPrompt = false
             }

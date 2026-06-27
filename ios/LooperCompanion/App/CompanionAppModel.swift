@@ -903,14 +903,22 @@ final class CompanionAppModel {
     }
 
     @discardableResult
-    func sendSessionPrompt(_ prompt: String, to sessionID: String) async -> Bool {
-        await sendPromptIntent(prompt, to: sessionID)
+    func sendSessionPrompt(
+        _ prompt: String,
+        intent: CompanionPromptIntent = .queue,
+        to sessionID: String
+    ) async -> Bool {
+        await sendPromptIntent(prompt, intent: intent, to: sessionID)
     }
 
     @discardableResult
-    func beginSendSessionPrompt(_ prompt: String, to sessionID: String) -> Task<Bool, Never> {
+    func beginSendSessionPrompt(
+        _ prompt: String,
+        intent: CompanionPromptIntent = .queue,
+        to sessionID: String
+    ) -> Task<Bool, Never> {
         Task { @MainActor [weak self] in
-            await self?.sendPromptIntent(prompt, to: sessionID) ?? false
+            await self?.sendPromptIntent(prompt, intent: intent, to: sessionID) ?? false
         }
     }
 
@@ -947,7 +955,11 @@ final class CompanionAppModel {
         )
     }
 
-    private func sendPromptIntent(_ prompt: String, to sessionID: String) async -> Bool {
+    private func sendPromptIntent(
+        _ prompt: String,
+        intent: CompanionPromptIntent,
+        to sessionID: String
+    ) async -> Bool {
         let targetSurface = snapshotState.assistantSurface(for: sessionID)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else {
@@ -966,7 +978,8 @@ final class CompanionAppModel {
             let result = try await targetRuntime.sendPrompt(
                 threadID: sessionID,
                 prompt: trimmedPrompt,
-                assistantSurface: targetSurface
+                assistantSurface: targetSurface,
+                promptIntent: intent
             )
             recordPromptAccepted(
                 result,

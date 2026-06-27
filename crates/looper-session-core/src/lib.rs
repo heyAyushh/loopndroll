@@ -173,6 +173,7 @@ impl SessionState {
 pub enum SessionCommand {
     SetMode { mode: Option<SessionMode> },
     SendPrompt { client_mutation_id: String },
+    SteerPrompt { client_mutation_id: String },
     SubmitNotificationReply { client_mutation_id: String },
     AgentStarted,
     AgentStopped,
@@ -290,6 +291,9 @@ pub fn next(state: SessionState, command: SessionCommand) -> Result<SessionState
         | SessionCommand::SubmitNotificationReply { client_mutation_id } => {
             next_prompt_state(state, client_mutation_id)
         }
+        SessionCommand::SteerPrompt { client_mutation_id } => {
+            next_steer_prompt_state(state, client_mutation_id)
+        }
         SessionCommand::AgentStarted => state
             .mode()
             .cloned()
@@ -385,6 +389,32 @@ fn next_prompt_state(
         }
         SessionState::AgentRunning { mode } => Ok(SessionState::ContinuationPending { mode }),
         SessionState::Idle | SessionState::Done => Err(reject_mode_required(state)),
+        SessionState::PromptPending { .. }
+        | SessionState::Dispatched { .. }
+        | SessionState::StopRequested { .. }
+        | SessionState::ChecksRunning { .. } => Err(SessionReject {
+            code: SessionRejectCode::SessionBusy,
+            reason: "session cannot receive another prompt until the current transition settles"
+                .to_owned(),
+            current_state: state,
+        }),
+    }
+}
+
+fn next_steer_prompt_state(
+    state: SessionState,
+    client_mutation_id: String,
+) -> Result<SessionState, SessionReject> {
+    match state {
+        SessionState::AgentRunning { mode }
+        | SessionState::WaitReply { mode }
+        | SessionState::ContinuationPending { mode } => Ok(SessionState::Dispatched {
+            mode,
+            client_mutation_id: Some(client_mutation_id),
+        }),
+        SessionState::Idle | SessionState::Done | SessionState::ModeArmed { .. } => {
+            Err(reject_mode_required(state))
+        }
         SessionState::PromptPending { .. }
         | SessionState::Dispatched { .. }
         | SessionState::StopRequested { .. }
@@ -515,6 +545,27 @@ mod tests {
             SessionState::Dispatched {
                 mode: SessionMode::AwaitReply,
                 client_mutation_id: Some("cmid-2".to_owned())
+            }
+        );
+    }
+
+    #[test]
+    fn active_session_can_steer_without_arming_mode() {
+        let steered = next(
+            SessionState::AgentRunning {
+                mode: SessionMode::Infinite,
+            },
+            SessionCommand::SteerPrompt {
+                client_mutation_id: "cmid-steer".to_owned(),
+            },
+        )
+        .expect("live session can steer");
+
+        assert_eq!(
+            steered,
+            SessionState::Dispatched {
+                mode: SessionMode::Infinite,
+                client_mutation_id: Some("cmid-steer".to_owned())
             }
         );
     }

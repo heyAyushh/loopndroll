@@ -2323,6 +2323,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
             prompt: "Resume from phone.".to_owned(),
             assistant_surface: String::new(),
             client_mutation_id: "mobile-controls-resume-prompt".to_owned(),
+            prompt_intent: "queue".to_owned(),
         }),
     )
     .await;
@@ -2340,6 +2341,7 @@ async fn mobile_session_controls_are_owned_by_rust() {
             prompt: "Keep going.".to_owned(),
             assistant_surface: String::new(),
             client_mutation_id: "mobile-controls-active-prompt".to_owned(),
+            prompt_intent: "queue".to_owned(),
         }),
     )
     .await;
@@ -3160,6 +3162,7 @@ async fn grpc_mobile_prompt_records_prompt_resumed_event() {
                     prompt: "Keep going from gRPC.".to_owned(),
                     assistant_surface: String::new(),
                     client_mutation_id: "grpc-prompt-records-event-1".to_owned(),
+                    prompt_intent: "steer".to_owned(),
                 },
             )),
         })),
@@ -3224,6 +3227,7 @@ async fn codex_mobile_prompt_records_prompt_resumed_event() {
             prompt: "Keep going from phone.".to_owned(),
             assistant_surface: String::new(),
             client_mutation_id: "codex-mobile-prompt-resumed-event".to_owned(),
+            prompt_intent: "steer".to_owned(),
         }),
     )
     .await;
@@ -3265,6 +3269,7 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
             prompt: "Keep going from phone.".to_owned(),
             assistant_surface: String::new(),
             client_mutation_id: "devin-mobile-prompt-queue".to_owned(),
+            prompt_intent: "queue".to_owned(),
         }),
     )
     .await;
@@ -3319,6 +3324,7 @@ async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
             prompt: "Keep going from phone.".to_owned(),
             assistant_surface: String::new(),
             client_mutation_id: "devin-mobile-prompt-stopped".to_owned(),
+            prompt_intent: "queue".to_owned(),
         }),
     )
     .await;

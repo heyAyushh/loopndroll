@@ -8,6 +8,8 @@ pub enum ClientCoreError {
     EmptyThreadId,
     #[error("prompt is required")]
     EmptyPrompt,
+    #[error("prompt intent must be steer or queue")]
+    InvalidPromptIntent,
     #[error("notification id is required")]
     EmptyNotificationId,
     #[error("client mutation id is required")]

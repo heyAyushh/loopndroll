@@ -70,6 +70,7 @@ pub(super) fn mobile_session_error_response(error: MobileSessionError) -> Respon
         MobileSessionError::PromptResumeUnavailable(_) => StatusCode::BAD_GATEWAY,
         MobileSessionError::SessionNotFound => StatusCode::NOT_FOUND,
         MobileSessionError::InvalidPreset
+        | MobileSessionError::InvalidPromptIntent
         | MobileSessionError::InvalidScope
         | MobileSessionError::InvalidAssistantSurface
         | MobileSessionError::PromptRequired

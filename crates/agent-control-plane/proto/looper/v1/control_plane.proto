@@ -62,6 +62,7 @@ message SendSessionPromptRequest {
   string prompt = 2;
   string assistant_surface = 3;
   string client_mutation_id = 4;
+  string prompt_intent = 5;
 }
 
 message SubmitNotificationReplyRequest {

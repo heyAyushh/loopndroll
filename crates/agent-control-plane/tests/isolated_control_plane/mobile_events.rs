@@ -274,7 +274,7 @@ async fn grpc_mobile_events_streams_authenticated_prompt_resumed_event() {
     )
     .await;
     prime_state_mini_cache(&control_plane);
-    seed_promptable_session_mini_without_mode(
+    seed_live_promptable_session_mini_without_mode(
         &control_plane,
         "mini-revision-grpc-authenticated-resume",
     );
@@ -330,7 +330,7 @@ async fn grpc_prompt_ack_returns_before_codex_resume_delivery_completes() {
     )
     .await;
     prime_state_mini_cache(&control_plane);
-    seed_promptable_session_mini_without_mode(&control_plane, "mini-revision-g011-resume");
+    seed_live_promptable_session_mini_without_mode(&control_plane, "mini-revision-g011-resume");
 
     let response = tokio::time::timeout(tokio::time::Duration::from_millis(1_500), async {
         let mut stream = open_session_stream(
@@ -473,6 +473,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
                     "threadId": "thread-main",
                     "prompt": "Continue from G004.",
                     "assistantSurface": Option::<&str>::None,
+                    "promptIntent": "queue",
                 }),
             ),
         )
@@ -820,9 +821,10 @@ async fn grpc_session_stream_prompt_rejects_without_mode_with_fsm_code() {
     let mut stream = open_session_stream(
         &mut client,
         &authorization,
-        vec![send_prompt_session_frame(
+        vec![send_prompt_session_frame_with_intent(
             "Continue without mode.",
             "session-stream-fsm-mode-required",
+            "queue",
         )],
     )
     .await;
@@ -940,6 +942,14 @@ fn set_mode_session_frame(preset: &str, client_mutation_id: &str) -> ClientFrame
 }
 
 fn send_prompt_session_frame(prompt: &str, client_mutation_id: &str) -> ClientFrame {
+    send_prompt_session_frame_with_intent(prompt, client_mutation_id, "steer")
+}
+
+fn send_prompt_session_frame_with_intent(
+    prompt: &str,
+    client_mutation_id: &str,
+    prompt_intent: &str,
+) -> ClientFrame {
     ClientFrame {
         frame: Some(client_frame::Frame::Command(Command {
             command: Some(command::Command::SendSessionPrompt(
@@ -948,6 +958,7 @@ fn send_prompt_session_frame(prompt: &str, client_mutation_id: &str) -> ClientFr
                     prompt: prompt.to_owned(),
                     assistant_surface: String::new(),
                     client_mutation_id: client_mutation_id.to_owned(),
+                    prompt_intent: prompt_intent.to_owned(),
                 },
             )),
         })),
@@ -1115,9 +1126,10 @@ async fn send_prompt_grpc(
     let mut stream = open_session_stream(
         client,
         authorization,
-        vec![send_prompt_session_frame(
+        vec![send_prompt_session_frame_with_intent(
             "Continue from G004.",
             client_mutation_id,
+            "queue",
         )],
     )
     .await;
@@ -1264,6 +1276,31 @@ fn seed_promptable_session_mini_without_mode(control_plane: &ControlPlane, revis
             revision,
         )
         .expect("seed promptable session mini without mode");
+}
+
+fn seed_live_promptable_session_mini_without_mode(control_plane: &ControlPlane, revision: &str) {
+    let seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+    control_plane
+        .store()
+        .replace_mobile_session_minis(
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-main".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "lifecycle": "active",
+                    "replyable": true,
+                    "canSendPrompt": true,
+                }),
+            }],
+            seq,
+            revision,
+        )
+        .expect("seed live promptable session mini without mode");
 }
 
 fn command_request_hash_for_test(command_kind: &str, payload: serde_json::Value) -> String {

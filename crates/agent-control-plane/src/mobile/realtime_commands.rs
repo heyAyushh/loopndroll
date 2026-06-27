@@ -8,7 +8,7 @@ use crate::control_plane::session_fsm::{
 use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
 use crate::mobile::api::session_mini_records_contain_session;
 use crate::mobile::prompt_delivery::{
-    accept_session_prompt, dispatch_session_prompt_after_ack, prompt_dispatch_fields,
+    PromptIntent, accept_session_prompt, dispatch_session_prompt_after_ack, prompt_dispatch_fields,
 };
 use crate::mobile::realtime_ack::{
     CommandAckError, CommandReservation, ack_response_value, command_ack_server_time,
@@ -134,19 +134,24 @@ pub(crate) fn submit_notification_reply_command(
         )?;
         return Err(error);
     }
-    let accepted_delivery =
-        match accept_session_prompt(control_plane, thread_id, assistant_surface, prompt) {
-            Ok(delivery) => delivery,
-            Err(error) => {
-                release_command_reservation(
-                    control_plane,
-                    COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
-                    client_mutation_id,
-                    &request_hash,
-                )?;
-                return Err(RealtimeCommandError::MobileSession(error));
-            }
-        };
+    let accepted_delivery = match accept_session_prompt(
+        control_plane,
+        thread_id,
+        assistant_surface,
+        prompt,
+        PromptIntent::Queue,
+    ) {
+        Ok(delivery) => delivery,
+        Err(error) => {
+            release_command_reservation(
+                control_plane,
+                COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
+                client_mutation_id,
+                &request_hash,
+            )?;
+            return Err(RealtimeCommandError::MobileSession(error));
+        }
+    };
     let dispatch = accepted_delivery.dispatch.clone();
     let after_ack = accepted_delivery.after_ack;
     let server_time = command_ack_server_time();

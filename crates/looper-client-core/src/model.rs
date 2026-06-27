@@ -88,6 +88,8 @@ pub struct ClientPendingCommand {
     pub preset: String,
     #[serde(rename = "assistantSurface", default)]
     pub assistant_surface: String,
+    #[serde(rename = "promptIntent", default)]
+    pub prompt_intent: String,
     #[serde(default)]
     pub prompt: String,
     #[serde(rename = "notificationID", default)]
@@ -115,6 +117,7 @@ pub struct OutboundSessionFrame {
     pub thread_id: String,
     pub preset: String,
     pub prompt: String,
+    pub prompt_intent: String,
     pub assistant_surface: String,
     pub notification_id: String,
     pub archived: bool,

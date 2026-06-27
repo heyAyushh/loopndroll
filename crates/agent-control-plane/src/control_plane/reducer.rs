@@ -72,10 +72,27 @@ pub fn session_state_for_thread(
     assistant_surface: Option<&str>,
 ) -> SessionState {
     let reduced = fold_mobile_state_events(events);
+    let projected = projected_session_state_from_minis(minis, thread_id, assistant_surface);
+    if let Some(projected_state) = projected.as_ref() {
+        if projected_state_has_runtime_lifecycle(projected_state) {
+            return projected_state.clone();
+        }
+    }
     if let Some(state) = reduced.state_for_thread(thread_id) {
         return state.clone();
     }
-    projected_session_state_from_minis(minis, thread_id, assistant_surface).unwrap_or_default()
+    projected.unwrap_or_default()
+}
+
+fn projected_state_has_runtime_lifecycle(state: &SessionState) -> bool {
+    matches!(
+        state,
+        SessionState::AgentRunning { .. }
+            | SessionState::WaitReply { .. }
+            | SessionState::ContinuationPending { .. }
+            | SessionState::ChecksRunning { .. }
+            | SessionState::StopRequested { .. }
+    )
 }
 
 pub fn projected_session_state_from_minis(

@@ -22,6 +22,12 @@ pub enum PromptDispatch {
     Resumed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptIntent {
+    Queue,
+    Steer,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcceptedPromptDelivery {
     pub dispatch: PromptDispatch,
@@ -56,6 +62,10 @@ const DISPATCH_ACCEPTED: &str = "accepted";
 const DISPATCH_DELIVERED: &str = "delivered";
 const DISPATCH_QUEUED: &str = "queued";
 const DISPATCH_RESUMED: &str = "resumed";
+const PROMPT_INTENT_QUEUE: &str = "queue";
+const PROMPT_INTENT_STEER: &str = "steer";
+const STEER_UNAVAILABLE_FOR_HOOK_REASON: &str =
+    "steering is unavailable for hook-only sessions; choose Queue to send after the current run";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DeliveryActionCacheKey {
@@ -167,27 +177,56 @@ pub fn accept_session_prompt(
     thread_id: &str,
     assistant_surface: Option<&str>,
     prompt: &str,
+    intent: PromptIntent,
 ) -> Result<AcceptedPromptDelivery, MobileSessionError> {
     let prompt = required_prompt(prompt)?;
-    if prompt_is_replyable_from_minis(control_plane, thread_id, assistant_surface)? {
-        return Ok(AcceptedPromptDelivery {
-            dispatch: PromptDispatch::Accepted,
-            after_ack: Some(PromptDeliveryAfterAck {
-                thread_id: thread_id.to_owned(),
-                prompt,
-                action: PromptDeliveryAction::QueueForHook,
-            }),
-        });
+    match intent {
+        PromptIntent::Queue => {
+            if prompt_is_replyable_from_minis(control_plane, thread_id, assistant_surface)? {
+                return Ok(AcceptedPromptDelivery {
+                    dispatch: PromptDispatch::Accepted,
+                    after_ack: Some(PromptDeliveryAfterAck {
+                        thread_id: thread_id.to_owned(),
+                        prompt,
+                        action: PromptDeliveryAction::QueueForHook,
+                    }),
+                });
+            }
+            let action = resolve_delivery_action(control_plane, thread_id, assistant_surface)?;
+            Ok(AcceptedPromptDelivery {
+                dispatch: PromptDispatch::Accepted,
+                after_ack: Some(PromptDeliveryAfterAck {
+                    thread_id: thread_id.to_owned(),
+                    prompt,
+                    action,
+                }),
+            })
+        }
+        PromptIntent::Steer => {
+            let action = resolve_delivery_action(control_plane, thread_id, assistant_surface)?;
+            if matches!(action, PromptDeliveryAction::QueueForHook) {
+                return Err(MobileSessionError::PromptDeliveryUnavailableReason(
+                    STEER_UNAVAILABLE_FOR_HOOK_REASON.to_owned(),
+                ));
+            }
+            Ok(AcceptedPromptDelivery {
+                dispatch: PromptDispatch::Accepted,
+                after_ack: Some(PromptDeliveryAfterAck {
+                    thread_id: thread_id.to_owned(),
+                    prompt,
+                    action,
+                }),
+            })
+        }
     }
-    let action = resolve_delivery_action(control_plane, thread_id, assistant_surface)?;
-    Ok(AcceptedPromptDelivery {
-        dispatch: PromptDispatch::Accepted,
-        after_ack: Some(PromptDeliveryAfterAck {
-            thread_id: thread_id.to_owned(),
-            prompt,
-            action,
-        }),
-    })
+}
+
+pub fn prompt_intent_from_str(value: &str) -> Result<PromptIntent, MobileSessionError> {
+    match value.trim() {
+        "" | PROMPT_INTENT_QUEUE => Ok(PromptIntent::Queue),
+        PROMPT_INTENT_STEER => Ok(PromptIntent::Steer),
+        _ => Err(MobileSessionError::InvalidPromptIntent),
+    }
 }
 
 fn accept_legacy_session_prompt(

@@ -618,6 +618,40 @@ enum SessionMode: String, CaseIterable, Codable, Sendable {
     }
 }
 
+enum CompanionPromptIntent: String, CaseIterable, Codable, Identifiable, Sendable {
+    case steer
+    case queue
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .steer:
+            return "Steer"
+        case .queue:
+            return "Queue"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .steer:
+            return "arrow.up.message"
+        case .queue:
+            return "text.line.last.and.arrowtriangle.forward"
+        }
+    }
+
+    var sendButtonTitle: String {
+        switch self {
+        case .steer:
+            return "Steer"
+        case .queue:
+            return "Queue Prompt"
+        }
+    }
+}
+
 enum SessionStatus: String, Codable, Sendable {
     case active
     case waiting

@@ -297,6 +297,7 @@ async fn submit_session_prompt(thread_id: &str, prompt: &str) -> Result<()> {
                 prompt: prompt.to_owned(),
                 assistant_surface: String::new(),
                 client_mutation_id: client_mutation_id.clone(),
+                prompt_intent: "queue".to_owned(),
             },
         )),
     };

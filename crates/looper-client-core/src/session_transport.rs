@@ -418,6 +418,7 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 prompt: frame.prompt,
                 assistant_surface: frame.assistant_surface,
                 client_mutation_id: frame.client_mutation_id,
+                prompt_intent: frame.prompt_intent,
             },
         )),
         ClientCommandKind::SubmitNotificationReply => {

@@ -178,6 +178,8 @@ pub enum MobileSessionError {
     InvalidAssistantSurface,
     #[error("prompt is required")]
     PromptRequired,
+    #[error("prompt intent must be steer or queue")]
+    InvalidPromptIntent,
     #[error("set a session mode before sending a prompt")]
     ModeRequired,
     #[error("archived sessions cannot receive prompts")]

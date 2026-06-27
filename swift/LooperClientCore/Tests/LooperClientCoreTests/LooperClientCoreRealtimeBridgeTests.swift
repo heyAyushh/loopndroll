@@ -38,7 +38,7 @@ struct LooperClientCoreSessionManagerTests {
             assistantSurface: "codex"
         )
         #expect(result.accepted)
-        #expect(result.dispatchKind == "queued")
+        #expect(result.dispatchKind == "accepted")
 
         let snapshot = try manager.localSnapshot()
         #expect(snapshot.pendingCommands.count == 1)
@@ -64,7 +64,7 @@ struct LooperClientCoreSessionManagerTests {
                 assistantSurface: "codex"
             )
             #expect(result.accepted)
-            #expect(result.dispatchKind == "queued")
+            #expect(result.dispatchKind == "accepted")
         }
 
         let snapshot = try manager.localSnapshot()

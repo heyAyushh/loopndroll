@@ -786,6 +786,7 @@ fn session_prompt_command(
                 prompt: prompt.to_owned(),
                 assistant_surface: String::new(),
                 client_mutation_id,
+                prompt_intent: "queue".to_owned(),
             },
         )),
     }

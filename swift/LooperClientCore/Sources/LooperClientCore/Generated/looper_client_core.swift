@@ -579,7 +579,7 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func saveDefaultPrompt(prompt: String) async throws  -> ClientSessionCommandIntentResult
 
-    func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientSessionPromptIntentResult
+    func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
 
     func setAssistantSurface(assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
 
@@ -840,13 +840,13 @@ open func saveDefaultPrompt(prompt: String)async throws  -> ClientSessionCommand
         )
 }
 
-open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientSessionPromptIntentResult  {
+open func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String)async throws  -> ClientSessionPromptIntentResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_send_prompt(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface)
+                    FfiConverterString.lower(threadId),FfiConverterString.lower(prompt),FfiConverterString.lower(assistantSurface),FfiConverterString.lower(promptIntent)
                 )
             },
             pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
@@ -2417,6 +2417,7 @@ public struct ClientPendingCommand: Equatable, Hashable {
     public var threadId: String
     public var preset: String
     public var assistantSurface: String
+    public var promptIntent: String
     public var prompt: String
     public var notificationId: String
     public var archived: Bool
@@ -2424,12 +2425,13 @@ public struct ClientPendingCommand: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, prompt: String, notificationId: String, archived: Bool, attemptCount: UInt32) {
+    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, promptIntent: String, prompt: String, notificationId: String, archived: Bool, attemptCount: UInt32) {
         self.kind = kind
         self.clientMutationId = clientMutationId
         self.threadId = threadId
         self.preset = preset
         self.assistantSurface = assistantSurface
+        self.promptIntent = promptIntent
         self.prompt = prompt
         self.notificationId = notificationId
         self.archived = archived
@@ -2457,6 +2459,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
                 threadId: FfiConverterString.read(from: &buf),
                 preset: FfiConverterString.read(from: &buf),
                 assistantSurface: FfiConverterString.read(from: &buf),
+                promptIntent: FfiConverterString.read(from: &buf),
                 prompt: FfiConverterString.read(from: &buf),
                 notificationId: FfiConverterString.read(from: &buf),
                 archived: FfiConverterBool.read(from: &buf),
@@ -2470,6 +2473,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
         FfiConverterString.write(value.threadId, into: &buf)
         FfiConverterString.write(value.preset, into: &buf)
         FfiConverterString.write(value.assistantSurface, into: &buf)
+        FfiConverterString.write(value.promptIntent, into: &buf)
         FfiConverterString.write(value.prompt, into: &buf)
         FfiConverterString.write(value.notificationId, into: &buf)
         FfiConverterBool.write(value.archived, into: &buf)
@@ -3756,6 +3760,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case InvalidEndpoint
     case EmptyThreadId
     case EmptyPrompt
+    case InvalidPromptIntent
     case EmptyNotificationId
     case EmptyMutationId
     case EmptySessionId
@@ -3812,29 +3817,30 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 2: return .InvalidEndpoint
         case 3: return .EmptyThreadId
         case 4: return .EmptyPrompt
-        case 5: return .EmptyNotificationId
-        case 6: return .EmptyMutationId
-        case 7: return .EmptySessionId
-        case 8: return .InvalidSequence
-        case 9: return .InvalidSnapshotJson
-        case 10: return .InvalidDetailJson
-        case 11: return .InvalidStateMiniPayloadJson
-        case 12: return .StateMiniSessionIdMismatch
-        case 13: return .InvalidConnectionState
-        case 14: return .UnexpectedOutboxMutations
-        case 15: return .MissingCommandAcknowledgement
-        case 16: return .NoPendingNotificationReply
-        case 17: return .SessionCommandTransportFailed
-        case 18: return .SessionCommandAckTimedOut
-        case 19: return .StateMiniSnapshotTransportFailed
-        case 20: return .StateMiniSnapshotTimedOut
-        case 21: return .StateMiniStreamNotRunning
-        case 22: return .StateMiniStreamTransportFailed
-        case 23: return .StateMiniStreamRecoveryRequired
-        case 24: return .LocalStorePathRequired
-        case 25: return .LocalStoreReadFailed
-        case 26: return .LocalStoreWriteFailed
-        case 27: return .StateLockPoisoned
+        case 5: return .InvalidPromptIntent
+        case 6: return .EmptyNotificationId
+        case 7: return .EmptyMutationId
+        case 8: return .EmptySessionId
+        case 9: return .InvalidSequence
+        case 10: return .InvalidSnapshotJson
+        case 11: return .InvalidDetailJson
+        case 12: return .InvalidStateMiniPayloadJson
+        case 13: return .StateMiniSessionIdMismatch
+        case 14: return .InvalidConnectionState
+        case 15: return .UnexpectedOutboxMutations
+        case 16: return .MissingCommandAcknowledgement
+        case 17: return .NoPendingNotificationReply
+        case 18: return .SessionCommandTransportFailed
+        case 19: return .SessionCommandAckTimedOut
+        case 20: return .StateMiniSnapshotTransportFailed
+        case 21: return .StateMiniSnapshotTimedOut
+        case 22: return .StateMiniStreamNotRunning
+        case 23: return .StateMiniStreamTransportFailed
+        case 24: return .StateMiniStreamRecoveryRequired
+        case 25: return .LocalStorePathRequired
+        case 26: return .LocalStoreReadFailed
+        case 27: return .LocalStoreWriteFailed
+        case 28: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3863,96 +3869,100 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .EmptyNotificationId:
+        case .InvalidPromptIntent:
             writeInt(&buf, Int32(5))
 
 
-        case .EmptyMutationId:
+        case .EmptyNotificationId:
             writeInt(&buf, Int32(6))
 
 
-        case .EmptySessionId:
+        case .EmptyMutationId:
             writeInt(&buf, Int32(7))
 
 
-        case .InvalidSequence:
+        case .EmptySessionId:
             writeInt(&buf, Int32(8))
 
 
-        case .InvalidSnapshotJson:
+        case .InvalidSequence:
             writeInt(&buf, Int32(9))
 
 
-        case .InvalidDetailJson:
+        case .InvalidSnapshotJson:
             writeInt(&buf, Int32(10))
 
 
-        case .InvalidStateMiniPayloadJson:
+        case .InvalidDetailJson:
             writeInt(&buf, Int32(11))
 
 
-        case .StateMiniSessionIdMismatch:
+        case .InvalidStateMiniPayloadJson:
             writeInt(&buf, Int32(12))
 
 
-        case .InvalidConnectionState:
+        case .StateMiniSessionIdMismatch:
             writeInt(&buf, Int32(13))
 
 
-        case .UnexpectedOutboxMutations:
+        case .InvalidConnectionState:
             writeInt(&buf, Int32(14))
 
 
-        case .MissingCommandAcknowledgement:
+        case .UnexpectedOutboxMutations:
             writeInt(&buf, Int32(15))
 
 
-        case .NoPendingNotificationReply:
+        case .MissingCommandAcknowledgement:
             writeInt(&buf, Int32(16))
 
 
-        case .SessionCommandTransportFailed:
+        case .NoPendingNotificationReply:
             writeInt(&buf, Int32(17))
 
 
-        case .SessionCommandAckTimedOut:
+        case .SessionCommandTransportFailed:
             writeInt(&buf, Int32(18))
 
 
-        case .StateMiniSnapshotTransportFailed:
+        case .SessionCommandAckTimedOut:
             writeInt(&buf, Int32(19))
 
 
-        case .StateMiniSnapshotTimedOut:
+        case .StateMiniSnapshotTransportFailed:
             writeInt(&buf, Int32(20))
 
 
-        case .StateMiniStreamNotRunning:
+        case .StateMiniSnapshotTimedOut:
             writeInt(&buf, Int32(21))
 
 
-        case .StateMiniStreamTransportFailed:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(22))
 
 
-        case .StateMiniStreamRecoveryRequired:
+        case .StateMiniStreamTransportFailed:
             writeInt(&buf, Int32(23))
 
 
-        case .LocalStorePathRequired:
+        case .StateMiniStreamRecoveryRequired:
             writeInt(&buf, Int32(24))
 
 
-        case .LocalStoreReadFailed:
+        case .LocalStorePathRequired:
             writeInt(&buf, Int32(25))
 
 
-        case .LocalStoreWriteFailed:
+        case .LocalStoreReadFailed:
             writeInt(&buf, Int32(26))
 
 
-        case .StateLockPoisoned:
+        case .LocalStoreWriteFailed:
             writeInt(&buf, Int32(27))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(28))
 
         }
     }
@@ -4798,7 +4808,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_save_default_prompt() != 44743) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 63085) {
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33854) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_assistant_surface() != 59908) {

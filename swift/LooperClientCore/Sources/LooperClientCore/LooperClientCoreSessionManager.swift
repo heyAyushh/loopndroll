@@ -73,12 +73,14 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     public func sendPrompt(
         threadID: String,
         prompt: String,
-        assistantSurface: String
+        assistantSurface: String,
+        promptIntent: String = "queue"
     ) async throws -> ClientSessionPromptIntentResult {
         try await runtime.sendPrompt(
             threadId: threadID,
             prompt: prompt,
-            assistantSurface: assistantSurface
+            assistantSurface: assistantSurface,
+            promptIntent: promptIntent
         )
     }
 

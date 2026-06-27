@@ -776,6 +776,7 @@ mod tests {
             thread_id: "thread-codex".to_owned(),
             preset: String::new(),
             assistant_surface: "codex".to_owned(),
+            prompt_intent: "queue".to_owned(),
             prompt: "Continue".to_owned(),
             notification_id: String::new(),
             archived: false,

@@ -23,8 +23,8 @@ use crate::mobile::events::{
     mobile_event_now, mobile_event_wire_name,
 };
 use crate::mobile::prompt_delivery::{
-    accept_session_prompt, dispatch_session_prompt_after_ack, invalidate_delivery_action_cache,
-    prompt_dispatch_fields,
+    PromptIntent, accept_session_prompt, dispatch_session_prompt_after_ack,
+    invalidate_delivery_action_cache, prompt_dispatch_fields, prompt_intent_from_str,
 };
 use crate::mobile::realtime_ack::{
     CommandAckError, CommandReservation, ack_response_value, command_ack_server_time,
@@ -267,6 +267,7 @@ fn handle_session_command(
                 request.thread_id,
                 request.prompt,
                 request.assistant_surface,
+                request.prompt_intent,
                 &request.client_mutation_id,
             ),
         ),
@@ -722,16 +723,23 @@ fn send_session_prompt_command(
     thread_id: String,
     prompt: String,
     assistant_surface: String,
+    prompt_intent: String,
     client_mutation_id: &str,
 ) -> Result<proto::CommandAck, Status> {
     let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
     let assistant_surface = normalized_assistant_surface(&assistant_surface)?;
+    let prompt_intent = prompt_intent_from_str(&prompt_intent).map_err(mobile_session_status)?;
+    let prompt_intent_value = match prompt_intent {
+        PromptIntent::Queue => "queue",
+        PromptIntent::Steer => "steer",
+    };
     let request_hash = command_request_hash(
         COMMAND_KIND_SEND_SESSION_PROMPT,
         serde_json::json!({
             "threadId": thread_id,
             "prompt": prompt,
             "assistantSurface": assistant_surface,
+            "promptIntent": prompt_intent_value,
         }),
     )?;
     if let Some(record) = existing_command_ack(
@@ -771,14 +779,17 @@ fn send_session_prompt_command(
         )?;
         return Err(error);
     }
-    if let Err(error) = ensure_session_fsm_allows(
-        control_plane,
-        &thread_id,
-        assistant_surface,
-        SessionCommand::SendPrompt {
+    let fsm_command = match prompt_intent {
+        PromptIntent::Queue => SessionCommand::SendPrompt {
             client_mutation_id: client_mutation_id.to_owned(),
         },
-    ) {
+        PromptIntent::Steer => SessionCommand::SteerPrompt {
+            client_mutation_id: client_mutation_id.to_owned(),
+        },
+    };
+    if let Err(error) =
+        ensure_session_fsm_allows(control_plane, &thread_id, assistant_surface, fsm_command)
+    {
         release_command_reservation(
             control_plane,
             COMMAND_KIND_SEND_SESSION_PROMPT,
@@ -787,19 +798,24 @@ fn send_session_prompt_command(
         )?;
         return Err(error);
     }
-    let accepted_delivery =
-        match accept_session_prompt(control_plane, &thread_id, assistant_surface, &prompt) {
-            Ok(delivery) => delivery,
-            Err(error) => {
-                release_command_reservation(
-                    control_plane,
-                    COMMAND_KIND_SEND_SESSION_PROMPT,
-                    client_mutation_id,
-                    &request_hash,
-                )?;
-                return Err(mobile_session_status(error));
-            }
-        };
+    let accepted_delivery = match accept_session_prompt(
+        control_plane,
+        &thread_id,
+        assistant_surface,
+        &prompt,
+        prompt_intent,
+    ) {
+        Ok(delivery) => delivery,
+        Err(error) => {
+            release_command_reservation(
+                control_plane,
+                COMMAND_KIND_SEND_SESSION_PROMPT,
+                client_mutation_id,
+                &request_hash,
+            )?;
+            return Err(mobile_session_status(error));
+        }
+    };
     let dispatch = accepted_delivery.dispatch.clone();
     let after_ack = accepted_delivery.after_ack;
     let server_time = command_ack_server_time();
@@ -1390,6 +1406,7 @@ fn mobile_session_status(error: MobileSessionError) -> Status {
     match error {
         MobileSessionError::SessionNotFound => Status::not_found(error.to_string()),
         MobileSessionError::PromptRequired
+        | MobileSessionError::InvalidPromptIntent
         | MobileSessionError::InvalidPreset
         | MobileSessionError::InvalidScope
         | MobileSessionError::InvalidAssistantSurface
