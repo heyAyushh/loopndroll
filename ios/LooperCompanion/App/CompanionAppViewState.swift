@@ -11,7 +11,7 @@ struct CompanionAppViewState {
     }
 
     private var snapshotState: CompanionSnapshotStateStore {
-        model.observeSnapshotRenderRevision()
+        _ = model.snapshotRenderRevision
         return model.snapshotState
     }
 

@@ -117,10 +117,6 @@ final class CompanionAppModel {
         CompanionAppViewState(model: self)
     }
 
-    func observeSnapshotRenderRevision() {
-        _ = snapshotRenderRevision
-    }
-
     private func publishSnapshotStateChange(reason _: String) {
         snapshotRenderRevision += 1
     }

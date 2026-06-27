@@ -16,7 +16,8 @@ use crate::grpc::auth::authorize_mobile_api_request_from_peer;
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::{
-    session_mini_projection_inputs_with_mode, session_mini_records_contain_session,
+    mobile_session_mini_delta, session_mini_projection_inputs_with_mode,
+    session_mini_records_contain_session,
 };
 use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
@@ -50,6 +51,7 @@ const COMMAND_KIND_SAVE_DEFAULT_PROMPT: &str = "SaveDefaultPrompt";
 const COMMAND_KIND_SET_SESSION_ARCHIVED: &str = "SetSessionArchived";
 const COMMAND_KIND_DELETE_SESSION: &str = "DeleteSession";
 const COMMAND_KIND_MUTE_SESSION: &str = "MuteSession";
+const MOBILE_STATE_ENTITY_ID: &str = "mobile";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
 const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -445,7 +447,7 @@ fn replay_state_delta_frames(
     let mut frames = Vec::with_capacity(records.len());
     for record in records {
         *last_seq = (*last_seq).max(record.seq);
-        frames.push(state_delta_frame(&record));
+        frames.push(state_delta_frame(control_plane, &record));
     }
     *last_seq = (*last_seq).max(after_seq);
     Ok(frames)
@@ -493,7 +495,10 @@ fn rejected_command_ack(
     }
 }
 
-fn state_delta_frame(record: &MobileStateEventRecord) -> proto::ServerFrame {
+fn state_delta_frame(
+    control_plane: &ControlPlane,
+    record: &MobileStateEventRecord,
+) -> proto::ServerFrame {
     proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::StateDelta(
             proto::StateMiniDelta {
@@ -502,10 +507,30 @@ fn state_delta_frame(record: &MobileStateEventRecord) -> proto::ServerFrame {
                 kind: proto_event_name(record.kind).to_owned(),
                 revision: record.revision.clone(),
                 server_time: record.server_time.clone(),
-                payload_json: record.payload_json.clone(),
+                payload_json: state_delta_payload_json(control_plane, record),
             },
         )),
     }
+}
+
+fn state_delta_payload_json(
+    control_plane: &ControlPlane,
+    record: &MobileStateEventRecord,
+) -> String {
+    let Ok(minis) = control_plane
+        .store()
+        .mobile_session_minis_at_seq(record.seq)
+    else {
+        return record.payload_json.clone();
+    };
+    if minis.is_empty() {
+        return record.payload_json.clone();
+    }
+    let replace = record.entity_id == MOBILE_STATE_ENTITY_ID;
+    if !replace && minis.len() == 1 {
+        return minis[0].body_json.clone();
+    }
+    mobile_session_mini_delta(record.seq, &minis, replace).to_string()
 }
 
 fn mobile_event_record_frame(

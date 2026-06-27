@@ -33,6 +33,10 @@ const SESSION_ID_FIELD: &str = "sessionId";
 const SESSION_ID_ALIAS_FIELD: &str = "sessionID";
 const PAYLOAD_ID_FIELD: &str = "id";
 const ASSISTANT_SURFACE_FIELD: &str = "assistantSurface";
+const LATEST_SEQ_FIELD: &str = "latestSeq";
+const LATEST_SEQ_ALIAS_FIELD: &str = "latest_seq";
+const REPLACE_FIELD: &str = "replace";
+const SESSIONS_FIELD: &str = "sessions";
 
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
@@ -590,6 +594,32 @@ fn client_state_mini_delta(
     let Some(payload) = payload else {
         return Ok(seq_only_state_mini_delta(delta));
     };
+    let replace_sessions = payload
+        .get(REPLACE_FIELD)
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if replace_sessions {
+        let sessions = state_mini_payload_sessions(&payload);
+        if !sessions.is_empty() {
+            return Ok(ClientStateMiniDelta {
+                seq: delta.seq,
+                latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
+                entity_id: delta.entity_id,
+                kind: delta.kind,
+                revision: delta.revision,
+                server_time: delta.server_time,
+                has_session: false,
+                session: ClientStateMini {
+                    session_id: String::new(),
+                    assistant_surface: String::new(),
+                    seq: delta.seq,
+                    revision: String::new(),
+                    payload_json: String::new(),
+                },
+                sessions,
+            });
+        }
+    }
     let Some(session_id) = state_mini_payload_session_id(&payload) else {
         return Ok(seq_only_state_mini_delta(delta));
     };
@@ -617,6 +647,27 @@ fn client_state_mini_delta(
         session,
         sessions: Vec::new(),
     })
+}
+
+fn state_mini_payload_latest_seq(payload: &Value, fallback: i64) -> i64 {
+    payload
+        .get(LATEST_SEQ_FIELD)
+        .or_else(|| payload.get(LATEST_SEQ_ALIAS_FIELD))
+        .and_then(Value::as_i64)
+        .unwrap_or(fallback)
+}
+
+fn state_mini_payload_sessions(payload: &Value) -> Vec<ClientStateMini> {
+    payload
+        .get(SESSIONS_FIELD)
+        .and_then(Value::as_array)
+        .map(|sessions| {
+            sessions
+                .iter()
+                .filter_map(client_state_mini_from_json)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn seq_only_state_mini_delta(delta: proto::StateMiniDelta) -> ClientStateMiniDelta {
@@ -754,6 +805,45 @@ mod tests {
             serde_json::from_str(&delta.session.payload_json).expect("normalized payload");
         assert_eq!(payload["id"], "thread-2");
         assert_eq!(payload["sessionId"], "thread-2");
+    }
+
+    #[test]
+    fn state_mini_delta_accepts_replace_sessions_payload() {
+        let delta = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 16,
+            entity_id: "mobile".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-16".to_owned(),
+            server_time: "2026-06-27T00:00:16Z".to_owned(),
+            payload_json: json!({
+                "latestSeq": 16,
+                "replace": true,
+                "sessions": [
+                    {
+                        "sessionId": "thread-1",
+                        "assistantSurface": "codex",
+                        "seq": 16,
+                        "revision": "rev-16",
+                        "title": "One"
+                    },
+                    {
+                        "sessionID": "thread-2",
+                        "assistantSurface": "devin",
+                        "seq": 16,
+                        "revision": "rev-16",
+                        "title": "Two"
+                    }
+                ]
+            })
+            .to_string(),
+        })
+        .expect("delta");
+
+        assert!(!delta.has_session);
+        assert_eq!(delta.latest_seq, 16);
+        assert_eq!(delta.sessions.len(), 2);
+        assert_eq!(delta.sessions[0].session_id, "thread-1");
+        assert_eq!(delta.sessions[1].session_id, "thread-2");
     }
 
     #[test]

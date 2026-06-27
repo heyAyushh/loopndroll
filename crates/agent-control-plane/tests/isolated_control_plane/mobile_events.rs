@@ -694,6 +694,16 @@ async fn grpc_session_stream_acks_mode_command_before_state_deltas() {
     assert_eq!(ack.error_code, "");
     assert_eq!(ack.reject_reason, "");
 
+    let mini_delta =
+        next_session_state_delta_matching(&mut stream, "mode session mini delta", |delta| {
+            state_delta_payload_string(delta, "id").as_deref() == Some("thread-main")
+        })
+        .await;
+    assert_eq!(
+        state_delta_payload_string(&mini_delta, "effectiveMode").as_deref(),
+        Some("await-reply")
+    );
+
     let delta = next_session_state_delta_matching(&mut stream, "mode command ack delta", |delta| {
         delta.seq == ack.ack_seq
     })

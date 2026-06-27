@@ -430,6 +430,12 @@ create index if not exists mobile_session_minis_seq
         mobile_session_minis(&connection)
     }
 
+    pub fn mobile_session_minis_at_seq(&self, seq: i64) -> Result<Vec<MobileSessionMiniRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        mobile_session_minis_at_seq(&connection, seq)
+    }
+
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -1128,7 +1134,13 @@ fn upsert_mobile_session_mini(
     revision: &str,
     updated_at_ms: i64,
 ) -> Result<MobileSessionMiniRecord> {
-    let body_json = mobile_session_mini_body_json(&mini.body_json, seq, revision);
+    let body_json = mobile_session_mini_body_json(
+        &mini.body_json,
+        &mini.session_id,
+        &mini.assistant_surface,
+        seq,
+        revision,
+    );
     connection.execute(
         "insert into mobile_session_minis (
             session_id, assistant_surface, seq, revision, body_json, updated_at_ms
@@ -1189,9 +1201,36 @@ fn mobile_session_minis(connection: &Connection) -> Result<Vec<MobileSessionMini
         .map_err(Into::into)
 }
 
-fn mobile_session_mini_body_json(body_json: &Value, seq: i64, revision: &str) -> String {
+fn mobile_session_minis_at_seq(
+    connection: &Connection,
+    seq: i64,
+) -> Result<Vec<MobileSessionMiniRecord>> {
+    let mut statement = connection.prepare(
+        "select session_id, assistant_surface, seq, revision, body_json, updated_at_ms
+         from mobile_session_minis
+         where seq = ?1
+         order by assistant_surface asc, session_id asc",
+    )?;
+    let rows = statement.query_map(params![seq], mobile_session_mini_row)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn mobile_session_mini_body_json(
+    body_json: &Value,
+    session_id: &str,
+    assistant_surface: &str,
+    seq: i64,
+    revision: &str,
+) -> String {
     let mut body_json = body_json.clone();
     if let Some(body_json) = body_json.as_object_mut() {
+        body_json.insert("id".to_owned(), serde_json::json!(session_id));
+        body_json.insert("sessionId".to_owned(), serde_json::json!(session_id));
+        body_json.insert(
+            "assistantSurface".to_owned(),
+            serde_json::json!(assistant_surface),
+        );
         body_json.insert("seq".to_owned(), serde_json::json!(seq));
         body_json.insert("revision".to_owned(), serde_json::json!(revision));
     }
