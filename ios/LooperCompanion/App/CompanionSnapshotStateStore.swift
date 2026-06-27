@@ -80,11 +80,21 @@ final class CompanionSnapshotStateStore {
             hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
             currentSelectedAssistantSurface: selectedAssistantSurface
         )
-        let surface = SnapshotProjectionCodec.assistantSurface(from: projection.selectedAssistantSurface)
-        let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
+        guard let projection,
+              let surface = SnapshotProjectionCodec.assistantSurface(
+                from: projection.selectedAssistantSurface
+              ),
+              let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
+        else {
+            return applySnapshotWithoutProjection(nextSnapshot, preferredSurface: preferredSurface)
+        }
+
         selectedAssistantSurface = surface
         applyReducedVisibleSnapshot(visibleSnapshot, projection: projection)
-        syncDetailCache(withVisibleSnapshotJSON: projection.visibleSnapshotJson)
+        syncDetailCache(
+            withVisibleSnapshot: visibleSnapshot,
+            visibleSnapshotJSON: projection.visibleSnapshotJson
+        )
         return visibleSnapshot
     }
 
@@ -113,7 +123,7 @@ final class CompanionSnapshotStateStore {
 
         let selectedSurface = SnapshotProjectionCodec.assistantSurface(
             from: selection.selectedAssistantSurface
-        )
+        ) ?? surface
         hasUserSelectedAssistantSurface = selection.hasUserSelectedAssistantSurface
         applyVisibleAssistantSurface(selectedSurface)
         return true
@@ -318,6 +328,43 @@ final class CompanionSnapshotStateStore {
         )
     }
 
+    private func applyFallbackVisibleSnapshot(
+        _ visibleSnapshot: MobileSnapshot,
+        selectedSurface: CompanionAssistantSurface
+    ) {
+        snapshot = visibleSnapshot
+        selectedAssistantSurface = selectedSurface
+        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
+        sessionIndex = SessionIndex(snapshot: visibleSnapshot)
+    }
+
+    private func applySnapshotWithoutProjection(
+        _ nextSnapshot: MobileSnapshot,
+        preferredSurface: CompanionAssistantSurface?
+    ) -> MobileSnapshot {
+        let surface = fallbackAssistantSurface(
+            for: nextSnapshot,
+            preferredSurface: preferredSurface
+        )
+        let visibleSnapshot = nextSnapshot.visibleSnapshot(for: surface)
+        applyFallbackVisibleSnapshot(visibleSnapshot, selectedSurface: surface)
+        syncDetailCacheFallback(withVisibleSnapshot: visibleSnapshot)
+        return visibleSnapshot
+    }
+
+    private func fallbackAssistantSurface(
+        for snapshot: MobileSnapshot,
+        preferredSurface: CompanionAssistantSurface?
+    ) -> CompanionAssistantSurface {
+        if let preferredSurface {
+            return preferredSurface
+        }
+        if hasUserSelectedAssistantSurface {
+            return selectedAssistantSurface
+        }
+        return snapshot.globalSettings.assistantSurface
+    }
+
     private func sourceSnapshotForProjection() -> MobileSnapshot? {
         canonicalSnapshot ?? snapshot
     }
@@ -354,14 +401,27 @@ final class CompanionSnapshotStateStore {
         return snapshot.sessions.count + surfaceCount
     }
 
-    private func syncDetailCache(withVisibleSnapshotJSON visibleSnapshotJSON: String) {
-        let projection = SnapshotProjectionCodec.reduceDetailCache(
+    private func syncDetailCache(
+        withVisibleSnapshot visibleSnapshot: MobileSnapshot,
+        visibleSnapshotJSON: String
+    ) {
+        guard let projection = SnapshotProjectionCodec.reduceDetailCache(
             visibleSnapshotJSON: visibleSnapshotJSON,
             detailBySessionID: detailBySessionID
-        )
-        detailBySessionID = SnapshotProjectionCodec.decodeDetailMap(
-            projection.detailBySessionIdJson
-        )
+        ),
+            let detailMap = SnapshotProjectionCodec.decodeDetailMap(projection.detailBySessionIdJson)
+        else {
+            syncDetailCacheFallback(withVisibleSnapshot: visibleSnapshot)
+            return
+        }
+        detailBySessionID = detailMap
+    }
+
+    private func syncDetailCacheFallback(withVisibleSnapshot visibleSnapshot: MobileSnapshot) {
+        let visibleSessionIDs = Set(visibleSnapshot.sessions.map(\.id))
+        detailBySessionID = detailBySessionID.filter { sessionID, _ in
+            visibleSessionIDs.contains(sessionID)
+        }
     }
 
 }
@@ -372,31 +432,39 @@ private enum SnapshotProjectionCodec {
         preferredSurface: CompanionAssistantSurface?,
         hasUserSelectedAssistantSurface: Bool,
         currentSelectedAssistantSurface: CompanionAssistantSurface
-    ) -> ClientSnapshotProjection {
+    ) -> ClientSnapshotProjection? {
+        guard let snapshotJSON = encode(snapshot) else {
+            return nil
+        }
         do {
             return try reduceMobileSnapshotProjection(
-                snapshotJson: encode(snapshot),
+                snapshotJson: snapshotJSON,
                 preferredAssistantSurface: preferredSurface?.rawValue ?? "",
                 hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
                 currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue,
                 assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
             )
         } catch {
-            invariantFailure("Snapshot projection failed", error: error)
+            recordFailure("snapshot:projection-failed", error: error)
+            return nil
         }
     }
 
     static func reduceDetailCache(
         visibleSnapshotJSON: String,
         detailBySessionID: [String: SessionDetail]
-    ) -> ClientDetailCacheProjection {
+    ) -> ClientDetailCacheProjection? {
+        guard let detailBySessionIDJSON = encode(detailBySessionID) else {
+            return nil
+        }
         do {
             return try reduceMobileSnapshotDetailCache(
                 visibleSnapshotJson: visibleSnapshotJSON,
-                detailBySessionIdJson: encode(detailBySessionID)
+                detailBySessionIdJson: detailBySessionIDJSON
             )
         } catch {
-            invariantFailure("Detail cache projection failed", error: error)
+            recordFailure("snapshot:detail-cache-projection-failed", error: error)
+            return nil
         }
     }
 
@@ -412,44 +480,48 @@ private enum SnapshotProjectionCodec {
         )
     }
 
-    static func assistantSurface(from rawValue: String) -> CompanionAssistantSurface {
+    static func assistantSurface(from rawValue: String) -> CompanionAssistantSurface? {
         guard let surface = CompanionAssistantSurface(rawValue: rawValue) else {
-            fatalError("Snapshot projection returned unknown assistant surface: \(rawValue)")
+            CompanionDiagnostics.record("snapshot:projection-unknown-surface surface=\(rawValue)")
+            return nil
         }
 
         return surface
     }
 
-    static func decodeSnapshot(_ json: String) -> MobileSnapshot {
+    static func decodeSnapshot(_ json: String) -> MobileSnapshot? {
         decode(MobileSnapshot.self, from: json)
     }
 
-    static func decodeDetailMap(_ json: String) -> [String: SessionDetail] {
+    static func decodeDetailMap(_ json: String) -> [String: SessionDetail]? {
         decode([String: SessionDetail].self, from: json)
     }
 
-    private static func encode<Value: Encodable>(_ value: Value) -> String {
+    private static func encode<Value: Encodable>(_ value: Value) -> String? {
         do {
             let data = try JSONEncoder().encode(value)
             guard let json = String(data: data, encoding: .utf8) else {
-                fatalError("Client projection payload was not valid UTF-8")
+                CompanionDiagnostics.record("snapshot:projection-non-utf8")
+                return nil
             }
 
             return json
         } catch {
-            invariantFailure("Client projection payload encoding failed", error: error)
+            recordFailure("snapshot:projection-encode-failed", error: error)
+            return nil
         }
     }
 
-    private static func decode<Value: Decodable>(_ type: Value.Type, from json: String) -> Value {
+    private static func decode<Value: Decodable>(_ type: Value.Type, from json: String) -> Value? {
         do {
             return try JSONDecoder().decode(type, from: Data(json.utf8))
         } catch {
-            invariantFailure("Client projection payload decoding failed", error: error)
+            recordFailure("snapshot:projection-decode-failed", error: error)
+            return nil
         }
     }
 
-    private static func invariantFailure(_ message: String, error: Error) -> Never {
-        fatalError("\(message): \(error)")
+    private static func recordFailure(_ message: String, error: Error) {
+        CompanionDiagnostics.record("\(message) error=\(error.localizedDescription)")
     }
 }
