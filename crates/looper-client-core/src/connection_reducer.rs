@@ -31,25 +31,17 @@ pub fn reduce_snapshot_load_failure(
     has_reached_base_url: bool,
 ) -> Result<ClientSnapshotLoadFailureProjection, ClientCoreError> {
     let error_state = normalize_connection_state(&mapped_error_state)?;
-    let current_state = normalize_connection_state(&current_connection_state)?;
-    let should_preserve_connected = should_preserve_connected_state(
-        error_state,
-        current_state,
-        has_usable_snapshot,
-        has_server_health,
-        has_reached_base_url,
-    );
-    let next_state = if should_preserve_connected {
-        CONNECTED
-    } else {
-        error_state
-    };
+    let _ = normalize_connection_state(&current_connection_state)?;
+    let _ = (has_server_health, has_reached_base_url);
 
     Ok(ClientSnapshotLoadFailureProjection {
-        connection_state: next_state.to_owned(),
-        preserved_connected_state: should_preserve_connected,
-        should_clear_route_state: !allows_connection_route_presentation(next_state),
-        should_suppress_error: should_suppress_snapshot_load_error(next_state, has_usable_snapshot),
+        connection_state: error_state.to_owned(),
+        preserved_connected_state: false,
+        should_clear_route_state: !allows_connection_route_presentation(error_state),
+        should_suppress_error: should_suppress_snapshot_load_error(
+            error_state,
+            has_usable_snapshot,
+        ),
     })
 }
 
@@ -67,18 +59,6 @@ pub fn reduce_connection_failure(
         should_suppress_error: suppress_error_when_snapshot_usable
             && should_suppress_snapshot_load_error(state, has_usable_snapshot),
     })
-}
-
-fn should_preserve_connected_state(
-    error_state: &str,
-    current_state: &str,
-    has_usable_snapshot: bool,
-    has_server_health: bool,
-    has_reached_base_url: bool,
-) -> bool {
-    has_usable_snapshot
-        && error_state == OFFLINE
-        && (current_state == CONNECTED || has_server_health || has_reached_base_url)
 }
 
 fn should_suppress_snapshot_load_error(state: &str, has_usable_snapshot: bool) -> bool {
@@ -106,7 +86,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preserves_connected_when_cached_state_is_still_usable() {
+    fn cached_state_does_not_fake_connected_state() {
         let projection = reduce_snapshot_load_failure(
             OFFLINE.to_owned(),
             CONNECTED.to_owned(),
@@ -116,21 +96,21 @@ mod tests {
         )
         .expect("projection");
 
-        assert_eq!(projection.connection_state, CONNECTED);
-        assert!(projection.preserved_connected_state);
-        assert!(!projection.should_clear_route_state);
+        assert_eq!(projection.connection_state, OFFLINE);
+        assert!(!projection.preserved_connected_state);
+        assert!(projection.should_clear_route_state);
         assert!(projection.should_suppress_error);
     }
 
     #[test]
-    fn preserves_connected_when_route_metadata_exists() {
+    fn route_metadata_does_not_fake_connected_state() {
         let projection =
             reduce_snapshot_load_failure(OFFLINE.to_owned(), OFFLINE.to_owned(), true, true, false)
                 .expect("projection");
 
-        assert_eq!(projection.connection_state, CONNECTED);
-        assert!(projection.preserved_connected_state);
-        assert!(!projection.should_clear_route_state);
+        assert_eq!(projection.connection_state, OFFLINE);
+        assert!(!projection.preserved_connected_state);
+        assert!(projection.should_clear_route_state);
         assert!(projection.should_suppress_error);
     }
 

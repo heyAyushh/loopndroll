@@ -62,6 +62,22 @@ struct LooperClientCoreTests {
     }
 
     @Test
+    func cachedSnapshotFailureDoesNotReportConnected() throws {
+        let projection = try reduceSnapshotLoadFailure(
+            mappedErrorState: "offline",
+            currentConnectionState: "connected",
+            hasUsableSnapshot: true,
+            hasServerHealth: true,
+            hasReachedBaseUrl: true
+        )
+
+        #expect(projection.connectionState == "offline")
+        #expect(!projection.preservedConnectedState)
+        #expect(projection.shouldClearRouteState)
+        #expect(projection.shouldSuppressError)
+    }
+
+    @Test
     func sessionManagerStartsWithoutSwiftStateMutationHooks() throws {
         let manager = try temporarySessionManager()
 
