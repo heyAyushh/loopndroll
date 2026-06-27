@@ -36,19 +36,11 @@ struct AssistantClientGlyph: View {
 
 private struct CodexLogoMark: View {
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: CodexLogoMetrics.cornerRadius)
-                .fill(CodexLogoPalette.background)
-            Text(CodexLogoMetrics.letter)
-                .font(.system(
-                    size: CodexLogoMetrics.letterSize,
-                    weight: .heavy,
-                    design: .rounded
-                ))
-                .foregroundStyle(CodexLogoPalette.foreground)
-                .minimumScaleFactor(CodexLogoMetrics.minimumScale)
-        }
-        .aspectRatio(1, contentMode: .fit)
+        CompanionCachedImage(
+            asset: .codexLogo,
+            fallbackSystemImage: "terminal"
+        )
+        .scaledToFit()
         .accessibilityHidden(true)
     }
 }
@@ -331,16 +323,4 @@ private enum GrokLogoMetrics {
 private enum GrokLogoPalette {
     static let darkModeTint = Color(red: 0.47, green: 0.47, blue: 0.49)
     static let lightModeTint = Color(red: 0.30, green: 0.30, blue: 0.32)
-}
-
-private enum CodexLogoPalette {
-    static let background = Color(red: 0.05, green: 0.31, blue: 0.24)
-    static let foreground = Color.white
-}
-
-private enum CodexLogoMetrics {
-    static let cornerRadius: CGFloat = 7
-    static let letter = "C"
-    static let letterSize: CGFloat = 18
-    static let minimumScale: CGFloat = 0.7
 }
