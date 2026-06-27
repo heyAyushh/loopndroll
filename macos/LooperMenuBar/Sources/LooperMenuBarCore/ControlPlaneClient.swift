@@ -1799,26 +1799,10 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
       .compactMap(URL.init(string:))
     let healthBaseURLs = baseURLs.compactMap(URL.init(string:))
 
-    return stableUniqueURLs(advertisedTailscaleBaseURLs + healthBaseURLs)
-      .enumerated()
-      .sorted { lhs, rhs in
-        let lhsPriority = lhs.element.routePriority(preference: preference)
-        let rhsPriority = rhs.element.routePriority(preference: preference)
-
-        guard lhsPriority != rhsPriority else {
-          return lhs.offset < rhs.offset
-        }
-
-        return lhsPriority < rhsPriority
-      }
-      .map(\.element)
-  }
-
-  private func stableUniqueURLs(_ urls: [URL]) -> [URL] {
-    var seen = Set<String>()
-    return urls.filter { url in
-      seen.insert(url.absoluteString).inserted
-    }
+    return MobileRouteURLPolicy.sortedUniqueURLs(
+      advertisedTailscaleBaseURLs + healthBaseURLs,
+      preference: preference
+    )
   }
 
   enum CodingKeys: String, CodingKey {
@@ -1976,6 +1960,38 @@ public struct MobileTailscaleStatus: Codable, Equatable, Sendable {
   }
 }
 
+public enum MobileRouteURLPolicy {
+  public static let defaultHTTPAPIPort = 8765
+  public static let defaultRealtimeGRPCPort = 8766
+
+  public static func canonicalRealtimeGRPCBaseURL(for baseURL: URL) -> URL {
+    baseURL.canonicalRealtimeGRPCBaseURL
+  }
+
+  public static func sortedUniqueURLs(
+    _ urls: [URL],
+    preference: MobileRoutePreference
+  ) -> [URL] {
+    var seen = Set<String>()
+    return urls
+      .filter { url in
+        seen.insert(url.absoluteString).inserted
+      }
+      .enumerated()
+      .sorted { lhs, rhs in
+        let lhsPriority = lhs.element.routePriority(preference: preference)
+        let rhsPriority = rhs.element.routePriority(preference: preference)
+
+        guard lhsPriority != rhsPriority else {
+          return lhs.offset < rhs.offset
+        }
+
+        return lhsPriority < rhsPriority
+      }
+      .map(\.element)
+  }
+}
+
 extension URL {
   fileprivate enum MobileRoute {
     case remote
@@ -2040,6 +2056,28 @@ extension URL {
       tailscalePriority
     case .lan:
       lanPriority
+    }
+  }
+
+  fileprivate var canonicalRealtimeGRPCBaseURL: URL {
+    guard port == MobileRouteURLPolicy.defaultHTTPAPIPort,
+      scheme?.lowercased() == "http",
+      allowsRealtimePortRepair,
+      var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+    else {
+      return self
+    }
+
+    components.port = MobileRouteURLPolicy.defaultRealtimeGRPCPort
+    return components.url ?? self
+  }
+
+  private var allowsRealtimePortRepair: Bool {
+    switch mobileRoute {
+    case .tailscale, .lan, .loopback:
+      return true
+    case .remote:
+      return false
     }
   }
 

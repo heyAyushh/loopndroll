@@ -41,6 +41,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let notificationTargetMacOS = "macos"
   }
 
+  private let endpointStore: ControlPlaneEndpointStore
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
@@ -58,6 +59,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private var cachedMenuEnrichment: MenuRefreshResult?
   private var continuationRefreshTask: Task<Void, Never>?
   private var sessionMiniSyncTask: Task<Void, Never>?
+  private var sessionMiniSyncGeneration = 0
   private var mobileHealth: MobileHealthResponse?
   private var mobileState: DesktopMobileStateResponse?
   private var pushDevices: DesktopPushDevicesResponse?
@@ -80,6 +82,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   override init() {
     let endpointStore = ControlPlaneEndpointStore()
     let client = HTTPControlPlaneClient(endpointStore: endpointStore)
+    self.endpointStore = endpointStore
     self.client = client
     self.sessionRuntime = MenuBarSessionRuntime.liveDefault()
     self.lifecycle = LooperLifecycleCoordinator(
@@ -105,6 +108,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
     Task {
       _ = await lifecycle.registerOnLaunch()
+      restartSessionMiniSync()
       await refreshMenu()
       if diagnosticsRequestedFromLaunchArguments {
         await showDiagnosticsWindow(force: true)
@@ -740,9 +744,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return
     }
 
+    sessionMiniSyncGeneration += 1
+    let syncGeneration = sessionMiniSyncGeneration
     sessionMiniSyncTask = Task { [weak self, sessionRuntime] in
       guard let self else {
         return
+      }
+      defer {
+        if self.sessionMiniSyncGeneration == syncGeneration {
+          self.sessionMiniSyncTask = nil
+        }
       }
       do {
         try await self.configureSessionClientCoreRuntimeIfNeeded()
@@ -766,14 +777,24 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       throw MenuBarSessionRuntimeError.noRealtimeEndpoint
     }
     _ = try await sessionRuntime.startIfNeeded {
-      let health = try await client.fetchMobileHealth()
-      return health.preferredRealtimeBaseURLs
+      MenuBarRealtimeEndpointResolver.endpoints(
+        controlPlaneBaseURL: endpointStore.baseURL,
+        health: mobileHealth,
+        preference: mobileRoutePreference
+      )
     }
   }
 
   private func stopSessionMiniSync() {
+    sessionMiniSyncGeneration += 1
     sessionMiniSyncTask?.cancel()
     sessionMiniSyncTask = nil
+  }
+
+  private func restartSessionMiniSync() {
+    stopSessionMiniSync()
+    sessionRuntime?.stop()
+    startSessionMiniSync()
   }
 
   private func applySessionMiniSnapshot(_ snapshot: MenuBarSessionMiniLocalSnapshot) {
@@ -1791,6 +1812,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     mobileRoutePreference = preference
+    restartSessionMiniSync()
     Task {
       await refreshMenu(force: true)
     }

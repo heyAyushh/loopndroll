@@ -214,6 +214,42 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.attemptCount == 1)
     }
 
+    @Test("realtime endpoint resolver seeds Session without mobile health")
+    func testRealtimeEndpointResolverSeedsSessionWithoutMobileHealth() throws {
+        let endpoints = MenuBarRealtimeEndpointResolver.endpoints(
+            controlPlaneBaseURL: try #require(URL(string: "http://127.0.0.1:8765")),
+            health: nil,
+            preference: .tailscale
+        )
+
+        #expect(endpoints.map(\.absoluteString) == ["http://127.0.0.1:8766"])
+    }
+
+    @Test("realtime endpoint resolver ranks health routes and local fallback")
+    func testRealtimeEndpointResolverRanksHealthRoutesAndLocalFallback() throws {
+        let endpoints = MenuBarRealtimeEndpointResolver.endpoints(
+            controlPlaneBaseURL: try #require(URL(string: "http://127.0.0.1:8765")),
+            health: MobileHealthResponse(
+                ok: true,
+                baseURL: "http://192.168.1.33:8765",
+                baseURLs: ["http://192.168.1.33:8765"],
+                grpcBaseURL: "http://100.95.2.4:8766",
+                grpcBaseURLs: [
+                    "http://100.95.2.4:8766",
+                    "http://192.168.1.33:8766",
+                ],
+                requiresAuthentication: true
+            ),
+            preference: .lan
+        )
+
+        #expect(endpoints.map(\.absoluteString) == [
+            "http://192.168.1.33:8766",
+            "http://100.95.2.4:8766",
+            "http://127.0.0.1:8766",
+        ])
+    }
+
     @Test("offline notification reply stays durable and dedupes retry")
     func testOfflineNotificationReplyStaysDurableAndDedupesRetry() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
