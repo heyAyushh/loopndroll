@@ -205,7 +205,7 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
 
-        model.markCurrentSiriSession(cachedSession)
+        await model.markCurrentSiriSession(cachedSession)
 
         #expect(model.snapshot?.globalSettings.siriCurrentSessionId == Constants.cachedThreadID)
         #expect(model.snapshot?.globalSettings.siriCurrentAssistantSurface == .codex)

@@ -2229,6 +2229,35 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     }
 }
 
+extension SessionDetail {
+    init(summary: SessionSummary, snapshot: MobileSnapshot) {
+        self.init(
+            id: summary.id,
+            ref: summary.ref,
+            title: summary.title,
+            status: summary.status,
+            effectiveMode: summary.effectiveMode,
+            lastUpdatedAt: summary.lastUpdatedAt,
+            lastActivityAt: summary.lastActivityAt,
+            lastMessageAt: summary.lastMessageAt,
+            assistantPreview: summary.assistantPreview,
+            latestAssistantMessage: nil,
+            firstUserPrompt: nil,
+            isArchived: summary.isArchived,
+            canSendPrompt: summary.canSendPrompt,
+            promptDeliveryUnavailableReason: summary.promptDeliveryUnavailableReason,
+            assistantClient: summary.assistantClient,
+            goal: summary.goal,
+            metadata: summary.metadata,
+            notificationIds: [],
+            completionCheckID: nil,
+            completionCheckWaitForReply: snapshot.globalSettings.completionCheckWaitForReply,
+            availableNotifications: snapshot.notifications,
+            availableCompletionChecks: snapshot.completionChecks
+        )
+    }
+}
+
 struct GrokBuildHookStatus: Codable, Equatable, Sendable {
     var health: String
     var owner: String

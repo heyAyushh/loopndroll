@@ -73,6 +73,7 @@ final class CompanionAppModel {
     var realtimeServerTime: String?
     var realtimeLatestSeq: Int64 = 0
     var realtimeStreamIsLive = false
+    private(set) var isAwaitingRouteSessionProof = false
     var localNotificationStatus: UNAuthorizationStatus = .notDetermined
     var remotePushRegistration: RemotePushRegistrationResponse?
     var remotePushFailureMessage: String?
@@ -342,6 +343,9 @@ final class CompanionAppModel {
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
         realtimeStreamIsLive = isLive
         activeSessionRouteBaseURL = isLive ? endpointURL : nil
+        if isLive {
+            isAwaitingRouteSessionProof = false
+        }
         connectionState = Self.connectionStateForSessionLiveness(
             isLive: isLive,
             currentState: connectionState
@@ -433,6 +437,7 @@ final class CompanionAppModel {
 
     private func applyStoredConnectionRoutePreference() async {
         connectionRevision += 1
+        isAwaitingRouteSessionProof = true
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         applyLiveEnvironmentFromSessionCore()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
@@ -981,6 +986,7 @@ final class CompanionAppModel {
     }
 
     func loadSessionDetail(id: String) async {
+        applyLocalSessionDetailIfAvailable(id: id)
         let outcome = await sessionDetailCoordinator.loadIfNeeded(
             id: id,
             service: service,
@@ -998,6 +1004,7 @@ final class CompanionAppModel {
         id: String,
         assistantSurface: CompanionAssistantSurface? = nil
     ) async {
+        applyLocalSessionDetailIfAvailable(id: id)
         let outcome = await sessionDetailCoordinator.refresh(
             id: id,
             assistantSurface: assistantSurface,
@@ -1021,6 +1028,19 @@ final class CompanionAppModel {
         case .skipped, .stale:
             break
         }
+    }
+
+    @discardableResult
+    private func applyLocalSessionDetailIfAvailable(id: String) -> Bool {
+        guard let snapshot,
+              let session = snapshotState.session(withID: id) ?? snapshot.session(withID: id)
+        else {
+            return false
+        }
+
+        snapshotState.setDetail(SessionDetail(summary: session, snapshot: snapshot), for: id)
+        publishSnapshotStateChange(reason: "session-detail-local")
+        return true
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
@@ -1335,6 +1355,22 @@ final class CompanionAppModel {
     func setSiriDefaultSession(_ session: SessionSummary) async {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
+        }
+
+        do {
+            try await targetRuntime.setSiriDefaultSession(
+                threadID: sessionID,
+                assistantSurface: targetSurface
+            )
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
+        }
 
         if let visibleSnapshot = snapshotState.applyDefaultSiriSession(
             sessionID: sessionID,
@@ -1344,19 +1380,10 @@ final class CompanionAppModel {
             publishSnapshotStateChange(reason: "siri-default-session")
         }
 
-        do {
-            try await sessionMiniController.sessionRuntime?.setSiriDefaultSession(
-                threadID: sessionID,
-                assistantSurface: targetSurface
-            )
-            errorMessage = nil
-            lastUpdatedAt = Date()
-            Haptics.success()
-            await donateSetDefaultSiriSession(session)
-        } catch {
-            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-            Haptics.error()
-        }
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        Haptics.success()
+        await donateSetDefaultSiriSession(session)
     }
 
     func donateOpenedSiriSession(_ session: SessionSummary) async {
@@ -1378,9 +1405,24 @@ final class CompanionAppModel {
         }
     }
 
-    func markCurrentSiriSession(_ session: SessionSummary) {
+    func markCurrentSiriSession(_ session: SessionSummary) async {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            return
+        }
+
+        do {
+            try await targetRuntime.setSiriCurrentSession(
+                threadID: sessionID,
+                assistantSurface: targetSurface
+            )
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            return
+        }
+
         guard let visibleSnapshot = snapshotState.applyCurrentSiriSession(
             sessionID: sessionID,
             assistantSurface: targetSurface
@@ -1391,18 +1433,8 @@ final class CompanionAppModel {
         CompanionSnapshotCache.save(visibleSnapshot)
         publishSnapshotStateChange(reason: "siri-current-session")
         CompanionDiagnostics.record("siri-current:local sessionID=\(sessionID)")
-        Task { @MainActor [weak self] in
-            do {
-                try await self?.sessionMiniController.sessionRuntime?.setSiriCurrentSession(
-                    threadID: sessionID,
-                    assistantSurface: targetSurface
-                )
-                self?.errorMessage = nil
-                self?.lastUpdatedAt = Date()
-            } catch {
-                self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-            }
-        }
+        errorMessage = nil
+        lastUpdatedAt = Date()
     }
 
     func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
@@ -1472,10 +1504,21 @@ final class CompanionAppModel {
         guard !isSavingDefaultPrompt else {
             return
         }
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            return
+        }
 
         isSavingDefaultPrompt = true
         defer {
             isSavingDefaultPrompt = false
+        }
+
+        do {
+            try await targetRuntime.saveDefaultPrompt(defaultPrompt)
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            return
         }
 
         if let visibleSnapshot = snapshotState.applyDefaultPrompt(defaultPrompt) {
@@ -1483,27 +1526,34 @@ final class CompanionAppModel {
             publishSnapshotStateChange(reason: "default-prompt")
         }
 
-        do {
-            try await sessionMiniController.sessionRuntime?.saveDefaultPrompt(defaultPrompt)
-            errorMessage = nil
-            lastUpdatedAt = Date()
-        } catch {
-            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-        }
+        errorMessage = nil
+        lastUpdatedAt = Date()
     }
 
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) {
+        guard snapshotState.selectedAssistantSurface != surface else {
+            return
+        }
         guard snapshotState.selectAssistantSurface(surface) else {
             return
         }
-
         publishSnapshotStateChange(reason: "assistant-surface-selected")
         CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
-        Task { @MainActor [weak self] in
+
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
+        }
+
+        Task { @MainActor [weak self, targetRuntime] in
             do {
-                try await self?.sessionMiniController.sessionRuntime?.setAssistantSurface(surface)
-                self?.errorMessage = nil
-                self?.lastUpdatedAt = Date()
+                try await targetRuntime.setAssistantSurface(surface)
+                guard let self else {
+                    return
+                }
+                self.errorMessage = nil
+                self.lastUpdatedAt = Date()
             } catch {
                 self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             }
@@ -1754,6 +1804,15 @@ final class CompanionAppModel {
     private func sessionAuthoritativeConnectionState(
         _ projectedState: ConnectivityState
     ) -> ConnectivityState {
+        if isAwaitingRouteSessionProof {
+            switch projectedState {
+            case .unauthorized, .locked, .unpaired:
+                return projectedState
+            case .connecting, .connected, .offline:
+                return .connecting
+            }
+        }
+
         if realtimeStreamIsLive {
             return .connected
         }

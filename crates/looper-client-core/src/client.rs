@@ -1564,9 +1564,7 @@ impl ClientCoreState {
         if delta.has_session {
             self.upsert_state_mini(delta.session);
         } else if !delta.sessions.is_empty() {
-            for session in normalize_state_minis(delta.sessions) {
-                self.upsert_state_mini(session);
-            }
+            self.state_minis = normalize_state_minis(delta.sessions);
         }
 
         self.latest_seq = self.latest_seq.max(delta.seq).max(delta.latest_seq);
@@ -2749,7 +2747,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_session_batch_merges_without_erasing_other_surfaces() {
+    fn stream_session_batch_replaces_missing_sessions() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -2782,15 +2780,14 @@ mod tests {
             .expect("apply stream batch");
 
         assert!(result.did_change);
-        assert_eq!(result.snapshot.state_minis.len(), 2);
-        assert!(result.snapshot.state_minis.iter().any(|session| {
-            session.session_id == "thread-devin" && session.assistant_surface == "devin"
-        }));
-        assert!(result.snapshot.state_minis.iter().any(|session| {
-            session.session_id == "thread-codex"
-                && session.assistant_surface == "codex"
-                && session.payload_json.contains("new codex")
-        }));
+        assert_eq!(result.snapshot.state_minis.len(), 1);
+        assert_eq!(result.snapshot.state_minis[0].session_id, "thread-codex");
+        assert_eq!(result.snapshot.state_minis[0].assistant_surface, "codex");
+        assert!(
+            result.snapshot.state_minis[0]
+                .payload_json
+                .contains("new codex")
+        );
     }
 
     #[test]

@@ -1267,7 +1267,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let submenu = NSMenu(title: Layout.notificationsMenuTitle)
     submenu.autoenablesItems = false
 
-    let selectedTargetIDs = Set(mobileState?.defaultNotificationTargetIDs ?? ["macos"])
+    let selectedTargetIDs = Set(mobileState?.defaultNotificationTargetIDs ?? [])
+    let hasAuthoritativeTargets = mobileState != nil
     let options = NotificationTargetOptions.build(
       mobileState: mobileState, pushDevices: pushDevices)
     for option in options {
@@ -1279,7 +1280,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       optionItem.target = self
       optionItem.representedObject = option.id
       optionItem.state = selectedTargetIDs.contains(option.id) ? .on : .off
-      optionItem.isEnabled = option.available
+      optionItem.isEnabled = option.available && hasAuthoritativeTargets
       optionItem.image = menuSymbolImage(
         named: option.systemImageName,
         accessibilityDescription: option.title
@@ -1288,6 +1289,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         setSubtitle(detail, on: optionItem)
       }
       submenu.addItem(optionItem)
+    }
+
+    if !hasAuthoritativeTargets {
+      submenu.addItem(NSMenuItem.separator())
+      addDisabledItem("Loading current targets", to: submenu)
     }
 
     if options.count == 1 {
@@ -1715,7 +1721,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     guard let targetID = sender.representedObject as? String else {
       return
     }
-    var selectedTargetIDs = mobileState?.defaultNotificationTargetIDs ?? ["macos"]
+    guard mobileState != nil else {
+      Task {
+        await refreshMenu(force: true)
+      }
+      return
+    }
+
+    var selectedTargetIDs = mobileState?.defaultNotificationTargetIDs ?? []
     if selectedTargetIDs.contains(targetID) {
       selectedTargetIDs.removeAll { $0 == targetID }
     } else {
@@ -1812,9 +1825,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     mobileRoutePreference = preference
-    restartSessionMiniSync()
     Task {
       await refreshMenu(force: true)
+      restartSessionMiniSync()
     }
   }
 

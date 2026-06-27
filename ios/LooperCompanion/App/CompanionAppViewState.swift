@@ -158,6 +158,10 @@ struct CompanionAppViewState {
     }
 
     var connectivityStatusLabel: String {
+        if model.isAwaitingRouteSessionProof {
+            return model.connectionState.label
+        }
+
         if isShowingUsableLocalState {
             switch model.connectionState {
             case .connecting, .offline:

@@ -366,7 +366,7 @@ struct LooperSiriSessionClient: Sendable {
             return []
         }
 
-        let snapshot = try await service.loadSnapshot()
+        let snapshot = try await loadSnapshotLocalFirst()
         let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
             snapshot,
             surfaces: CompanionAssistantSurface.allCases
@@ -423,7 +423,7 @@ struct LooperSiriSessionClient: Sendable {
     }
 
     func defaultSiriSessionEntity() async throws -> LooperSessionEntity {
-        let snapshot = try await service.loadSnapshot()
+        let snapshot = try await loadSnapshotLocalFirst()
         let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
             snapshot,
             surfaces: CompanionAssistantSurface.allCases
@@ -448,7 +448,7 @@ struct LooperSiriSessionClient: Sendable {
     }
 
     func currentSiriSessionEntity() async throws -> LooperSessionEntity {
-        let snapshot = try await service.loadSnapshot()
+        let snapshot = try await loadSnapshotLocalFirst()
         let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
             snapshot,
             surfaces: CompanionAssistantSurface.allCases
@@ -466,7 +466,7 @@ struct LooperSiriSessionClient: Sendable {
             assistantSurface: snapshot.globalSettings.siriCurrentAssistantSurface,
             snapshot: snapshot
         ) else {
-            throw unresolvedDefaultSiriSessionError(from: projection, snapshot: snapshot)
+            throw unresolvedCurrentSiriSessionError(snapshot: snapshot)
         }
 
         return entity
@@ -488,7 +488,11 @@ struct LooperSiriSessionClient: Sendable {
     }
 
     func loadSessionDetail(for entity: LooperSessionEntity) async throws -> SessionDetail {
-        try await service.loadSessionDetail(
+        if let detail = try? await localSessionDetail(for: entity) {
+            return detail
+        }
+
+        return try await service.loadSessionDetail(
             id: entity.sessionID,
             surface: entity.assistantSurface ?? .codex
         )
@@ -524,7 +528,7 @@ struct LooperSiriSessionClient: Sendable {
     }
 
     private func sessionEntities(for surface: CompanionAssistantSurface? = nil) async throws -> [LooperSessionEntity] {
-        let snapshot = try await service.loadSnapshot()
+        let snapshot = try await loadSnapshotLocalFirst()
         let surfaces = surface.map { [$0] } ?? CompanionAssistantSurface.allCases
         let projection = LooperSiriSessionEntityProjectionCodec.projectSessionEntities(
             snapshot,
@@ -536,6 +540,30 @@ struct LooperSiriSessionClient: Sendable {
             snapshot: snapshot,
             surfaces: surfaces
         )
+    }
+
+    private func loadSnapshotLocalFirst() async throws -> MobileSnapshot {
+        if let sessionRuntime {
+            do {
+                if let snapshot = try sessionRuntime.cachedSnapshot() {
+                    CompanionDiagnostics.record("siri:local-snapshot")
+                    return snapshot
+                }
+            } catch {
+                CompanionDiagnostics.record("siri:local-snapshot-failed error=\(error.localizedDescription)")
+            }
+        }
+
+        CompanionDiagnostics.record("siri:http-snapshot-fallback")
+        return try await service.loadSnapshot()
+    }
+
+    private func localSessionDetail(for entity: LooperSessionEntity) async throws -> SessionDetail? {
+        let snapshot = try await loadSnapshotLocalFirst()
+        guard let session = snapshot.session(withID: entity.sessionID) else {
+            return nil
+        }
+        return SessionDetail(summary: session, snapshot: snapshot)
     }
 
     private func projectedEntity(
@@ -605,6 +633,13 @@ struct LooperSiriSessionClient: Sendable {
     ) -> LooperSiriError {
         let unresolvedSessionID = projection?.unresolvedDefaultSessionId.nilIfEmpty ??
             snapshot.globalSettings.siriDefaultSessionId?.nilIfEmpty
+        return unresolvedSessionID == nil
+            ? .noDefaultSession
+            : .defaultSessionUnavailable(unresolvedSessionID ?? "")
+    }
+
+    private func unresolvedCurrentSiriSessionError(snapshot: MobileSnapshot) -> LooperSiriError {
+        let unresolvedSessionID = snapshot.globalSettings.siriCurrentSessionId?.nilIfEmpty
         return unresolvedSessionID == nil
             ? .noDefaultSession
             : .defaultSessionUnavailable(unresolvedSessionID ?? "")

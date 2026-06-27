@@ -52,6 +52,10 @@ final class CompanionSessionDetailCoordinator {
             loadingSessionDetailIDs.remove(id)
         }
 
+        let didApplyLocalDetail = applyLocalDetailIfAvailable(
+            id: id,
+            snapshotState: snapshotState
+        )
         var lastError: Error?
         for surface in detailQuerySurfaces(
             for: id,
@@ -66,7 +70,7 @@ final class CompanionSessionDetailCoordinator {
                 )
                 guard isCurrentConnectionRevision(connectionRevision) else {
                     CompanionDiagnostics.record("session-detail:stale-skip id=\(id)")
-                    return .stale
+                    return didApplyLocalDetail ? .loaded : .stale
                 }
 
                 snapshotState.setDetail(detail, for: id)
@@ -74,7 +78,7 @@ final class CompanionSessionDetailCoordinator {
             } catch {
                 guard isCurrentConnectionRevision(connectionRevision) else {
                     CompanionDiagnostics.record("session-detail:stale-error-skip id=\(id)")
-                    return .stale
+                    return didApplyLocalDetail ? .loaded : .stale
                 }
 
                 lastError = error
@@ -85,9 +89,29 @@ final class CompanionSessionDetailCoordinator {
         }
 
         if let lastError {
+            if didApplyLocalDetail {
+                return .loaded
+            }
             return .failed(lastError)
         }
-        return .skipped
+        return didApplyLocalDetail ? .loaded : .skipped
+    }
+
+    private func applyLocalDetailIfAvailable(
+        id: String,
+        snapshotState: CompanionSnapshotStateStore
+    ) -> Bool {
+        guard let snapshot = snapshotState.snapshot,
+              let session = snapshotState.session(withID: id) ?? snapshot.session(withID: id)
+        else {
+            return false
+        }
+
+        snapshotState.setDetail(
+            SessionDetail(summary: session, snapshot: snapshot),
+            for: id
+        )
+        return true
     }
 
     private func detailQuerySurfaces(

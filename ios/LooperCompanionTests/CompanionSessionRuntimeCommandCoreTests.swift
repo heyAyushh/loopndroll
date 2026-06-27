@@ -5,7 +5,7 @@ import Testing
 @Suite("CompanionSessionRuntime command core")
 struct CompanionSessionRuntimeCommandCoreTests {
     @Test
-    func sessionRuntimeStartIfNeededLetsRustCoreOwnStreamRestart() async throws {
+    func sessionRuntimeStartIfNeededWaitsForStreamLiveness() async throws {
         let runtime = try Self.temporarySessionRuntime()
         let endpointURL = try #require(URL(string: "http://100.64.0.2:8765"))
         var endpointProviderCalls = 0
@@ -34,12 +34,12 @@ struct CompanionSessionRuntimeCommandCoreTests {
             return [endpointURL]
         }
 
-        #expect(snapshot?.phase == .ready)
-        #expect(snapshot?.endpointUrl == endpointURL.absoluteString)
-        #expect(secondStart?.phase == .ready)
-        #expect(secondStart?.endpointUrl == endpointURL.absoluteString)
-        #expect(restartedSnapshot?.phase == .ready)
-        #expect(restartedSnapshot?.endpointUrl == endpointURL.absoluteString)
+        #expect(snapshot?.phase == .connecting)
+        #expect(snapshot?.endpointUrl.isEmpty == true)
+        #expect(secondStart?.phase == .connecting)
+        #expect(secondStart?.endpointUrl.isEmpty == true)
+        #expect(restartedSnapshot?.phase == .connecting)
+        #expect(restartedSnapshot?.endpointUrl.isEmpty == true)
         #expect(endpointProviderCalls == 3)
     }
 

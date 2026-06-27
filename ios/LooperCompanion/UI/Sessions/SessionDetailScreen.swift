@@ -109,7 +109,7 @@ struct SessionDetailScreen: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             syncDraftModeFromCurrentModeIfNeeded()
-            markCurrentSiriSession()
+            scheduleMarkCurrentSiriSession()
         }
         .onChange(of: session.id) {
             resetDraftMode()
@@ -144,7 +144,7 @@ struct SessionDetailScreen: View {
         }
         .task {
             await model.refreshSessionDetail(id: session.id)
-            markCurrentSiriSession()
+            await markCurrentSiriSessionIfNeeded()
             await model.donateOpenedSiriSession(session)
         }
         .task(id: promptSuggestionContextKey) {
@@ -152,7 +152,7 @@ struct SessionDetailScreen: View {
         }
         .refreshable {
             await model.refreshSessionDetail(id: session.id)
-            markCurrentSiriSession()
+            await markCurrentSiriSessionIfNeeded()
         }
         .confirmationDialog(
             "Delete Session",
@@ -589,8 +589,14 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private func markCurrentSiriSession() {
-        model.markCurrentSiriSession(session)
+    private func scheduleMarkCurrentSiriSession() {
+        Task {
+            await model.markCurrentSiriSession(session)
+        }
+    }
+
+    private func markCurrentSiriSessionIfNeeded() async {
+        await model.markCurrentSiriSession(session)
     }
 
 }
