@@ -14,7 +14,7 @@ use crate::{
     model::{
         ClientCommandAck, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
         ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, OutboundSessionFrame,
-        OutboundSessionFrameKind,
+        OutboundSessionFrameKind, STATE_MINI_REPLACEMENT_KIND,
     },
 };
 
@@ -475,16 +475,16 @@ async fn drive_state_mini_stream_session(
     }
 }
 
-fn state_mini_data_cursor_after_ack(current_seq: i64, _ack_seq: i64) -> i64 {
-    current_seq
+fn state_mini_data_cursor_after_ack(current_seq: i64, ack_seq: i64) -> i64 {
+    current_seq.max(ack_seq)
 }
 
 fn state_mini_data_cursor_after_delta(current_seq: i64, delta_seq: i64) -> i64 {
     current_seq.max(delta_seq)
 }
 
-fn state_mini_data_cursor_after_heartbeat(current_seq: i64, _heartbeat_seq: i64) -> i64 {
-    current_seq
+fn state_mini_data_cursor_after_heartbeat(current_seq: i64, heartbeat_seq: i64) -> i64 {
+    current_seq.max(heartbeat_seq)
 }
 
 fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
@@ -802,25 +802,23 @@ fn client_state_mini_delta(
         .unwrap_or(false);
     if replace_sessions {
         let sessions = state_mini_payload_sessions(&payload);
-        if !sessions.is_empty() {
-            return Ok(ClientStateMiniDelta {
+        return Ok(ClientStateMiniDelta {
+            seq: delta.seq,
+            latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
+            entity_id: delta.entity_id,
+            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+            revision: delta.revision,
+            server_time: delta.server_time,
+            has_session: false,
+            session: ClientStateMini {
+                session_id: String::new(),
+                assistant_surface: String::new(),
                 seq: delta.seq,
-                latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
-                entity_id: delta.entity_id,
-                kind: delta.kind,
-                revision: delta.revision,
-                server_time: delta.server_time,
-                has_session: false,
-                session: ClientStateMini {
-                    session_id: String::new(),
-                    assistant_surface: String::new(),
-                    seq: delta.seq,
-                    revision: String::new(),
-                    payload_json: String::new(),
-                },
-                sessions,
-            });
-        }
+                revision: String::new(),
+                payload_json: String::new(),
+            },
+            sessions,
+        });
     }
     let Some(session_id) = state_mini_payload_session_id(&payload) else {
         return Ok(seq_only_state_mini_delta(delta));
@@ -1124,6 +1122,7 @@ mod tests {
         .expect("delta");
 
         assert!(!delta.has_session);
+        assert_eq!(delta.kind, STATE_MINI_REPLACEMENT_KIND);
         assert_eq!(delta.latest_seq, 16);
         assert_eq!(delta.sessions.len(), 2);
         assert_eq!(delta.sessions[0].session_id, "thread-1");
@@ -1131,17 +1130,35 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replay_cursor_advances_only_on_deltas() {
+    fn state_mini_delta_accepts_empty_replace_sessions_payload() {
+        let delta = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 17,
+            entity_id: "mobile".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-17".to_owned(),
+            server_time: "2026-06-27T00:00:17Z".to_owned(),
+            payload_json: json!({
+                "latestSeq": 17,
+                "replace": true,
+                "sessions": []
+            })
+            .to_string(),
+        })
+        .expect("delta");
+
+        assert!(!delta.has_session);
+        assert_eq!(delta.kind, STATE_MINI_REPLACEMENT_KIND);
+        assert_eq!(delta.latest_seq, 17);
+        assert!(delta.sessions.is_empty());
+        assert_eq!(delta.entity_id, "mobile");
+    }
+
+    #[test]
+    fn state_mini_replay_cursor_advances_on_server_finality_frames() {
         let current_seq = 10;
 
-        assert_eq!(
-            state_mini_data_cursor_after_ack(current_seq, 20),
-            current_seq
-        );
-        assert_eq!(
-            state_mini_data_cursor_after_heartbeat(current_seq, 30),
-            current_seq
-        );
+        assert_eq!(state_mini_data_cursor_after_ack(current_seq, 20), 20);
+        assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 30), 30);
         assert_eq!(
             state_mini_data_cursor_after_delta(current_seq, 9),
             current_seq

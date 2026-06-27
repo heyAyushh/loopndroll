@@ -1806,9 +1806,10 @@ final class CompanionAppModel {
     ) -> ConnectivityState {
         if isAwaitingRouteSessionProof {
             switch projectedState {
-            case .unauthorized, .locked, .unpaired:
+            case .unauthorized, .locked, .unpaired, .offline:
+                isAwaitingRouteSessionProof = false
                 return projectedState
-            case .connecting, .connected, .offline:
+            case .connecting, .connected:
                 return .connecting
             }
         }

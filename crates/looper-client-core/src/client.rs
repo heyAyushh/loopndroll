@@ -19,7 +19,7 @@ use crate::model::{
     ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
     ClientPendingMutation, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
     ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind, STATE_MINI_REPLACEMENT_KIND,
 };
 use crate::session_transport::fetch_state_mini_snapshot;
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
@@ -1307,6 +1307,7 @@ impl LooperClientCore {
                 endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
+                state.latest_seq = state.latest_seq.max(latest_seq);
                 update_server_time_if_newer(&mut state.server_time, server_time);
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
@@ -1460,6 +1461,10 @@ impl ClientCoreState {
         } else {
             reject_message(&ack)
         };
+        if ack.ack_seq > self.latest_seq && !ack.revision.is_empty() {
+            self.revision = ack.revision.clone();
+        }
+        self.latest_seq = self.latest_seq.max(ack.ack_seq);
         let command_kind = self
             .pending_mutations
             .iter()
@@ -1563,7 +1568,7 @@ impl ClientCoreState {
 
         if delta.has_session {
             self.upsert_state_mini(delta.session);
-        } else if !delta.sessions.is_empty() {
+        } else if is_state_mini_replacement_delta(&delta) || !delta.sessions.is_empty() {
             self.state_minis = normalize_state_minis(delta.sessions);
         }
 
@@ -1579,6 +1584,10 @@ impl ClientCoreState {
         self.last_error.clear();
         true
     }
+}
+
+fn is_state_mini_replacement_delta(delta: &ClientStateMiniDelta) -> bool {
+    !delta.has_session && delta.kind == STATE_MINI_REPLACEMENT_KIND
 }
 
 #[cfg(test)]
@@ -2056,7 +2065,7 @@ mod tests {
         assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
         assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(update.latest_seq, 12);
-        assert_eq!(update.snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert_eq!(update.snapshot.latest_seq, 12);
         assert_eq!(update.snapshot.server_time, SERVER_TIME);
     }
 
@@ -2329,8 +2338,8 @@ mod tests {
         let snapshot = core.snapshot().expect("snapshot");
         assert_eq!(snapshot.outbox_depth, 0);
         assert!(snapshot.pending_mutations.is_empty());
-        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
-        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:42Z");
     }
 
@@ -2389,8 +2398,8 @@ mod tests {
         let snapshot = core.snapshot().expect("snapshot");
         assert_eq!(snapshot.outbox_depth, 0);
         assert!(snapshot.pending_mutations.is_empty());
-        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
-        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.latest_seq, 43);
+        assert_eq!(snapshot.revision, "rev-43");
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:43Z");
     }
 
@@ -2817,8 +2826,8 @@ mod tests {
             })
             .expect("ack");
 
-        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
-        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:00Z");
         assert!(snapshot.pending_mutations.is_empty());
         assert!(snapshot.last_error.is_empty());
@@ -2851,7 +2860,8 @@ mod tests {
             })
             .expect("ack");
 
-        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
+        assert_eq!(snapshot.latest_seq, 43);
+        assert_eq!(snapshot.revision, "rev-43");
         assert!(snapshot.pending_mutations.is_empty());
         assert_eq!(
             snapshot.last_error,
@@ -2976,8 +2986,8 @@ mod tests {
             })
             .expect("batch ack");
 
-        assert_eq!(snapshot.latest_seq, INITIAL_SEQUENCE);
-        assert!(snapshot.revision.is_empty());
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:01Z");
         assert!(snapshot.pending_mutations.is_empty());
         assert_eq!(
@@ -3090,6 +3100,36 @@ mod tests {
             stale.snapshot.state_minis[0].payload_json,
             r#"{"title":"new"}"#
         );
+    }
+
+    #[test]
+    fn state_mini_replacement_delta_can_clear_local_projection() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 5,
+            sessions: vec![state_mini("thread-1", "codex", 5, "rev-5", "old")],
+            server_time: String::new(),
+        })
+        .expect("seed minis");
+
+        let result = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 6,
+                latest_seq: 6,
+                entity_id: "mobile".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+                revision: "rev-6".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![],
+            })
+            .expect("apply replacement");
+
+        assert!(result.did_change);
+        assert_eq!(result.snapshot.latest_seq, 6);
+        assert!(result.snapshot.state_minis.is_empty());
+        assert_eq!(result.snapshot.revision, "rev-6");
     }
 
     #[test]

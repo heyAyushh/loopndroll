@@ -22,6 +22,32 @@ public struct MenuRefreshResult: Equatable, Sendable {
     public var succeeded: Bool {
         sessionMiniSnapshot != nil || snapshot != nil
     }
+
+    public var hasReusableEnrichment: Bool {
+        snapshot != nil
+            || connections != nil
+            || acpClientHosts != nil
+            || mobileState != nil
+            || pushDevices != nil
+            || mobileHealth != nil
+    }
+
+    public func mergingReusableEnrichment(from cached: MenuRefreshResult?) -> MenuRefreshResult {
+        guard let cached else {
+            return self
+        }
+        return MenuRefreshResult(
+            didFetchHTTP: didFetchHTTP || cached.didFetchHTTP,
+            sessionMiniSnapshot: sessionMiniSnapshot ?? cached.sessionMiniSnapshot,
+            snapshot: snapshot ?? cached.snapshot,
+            connections: connections ?? cached.connections,
+            acpClientHosts: acpClientHosts ?? cached.acpClientHosts,
+            mobileState: mobileState ?? cached.mobileState,
+            pushDevices: pushDevices ?? cached.pushDevices,
+            mobileHealth: mobileHealth ?? cached.mobileHealth,
+            error: error
+        )
+    }
 }
 
 public actor MenuRefreshCoordinator {

@@ -708,10 +708,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func cacheMenuEnrichmentIfAvailable(_ result: MenuRefreshResult) {
-    guard result.snapshot != nil else {
+    guard result.hasReusableEnrichment else {
       return
     }
-    cachedMenuEnrichment = result
+    cachedMenuEnrichment = result.mergingReusableEnrichment(from: cachedMenuEnrichment)
   }
 
   private func cacheSessionMiniSnapshotIfAvailable(_ snapshot: MenuBarSessionMiniLocalSnapshot?) {

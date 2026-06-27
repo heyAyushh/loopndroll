@@ -692,7 +692,7 @@ public struct DesktopMobileStateResponse: Codable, Equatable, Sendable {
 
   public init(
     globalNotificationID: String? = nil,
-    defaultNotificationTargetIDs: [String] = ["macos"],
+    defaultNotificationTargetIDs: [String] = [],
     notifications: [DesktopNotificationRouteSummary] = []
   ) {
     self.globalNotificationID = globalNotificationID
@@ -707,8 +707,7 @@ public struct DesktopMobileStateResponse: Codable, Equatable, Sendable {
     let defaultNotificationTargetIDs =
       try container
       .decodeIfPresent([String].self, forKey: .defaultNotificationTargetIDs)
-      ?? globalNotificationID.map { ["macos", $0] }
-      ?? ["macos"]
+      ?? []
     self.init(
       globalNotificationID: globalNotificationID,
       defaultNotificationTargetIDs: defaultNotificationTargetIDs,
