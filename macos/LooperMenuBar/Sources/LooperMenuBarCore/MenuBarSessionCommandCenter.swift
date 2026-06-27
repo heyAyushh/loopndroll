@@ -1,25 +1,6 @@
 import Foundation
 import LooperClientCore
 
-public struct MenuBarSessionModeCommandResult: Equatable, Sendable {
-    public let accepted: Bool
-    public let delivered: Bool
-}
-
-public struct MenuBarSessionPromptCommandResult: Equatable, Sendable {
-    public let accepted: Bool
-    public let delivered: Bool
-    public let dispatchKind: String
-}
-
-public struct MenuBarNotificationReplyCommandResult: Equatable, Sendable {
-    public let notificationID: String
-    public let clientMutationID: String
-    public let accepted: Bool
-    public let delivered: Bool
-    public let dispatchKind: String
-}
-
 public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyThreadID
     case emptyNotificationID
@@ -40,17 +21,13 @@ public actor MenuBarSessionCommandCenter {
     public func setSessionMode(
         threadID: String,
         preset: String?
-    ) async throws -> MenuBarSessionModeCommandResult {
+    ) async throws -> ClientSessionModeIntentResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedPreset = preset?.nilIfBlank ?? ""
-        let result = try await sessionRuntime.setSessionMode(
+        return try await sessionRuntime.setSessionMode(
             threadID: normalizedThreadID,
             preset: normalizedPreset
-        )
-        return MenuBarSessionModeCommandResult(
-            accepted: result.accepted,
-            delivered: result.accepted
         )
     }
 
@@ -59,20 +36,15 @@ public actor MenuBarSessionCommandCenter {
         threadID: String,
         prompt: String,
         assistantSurface: String?
-    ) async throws -> MenuBarSessionPromptCommandResult {
+    ) async throws -> ClientSessionPromptIntentResult {
         let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let result = try await sessionRuntime.sendPrompt(
+        return try await sessionRuntime.sendPrompt(
             threadID: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: normalizedAssistantSurface
-        )
-        return MenuBarSessionPromptCommandResult(
-            accepted: result.accepted,
-            delivered: result.accepted,
-            dispatchKind: result.dispatchKind.nilIfBlank ?? "accepted"
         )
     }
 
@@ -83,7 +55,7 @@ public actor MenuBarSessionCommandCenter {
         prompt: String,
         assistantSurface: String?,
         clientMutationID: String? = nil
-    ) async throws -> MenuBarNotificationReplyCommandResult {
+    ) async throws -> ClientNotificationReplyIntentResult {
         let normalizedNotificationID = try normalizedRequired(
             notificationID,
             error: .emptyNotificationID
@@ -92,19 +64,12 @@ public actor MenuBarSessionCommandCenter {
         let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
         let sessionRuntime = try requiredSessionRuntime()
         let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
-        let result = try await sessionRuntime.submitNotificationReply(
+        return try await sessionRuntime.submitNotificationReply(
             notificationID: normalizedNotificationID,
             threadID: normalizedThreadID,
             prompt: normalizedPrompt,
             assistantSurface: normalizedAssistantSurface,
             clientMutationID: clientMutationID
-        )
-        return MenuBarNotificationReplyCommandResult(
-            notificationID: result.notificationId.nilIfBlank ?? normalizedNotificationID,
-            clientMutationID: result.clientMutationId,
-            accepted: result.accepted,
-            delivered: result.accepted,
-            dispatchKind: result.dispatchKind.nilIfBlank ?? "accepted"
         )
     }
 
