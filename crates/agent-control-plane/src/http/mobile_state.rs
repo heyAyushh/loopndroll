@@ -2,24 +2,20 @@ use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use crate::control_plane::{ControlPlane, DesktopSnapshot};
+use crate::control_plane::ControlPlane;
 use crate::events::MobileStateEventGap;
 use crate::mobile::api::{
-    mobile_session_detail, mobile_session_mini_delta, mobile_session_mini_snapshot,
-    mobile_snapshot, session_mini_projection_inputs,
+    mobile_session_mini_delta, mobile_session_mini_snapshot, mobile_snapshot,
+    session_mini_projection_inputs,
 };
 use crate::mobile::events::{MobileEventInput, MobileEventKind};
 use crate::mobile::network::advertised_mobile_grpc_base_urls;
 use crate::mobile::prompt_delivery::{
     invalidate_delivery_action_cache, mobile_desktop_snapshot, prime_delivery_action_cache,
 };
-use crate::mobile::session::MobileSessionState;
 
 use super::mobile_access::{current_mobile_time, request_advertised_mobile_base_urls};
-use super::responses::{
-    internal_mobile_error_response, mobile_session_error_response,
-    mobile_session_not_found_response,
-};
+use super::responses::{internal_mobile_error_response, mobile_session_error_response};
 
 pub(super) const DEFAULT_SESSION_MINI_REPLAY_LIMIT: usize = 100;
 pub(super) const MAX_SESSION_MINI_REPLAY_LIMIT: usize = 500;
@@ -151,26 +147,6 @@ fn rebuild_mobile_session_mini_projection(
     Ok((latest_seq, records))
 }
 
-pub(super) fn missing_mobile_session_rejection(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> Option<Response> {
-    let snapshot = match mobile_desktop_snapshot(control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return Some(internal_mobile_error_response(error.to_string())),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return Some(mobile_session_error_response(error)),
-    };
-    if mobile_session_is_visible(&snapshot, &session_state, thread_id, assistant_surface) {
-        return None;
-    }
-
-    Some(mobile_session_not_found_response())
-}
-
 pub(super) fn emit_mobile_session_changed(
     control_plane: &ControlPlane,
     thread_id: Option<&str>,
@@ -198,13 +174,4 @@ pub(super) fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, det
         prompt_id: None,
         detail: Some(detail.to_owned()),
     });
-}
-
-fn mobile_session_is_visible(
-    snapshot: &DesktopSnapshot,
-    session_state: &MobileSessionState,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> bool {
-    mobile_session_detail(snapshot, session_state, thread_id, assistant_surface).is_some()
 }

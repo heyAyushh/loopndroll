@@ -555,9 +555,13 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
+    func deleteSession(threadId: String) async throws  -> ClientSessionCommandIntentResult
+
     func drainNotificationReplyOutbox() async throws  -> ClientNotificationReplyIntentResult
 
     func localSnapshot() throws  -> ClientLocalStateSnapshot
+
+    func muteSession(threadId: String) async throws  -> ClientSessionCommandIntentResult
 
     func observe() async throws  -> ClientStateMiniStreamUpdate
 
@@ -573,9 +577,19 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientNotificationReplyPersistResult
 
+    func saveDefaultPrompt(prompt: String) async throws  -> ClientSessionCommandIntentResult
+
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String) async throws  -> ClientSessionPromptIntentResult
 
+    func setAssistantSurface(assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
+
     func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
+
+    func setSessionArchived(threadId: String, archived: Bool) async throws  -> ClientSessionCommandIntentResult
+
+    func setSiriCurrentSession(threadId: String, assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
+
+    func setSiriDefaultSession(threadId: String, assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
 
     func start(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) throws  -> ClientStateSnapshot
 
@@ -649,6 +663,23 @@ public convenience init(filePath: String)throws  {
 
 
 
+open func deleteSession(threadId: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_delete_session(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func drainNotificationReplyOutbox()async throws  -> ClientNotificationReplyIntentResult  {
     return
         try  await uniffiRustCallAsync(
@@ -672,6 +703,23 @@ open func localSnapshot()throws  -> ClientLocalStateSnapshot  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+open func muteSession(threadId: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_mute_session(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
 }
 
 open func observe()async throws  -> ClientStateMiniStreamUpdate  {
@@ -775,6 +823,23 @@ open func persistNotificationReplyWithGeneratedMutation(notificationId: String, 
 })
 }
 
+open func saveDefaultPrompt(prompt: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_save_default_prompt(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(prompt)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)async throws  -> ClientSessionPromptIntentResult  {
     return
         try  await uniffiRustCallAsync(
@@ -792,6 +857,23 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String)
         )
 }
 
+open func setAssistantSurface(assistantSurface: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_assistant_surface(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(assistantSurface)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
 open func setMode(threadId: String, preset: String)async throws  -> ClientSessionModeIntentResult  {
     return
         try  await uniffiRustCallAsync(
@@ -805,6 +887,57 @@ open func setMode(threadId: String, preset: String)async throws  -> ClientSessio
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientSessionModeIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func setSessionArchived(threadId: String, archived: Bool)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_session_archived(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId),FfiConverterBool.lower(archived)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func setSiriCurrentSession(threadId: String, assistantSurface: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_siri_current_session(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId),FfiConverterString.lower(assistantSurface)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func setSiriDefaultSession(threadId: String, assistantSurface: String)async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_siri_default_session(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(threadId),FfiConverterString.lower(assistantSurface)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -2286,11 +2419,12 @@ public struct ClientPendingCommand: Equatable, Hashable {
     public var assistantSurface: String
     public var prompt: String
     public var notificationId: String
+    public var archived: Bool
     public var attemptCount: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, prompt: String, notificationId: String, attemptCount: UInt32) {
+    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, prompt: String, notificationId: String, archived: Bool, attemptCount: UInt32) {
         self.kind = kind
         self.clientMutationId = clientMutationId
         self.threadId = threadId
@@ -2298,6 +2432,7 @@ public struct ClientPendingCommand: Equatable, Hashable {
         self.assistantSurface = assistantSurface
         self.prompt = prompt
         self.notificationId = notificationId
+        self.archived = archived
         self.attemptCount = attemptCount
     }
 
@@ -2324,6 +2459,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
                 assistantSurface: FfiConverterString.read(from: &buf),
                 prompt: FfiConverterString.read(from: &buf),
                 notificationId: FfiConverterString.read(from: &buf),
+                archived: FfiConverterBool.read(from: &buf),
                 attemptCount: FfiConverterUInt32.read(from: &buf)
         )
     }
@@ -2336,6 +2472,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
         FfiConverterString.write(value.assistantSurface, into: &buf)
         FfiConverterString.write(value.prompt, into: &buf)
         FfiConverterString.write(value.notificationId, into: &buf)
+        FfiConverterBool.write(value.archived, into: &buf)
         FfiConverterUInt32.write(value.attemptCount, into: &buf)
     }
 }
@@ -2411,6 +2548,64 @@ public func FfiConverterTypeClientPendingMutation_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeClientPendingMutation_lower(_ value: ClientPendingMutation) -> RustBuffer {
     return FfiConverterTypeClientPendingMutation.lower(value)
+}
+
+
+public struct ClientSessionCommandIntentResult: Equatable, Hashable {
+    public var accepted: Bool
+    public var clientMutationId: String
+    public var entityId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, clientMutationId: String, entityId: String) {
+        self.accepted = accepted
+        self.clientMutationId = clientMutationId
+        self.entityId = entityId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionCommandIntentResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionCommandIntentResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionCommandIntentResult {
+        return
+            try ClientSessionCommandIntentResult(
+                accepted: FfiConverterBool.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionCommandIntentResult, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterString.write(value.entityId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionCommandIntentResult_lift(_ buf: RustBuffer) throws -> ClientSessionCommandIntentResult {
+    return try FfiConverterTypeClientSessionCommandIntentResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionCommandIntentResult_lower(_ value: ClientSessionCommandIntentResult) -> RustBuffer {
+    return FfiConverterTypeClientSessionCommandIntentResult.lower(value)
 }
 
 
@@ -3437,6 +3632,13 @@ public enum ClientCommandKind: Equatable, Hashable {
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
+    case setAssistantSurface
+    case setSiriCurrentSession
+    case setSiriDefaultSession
+    case saveDefaultPrompt
+    case setSessionArchived
+    case deleteSession
+    case muteSession
 
 
 
@@ -3464,6 +3666,20 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case 3: return .submitNotificationReply
 
+        case 4: return .setAssistantSurface
+
+        case 5: return .setSiriCurrentSession
+
+        case 6: return .setSiriDefaultSession
+
+        case 7: return .saveDefaultPrompt
+
+        case 8: return .setSessionArchived
+
+        case 9: return .deleteSession
+
+        case 10: return .muteSession
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3482,6 +3698,34 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case .submitNotificationReply:
             writeInt(&buf, Int32(3))
+
+
+        case .setAssistantSurface:
+            writeInt(&buf, Int32(4))
+
+
+        case .setSiriCurrentSession:
+            writeInt(&buf, Int32(5))
+
+
+        case .setSiriDefaultSession:
+            writeInt(&buf, Int32(6))
+
+
+        case .saveDefaultPrompt:
+            writeInt(&buf, Int32(7))
+
+
+        case .setSessionArchived:
+            writeInt(&buf, Int32(8))
+
+
+        case .deleteSession:
+            writeInt(&buf, Int32(9))
+
+
+        case .muteSession:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -3737,6 +3981,13 @@ public enum ClientPendingCommandKind: Equatable, Hashable {
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
+    case setAssistantSurface
+    case setSiriCurrentSession
+    case setSiriDefaultSession
+    case saveDefaultPrompt
+    case setSessionArchived
+    case deleteSession
+    case muteSession
 
 
 
@@ -3764,6 +4015,20 @@ public struct FfiConverterTypeClientPendingCommandKind: FfiConverterRustBuffer {
 
         case 3: return .submitNotificationReply
 
+        case 4: return .setAssistantSurface
+
+        case 5: return .setSiriCurrentSession
+
+        case 6: return .setSiriDefaultSession
+
+        case 7: return .saveDefaultPrompt
+
+        case 8: return .setSessionArchived
+
+        case 9: return .deleteSession
+
+        case 10: return .muteSession
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3782,6 +4047,34 @@ public struct FfiConverterTypeClientPendingCommandKind: FfiConverterRustBuffer {
 
         case .submitNotificationReply:
             writeInt(&buf, Int32(3))
+
+
+        case .setAssistantSurface:
+            writeInt(&buf, Int32(4))
+
+
+        case .setSiriCurrentSession:
+            writeInt(&buf, Int32(5))
+
+
+        case .setSiriDefaultSession:
+            writeInt(&buf, Int32(6))
+
+
+        case .saveDefaultPrompt:
+            writeInt(&buf, Int32(7))
+
+
+        case .setSessionArchived:
+            writeInt(&buf, Int32(8))
+
+
+        case .deleteSession:
+            writeInt(&buf, Int32(9))
+
+
+        case .muteSession:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -4469,10 +4762,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_func_reduce_siri_session_entities() != 51113) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_delete_session() != 20715) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_drain_notification_reply_outbox() != 43759) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_local_snapshot() != 4228) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_mute_session() != 49175) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_observe() != 24785) {
@@ -4496,10 +4795,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 47870) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_save_default_prompt() != 44743) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 63085) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_assistant_surface() != 59908) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 14470) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_session_archived() != 14025) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_siri_current_session() != 65448) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_siri_default_session() != 43518) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_start() != 53576) {

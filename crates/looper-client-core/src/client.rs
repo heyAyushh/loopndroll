@@ -35,6 +35,7 @@ use crate::transport::validate_endpoint_url;
 const INITIAL_SEQUENCE: i64 = 0;
 const EMPTY_SEQUENCE: i64 = 0;
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 
 #[derive(Debug, Default)]
 struct ClientCoreState {
@@ -176,6 +177,7 @@ impl LooperClientCore {
             prompt: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            archived: false,
             client_mutation_id: client_mutation_id.clone(),
             after_seq: EMPTY_SEQUENCE,
         });
@@ -203,6 +205,7 @@ impl LooperClientCore {
             prompt,
             assistant_surface,
             notification_id: String::new(),
+            archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
         });
@@ -231,6 +234,181 @@ impl LooperClientCore {
             prompt,
             assistant_surface,
             notification_id,
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn set_assistant_surface(
+        &self,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&assistant_surface, ClientCoreError::EmptySessionId)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetAssistantSurface,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            prompt: String::new(),
+            assistant_surface,
+            notification_id: String::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn set_siri_current_session(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        self.queue_siri_session_command(
+            ClientCommandKind::SetSiriCurrentSession,
+            thread_id,
+            assistant_surface,
+            client_mutation_id,
+        )
+    }
+
+    fn set_siri_default_session(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        self.queue_siri_session_command(
+            ClientCommandKind::SetSiriDefaultSession,
+            thread_id,
+            assistant_surface,
+            client_mutation_id,
+        )
+    }
+
+    fn save_default_prompt(
+        &self,
+        prompt: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SaveDefaultPrompt,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            prompt,
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn queue_siri_session_command(
+        &self,
+        command_kind: ClientCommandKind,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind,
+            thread_id,
+            preset: String::new(),
+            prompt: String::new(),
+            assistant_surface,
+            notification_id: String::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn set_session_archived(
+        &self,
+        thread_id: String,
+        archived: bool,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&thread_id, ClientCoreError::EmptyThreadId)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetSessionArchived,
+            thread_id,
+            preset: String::new(),
+            prompt: String::new(),
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            archived,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn delete_session(
+        &self,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&thread_id, ClientCoreError::EmptyThreadId)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::DeleteSession,
+            thread_id,
+            preset: String::new(),
+            prompt: String::new(),
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn mute_session(
+        &self,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&thread_id, ClientCoreError::EmptyThreadId)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::MuteSession,
+            thread_id,
+            preset: String::new(),
+            prompt: String::new(),
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
         });
@@ -442,6 +620,128 @@ impl LooperClientCore {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_assistant_surface_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_assistant_surface(assistant_surface.clone(), client_mutation_id.clone())?;
+        local_store
+            .enqueue_set_assistant_surface_command(assistant_surface, client_mutation_id.clone())?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_siri_current_session_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_siri_current_session(
+            thread_id.clone(),
+            assistant_surface.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue_set_siri_current_session_command(
+            thread_id,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_siri_default_session_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_siri_default_session(
+            thread_id.clone(),
+            assistant_surface.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue_set_siri_default_session_command(
+            thread_id,
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_save_default_prompt_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        prompt: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.save_default_prompt(prompt.clone(), client_mutation_id.clone())?;
+        local_store.enqueue_save_default_prompt_command(prompt, client_mutation_id.clone())?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_session_archived_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        archived: bool,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_session_archived(thread_id.clone(), archived, client_mutation_id.clone())?;
+        local_store.enqueue_set_session_archived_command(
+            thread_id,
+            archived,
+            client_mutation_id.clone(),
+        )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_delete_session_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.delete_session(thread_id.clone(), client_mutation_id.clone())?;
+        local_store.enqueue_delete_session_command(thread_id, client_mutation_id.clone())?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_mute_session_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.mute_session(thread_id.clone(), client_mutation_id.clone())?;
+        local_store.enqueue_mute_session_command(thread_id, client_mutation_id.clone())?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         self.spawn_command_ack_flush(local_store, client_mutation_id);

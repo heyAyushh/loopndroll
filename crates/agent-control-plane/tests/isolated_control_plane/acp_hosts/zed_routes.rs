@@ -108,11 +108,17 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
-    let mobile_zed_snapshot = request_json_body_with_options(
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "zed",
+        "zed-mobile-surface",
+    )
+    .await;
+    let mobile_zed_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "zed" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )

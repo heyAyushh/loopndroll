@@ -43,6 +43,14 @@ const MODE_CLEARED_DETAIL: &str = "mode-cleared";
 const MODE_UPDATED_DETAIL: &str = "mode-updated";
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
 const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
+const COMMAND_KIND_SET_ASSISTANT_SURFACE: &str = "SetAssistantSurface";
+const COMMAND_KIND_SET_SIRI_CURRENT_SESSION: &str = "SetSiriCurrentSession";
+const COMMAND_KIND_SET_SIRI_DEFAULT_SESSION: &str = "SetSiriDefaultSession";
+const COMMAND_KIND_SAVE_DEFAULT_PROMPT: &str = "SaveDefaultPrompt";
+const COMMAND_KIND_SET_SESSION_ARCHIVED: &str = "SetSessionArchived";
+const COMMAND_KIND_DELETE_SESSION: &str = "DeleteSession";
+const COMMAND_KIND_MUTE_SESSION: &str = "MuteSession";
+const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
 const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
@@ -279,6 +287,86 @@ fn handle_session_command(
             )
             .map_err(realtime_command_status)
             .map(notification_reply_ack_from_command),
+        ),
+        Some(proto::command::Command::SetAssistantSurface(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            set_assistant_surface_command(
+                control_plane,
+                request.assistant_surface,
+                &request.client_mutation_id,
+            ),
+        ),
+        Some(proto::command::Command::SetSiriCurrentSession(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            set_siri_session_command(
+                control_plane,
+                COMMAND_KIND_SET_SIRI_CURRENT_SESSION,
+                request.thread_id,
+                request.assistant_surface,
+                &request.client_mutation_id,
+                SiriSessionTarget::Current,
+            ),
+        ),
+        Some(proto::command::Command::SetSiriDefaultSession(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            set_siri_session_command(
+                control_plane,
+                COMMAND_KIND_SET_SIRI_DEFAULT_SESSION,
+                request.thread_id,
+                request.assistant_surface,
+                &request.client_mutation_id,
+                SiriSessionTarget::Default,
+            ),
+        ),
+        Some(proto::command::Command::SaveDefaultPrompt(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            save_default_prompt_command(control_plane, request.prompt, &request.client_mutation_id),
+        ),
+        Some(proto::command::Command::SetSessionArchived(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            set_session_archived_command(
+                control_plane,
+                request.thread_id,
+                request.archived,
+                &request.client_mutation_id,
+            ),
+        ),
+        Some(proto::command::Command::DeleteSession(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            delete_session_command(
+                control_plane,
+                request.thread_id,
+                &request.client_mutation_id,
+            ),
+        ),
+        Some(proto::command::Command::MuteSession(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            mute_session_command(
+                control_plane,
+                request.thread_id,
+                &request.client_mutation_id,
+            ),
         ),
         None => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             String::new(),
@@ -751,6 +839,376 @@ fn send_session_prompt_command(
     }
 
     Ok(command_ack_from_ack_result(&ack_result))
+}
+
+#[derive(Clone, Copy)]
+enum SiriSessionTarget {
+    Current,
+    Default,
+}
+
+fn set_assistant_surface_command(
+    control_plane: &ControlPlane,
+    assistant_surface: String,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    let assistant_surface = normalized_required_assistant_surface(&assistant_surface)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_ASSISTANT_SURFACE,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "assistantSurface": assistant_surface,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_assistant_surface(assistant_surface)
+                .map_err(mobile_session_status)?;
+            emit_all_mobile_sessions_changed(control_plane, "assistant-surface-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "assistantSurface": assistant_surface,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn set_siri_session_command(
+    control_plane: &ControlPlane,
+    command_kind: &str,
+    thread_id: String,
+    assistant_surface: String,
+    client_mutation_id: &str,
+    target: SiriSessionTarget,
+) -> Result<proto::CommandAck, Status> {
+    let assistant_surface = normalized_assistant_surface(&assistant_surface)?;
+    let normalized_thread_id = normalized_optional_string(&thread_id);
+    if let Some(thread_id) = normalized_thread_id.as_deref() {
+        ensure_mobile_session_visible_from_minis(control_plane, thread_id, assistant_surface)?;
+    }
+    let entity_id = normalized_thread_id
+        .clone()
+        .unwrap_or_else(|| MOBILE_SETTINGS_ENTITY_ID.to_owned());
+
+    command_ack_with_idempotency(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &entity_id,
+        serde_json::json!({
+            "threadId": normalized_thread_id,
+            "assistantSurface": assistant_surface,
+        }),
+        |server_time| {
+            match target {
+                SiriSessionTarget::Current => control_plane
+                    .mobile_session_service()
+                    .set_siri_current_session(normalized_thread_id.as_deref(), assistant_surface)
+                    .map_err(mobile_session_status)?,
+                SiriSessionTarget::Default => control_plane
+                    .mobile_session_service()
+                    .set_siri_default_session(normalized_thread_id.as_deref(), assistant_surface)
+                    .map_err(mobile_session_status)?,
+            }
+            emit_all_mobile_sessions_changed(control_plane, siri_session_detail(target));
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": normalized_thread_id,
+                    "entityId": entity_id,
+                    "assistantSurface": assistant_surface,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn save_default_prompt_command(
+    control_plane: &ControlPlane,
+    prompt: String,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SAVE_DEFAULT_PROMPT,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "prompt": prompt,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .save_default_prompt(&prompt)
+                .map_err(mobile_session_status)?;
+            emit_all_mobile_sessions_changed(control_plane, "default-prompt-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn set_session_archived_command(
+    control_plane: &ControlPlane,
+    thread_id: String,
+    archived: bool,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    let thread_id = normalized_required_string(&thread_id, "thread_id")?;
+    ensure_mobile_session_visible_from_minis(control_plane, thread_id, None)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_SESSION_ARCHIVED,
+        client_mutation_id,
+        thread_id,
+        serde_json::json!({
+            "threadId": thread_id,
+            "archived": archived,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_session_archived(thread_id, archived)
+                .map_err(mobile_session_status)?;
+            emit_mobile_session_changed(
+                control_plane,
+                Some(thread_id),
+                Some(if archived { "archived" } else { "unarchived" }),
+            );
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": thread_id,
+                    "entityId": thread_id,
+                    "archived": archived,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn delete_session_command(
+    control_plane: &ControlPlane,
+    thread_id: String,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    let thread_id = normalized_required_string(&thread_id, "thread_id")?;
+    ensure_mobile_session_visible_from_minis(control_plane, thread_id, None)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_DELETE_SESSION,
+        client_mutation_id,
+        thread_id,
+        serde_json::json!({
+            "threadId": thread_id,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .delete_session(thread_id)
+                .map_err(mobile_session_status)?;
+            emit_all_mobile_sessions_changed(control_plane, "deleted");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": thread_id,
+                    "entityId": thread_id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn mute_session_command(
+    control_plane: &ControlPlane,
+    thread_id: String,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck, Status> {
+    let thread_id = normalized_required_string(&thread_id, "thread_id")?;
+    ensure_mobile_session_visible_from_minis(control_plane, thread_id, None)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_MUTE_SESSION,
+        client_mutation_id,
+        thread_id,
+        serde_json::json!({
+            "threadId": thread_id,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .mute_session(thread_id)
+                .map_err(mobile_session_status)?;
+            emit_mobile_session_changed(control_plane, Some(thread_id), Some("muted"));
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": thread_id,
+                    "entityId": thread_id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+fn command_ack_with_idempotency(
+    control_plane: &ControlPlane,
+    command_kind: &str,
+    client_mutation_id: &str,
+    entity_id: &str,
+    request_payload: serde_json::Value,
+    apply: impl FnOnce(&str) -> Result<(String, serde_json::Value), Status>,
+) -> Result<proto::CommandAck, Status> {
+    let client_mutation_id = required_client_mutation_id(client_mutation_id)?;
+    let request_hash = command_request_hash(command_kind, request_payload)?;
+    if let Some(record) = existing_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+    )? {
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
+    }
+    let reservation = reserve_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+    )?;
+    if let CommandReservation::Replay(record) = reservation {
+        return Ok(command_ack_from_record(
+            &record,
+            &ack_response_value(&record),
+            true,
+        ));
+    }
+
+    let server_time = command_ack_server_time();
+    let (revision, response_json) = match apply(&server_time) {
+        Ok(result) => result,
+        Err(error) => {
+            release_command_reservation(
+                control_plane,
+                command_kind,
+                client_mutation_id,
+                &request_hash,
+            )?;
+            return Err(error);
+        }
+    };
+    let ack_result = match record_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+        response_json,
+        command_ack_state_event(entity_id, &revision, &server_time),
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            release_command_reservation(
+                control_plane,
+                command_kind,
+                client_mutation_id,
+                &request_hash,
+            )?;
+            return Err(error.into());
+        }
+    };
+    Ok(command_ack_from_ack_result(&ack_result))
+}
+
+fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, detail: &str) {
+    control_plane.emit_mobile_all_sessions_event(MobileEventInput {
+        kind: MobileEventKind::SessionChanged,
+        thread_id: None,
+        prompt_id: None,
+        detail: Some(detail.to_owned()),
+    });
+}
+
+fn emit_mobile_session_changed(
+    control_plane: &ControlPlane,
+    thread_id: Option<&str>,
+    detail: Option<&str>,
+) {
+    if let Some(thread_id) = thread_id {
+        invalidate_delivery_action_cache(control_plane, thread_id);
+    }
+    let input = MobileEventInput {
+        kind: MobileEventKind::SessionChanged,
+        thread_id: thread_id.map(str::to_owned),
+        prompt_id: None,
+        detail: detail.map(str::to_owned),
+    };
+    match thread_id {
+        Some(thread_id) => control_plane.emit_mobile_session_event(input, thread_id),
+        None => control_plane.emit_mobile_event(input),
+    }
+}
+
+fn normalized_required_assistant_surface(value: &str) -> Result<&str, Status> {
+    normalized_assistant_surface(value)?
+        .ok_or_else(|| Status::invalid_argument("assistant surface is required"))
+}
+
+fn normalized_required_string<'a>(value: &'a str, field_name: &str) -> Result<&'a str, Status> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(Status::invalid_argument(format!(
+            "{field_name} is required"
+        )));
+    }
+    Ok(value)
+}
+
+fn normalized_optional_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn siri_session_detail(target: SiriSessionTarget) -> &'static str {
+    match target {
+        SiriSessionTarget::Current => "siri-current-session-updated",
+        SiriSessionTarget::Default => "siri-default-session-updated",
+    }
 }
 
 fn normalized_optional_value(value: &str) -> Option<&str> {

@@ -431,6 +431,51 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 },
             ))
         }
+        ClientCommandKind::SetAssistantSurface => Ok(proto::command::Command::SetAssistantSurface(
+            proto::SetAssistantSurfaceRequest {
+                assistant_surface: frame.assistant_surface,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
+        ClientCommandKind::SetSiriCurrentSession => Ok(
+            proto::command::Command::SetSiriCurrentSession(proto::SetSiriCurrentSessionRequest {
+                thread_id: frame.thread_id,
+                assistant_surface: frame.assistant_surface,
+                client_mutation_id: frame.client_mutation_id,
+            }),
+        ),
+        ClientCommandKind::SetSiriDefaultSession => Ok(
+            proto::command::Command::SetSiriDefaultSession(proto::SetSiriDefaultSessionRequest {
+                thread_id: frame.thread_id,
+                assistant_surface: frame.assistant_surface,
+                client_mutation_id: frame.client_mutation_id,
+            }),
+        ),
+        ClientCommandKind::SaveDefaultPrompt => Ok(proto::command::Command::SaveDefaultPrompt(
+            proto::SaveDefaultPromptRequest {
+                prompt: frame.prompt,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
+        ClientCommandKind::SetSessionArchived => Ok(proto::command::Command::SetSessionArchived(
+            proto::SetSessionArchivedRequest {
+                thread_id: frame.thread_id,
+                archived: frame.archived,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
+        ClientCommandKind::DeleteSession => Ok(proto::command::Command::DeleteSession(
+            proto::DeleteSessionRequest {
+                thread_id: frame.thread_id,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
+        ClientCommandKind::MuteSession => Ok(proto::command::Command::MuteSession(
+            proto::MuteSessionRequest {
+                thread_id: frame.thread_id,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
     }
 }
 
@@ -455,7 +500,14 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
         ClientCommandKind::SendSessionPrompt | ClientCommandKind::SubmitNotificationReply => {
             "accepted"
         }
-        ClientCommandKind::SetSessionMode => "",
+        ClientCommandKind::SetSessionMode
+        | ClientCommandKind::SetAssistantSurface
+        | ClientCommandKind::SetSiriCurrentSession
+        | ClientCommandKind::SetSiriDefaultSession
+        | ClientCommandKind::SaveDefaultPrompt
+        | ClientCommandKind::SetSessionArchived
+        | ClientCommandKind::DeleteSession
+        | ClientCommandKind::MuteSession => "",
     }
 }
 

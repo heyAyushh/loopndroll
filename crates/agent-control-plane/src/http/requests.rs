@@ -53,26 +53,14 @@ pub(super) struct MobilePushTestRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct MobileSessionModeRequest {
+pub(super) struct DesktopSessionModeRequest {
     pub(super) preset: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct MobileSessionArchiveRequest {
-    pub(super) archived: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct MobileSessionDetailQuery {
     pub(super) assistant_surface: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct MobileDefaultPromptRequest {
-    pub(super) default_prompt: String,
 }
 
 #[derive(Deserialize)]
@@ -89,15 +77,14 @@ pub(super) struct DesktopScopeRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct MobileAssistantSurfaceRequest {
+pub(super) struct DesktopAssistantSurfaceRequest {
     pub(super) assistant_surface: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct MobileSiriDefaultSessionRequest {
-    pub(super) session_id: Option<String>,
-    pub(super) assistant_surface: Option<String>,
+pub(super) struct DesktopSessionArchiveRequest {
+    pub(super) archived: bool,
 }
 
 #[derive(Deserialize)]

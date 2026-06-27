@@ -10,6 +10,7 @@ use crate::mobile::session::{
 
 use super::assistant_identity::thread_matches_assistant_surface;
 use super::overrides::{is_deleted, session_override};
+use super::settings::mobile_global_settings;
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
@@ -314,6 +315,10 @@ fn session_mini_value(
                 .map(|state| state.notification_ids.is_empty())
                 .unwrap_or(true),
         }),
+    );
+    mini.insert(
+        "globalSettings".to_owned(),
+        mobile_global_settings(session_state),
     );
     Value::Object(mini)
 }

@@ -335,7 +335,7 @@ struct CompanionAppViewState {
             parts.append(coverageSummary)
         }
 
-        if let realtimeServerTime = model.realtimeServerTime, !realtimeServerTime.isEmpty {
+        if model.realtimeLatestSeq > 0 || model.realtimeServerTime?.isEmpty == false {
             parts.append("stream live")
         } else if let lastSyncedAt = model.snapshotState.snapshot?.host.lastSyncedAt, !lastSyncedAt.isEmpty {
             parts.append("synced \(ModelFormatting.relativeTimestamp(lastSyncedAt))")

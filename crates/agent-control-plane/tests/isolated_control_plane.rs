@@ -13,8 +13,10 @@ use agent_control_plane::auth::{
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
-    ClientFrame, Command, HealthRequest, Resume, SendSessionPromptRequest, ServerFrame,
-    SetSessionModeRequest, SubmitNotificationReplyRequest, client_frame, command,
+    ClientFrame, Command, DeleteSessionRequest, HealthRequest, MuteSessionRequest, Resume,
+    SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame, SetAssistantSurfaceRequest,
+    SetSessionArchivedRequest, SetSessionModeRequest, SetSiriDefaultSessionRequest,
+    SubmitNotificationReplyRequest, client_frame, command,
     looper_realtime_client::LooperRealtimeClient, server_frame,
 };
 use agent_control_plane::http::build_router;
@@ -222,7 +224,8 @@ async fn desktop_snapshot_reads_latest_assistant_preview() {
         ],
     );
     fixture.attach_transcript_path("thread-main", &transcript_path);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let snapshot = request_json(&router, "/desktop/snapshot").await;
     let main_thread = snapshot["threads"]
@@ -263,7 +266,8 @@ async fn handoff_session_page_carries_deep_link_and_preview() {
         })],
     );
     fixture.attach_transcript_path("thread-main", &transcript_path);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let response = request_with_options(
         &router,
@@ -389,7 +393,8 @@ status = "{status}"
             ),
         );
     }
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let goals = request_json(&router, "/goal").await;
     let statuses = goals["goals"]
@@ -436,7 +441,8 @@ rrule = "FREQ=HOURLY;INTERVAL=1"
 target_thread_id = "thread-main"
 "#,
     );
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let goals = request_json(&router, "/goals").await;
     let goal = goals["goals"]
@@ -542,7 +548,8 @@ async fn nested_hooks_json_shape_is_supported() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_nested_hooks_json("agent-control-plane hook --managed-by looper");
     fixture.write_config_toml(true);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let status = request_json(&router, "/status/control-plane").await;
     assert_eq!(status["hooks"]["owner"], "looper-rust");
@@ -1991,15 +1998,17 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
     assert!(session_mini_snapshot_has_session(&initial, "thread-main"));
     let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
 
-    request_json_body_with_options(
-        &router,
-        Method::DELETE,
-        "/api/mobile/sessions/thread-main",
-        serde_json::json!({}),
-        &auth_headers,
-        None,
+    prime_state_mini_cache(&control_plane);
+    let delete_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::DeleteSession(DeleteSessionRequest {
+            thread_id: "thread-main".to_owned(),
+            client_mutation_id: "session-mini-delete-thread-main".to_owned(),
+        }),
     )
     .await;
+    assert!(delete_ack.accepted);
 
     let after_delete = request_json_with_options(
         &router,
@@ -2019,15 +2028,16 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
         .expect("delete latest seq");
     assert!(delete_seq > initial_seq);
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &auth_headers,
-        None,
+    let surface_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: "devin".to_owned(),
+            client_mutation_id: "session-mini-surface-devin".to_owned(),
+        }),
     )
     .await;
+    assert!(surface_ack.accepted);
 
     let after_surface = request_json_with_options(
         &router,
@@ -2196,11 +2206,20 @@ async fn mobile_session_controls_are_owned_by_rust() {
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
-    let settings_snapshot = request_json_body_with_options(
+    let default_prompt_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SaveDefaultPrompt(SaveDefaultPromptRequest {
+            prompt: "Continue exactly from phone.".to_owned(),
+            client_mutation_id: "mobile-controls-default-prompt".to_owned(),
+        }),
+    )
+    .await;
+    assert!(default_prompt_ack.accepted);
+    let settings_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/default-prompt",
-        serde_json::json!({ "defaultPrompt": "Continue exactly from phone." }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2328,11 +2347,20 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(prompt_ack.error_code, "mode_required");
     assert_eq!(prompt_ack.entity_id, "thread-main");
 
-    let mute_snapshot = request_json_body_with_options(
+    let mute_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::MuteSession(MuteSessionRequest {
+            thread_id: "thread-main".to_owned(),
+            client_mutation_id: "mobile-controls-mute".to_owned(),
+        }),
+    )
+    .await;
+    assert!(mute_ack.accepted);
+    let mute_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/mute",
-        serde_json::json!({}),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2342,14 +2370,21 @@ async fn mobile_session_controls_are_owned_by_rust() {
         "thread-main"
     );
 
-    let siri_default_snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/siri-default-session",
-        serde_json::json!({
-            "sessionId": "thread-main",
-            "assistantSurface": "codex"
+    let siri_default_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSiriDefaultSession(SetSiriDefaultSessionRequest {
+            thread_id: "thread-main".to_owned(),
+            assistant_surface: "codex".to_owned(),
+            client_mutation_id: "mobile-controls-siri-default".to_owned(),
         }),
+    )
+    .await;
+    assert!(siri_default_ack.accepted);
+    let siri_default_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2371,49 +2406,45 @@ async fn mobile_session_controls_are_owned_by_rust() {
         serde_json::Value::Null
     );
 
-    let mut json_headers = auth_headers.to_vec();
-    json_headers.push((axum::http::header::CONTENT_TYPE, "application/json"));
-    let missing_siri_default = request_with_body_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/siri-default-session",
-        serde_json::to_vec(&serde_json::json!({
-            "sessionId": "missing-thread",
-            "assistantSurface": "codex"
-        }))
-        .expect("json body"),
-        &json_headers,
-        None,
-    )
-    .await;
-    assert_eq!(missing_siri_default.status(), StatusCode::NOT_FOUND);
-
-    let invalid_siri_default_surface = request_with_body_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/siri-default-session",
-        serde_json::to_vec(&serde_json::json!({
-            "sessionId": "thread-main",
-            "assistantSurface": "wrong"
-        }))
-        .expect("json body"),
-        &json_headers,
-        None,
-    )
-    .await;
-    assert_eq!(
-        invalid_siri_default_surface.status(),
-        StatusCode::BAD_REQUEST
-    );
-
-    let cleared_siri_default_snapshot = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/siri-default-session",
-        serde_json::json!({
-            "sessionId": null,
-            "assistantSurface": null
+    let missing_siri_default = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSiriDefaultSession(SetSiriDefaultSessionRequest {
+            thread_id: "missing-thread".to_owned(),
+            assistant_surface: "codex".to_owned(),
+            client_mutation_id: "mobile-controls-siri-missing".to_owned(),
         }),
+    )
+    .await;
+    assert!(!missing_siri_default.accepted);
+
+    let invalid_siri_default_surface = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSiriDefaultSession(SetSiriDefaultSessionRequest {
+            thread_id: "thread-main".to_owned(),
+            assistant_surface: "wrong".to_owned(),
+            client_mutation_id: "mobile-controls-siri-invalid-surface".to_owned(),
+        }),
+    )
+    .await;
+    assert!(!invalid_siri_default_surface.accepted);
+
+    let cleared_siri_default_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSiriDefaultSession(SetSiriDefaultSessionRequest {
+            thread_id: String::new(),
+            assistant_surface: String::new(),
+            client_mutation_id: "mobile-controls-siri-clear".to_owned(),
+        }),
+    )
+    .await;
+    assert!(cleared_siri_default_ack.accepted);
+    let cleared_siri_default_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2427,11 +2458,21 @@ async fn mobile_session_controls_are_owned_by_rust() {
         serde_json::Value::Null
     );
 
-    let archived_snapshot = request_json_body_with_options(
+    let archived_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSessionArchived(SetSessionArchivedRequest {
+            thread_id: "thread-main".to_owned(),
+            archived: true,
+            client_mutation_id: "mobile-controls-archive".to_owned(),
+        }),
+    )
+    .await;
+    assert!(archived_ack.accepted);
+    let archived_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/sessions/thread-main/archive",
-        serde_json::json!({ "archived": true }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2440,10 +2481,20 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(archived_session["isArchived"], serde_json::json!(true));
     assert_eq!(archived_session["status"], "archived");
 
+    let deleted_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::DeleteSession(DeleteSessionRequest {
+            thread_id: "thread-main".to_owned(),
+            client_mutation_id: "mobile-controls-delete".to_owned(),
+        }),
+    )
+    .await;
+    assert!(deleted_ack.accepted);
     let deleted_snapshot = request_json_with_options(
         &router,
-        Method::DELETE,
-        "/api/mobile/sessions/thread-main",
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2466,11 +2517,23 @@ async fn mobile_session_controls_are_owned_by_rust() {
     .await;
     assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
 
-    let assistant_surface_snapshot = request_json_body_with_options(
+    let assistant_surface_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: "devin".to_owned(),
+            client_mutation_id: "mobile-controls-surface-devin".to_owned(),
+        }),
+    )
+    .await;
+    assert!(
+        assistant_surface_ack.accepted,
+        "assistant surface ACK rejected: {assistant_surface_ack:?}"
+    );
+    let assistant_surface_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2481,11 +2544,20 @@ async fn mobile_session_controls_are_owned_by_rust() {
     );
     assert!(assistant_surface_snapshot["sessions"].as_array().is_some());
 
-    let grok_surface_snapshot = request_json_body_with_options(
+    let grok_surface_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: "grok-build".to_owned(),
+            client_mutation_id: "mobile-controls-surface-grok".to_owned(),
+        }),
+    )
+    .await;
+    assert!(grok_surface_ack.accepted);
+    let grok_surface_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "grok-build" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2502,7 +2574,8 @@ async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
     fixture.write_state_db();
     let grok_transcript = std::path::PathBuf::from("/Users/test/.grok/sessions/grok-thread.jsonl");
     fixture.attach_transcript_path("thread-main", &grok_transcript);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
@@ -2522,11 +2595,17 @@ async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
             .all(|session| session["id"] != "thread-main")
     );
 
-    let grok_snapshot = request_json_body_with_options(
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "grok-build",
+        "mobile-filter-grok-surface",
+    )
+    .await;
+    let grok_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "grok-build" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2612,7 +2691,8 @@ async fn mobile_session_detail_accepts_selected_surface_override() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_session();
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
@@ -2655,7 +2735,8 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
         })],
     );
     fixture.attach_transcript_path("thread-main", &codex_transcript);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
@@ -2679,13 +2760,11 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
             .any(|tag| tag.as_str() == Some("vscode"))
     );
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &auth_headers,
-        None,
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "devin",
+        "mobile-originator-devin-surface",
     )
     .await;
 
@@ -2749,7 +2828,8 @@ async fn mobile_snapshot_identifies_claude_originator_on_claude_surface() {
         })],
     );
     fixture.attach_transcript_path("thread-main", &claude_transcript);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
@@ -2776,11 +2856,17 @@ async fn mobile_snapshot_identifies_claude_originator_on_claude_surface() {
         "Claude Code"
     );
 
-    let claude_snapshot = request_json_body_with_options(
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "claude-code",
+        "mobile-originator-claude-surface",
+    )
+    .await;
+    let claude_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "claude-code" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2788,13 +2874,11 @@ async fn mobile_snapshot_identifies_claude_originator_on_claude_surface() {
     let visible_claude_session = mobile_snapshot_session(&claude_snapshot, "thread-main");
     assert_eq!(visible_claude_session["assistantClient"], "claude-code");
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &auth_headers,
-        None,
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "devin",
+        "mobile-originator-devin-after-claude",
     )
     .await;
     let devin_snapshot = request_json_with_options(
@@ -2905,7 +2989,8 @@ async fn desktop_snapshot_includes_devin_sessions() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_session();
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
 
     let snapshot = request_json(&router, "/desktop/snapshot").await;
     assert_eq!(snapshot["thread_count"], 3);
@@ -2937,13 +3022,11 @@ async fn desktop_snapshot_includes_devin_sessions() {
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &auth_headers,
-        None,
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "devin",
+        "mobile-devin-surface-visible",
     )
     .await;
     let mobile_snapshot = request_json_with_options(
@@ -2965,15 +3048,22 @@ async fn mobile_devin_surface_survives_menu_snapshot_limit() {
     fixture.write_state_db();
     fixture.write_devin_next_session();
     fixture.append_newer_than_devin_state_threads(EXTRA_MOBILE_SNAPSHOT_THREADS);
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
-    let devin_snapshot = request_json_body_with_options(
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "devin",
+        "mobile-devin-limit-surface",
+    )
+    .await;
+    let devin_snapshot = request_json_with_options(
         &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
+        Method::GET,
+        "/api/mobile/snapshot",
         &auth_headers,
         None,
     )
@@ -2990,17 +3080,16 @@ async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_grok_session("grok-session-1", "/tmp/project", "Ship Grok hooks");
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/api/mobile/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "grok-build" }),
-        &auth_headers,
-        None,
+    set_mobile_assistant_surface(
+        control_plane.clone(),
+        &authorization,
+        "grok-build",
+        "mobile-grok-surface",
     )
     .await;
 
@@ -3949,6 +4038,24 @@ async fn submit_grpc_session_command(
         Some(server_frame::Frame::Ack(ack)) => ack,
         other => panic!("expected Session ACK frame, got {other:?}"),
     }
+}
+
+async fn set_mobile_assistant_surface(
+    control_plane: ControlPlane,
+    authorization: &str,
+    assistant_surface: &str,
+    client_mutation_id: &str,
+) {
+    let ack = submit_grpc_session_command(
+        control_plane,
+        authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: assistant_surface.to_owned(),
+            client_mutation_id: client_mutation_id.to_owned(),
+        }),
+    )
+    .await;
+    assert!(ack.accepted);
 }
 
 async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &str, detail: &str) {

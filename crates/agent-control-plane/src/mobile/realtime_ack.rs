@@ -173,9 +173,18 @@ pub(crate) fn current_mobile_revision(
         return Ok(revision);
     }
 
-    Err(CommandAckError::Internal(
-        "state mini revision is required before recording a command ACK".to_owned(),
-    ))
+    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
+        let revision = revision.trim();
+        if !revision.is_empty() {
+            return Ok(revision.to_owned());
+        }
+    }
+
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .map_err(|error| CommandAckError::Internal(error.to_string()))?;
+    Ok(format!("mobile-state:seq-{latest_seq}"))
 }
 
 pub(crate) fn command_ack_server_time() -> String {

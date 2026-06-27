@@ -83,6 +83,67 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func setAssistantSurface(
+        _ assistantSurface: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setAssistantSurface(assistantSurface: assistantSurface)
+    }
+
+    @discardableResult
+    public func setSiriCurrentSession(
+        threadID: String,
+        assistantSurface: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setSiriCurrentSession(
+            threadId: threadID,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    @discardableResult
+    public func setSiriDefaultSession(
+        threadID: String,
+        assistantSurface: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setSiriDefaultSession(
+            threadId: threadID,
+            assistantSurface: assistantSurface
+        )
+    }
+
+    @discardableResult
+    public func saveDefaultPrompt(
+        _ prompt: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.saveDefaultPrompt(prompt: prompt)
+    }
+
+    @discardableResult
+    public func setSessionArchived(
+        threadID: String,
+        archived: Bool
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setSessionArchived(
+            threadId: threadID,
+            archived: archived
+        )
+    }
+
+    @discardableResult
+    public func deleteSession(
+        threadID: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.deleteSession(threadId: threadID)
+    }
+
+    @discardableResult
+    public func muteSession(
+        threadID: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.muteSession(threadId: threadID)
+    }
+
+    @discardableResult
     public func submitNotificationReply(
         notificationID: String,
         threadID: String,

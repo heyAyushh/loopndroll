@@ -182,6 +182,105 @@ final class CompanionSnapshotStateStore {
         return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
     }
 
+    @discardableResult
+    func applyDefaultSiriSession(
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) -> MobileSnapshot? {
+        guard var nextSnapshot = snapshot else {
+            return nil
+        }
+        guard nextSnapshot.globalSettings.siriDefaultSessionId != sessionID ||
+            nextSnapshot.globalSettings.siriDefaultAssistantSurface != assistantSurface
+        else {
+            return nil
+        }
+
+        nextSnapshot.globalSettings.siriDefaultSessionId = sessionID
+        nextSnapshot.globalSettings.siriDefaultAssistantSurface = assistantSurface
+        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
+    }
+
+    @discardableResult
+    func applyDefaultPrompt(_ prompt: String) -> MobileSnapshot? {
+        guard var nextSnapshot = snapshot else {
+            return nil
+        }
+        guard nextSnapshot.globalSettings.defaultPrompt != prompt else {
+            return nil
+        }
+
+        nextSnapshot.globalSettings.defaultPrompt = prompt
+        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
+    }
+
+    @discardableResult
+    func applySessionArchived(
+        sessionID: String,
+        archived: Bool
+    ) -> MobileSnapshot? {
+        guard var nextSnapshot = snapshot else {
+            return nil
+        }
+
+        let desiredStatus: SessionStatus = archived ? .archived : .stopped
+        let didChange = updateSessionSummary(
+            sessionID: sessionID,
+            in: &nextSnapshot
+        ) { session in
+            guard session.isArchived != archived || session.status != desiredStatus else {
+                return false
+            }
+            session.isArchived = archived
+            session.status = desiredStatus
+            return true
+        }
+
+        if var detail = detailBySessionID[sessionID] {
+            detail.isArchived = archived
+            detail.status = desiredStatus
+            detailBySessionID[sessionID] = detail
+        }
+
+        guard didChange else {
+            return nil
+        }
+        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
+    }
+
+    @discardableResult
+    func applySessionDeleted(sessionID: String) -> MobileSnapshot? {
+        guard var nextSnapshot = snapshot else {
+            return nil
+        }
+
+        let originalCount = sessionCount(in: nextSnapshot)
+        nextSnapshot.sessions.removeAll { $0.id == sessionID }
+        nextSnapshot.surfaceSessions = nextSnapshot.surfaceSessions.mapValues { sessions in
+            sessions.filter { $0.id != sessionID }
+        }
+        removeDetail(for: sessionID)
+
+        guard sessionCount(in: nextSnapshot) != originalCount else {
+            return nil
+        }
+        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
+    }
+
+    @discardableResult
+    func applySessionMuted(sessionID: String) -> MobileSnapshot? {
+        guard var detail = detailBySessionID[sessionID] else {
+            return nil
+        }
+        guard !detail.notificationIds.isEmpty else {
+            return nil
+        }
+
+        detail.notificationIds = []
+        detailBySessionID[sessionID] = detail
+        return snapshot
+    }
+
     private func applyReducedVisibleSnapshot(
         _ visibleSnapshot: MobileSnapshot,
         projection: ClientSnapshotProjection
@@ -195,6 +294,38 @@ final class CompanionSnapshotStateStore {
             projection: projection.sessionIndex,
             snapshot: visibleSnapshot
         )
+    }
+
+    private func updateSessionSummary(
+        sessionID: String,
+        in snapshot: inout MobileSnapshot,
+        update: (inout SessionSummary) -> Bool
+    ) -> Bool {
+        var didChange = false
+        snapshot.sessions = snapshot.sessions.map { session in
+            var nextSession = session
+            if nextSession.id == sessionID {
+                didChange = update(&nextSession) || didChange
+            }
+            return nextSession
+        }
+        snapshot.surfaceSessions = snapshot.surfaceSessions.mapValues { sessions in
+            sessions.map { session in
+                var nextSession = session
+                if nextSession.id == sessionID {
+                    didChange = update(&nextSession) || didChange
+                }
+                return nextSession
+            }
+        }
+        return didChange
+    }
+
+    private func sessionCount(in snapshot: MobileSnapshot) -> Int {
+        let surfaceCount = snapshot.surfaceSessions.values.reduce(0) { total, sessions in
+            total + sessions.count
+        }
+        return snapshot.sessions.count + surfaceCount
     }
 
     private func syncDetailCache(withVisibleSnapshotJSON visibleSnapshotJSON: String) {

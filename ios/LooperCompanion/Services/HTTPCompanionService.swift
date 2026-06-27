@@ -121,52 +121,6 @@ struct HTTPCompanionService: CompanionService {
         )
     }
 
-    func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
-        try await request(
-            path: sessionPath(id: id, suffix: "archive"),
-            method: HTTPMethod.post,
-            body: ["archived": archived]
-        )
-    }
-
-    func deleteSession(id: String) async throws -> MobileSnapshot {
-        try await request(path: sessionPath(id: id), method: HTTPMethod.delete)
-    }
-
-    private static func nonEmpty(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    func muteSession(id: String) async throws -> MobileSnapshot {
-        try await request(
-            path: sessionPath(id: id, suffix: "mute"),
-            method: HTTPMethod.post
-        )
-    }
-
-    func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot {
-        try await request(
-            path: "/api/mobile/settings/default-prompt",
-            method: HTTPMethod.post,
-            body: ["defaultPrompt": prompt]
-        )
-    }
-
-    func saveSiriDefaultSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        try await request(
-            path: "/api/mobile/settings/siri-default-session",
-            method: HTTPMethod.post,
-            body: [
-                "sessionId": id ?? NSNull(),
-                "assistantSurface": assistantSurface?.rawValue ?? NSNull()
-            ]
-        )
-    }
-
     func registerPushDevice(
         _ requestPayload: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

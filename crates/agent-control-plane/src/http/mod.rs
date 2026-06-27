@@ -17,7 +17,7 @@ use serde::Deserialize;
 use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
-use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
+use crate::control_plane::{ControlPlane, HookMutationTarget};
 use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
@@ -30,7 +30,7 @@ use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_
 use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 use crate::mobile::push::MobilePushRegistrationRequest;
 use crate::mobile::session::{
-    ASSISTANT_SURFACES, MobileSessionError, MobileSessionState, UpsertMobileNotificationRoute,
+    ASSISTANT_SURFACES, MobileSessionError, UpsertMobileNotificationRoute,
 };
 
 mod handoff;
@@ -48,20 +48,18 @@ use self::mobile_access::{
 };
 use self::mobile_state::{
     desktop_mobile_state_response, emit_all_mobile_sessions_changed, emit_mobile_session_changed,
-    missing_mobile_session_rejection, mobile_session_minis_delta_response,
-    mobile_session_minis_snapshot_response, mobile_snapshot_response,
+    mobile_session_minis_delta_response, mobile_session_minis_snapshot_response,
+    mobile_snapshot_response,
 };
 use self::requests::{
-    AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest,
+    AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest, DesktopAssistantSurfaceRequest,
     DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
     DesktopConnectionRenameRequest, DesktopDefaultNotificationTargetsRequest,
     DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationRequest,
-    DesktopScopeRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
-    DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
-    MobileAssistantSurfaceRequest, MobileDefaultPromptRequest,
-    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest,
-    MobileSessionArchiveRequest, MobileSessionDetailQuery, MobileSessionModeRequest,
-    MobileSiriDefaultSessionRequest,
+    DesktopScopeRequest, DesktopSessionArchiveRequest, DesktopSessionModeRequest,
+    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
+    DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
+    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest, MobileSessionDetailQuery,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -306,27 +304,7 @@ fn mobile_routes() -> Router<ControlPlane> {
         )
         .route(
             "/api/mobile/sessions/:thread_id",
-            get(mobile_session_detail_handler).delete(mobile_session_delete),
-        )
-        .route(
-            "/api/mobile/sessions/:thread_id/archive",
-            post(mobile_session_archive),
-        )
-        .route(
-            "/api/mobile/sessions/:thread_id/mute",
-            post(mobile_session_mute),
-        )
-        .route(
-            "/api/mobile/settings/default-prompt",
-            post(mobile_default_prompt),
-        )
-        .route(
-            "/api/mobile/settings/assistant-surface",
-            post(mobile_assistant_surface),
-        )
-        .route(
-            "/api/mobile/settings/siri-default-session",
-            post(mobile_siri_default_session),
+            get(mobile_session_detail_handler),
         )
         .route(
             "/api/mobile/passkeys/registration-challenge",
@@ -953,7 +931,7 @@ async fn desktop_scope(
 async fn desktop_assistant_surface(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<MobileAssistantSurfaceRequest>,
+    Json(input): Json<DesktopAssistantSurfaceRequest>,
 ) -> impl IntoResponse {
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
@@ -973,7 +951,7 @@ async fn desktop_assistant_surface(
 async fn desktop_global_preset(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<MobileSessionModeRequest>,
+    Json(input): Json<DesktopSessionModeRequest>,
 ) -> impl IntoResponse {
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
@@ -1237,7 +1215,7 @@ async fn desktop_session_archive(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Path(thread_id): Path<String>,
-    Json(input): Json<MobileSessionArchiveRequest>,
+    Json(input): Json<DesktopSessionArchiveRequest>,
 ) -> impl IntoResponse {
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
@@ -1583,179 +1561,6 @@ async fn mobile_session_detail_handler(
         Some(detail) => (StatusCode::OK, Json(detail)).into_response(),
         None => mobile_session_not_found_response(),
     }
-}
-
-async fn mobile_session_archive(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Path(thread_id): Path<String>,
-    Json(input): Json<MobileSessionArchiveRequest>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
-        return response;
-    }
-
-    match set_session_archived(&control_plane, &thread_id, input.archived) {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_session_delete(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Path(thread_id): Path<String>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
-        return response;
-    }
-
-    match delete_session_action(&control_plane, &thread_id) {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_session_mute(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Path(thread_id): Path<String>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-    if let Some(response) = missing_mobile_session_rejection(&control_plane, &thread_id, None) {
-        return response;
-    }
-
-    match mute_session_action(&control_plane, &thread_id) {
-        Ok(()) => mobile_snapshot_response(&control_plane, &headers),
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_default_prompt(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Json(input): Json<MobileDefaultPromptRequest>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-
-    match control_plane
-        .mobile_session_service()
-        .save_default_prompt(&input.default_prompt)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(&control_plane, None, Some("default-prompt-updated"));
-            mobile_snapshot_response(&control_plane, &headers)
-        }
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_assistant_surface(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Json(input): Json<MobileAssistantSurfaceRequest>,
-) -> impl IntoResponse {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-
-    match control_plane
-        .mobile_session_service()
-        .set_assistant_surface(&input.assistant_surface)
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "assistant-surface-updated");
-            mobile_snapshot_response(&control_plane, &headers)
-        }
-        Err(error) => mobile_session_error_response(error),
-    }
-}
-
-async fn mobile_siri_default_session(
-    State(control_plane): State<ControlPlane>,
-    headers: HeaderMap,
-    Json(input): Json<MobileSiriDefaultSessionRequest>,
-) -> Response {
-    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
-        return mobile_authorization_error_response(error);
-    }
-
-    let snapshot = match mobile_desktop_snapshot(&control_plane) {
-        Ok(snapshot) => snapshot,
-        Err(error) => return internal_mobile_error_response(error.to_string()),
-    };
-    let session_state = match control_plane.mobile_session_service().state() {
-        Ok(session_state) => session_state,
-        Err(error) => return mobile_session_error_response(error),
-    };
-
-    match validate_mobile_siri_target(
-        &snapshot,
-        &session_state,
-        input.session_id.as_deref(),
-        input.assistant_surface.as_deref(),
-    ) {
-        Ok(Some((session_id, assistant_surface))) => {
-            if let Err(error) = control_plane
-                .mobile_session_service()
-                .set_siri_default_session(Some(session_id), Some(assistant_surface))
-            {
-                return mobile_session_error_response(error);
-            }
-        }
-        Ok(None) => {
-            if let Err(error) = control_plane
-                .mobile_session_service()
-                .set_siri_default_session(None, None)
-            {
-                return mobile_session_error_response(error);
-            }
-        }
-        Err(error) => return mobile_session_error_response(error),
-    }
-
-    emit_mobile_session_changed(&control_plane, None, Some("siri-default-session-updated"));
-    mobile_snapshot_response(&control_plane, &headers)
-}
-
-fn validate_mobile_siri_target<'a>(
-    snapshot: &DesktopSnapshot,
-    session_state: &'a MobileSessionState,
-    session_id: Option<&'a str>,
-    assistant_surface: Option<&'a str>,
-) -> Result<Option<(&'a str, &'a str)>, MobileSessionError> {
-    let Some(session_id) = session_id
-        .map(str::trim)
-        .filter(|session_id| !session_id.is_empty())
-    else {
-        return Ok(None);
-    };
-    let assistant_surface = assistant_surface
-        .map(str::trim)
-        .filter(|surface| !surface.is_empty())
-        .unwrap_or(session_state.assistant_surface.as_str());
-
-    if !ASSISTANT_SURFACES.contains(&assistant_surface) {
-        return Err(MobileSessionError::InvalidAssistantSurface);
-    }
-    crate::mobile::api::validate_mobile_prompt_delivery_target(
-        snapshot,
-        session_state,
-        session_id,
-        Some(assistant_surface),
-    )?;
-    Ok(Some((session_id, assistant_surface)))
 }
 
 async fn mobile_passkey_registration_challenge(

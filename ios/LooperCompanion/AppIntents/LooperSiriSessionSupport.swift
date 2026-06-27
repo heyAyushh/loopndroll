@@ -452,8 +452,12 @@ struct LooperSiriSessionClient: Sendable {
     }
 
     func saveDefaultSiriSession(_ entity: LooperSessionEntity?) async throws {
-        _ = try await service.saveSiriDefaultSession(
-            id: entity?.sessionID,
+        guard let sessionRuntime else {
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
+
+        _ = try await sessionRuntime.setSiriDefaultSession(
+            threadID: entity?.sessionID ?? "",
             assistantSurface: entity?.assistantSurface
         )
     }
@@ -483,9 +487,12 @@ struct LooperSiriSessionClient: Sendable {
 
     func deleteSessions(_ entities: [LooperSessionEntity]) async throws -> Int {
         let uniqueEntities = entities.uniquedBySessionID()
+        guard let sessionRuntime else {
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
 
         for entity in uniqueEntities {
-            _ = try await service.deleteSession(id: entity.sessionID)
+            _ = try await sessionRuntime.deleteSession(threadID: entity.sessionID)
         }
 
         return uniqueEntities.count

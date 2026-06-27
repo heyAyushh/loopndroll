@@ -496,7 +496,12 @@ final class CompanionAppModel {
     }
 
     func refreshFromFallbackTimer() async {
-        guard !sessionMiniController.isSyncing || snapshot == nil else {
+        guard !snapshotState.hasSnapshot else {
+            CompanionDiagnostics.record("root:refresh-skip local-session-minis-ready")
+            return
+        }
+
+        guard !sessionMiniController.isSyncing else {
             CompanionDiagnostics.record("root:refresh-skip session-sync-active")
             return
         }
@@ -841,22 +846,50 @@ final class CompanionAppModel {
     }
 
     func setSessionArchived(_ archived: Bool, sessionID: String) async {
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.setSessionArchived(id: sessionID, archived: archived)
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
         }
 
-        if didMutate, snapshotState.hasDetail(for: sessionID) {
-            await refreshSessionDetail(id: sessionID)
+        if let visibleSnapshot = snapshotState.applySessionArchived(
+            sessionID: sessionID,
+            archived: archived
+        ) {
+            CompanionSnapshotCache.save(visibleSnapshot)
+        }
+
+        do {
+            try await targetRuntime.setSessionArchived(
+                threadID: sessionID,
+                archived: archived
+            )
+            errorMessage = nil
+            lastUpdatedAt = Date()
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
         }
     }
 
     func deleteSession(_ sessionID: String) async {
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.deleteSession(id: sessionID)
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
         }
 
-        if didMutate {
-            snapshotState.removeDetail(for: sessionID)
+        if let visibleSnapshot = snapshotState.applySessionDeleted(sessionID: sessionID) {
+            CompanionSnapshotCache.save(visibleSnapshot)
+        }
+
+        do {
+            try await targetRuntime.deleteSession(threadID: sessionID)
+            errorMessage = nil
+            lastUpdatedAt = Date()
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
         }
     }
 
@@ -1075,28 +1108,47 @@ final class CompanionAppModel {
     }
 
     func muteSession(_ sessionID: String) async {
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.muteSession(id: sessionID)
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
+            return
         }
 
-        if didMutate, snapshotState.hasDetail(for: sessionID) {
-            await refreshSessionDetail(id: sessionID)
+        _ = snapshotState.applySessionMuted(sessionID: sessionID)
+
+        do {
+            try await targetRuntime.muteSession(threadID: sessionID)
+            errorMessage = nil
+            lastUpdatedAt = Date()
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
         }
     }
 
     func setSiriDefaultSession(_ session: SessionSummary) async {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
-        let didMutate = await mutateSessionSnapshot(sessionID: sessionID) {
-            try await service.saveSiriDefaultSession(
-                id: sessionID,
-                assistantSurface: targetSurface
-            )
+
+        if let visibleSnapshot = snapshotState.applyDefaultSiriSession(
+            sessionID: sessionID,
+            assistantSurface: targetSurface
+        ) {
+            CompanionSnapshotCache.save(visibleSnapshot)
         }
 
-        if didMutate {
+        do {
+            try await sessionMiniController.sessionRuntime?.setSiriDefaultSession(
+                threadID: sessionID,
+                assistantSurface: targetSurface
+            )
+            errorMessage = nil
+            lastUpdatedAt = Date()
             Haptics.success()
             await donateSetDefaultSiriSession(session)
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            Haptics.error()
         }
     }
 
@@ -1131,6 +1183,18 @@ final class CompanionAppModel {
 
         CompanionSnapshotCache.save(visibleSnapshot)
         CompanionDiagnostics.record("siri-current:local sessionID=\(sessionID)")
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.sessionMiniController.sessionRuntime?.setSiriCurrentSession(
+                    threadID: sessionID,
+                    assistantSurface: targetSurface
+                )
+                self?.errorMessage = nil
+                self?.lastUpdatedAt = Date()
+            } catch {
+                self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            }
+        }
     }
 
     func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
@@ -1206,8 +1270,16 @@ final class CompanionAppModel {
             isSavingDefaultPrompt = false
         }
 
-        await mutateSnapshot {
-            try await service.saveDefaultPrompt(defaultPrompt)
+        if let visibleSnapshot = snapshotState.applyDefaultPrompt(defaultPrompt) {
+            CompanionSnapshotCache.save(visibleSnapshot)
+        }
+
+        do {
+            try await sessionMiniController.sessionRuntime?.saveDefaultPrompt(defaultPrompt)
+            errorMessage = nil
+            lastUpdatedAt = Date()
+        } catch {
+            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
         }
     }
 
@@ -1217,13 +1289,15 @@ final class CompanionAppModel {
         }
 
         CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
-    }
-
-    private func mutateSessionSnapshot(
-        sessionID: String,
-        _ operation: () async throws -> MobileSnapshot
-    ) async -> Bool {
-        return await mutateSnapshot(operation)
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.sessionMiniController.sessionRuntime?.setAssistantSurface(surface)
+                self?.errorMessage = nil
+                self?.lastUpdatedAt = Date()
+            } catch {
+                self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+            }
+        }
     }
 
     private func recordPromptAccepted(
@@ -1235,32 +1309,6 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "prompt:accepted sessionID=\(sessionID) kind=\(Self.nonEmptyText(result.dispatchKind) ?? "unknown")"
         )
-    }
-
-    @discardableResult
-    private func mutateSnapshot(_ operation: () async throws -> MobileSnapshot) async -> Bool {
-        let mutationRevision = connectionRevision
-        errorMessage = nil
-
-        do {
-            let nextSnapshot = try await operation()
-            guard mutationRevision == connectionRevision else {
-                CompanionDiagnostics.record("snapshot:mutation-stale-skip")
-                return false
-            }
-
-            await applySnapshot(nextSnapshot)
-            return true
-        } catch {
-            guard mutationRevision == connectionRevision else {
-                CompanionDiagnostics.record("snapshot:mutation-stale-error-skip error=\(error.localizedDescription)")
-                return false
-            }
-
-            applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
-            Haptics.error()
-            return false
-        }
     }
 
     private func connectionState(for error: Error) -> ConnectivityState {

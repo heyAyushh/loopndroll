@@ -35,8 +35,18 @@ pub fn reduce_state_minis_mobile_snapshot(
     }
 
     let mut sessions_by_surface: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut latest_global_settings: Option<(i64, Value)> = None;
     for mini in &sessions {
         let session = decode_session_payload(mini)?;
+        if let Some(settings) = session.get("globalSettings").cloned() {
+            if latest_global_settings
+                .as_ref()
+                .map(|(seq, _)| mini.seq >= *seq)
+                .unwrap_or(true)
+            {
+                latest_global_settings = Some((mini.seq, settings));
+            }
+        }
         sessions_by_surface
             .entry(mini.assistant_surface.clone())
             .or_default()
@@ -51,6 +61,10 @@ pub fn reduce_state_minis_mobile_snapshot(
         .get(&selected_surface)
         .cloned()
         .unwrap_or_default();
+    let global_settings = global_settings(
+        latest_global_settings.map(|(_, settings)| settings),
+        &selected_surface,
+    );
 
     let snapshot = json!({
         "revision": revision(latest_seq, &sessions),
@@ -61,12 +75,7 @@ pub fn reduce_state_minis_mobile_snapshot(
             "isReachable": false,
             "lastSyncedAt": server_time,
         },
-        "globalSettings": {
-            "defaultPrompt": DEFAULT_PROMPT,
-            "scope": GLOBAL_SCOPE,
-            "completionCheckWaitForReply": false,
-            "assistantSurface": selected_surface,
-        },
+        "globalSettings": global_settings,
         "sessions": visible_sessions,
         "surfaceSessions": sessions_by_surface,
         "notifications": [],
@@ -79,6 +88,35 @@ pub fn reduce_state_minis_mobile_snapshot(
         has_snapshot: true,
         snapshot_json,
     })
+}
+
+fn global_settings(settings: Option<Value>, selected_surface: &str) -> Value {
+    let mut merged = json!({
+        "defaultPrompt": DEFAULT_PROMPT,
+        "scope": GLOBAL_SCOPE,
+        "completionCheckWaitForReply": false,
+        "assistantSurface": selected_surface,
+    });
+    let Some(Value::Object(settings)) = settings else {
+        return merged;
+    };
+    let Some(merged_object) = merged.as_object_mut() else {
+        return merged;
+    };
+    for (key, value) in settings {
+        merged_object.insert(key, value);
+    }
+    if !merged_object
+        .get("assistantSurface")
+        .and_then(Value::as_str)
+        .is_some_and(|surface| !surface.trim().is_empty())
+    {
+        merged_object.insert(
+            "assistantSurface".to_owned(),
+            Value::String(selected_surface.to_owned()),
+        );
+    }
+    merged
 }
 
 fn decode_session_payload(mini: &ClientStateMini) -> Result<Value, ClientCoreError> {

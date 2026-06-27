@@ -802,6 +802,23 @@ fn command_client_mutation_id(command: &proto::Command) -> Option<String> {
         proto::command::Command::SubmitNotificationReply(request) => {
             Some(request.client_mutation_id.clone())
         }
+        proto::command::Command::SetAssistantSurface(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetSiriCurrentSession(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetSiriDefaultSession(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SaveDefaultPrompt(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetSessionArchived(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::DeleteSession(request) => Some(request.client_mutation_id.clone()),
+        proto::command::Command::MuteSession(request) => Some(request.client_mutation_id.clone()),
     }
 }
 

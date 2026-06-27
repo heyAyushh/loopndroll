@@ -19,6 +19,7 @@ pub const DEFAULT_LOCAL_STORE_FILE_NAME: &str = "looper-realtime-state-minis.jso
 const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
 const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
+const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 
 #[derive(Debug)]
 pub(crate) struct LooperClientCoreLocalStore {
@@ -53,6 +54,8 @@ struct StoredPendingCommand {
     prompt: Option<String>,
     #[serde(rename = "notificationID", default)]
     notification_id: Option<String>,
+    #[serde(default)]
+    archived: bool,
     #[serde(rename = "attemptCount", default)]
     attempt_count: u32,
 }
@@ -96,7 +99,9 @@ impl LooperClientCoreLocalStore {
             &command.client_mutation_id,
             ClientCoreError::EmptyMutationId,
         )?;
-        require_present(&command.thread_id, ClientCoreError::EmptyThreadId)?;
+        if !pending_command_allows_empty_thread_id(command.kind) {
+            require_present(&command.thread_id, ClientCoreError::EmptyThreadId)?;
+        }
 
         let mut state = self.lock_state()?;
         let command = StoredPendingCommand::from(command);
@@ -115,6 +120,7 @@ impl LooperClientCoreLocalStore {
             existing.notification_id = command
                 .notification_id
                 .or_else(|| existing.notification_id.clone());
+            existing.archived = command.archived;
         } else {
             state.pending_commands.push(command);
         }
@@ -136,6 +142,7 @@ impl LooperClientCoreLocalStore {
             assistant_surface: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            archived: false,
             attempt_count: 0,
         })
     }
@@ -157,6 +164,7 @@ impl LooperClientCoreLocalStore {
             assistant_surface,
             prompt,
             notification_id: String::new(),
+            archived: false,
             attempt_count: 0,
         })
     }
@@ -180,6 +188,140 @@ impl LooperClientCoreLocalStore {
             assistant_surface,
             prompt,
             notification_id,
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_set_assistant_surface_command(
+        &self,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_present(&assistant_surface, ClientCoreError::EmptySessionId)?;
+
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetAssistantSurface,
+            client_mutation_id,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            assistant_surface,
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_set_siri_current_session_command(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetSiriCurrentSession,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_set_siri_default_session_command(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetSiriDefaultSession,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface,
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_save_default_prompt_command(
+        &self,
+        prompt: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_present(&prompt, ClientCoreError::EmptyPrompt)?;
+
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SaveDefaultPrompt,
+            client_mutation_id,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            assistant_surface: String::new(),
+            prompt,
+            notification_id: String::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_set_session_archived_command(
+        &self,
+        thread_id: String,
+        archived: bool,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetSessionArchived,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_delete_session_command(
+        &self,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::DeleteSession,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_mute_session_command(
+        &self,
+        thread_id: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::MuteSession,
+            client_mutation_id,
+            thread_id,
+            preset: String::new(),
+            assistant_surface: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            archived: false,
             attempt_count: 0,
         })
     }
@@ -302,6 +444,7 @@ impl From<ClientPendingCommand> for StoredPendingCommand {
             assistant_surface: non_empty(command.assistant_surface),
             prompt: non_empty(command.prompt),
             notification_id: non_empty(command.notification_id),
+            archived: command.archived,
             attempt_count: command.attempt_count,
         }
     }
@@ -317,6 +460,7 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
             assistant_surface: command.assistant_surface.unwrap_or_default(),
             prompt: command.prompt.unwrap_or_default(),
             notification_id: command.notification_id.unwrap_or_default(),
+            archived: command.archived,
             attempt_count: command.attempt_count,
         }
     }
@@ -368,6 +512,14 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
     }
 }
 
+fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> bool {
+    matches!(
+        kind,
+        ClientPendingCommandKind::SetSiriCurrentSession
+            | ClientPendingCommandKind::SetSiriDefaultSession
+    )
+}
+
 fn non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -417,6 +569,7 @@ mod tests {
                 assistant_surface: "codex".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                archived: false,
                 attempt_count: 0,
             })
             .expect("enqueue");
@@ -429,6 +582,7 @@ mod tests {
                 assistant_surface: "codex".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                archived: false,
                 attempt_count: 0,
             })
             .expect("dedupe enqueue");
@@ -487,6 +641,7 @@ mod tests {
                 assistant_surface: "codex".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                archived: false,
                 attempt_count: 0,
             })
             .expect("enqueue");

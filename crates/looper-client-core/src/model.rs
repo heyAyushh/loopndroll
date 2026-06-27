@@ -19,6 +19,13 @@ pub enum ClientCommandKind {
     SetSessionMode,
     SendSessionPrompt,
     SubmitNotificationReply,
+    SetAssistantSurface,
+    SetSiriCurrentSession,
+    SetSiriDefaultSession,
+    SaveDefaultPrompt,
+    SetSessionArchived,
+    DeleteSession,
+    MuteSession,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +60,20 @@ pub enum ClientPendingCommandKind {
     SendSessionPrompt,
     #[serde(rename = "SubmitNotificationReply")]
     SubmitNotificationReply,
+    #[serde(rename = "SetAssistantSurface")]
+    SetAssistantSurface,
+    #[serde(rename = "SetSiriCurrentSession")]
+    SetSiriCurrentSession,
+    #[serde(rename = "SetSiriDefaultSession")]
+    SetSiriDefaultSession,
+    #[serde(rename = "SaveDefaultPrompt")]
+    SaveDefaultPrompt,
+    #[serde(rename = "SetSessionArchived")]
+    SetSessionArchived,
+    #[serde(rename = "DeleteSession")]
+    DeleteSession,
+    #[serde(rename = "MuteSession")]
+    MuteSession,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
@@ -71,6 +92,8 @@ pub struct ClientPendingCommand {
     pub prompt: String,
     #[serde(rename = "notificationID", default)]
     pub notification_id: String,
+    #[serde(default)]
+    pub archived: bool,
     #[serde(rename = "attemptCount", default)]
     pub attempt_count: u32,
 }
@@ -94,6 +117,7 @@ pub struct OutboundSessionFrame {
     pub prompt: String,
     pub assistant_surface: String,
     pub notification_id: String,
+    pub archived: bool,
     pub client_mutation_id: String,
     pub after_seq: i64,
 }
@@ -168,6 +192,13 @@ pub struct ClientNotificationReplyIntentResult {
 pub struct ClientNotificationReplyPersistResult {
     pub client_mutation_id: String,
     pub snapshot: ClientLocalStateSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionCommandIntentResult {
+    pub accepted: bool,
+    pub client_mutation_id: String,
+    pub entity_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]

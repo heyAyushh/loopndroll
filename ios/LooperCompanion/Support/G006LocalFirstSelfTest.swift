@@ -1028,29 +1028,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         throw ServiceError.promptFailed
     }
 
-    func setSessionArchived(id _: String, archived _: Bool) async throws -> MobileSnapshot {
-        snapshot
-    }
-
-    func deleteSession(id _: String) async throws -> MobileSnapshot {
-        snapshot
-    }
-
-    func muteSession(id _: String) async throws -> MobileSnapshot {
-        snapshot
-    }
-
-    func saveDefaultPrompt(_: String) async throws -> MobileSnapshot {
-        snapshot
-    }
-
-    func saveSiriDefaultSession(
-        id _: String?,
-        assistantSurface _: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        snapshot
-    }
-
     func registerPushDevice(_: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse {
         RemotePushRegistrationResponse(
             state: .storedAwaitingProvider,

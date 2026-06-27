@@ -778,6 +778,7 @@ mod tests {
             assistant_surface: "codex".to_owned(),
             prompt: "Continue".to_owned(),
             notification_id: String::new(),
+            archived: false,
             attempt_count: 1,
         }
     }

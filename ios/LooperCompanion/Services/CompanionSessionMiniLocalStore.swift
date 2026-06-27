@@ -326,6 +326,109 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
+    func setAssistantSurface(
+        _ assistantSurface: CompanionAssistantSurface
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.setAssistantSurface(assistantSurface.rawValue)
+        guard result.accepted else {
+            CompanionDiagnostics.record("assistant-surface:grpc-invalid surface=\(assistantSurface.rawValue)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("assistant-surface:grpc-accepted surface=\(assistantSurface.rawValue)")
+        return result
+    }
+
+    @discardableResult
+    func setSiriCurrentSession(
+        threadID: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.setSiriCurrentSession(
+            threadID: threadID,
+            assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        guard result.accepted else {
+            CompanionDiagnostics.record("siri-current:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("siri-current:grpc-accepted id=\(threadID)")
+        return result
+    }
+
+    @discardableResult
+    func setSiriDefaultSession(
+        threadID: String,
+        assistantSurface: CompanionAssistantSurface?
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.setSiriDefaultSession(
+            threadID: threadID,
+            assistantSurface: assistantSurface?.rawValue ?? ""
+        )
+        guard result.accepted else {
+            CompanionDiagnostics.record("siri-default:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("siri-default:grpc-accepted id=\(threadID)")
+        return result
+    }
+
+    @discardableResult
+    func saveDefaultPrompt(
+        _ prompt: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.saveDefaultPrompt(prompt)
+        guard result.accepted else {
+            CompanionDiagnostics.record("default-prompt:grpc-invalid")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("default-prompt:grpc-accepted")
+        return result
+    }
+
+    @discardableResult
+    func setSessionArchived(
+        threadID: String,
+        archived: Bool
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.setSessionArchived(
+            threadID: threadID,
+            archived: archived
+        )
+        guard result.accepted else {
+            CompanionDiagnostics.record("archive:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("archive:grpc-accepted id=\(threadID) archived=\(archived)")
+        return result
+    }
+
+    @discardableResult
+    func deleteSession(
+        threadID: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.deleteSession(threadID: threadID)
+        guard result.accepted else {
+            CompanionDiagnostics.record("delete:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("delete:grpc-accepted id=\(threadID)")
+        return result
+    }
+
+    @discardableResult
+    func muteSession(
+        threadID: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        let result = try await sessionManager.muteSession(threadID: threadID)
+        guard result.accepted else {
+            CompanionDiagnostics.record("mute:grpc-invalid id=\(threadID)")
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        CompanionDiagnostics.record("mute:grpc-accepted id=\(threadID)")
+        return result
+    }
+
+    @discardableResult
     func submitNotificationReply(
         notificationID: String,
         threadID: String,

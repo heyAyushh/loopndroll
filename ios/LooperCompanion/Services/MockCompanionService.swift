@@ -90,43 +90,6 @@ actor MockCompanionStore {
         return publishSnapshot()
     }
 
-    func setArchived(id: String, archived: Bool) -> MobileSnapshot {
-        let timestamp = Date().ISO8601Format()
-        allSessions = allSessions.map {
-            guard $0.id == id else { return $0 }
-            return SessionSummary(
-                id: $0.id,
-                ref: $0.ref,
-                title: $0.title,
-                status: archived ? .archived : .active,
-                effectiveMode: $0.effectiveMode,
-                lastUpdatedAt: timestamp,
-                lastActivityAt: timestamp,
-                lastMessageAt: $0.lastMessageAt,
-                assistantPreview: $0.assistantPreview,
-                isArchived: archived,
-                assistantClient: $0.assistantClient,
-                metadata: $0.metadata
-            )
-        }
-
-        if var detail = allDetails[id] {
-            detail.isArchived = archived
-            detail.status = archived ? .archived : .active
-            detail.lastUpdatedAt = timestamp
-            detail.lastActivityAt = detail.lastUpdatedAt
-            allDetails[id] = detail
-        }
-
-        return publishSnapshot()
-    }
-
-    func delete(id: String) -> MobileSnapshot {
-        allSessions.removeAll { $0.id == id }
-        allDetails.removeValue(forKey: id)
-        return publishSnapshot()
-    }
-
     func sendPrompt(id: String, prompt: String) -> MobileSnapshot {
         let timestamp = Date().ISO8601Format()
         let preview = "Queued prompt: \(prompt)"
@@ -158,29 +121,6 @@ actor MockCompanionStore {
             allDetails[id] = detail
         }
 
-        return publishSnapshot()
-    }
-
-    func mute(id: String) -> MobileSnapshot {
-        if var detail = allDetails[id] {
-            detail.notificationIds = []
-            allDetails[id] = detail
-        }
-
-        return publishSnapshot()
-    }
-
-    func savePrompt(_ prompt: String) -> MobileSnapshot {
-        snapshot.globalSettings.defaultPrompt = prompt
-        return publishSnapshot()
-    }
-
-    func saveSiriDefaultSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) -> MobileSnapshot {
-        snapshot.globalSettings.siriDefaultSessionId = id
-        snapshot.globalSettings.siriDefaultAssistantSurface = id == nil ? nil : assistantSurface
         return publishSnapshot()
     }
 
@@ -261,29 +201,6 @@ struct MockCompanionService: CompanionService {
         surface: CompanionAssistantSurface? = nil
     ) async throws -> SessionDetail {
         await store.sessionDetail(id: id, surface: surface)
-    }
-
-    func setSessionArchived(id: String, archived: Bool) async throws -> MobileSnapshot {
-        await store.setArchived(id: id, archived: archived)
-    }
-
-    func deleteSession(id: String) async throws -> MobileSnapshot {
-        await store.delete(id: id)
-    }
-
-    func muteSession(id: String) async throws -> MobileSnapshot {
-        await store.mute(id: id)
-    }
-
-    func saveDefaultPrompt(_ prompt: String) async throws -> MobileSnapshot {
-        await store.savePrompt(prompt)
-    }
-
-    func saveSiriDefaultSession(
-        id: String?,
-        assistantSurface: CompanionAssistantSurface?
-    ) async throws -> MobileSnapshot {
-        await store.saveSiriDefaultSession(id: id, assistantSurface: assistantSurface)
     }
 
     func registerPushDevice(

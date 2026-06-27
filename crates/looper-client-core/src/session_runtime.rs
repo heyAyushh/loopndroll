@@ -13,8 +13,9 @@ use crate::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
         ClientNotificationReplyIntentResult, ClientNotificationReplyPersistResult,
-        ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateMiniSnapshot,
-        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
+        ClientSessionCommandIntentResult, ClientSessionModeIntentResult,
+        ClientSessionPromptIntentResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
+        ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
 };
 
@@ -24,6 +25,13 @@ const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
 const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
+const ASSISTANT_SURFACE_MUTATION_PREFIX: &str = "assistant-surface";
+const SIRI_CURRENT_MUTATION_PREFIX: &str = "siri-current";
+const SIRI_DEFAULT_MUTATION_PREFIX: &str = "siri-default";
+const DEFAULT_PROMPT_MUTATION_PREFIX: &str = "default-prompt";
+const ARCHIVE_MUTATION_PREFIX: &str = "archive";
+const DELETE_MUTATION_PREFIX: &str = "delete";
+const MUTE_MUTATION_PREFIX: &str = "mute";
 const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "queued";
 
 #[derive(Debug, uniffi::Object)]
@@ -160,6 +168,131 @@ impl LooperClientCoreSessionRuntime {
             accepted: true,
             dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
             prompt_id: String::new(),
+        })
+    }
+
+    pub async fn set_assistant_surface(
+        &self,
+        assistant_surface: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(ASSISTANT_SURFACE_MUTATION_PREFIX);
+        self.client_core.accept_set_assistant_surface_durable(
+            self.local_store.clone(),
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: String::new(),
+        })
+    }
+
+    pub async fn set_siri_current_session(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(SIRI_CURRENT_MUTATION_PREFIX);
+        self.client_core.accept_set_siri_current_session_durable(
+            self.local_store.clone(),
+            thread_id.clone(),
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: thread_id,
+        })
+    }
+
+    pub async fn set_siri_default_session(
+        &self,
+        thread_id: String,
+        assistant_surface: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(SIRI_DEFAULT_MUTATION_PREFIX);
+        self.client_core.accept_set_siri_default_session_durable(
+            self.local_store.clone(),
+            thread_id.clone(),
+            assistant_surface,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: thread_id,
+        })
+    }
+
+    pub async fn save_default_prompt(
+        &self,
+        prompt: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(DEFAULT_PROMPT_MUTATION_PREFIX);
+        self.client_core.accept_save_default_prompt_durable(
+            self.local_store.clone(),
+            prompt,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: String::new(),
+        })
+    }
+
+    pub async fn set_session_archived(
+        &self,
+        thread_id: String,
+        archived: bool,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(ARCHIVE_MUTATION_PREFIX);
+        self.client_core.accept_set_session_archived_durable(
+            self.local_store.clone(),
+            thread_id.clone(),
+            archived,
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: thread_id,
+        })
+    }
+
+    pub async fn delete_session(
+        &self,
+        thread_id: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(DELETE_MUTATION_PREFIX);
+        self.client_core.accept_delete_session_durable(
+            self.local_store.clone(),
+            thread_id.clone(),
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: thread_id,
+        })
+    }
+
+    pub async fn mute_session(
+        &self,
+        thread_id: String,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id = generated_client_mutation_id(MUTE_MUTATION_PREFIX);
+        self.client_core.accept_mute_session_durable(
+            self.local_store.clone(),
+            thread_id.clone(),
+            client_mutation_id.clone(),
+        )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: thread_id,
         })
     }
 
