@@ -2035,47 +2035,66 @@ extension Sequence where Element == SessionSummary {
             return []
         }
 
-        let projection = SessionFreshnessOrderProjectionCodec.projectFreshnessOrder(sessions)
-        return SessionFreshnessOrderProjectionCodec.sessions(from: projection, sessions: sessions)
+        guard let projection = SessionFreshnessOrderProjectionCodec.projectFreshnessOrder(sessions),
+              let projectedSessions = SessionFreshnessOrderProjectionCodec.sessions(
+                from: projection,
+                sessions: sessions
+              )
+        else {
+            return sessions
+        }
+        return projectedSessions
     }
 }
 
 private enum SessionFreshnessOrderProjectionCodec {
     static func projectFreshnessOrder(_ sessions: [SessionSummary])
-        -> ClientSessionFreshnessOrderProjection
+        -> ClientSessionFreshnessOrderProjection?
     {
+        guard let sessionsJson = encode(sessions) else {
+            return nil
+        }
         do {
             return try reduceSessionFreshnessOrder(
-                sessionsJson: encode(sessions)
+                sessionsJson: sessionsJson
             )
         } catch {
-            fatalError("Session freshness projection failed: \(error)")
+            CompanionDiagnostics.record("session-freshness:projection-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 
     static func sessions(
         from projection: ClientSessionFreshnessOrderProjection,
         sessions: [SessionSummary]
-    ) -> [SessionSummary] {
-        projection.indexes.map { index in
+    ) -> [SessionSummary]? {
+        var projectedSessions: [SessionSummary] = []
+        projectedSessions.reserveCapacity(projection.indexes.count)
+        for index in projection.indexes {
             let sessionIndex = Int(index)
             guard sessions.indices.contains(sessionIndex) else {
-                fatalError("Session freshness projection returned invalid index \(sessionIndex)")
+                CompanionDiagnostics.record(
+                    "session-freshness:projection-invalid-index index=\(sessionIndex)"
+                )
+                return nil
             }
-            return sessions[sessionIndex]
+            projectedSessions.append(sessions[sessionIndex])
         }
+        return projectedSessions
     }
 
-    private static func encode<Value: Encodable>(_ value: Value) -> String {
+    private static func encode<Value: Encodable>(_ value: Value) -> String? {
         do {
             let data = try JSONEncoder().encode(value)
             guard let json = String(data: data, encoding: .utf8) else {
-                fatalError("Session freshness payload was not valid UTF-8")
+                CompanionDiagnostics.record("session-freshness:projection-non-utf8")
+                return nil
             }
 
             return json
         } catch {
-            fatalError("Session freshness payload encoding failed: \(error)")
+            CompanionDiagnostics.record("session-freshness:projection-encode-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 }
@@ -2377,12 +2396,35 @@ struct SessionIndex: Equatable, Sendable {
     let identity: String
 
     init(snapshot: MobileSnapshot) {
-        let projection = SessionIndexProjectionCodec.projectSessionIndex(snapshot)
-        self.init(projection: projection, snapshot: snapshot)
+        if let projection = SessionIndexProjectionCodec.projectSessionIndex(snapshot),
+           let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
+        {
+            self.init(
+                indexedSessions: indexedSessions,
+                identity: projection.identity
+            )
+            return
+        }
+
+        self.init(
+            indexedSessions: Self.fallbackSessions(from: snapshot),
+            identity: Self.fallbackIdentity(snapshot)
+        )
     }
 
     init(projection: ClientSessionIndexProjection, snapshot: MobileSnapshot) {
         let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
+            ?? Self.fallbackSessions(from: snapshot)
+        self.init(
+            indexedSessions: indexedSessions,
+            identity: projection.identity
+        )
+    }
+
+    private init(
+        indexedSessions: [(surface: CompanionAssistantSurface, session: SessionSummary)],
+        identity: String
+    ) {
         let allSessions = indexedSessions.map(\.session)
         let sessionsByID = Dictionary(
             uniqueKeysWithValues: indexedSessions.map { ($0.session.id, $0.session) }
@@ -2394,7 +2436,7 @@ struct SessionIndex: Equatable, Sendable {
             allSessions: allSessions,
             sessionsByID: sessionsByID,
             surfaceBySessionID: surfaceBySessionID,
-            identity: projection.identity
+            identity: identity
         )
     }
 
@@ -2421,45 +2463,78 @@ struct SessionIndex: Equatable, Sendable {
     private static func sessions(
         from projection: ClientSessionIndexProjection,
         snapshot: MobileSnapshot
-    ) -> [(surface: CompanionAssistantSurface, session: SessionSummary)] {
-        projection.entries.map { entry in
+    ) -> [(surface: CompanionAssistantSurface, session: SessionSummary)]? {
+        var indexedSessions: [(surface: CompanionAssistantSurface, session: SessionSummary)] = []
+        indexedSessions.reserveCapacity(projection.entries.count)
+        for entry in projection.entries {
             guard let surface = CompanionAssistantSurface(rawValue: entry.surface) else {
-                fatalError("Session index projection returned unknown surface: \(entry.surface)")
+                CompanionDiagnostics.record(
+                    "session-index:projection-unknown-surface surface=\(entry.surface)"
+                )
+                return nil
             }
 
             let sessions = snapshot.sessions(for: surface)
             let sessionIndex = Int(entry.sessionIndex)
             guard sessions.indices.contains(sessionIndex) else {
-                fatalError("Session index projection returned invalid index \(sessionIndex) for \(surface.rawValue)")
+                CompanionDiagnostics.record(
+                    "session-index:projection-invalid-index surface=\(surface.rawValue) index=\(sessionIndex)"
+                )
+                return nil
             }
 
-            return (surface, sessions[sessionIndex])
+            indexedSessions.append((surface, sessions[sessionIndex]))
         }
+        return indexedSessions
+    }
+
+    private static func fallbackSessions(
+        from snapshot: MobileSnapshot
+    ) -> [(surface: CompanionAssistantSurface, session: SessionSummary)] {
+        CompanionAssistantSurface.allCases.flatMap { surface in
+            snapshot.sessions(for: surface).map { session in
+                (surface: surface, session: session)
+            }
+        }
+    }
+
+    private static func fallbackIdentity(_ snapshot: MobileSnapshot) -> String {
+        let revision = snapshot.revision ?? "none"
+        let ids = fallbackSessions(from: snapshot)
+            .map { "\($0.surface.rawValue):\($0.session.id)" }
+            .joined(separator: "|")
+        return "fallback:\(revision):\(ids)"
     }
 }
 
 private enum SessionIndexProjectionCodec {
-    static func projectSessionIndex(_ snapshot: MobileSnapshot) -> ClientSessionIndexProjection {
+    static func projectSessionIndex(_ snapshot: MobileSnapshot) -> ClientSessionIndexProjection? {
+        guard let snapshotJson = encode(snapshot) else {
+            return nil
+        }
         do {
             return try reduceSessionIndex(
-                snapshotJson: encode(snapshot),
+                snapshotJson: snapshotJson,
                 assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
             )
         } catch {
-            fatalError("Session index projection failed: \(error)")
+            CompanionDiagnostics.record("session-index:projection-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 
-    private static func encode<Value: Encodable>(_ value: Value) -> String {
+    private static func encode<Value: Encodable>(_ value: Value) -> String? {
         do {
             let data = try JSONEncoder().encode(value)
             guard let json = String(data: data, encoding: .utf8) else {
-                fatalError("Session index payload was not valid UTF-8")
+                CompanionDiagnostics.record("session-index:projection-non-utf8")
+                return nil
             }
 
             return json
         } catch {
-            fatalError("Session index payload encoding failed: \(error)")
+            CompanionDiagnostics.record("session-index:projection-encode-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 }
@@ -2479,7 +2554,10 @@ struct SessionSections: Sendable {
     let archived: [SessionSummary]
 
     init(sessions: [SessionSummary]) {
-        let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions)
+        guard let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions) else {
+            self.init(fallbackSessions: sessions)
+            return
+        }
         self.init(projection: projection, sessions: sessions)
     }
 
@@ -2508,31 +2586,46 @@ struct SessionSections: Sendable {
             return sessions[index]
         }
     }
+
+    private init(fallbackSessions sessions: [SessionSummary]) {
+        archived = sessions.filter(\.isArchived)
+        needsAttention = sessions.filter { !$0.isArchived && $0.hasBlockedGoal }
+        running = sessions.filter { !$0.isArchived && $0.hasRunningGoal }
+        active = sessions.filter { !$0.isArchived && $0.status == .active }
+        waiting = sessions.filter { !$0.isArchived && $0.status == .waiting }
+        stopped = sessions.filter { !$0.isArchived && $0.status == .stopped }
+    }
 }
 
 private enum SessionSectionsProjectionCodec {
     static func projectSessionSections(_ sessions: [SessionSummary])
-        -> ClientSessionSectionsProjection
+        -> ClientSessionSectionsProjection?
     {
+        guard let sessionsJson = encode(sessions) else {
+            return nil
+        }
         do {
             return try reduceSessionSections(
-                sessionsJson: encode(sessions)
+                sessionsJson: sessionsJson
             )
         } catch {
-            fatalError("Session sections projection failed: \(error)")
+            CompanionDiagnostics.record("session-sections:projection-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 
-    private static func encode<Value: Encodable>(_ value: Value) -> String {
+    private static func encode<Value: Encodable>(_ value: Value) -> String? {
         do {
             let data = try JSONEncoder().encode(value)
             guard let json = String(data: data, encoding: .utf8) else {
-                fatalError("Session sections payload was not valid UTF-8")
+                CompanionDiagnostics.record("session-sections:projection-non-utf8")
+                return nil
             }
 
             return json
         } catch {
-            fatalError("Session sections payload encoding failed: \(error)")
+            CompanionDiagnostics.record("session-sections:projection-encode-failed error=\(error.localizedDescription)")
+            return nil
         }
     }
 }
