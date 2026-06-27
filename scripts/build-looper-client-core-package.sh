@@ -27,6 +27,7 @@ IOS_TARGETS=(
 
 MACOS_TARGETS=(
   aarch64-apple-darwin
+  x86_64-apple-darwin
 )
 
 build_apple_target() {
@@ -169,15 +170,35 @@ make_versioned_macos_static_framework() {
   ln -s "Versions/Current/${FFI_MODULE_NAME}" "$framework_dir/${FFI_MODULE_NAME}"
 }
 
+make_universal_macos_static_framework() {
+  local framework_parent="$FRAMEWORK_BUILD_DIR/macos-universal"
+  local framework_dir="$framework_parent/$FFI_FRAMEWORK_NAME"
+  local binary_path="$framework_dir/Versions/A/${FFI_MODULE_NAME}"
+
+  rm -Rf "$framework_parent"
+  mkdir -p "$framework_parent"
+  cp -R "$FRAMEWORK_BUILD_DIR/aarch64-apple-darwin/$FFI_FRAMEWORK_NAME" "$framework_parent/"
+  lipo -create \
+    "$FRAMEWORK_BUILD_DIR/aarch64-apple-darwin/$FFI_FRAMEWORK_NAME/Versions/A/${FFI_MODULE_NAME}" \
+    "$FRAMEWORK_BUILD_DIR/x86_64-apple-darwin/$FFI_FRAMEWORK_NAME/Versions/A/${FFI_MODULE_NAME}" \
+    -output "$binary_path"
+  write_framework_info_plist \
+    "$framework_dir/Versions/A/Resources/Info.plist" \
+    15.0 \
+    macosuniversal
+}
+
 make_shallow_static_framework aarch64-apple-ios 18.0
 make_shallow_static_framework aarch64-apple-ios-sim 18.0
 make_versioned_macos_static_framework aarch64-apple-darwin 15.0
+make_versioned_macos_static_framework x86_64-apple-darwin 15.0
+make_universal_macos_static_framework
 
 echo "Creating $XCFRAMEWORK_DIR"
 xcodebuild -create-xcframework \
   -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-ios/$FFI_FRAMEWORK_NAME" \
   -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-ios-sim/$FFI_FRAMEWORK_NAME" \
-  -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-darwin/$FFI_FRAMEWORK_NAME" \
+  -framework "$FRAMEWORK_BUILD_DIR/macos-universal/$FFI_FRAMEWORK_NAME" \
   -output "$XCFRAMEWORK_DIR"
 
 echo "Created $XCFRAMEWORK_DIR"
