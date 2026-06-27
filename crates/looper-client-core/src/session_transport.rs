@@ -24,6 +24,7 @@ pub(crate) mod proto {
 
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+const STATE_MINI_STREAM_FALLBACK_RACE_DELAY: Duration = Duration::from_millis(25);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
@@ -226,6 +227,12 @@ enum StateMiniTransportError {
     },
 }
 
+struct OpenStateMiniSession {
+    stream: tonic::Streaming<proto::ServerFrame>,
+    request_sender: mpsc::Sender<proto::ClientFrame>,
+    endpoint_url: String,
+}
+
 async fn run_state_mini_stream_session(
     endpoints: &[ClientEndpoint],
     bearer_token: &str,
@@ -242,71 +249,129 @@ async fn run_state_mini_stream_session(
         }
     })?;
     let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
-    for endpoint in candidates {
-        let endpoint_url = normalized_endpoint_url(&endpoint.url);
-        let endpoint = match Endpoint::from_shared(endpoint.url) {
-            Ok(endpoint) => endpoint,
-            Err(error) => {
-                last_transport_error = error.to_string();
-                continue;
+    let (result_sender, mut result_receiver) = mpsc::channel(candidates.len());
+    let mut handles = Vec::with_capacity(candidates.len());
+    for (index, endpoint) in candidates.into_iter().enumerate() {
+        let result_sender = result_sender.clone();
+        let bearer_token = bearer_token.to_owned();
+        let mobile_session_header = mobile_session_header.to_owned();
+        handles.push(tokio::spawn(async move {
+            if index > 0 {
+                tokio::time::sleep(STATE_MINI_STREAM_FALLBACK_RACE_DELAY).await;
             }
-        }
-        .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
-        let mut client =
-            match proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint).await {
-                Ok(client) => client,
-                Err(error) => {
-                    last_transport_error = error.to_string();
-                    continue;
-                }
-            };
-        let (request_sender, request_receiver) = mpsc::channel(64);
-        request_sender
-            .send(resume_client_frame(after_seq))
-            .await
-            .map_err(|error| StateMiniTransportError::Transport {
-                latest_seq: after_seq,
-                error_description: error.to_string(),
-            })?;
-        let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-        apply_metadata(
-            request.metadata_mut(),
-            bearer_token.to_owned(),
-            mobile_session_header.to_owned(),
-        )
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+            let result = open_state_mini_stream_candidate(
+                endpoint,
+                bearer_token,
+                mobile_session_header,
+                after_seq,
+            )
+            .await;
+            let _ = result_sender.send(result).await;
+        }));
+    }
+    drop(result_sender);
 
-        let response = match client.session(request).await {
-            Ok(response) => response,
-            Err(status) if status.code() == tonic::Code::OutOfRange => {
+    while let Some(result) = result_receiver.recv().await {
+        match result {
+            Ok(opened) => {
+                for handle in handles {
+                    handle.abort();
+                }
+                let OpenStateMiniSession {
+                    stream,
+                    request_sender,
+                    endpoint_url,
+                } = opened;
+                return drive_state_mini_stream_session(
+                    stream,
+                    request_sender,
+                    commands,
+                    events,
+                    command_acks,
+                    after_seq,
+                    endpoint_url,
+                )
+                .await;
+            }
+            Err(StateMiniTransportError::RecoveryRequired {
+                latest_seq,
+                error_description,
+            }) => {
+                for handle in handles {
+                    handle.abort();
+                }
                 return Err(StateMiniTransportError::RecoveryRequired {
-                    latest_seq: after_seq,
-                    error_description: status.message().to_owned(),
+                    latest_seq,
+                    error_description,
                 });
             }
-            Err(status) => {
-                last_transport_error = status.to_string();
-                continue;
+            Err(StateMiniTransportError::Transport {
+                error_description, ..
+            }) => {
+                last_transport_error = error_description;
             }
-        };
-        return drive_state_mini_stream_session(
-            response.into_inner(),
-            request_sender,
-            commands,
-            events,
-            command_acks,
-            after_seq,
-            endpoint_url,
-        )
-        .await;
+        }
     }
 
     Err(StateMiniTransportError::Transport {
         latest_seq: after_seq,
         error_description: last_transport_error,
+    })
+}
+
+async fn open_state_mini_stream_candidate(
+    endpoint: ClientEndpoint,
+    bearer_token: String,
+    mobile_session_header: String,
+    after_seq: i64,
+) -> Result<OpenStateMiniSession, StateMiniTransportError> {
+    let endpoint_url = normalized_endpoint_url(&endpoint.url);
+    let endpoint = Endpoint::from_shared(endpoint.url)
+        .map_err(|error| StateMiniTransportError::Transport {
+            latest_seq: after_seq,
+            error_description: error.to_string(),
+        })?
+        .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
+        .await
+        .map_err(|error| StateMiniTransportError::Transport {
+            latest_seq: after_seq,
+            error_description: error.to_string(),
+        })?;
+    let (request_sender, request_receiver) = mpsc::channel(64);
+    request_sender
+        .send(resume_client_frame(after_seq))
+        .await
+        .map_err(|error| StateMiniTransportError::Transport {
+            latest_seq: after_seq,
+            error_description: error.to_string(),
+        })?;
+    let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
+    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
+        |error| StateMiniTransportError::Transport {
+            latest_seq: after_seq,
+            error_description: error.to_string(),
+        },
+    )?;
+
+    let response = client.session(request).await.map_err(|status| {
+        if status.code() == tonic::Code::OutOfRange {
+            StateMiniTransportError::RecoveryRequired {
+                latest_seq: after_seq,
+                error_description: status.message().to_owned(),
+            }
+        } else {
+            StateMiniTransportError::Transport {
+                latest_seq: after_seq,
+                error_description: status.to_string(),
+            }
+        }
+    })?;
+
+    Ok(OpenStateMiniSession {
+        stream: response.into_inner(),
+        request_sender,
+        endpoint_url,
     })
 }
 
