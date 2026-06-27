@@ -28,6 +28,7 @@ pub fn reduce_state_minis_mobile_snapshot(
     sessions: Vec<ClientStateMini>,
     server_time: String,
 ) -> Result<ClientMobileSnapshotProjection, ClientCoreError> {
+    let sessions = decodable_sessions(&sessions);
     if sessions.is_empty() {
         return Ok(ClientMobileSnapshotProjection {
             has_snapshot: false,
@@ -37,8 +38,7 @@ pub fn reduce_state_minis_mobile_snapshot(
 
     let mut sessions_by_surface: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut latest_global_settings: Option<(i64, Value)> = None;
-    for mini in &sessions {
-        let session = decode_session_payload(mini)?;
+    for (mini, session) in &sessions {
         if let Some(settings) = session.get("globalSettings").cloned() {
             if latest_global_settings
                 .as_ref()
@@ -51,7 +51,7 @@ pub fn reduce_state_minis_mobile_snapshot(
         sessions_by_surface
             .entry(mini.assistant_surface.clone())
             .or_default()
-            .push(session);
+            .push(session.clone());
     }
     for sessions in sessions_by_surface.values_mut() {
         sort_sessions_by_freshness(sessions);
@@ -89,6 +89,17 @@ pub fn reduce_state_minis_mobile_snapshot(
         has_snapshot: true,
         snapshot_json,
     })
+}
+
+fn decodable_sessions(sessions: &[ClientStateMini]) -> Vec<(&ClientStateMini, Value)> {
+    sessions
+        .iter()
+        .filter_map(|mini| {
+            decode_session_payload(mini)
+                .ok()
+                .map(|session| (mini, session))
+        })
+        .collect()
 }
 
 fn global_settings(settings: Option<Value>, selected_surface: &str) -> Value {
@@ -192,20 +203,21 @@ fn fallback_assistant_surface(surface: &str) -> &str {
     }
 }
 
-fn selected_surface(sessions: &[ClientStateMini]) -> String {
+fn selected_surface(sessions: &[(&ClientStateMini, Value)]) -> String {
     let mut candidates = sessions
         .iter()
-        .filter(|session| is_known_assistant_surface(&session.assistant_surface))
+        .filter(|(session, _)| is_known_assistant_surface(&session.assistant_surface))
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         right
+            .0
             .seq
-            .cmp(&left.seq)
-            .then_with(|| left.session_id.cmp(&right.session_id))
+            .cmp(&left.0.seq)
+            .then_with(|| left.0.session_id.cmp(&right.0.session_id))
     });
     candidates
         .first()
-        .map(|session| session.assistant_surface.clone())
+        .map(|(session, _)| session.assistant_surface.clone())
         .unwrap_or_else(|| DEFAULT_ASSISTANT_SURFACE.to_owned())
 }
 
@@ -213,17 +225,18 @@ fn is_known_assistant_surface(surface: &str) -> bool {
     KNOWN_ASSISTANT_SURFACES.contains(&surface)
 }
 
-fn revision(latest_seq: i64, sessions: &[ClientStateMini]) -> String {
+fn revision(latest_seq: i64, sessions: &[(&ClientStateMini, Value)]) -> String {
     sessions
         .iter()
-        .filter(|session| !session.revision.trim().is_empty())
+        .filter(|(session, _)| !session.revision.trim().is_empty())
         .max_by(|left, right| {
-            left.seq
-                .cmp(&right.seq)
-                .then_with(|| left.assistant_surface.cmp(&right.assistant_surface))
-                .then_with(|| left.session_id.cmp(&right.session_id))
+            left.0
+                .seq
+                .cmp(&right.0.seq)
+                .then_with(|| left.0.assistant_surface.cmp(&right.0.assistant_surface))
+                .then_with(|| left.0.session_id.cmp(&right.0.session_id))
         })
-        .map(|session| session.revision.trim().to_owned())
+        .map(|(session, _)| session.revision.trim().to_owned())
         .unwrap_or_else(|| format!("{REVISION_PREFIX}{latest_seq}"))
 }
 
@@ -341,8 +354,33 @@ mod tests {
     }
 
     #[test]
-    fn mobile_snapshot_rejects_mismatched_payload_session_id() {
-        let err = reduce_state_minis_mobile_snapshot(
+    fn mobile_snapshot_skips_stale_invalid_minis() {
+        let projection = reduce_state_minis_mobile_snapshot(
+            2,
+            vec![
+                ClientStateMini {
+                    session_id: "envelope-id".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 1,
+                    revision: "rev-1".to_owned(),
+                    payload_json: session_json("payload-id", "S1", 100),
+                },
+                mini("thread-valid", "codex", 2, "rev-2", "S2", 200),
+            ],
+            String::new(),
+        )
+        .expect("projection skips invalid mini");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+
+        assert!(projection.has_snapshot);
+        assert_eq!(snapshot["sessions"].as_array().expect("sessions").len(), 1);
+        assert_eq!(snapshot["sessions"][0]["id"], "thread-valid");
+        assert_eq!(snapshot["revision"], "rev-2");
+    }
+
+    #[test]
+    fn mobile_snapshot_returns_empty_when_all_minis_are_invalid() {
+        let projection = reduce_state_minis_mobile_snapshot(
             1,
             vec![ClientStateMini {
                 session_id: "envelope-id".to_owned(),
@@ -353,9 +391,10 @@ mod tests {
             }],
             String::new(),
         )
-        .expect_err("mismatch");
+        .expect("projection");
 
-        assert_eq!(err, ClientCoreError::StateMiniSessionIdMismatch);
+        assert!(!projection.has_snapshot);
+        assert!(projection.snapshot_json.is_empty());
     }
 
     #[test]

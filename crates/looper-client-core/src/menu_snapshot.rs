@@ -130,8 +130,8 @@ pub fn reduce_state_minis_menu_snapshot(
     let mut sessions = snapshot
         .sessions
         .iter()
-        .map(decode_session_mini)
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(|session| decode_session_mini(session).ok())
+        .collect::<Vec<_>>();
     sessions.sort_by(compare_menu_sessions);
 
     Ok(ClientMenuBarSessionMiniLocalSnapshot {
@@ -737,21 +737,31 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mismatched_payload_session_id() {
-        let err = reduce_state_minis_menu_snapshot(ClientLocalStateSnapshot {
-            latest_seq: 1,
-            sessions: vec![mini(
-                "envelope-id",
-                "codex",
-                1,
-                minimal_payload("payload-id", 100, None),
-            )],
+    fn skips_stale_invalid_minis() {
+        let snapshot = reduce_state_minis_menu_snapshot(ClientLocalStateSnapshot {
+            latest_seq: 2,
+            sessions: vec![
+                mini(
+                    "envelope-id",
+                    "codex",
+                    1,
+                    minimal_payload("payload-id", 100, None),
+                ),
+                mini(
+                    "thread-valid",
+                    "codex",
+                    2,
+                    minimal_payload("thread-valid", 200, None),
+                ),
+            ],
             pending_commands: vec![],
             server_time: String::new(),
         })
-        .expect_err("mismatch");
+        .expect("menu projection skips invalid mini");
 
-        assert_eq!(err, ClientCoreError::StateMiniSessionIdMismatch);
+        assert_eq!(snapshot.latest_seq, 2);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].session_id, "thread-valid");
     }
 
     fn mini(

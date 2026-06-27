@@ -323,8 +323,6 @@ struct CompanionAppViewState {
 
         if let connectionRoutePresentation {
             parts.append("\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)")
-        } else if let serverHealth = model.serverHealth, serverHealth.ok {
-            parts.append("API running at \(serverHealth.baseURL)")
         }
 
         return parts.isEmpty ? "Connected." : "\(parts.joined(separator: " · "))."

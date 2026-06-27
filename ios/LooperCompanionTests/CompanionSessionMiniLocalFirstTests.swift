@@ -132,11 +132,19 @@ struct CompanionSessionMiniLocalFirstTests {
         model.realtimeLatestSeq = 10
         model.connectionState = .connected
         model.activeSessionRouteBaseURL = URL(string: "http://192.168.2.10:8766")
+        model.serverHealth = CompanionServerHealth(
+            ok: true,
+            baseURL: "http://stale-http-route.local:8765",
+            baseURLs: ["http://stale-http-route.local:8765"],
+            serverTime: Constants.heartbeatTimestamp
+        )
 
         #expect(model.realtimeServerTime == Constants.heartbeatTimestamp)
         #expect(!model.viewState.connectivitySummary.localizedCaseInsensitiveContains("stream"))
         #expect(!model.viewState.connectivitySummary.contains("synced "))
         #expect(!model.viewState.connectivitySummary.contains("running goal"))
+        #expect(!model.viewState.connectivitySummary.contains("API running"))
+        #expect(!model.viewState.connectivitySummary.contains("stale-http-route"))
         #expect(service.loadSnapshotCallCount == 0)
     }
 
