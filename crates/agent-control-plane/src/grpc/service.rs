@@ -16,8 +16,8 @@ use crate::grpc::auth::authorize_mobile_api_request_from_peer;
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::{
-    mobile_session_mini_delta, session_mini_projection_inputs_with_mode,
-    session_mini_records_contain_session,
+    compact_mobile_session_mini_record, mobile_session_mini_delta,
+    session_mini_projection_inputs_with_mode, session_mini_records_contain_session,
 };
 use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventInput, MobileEventKind, MobileEventRecord,
@@ -532,7 +532,9 @@ fn state_delta_payload_json(
     }
     let replace = record.entity_id == MOBILE_STATE_ENTITY_ID;
     if !replace && minis.len() == 1 {
-        return minis[0].body_json.clone();
+        return compact_mobile_session_mini_record(&minis[0]).unwrap_or_else(|| {
+            state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
+        });
     }
     mobile_session_mini_delta(record.seq, &minis, replace).to_string()
 }

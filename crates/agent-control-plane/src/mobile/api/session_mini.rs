@@ -28,8 +28,38 @@ const MINI_TITLE_MAX_CHARS: usize = 240;
 const MINI_PREVIEW_MAX_CHARS: usize = 600;
 const MINI_REASON_MAX_CHARS: usize = 240;
 const MINI_METADATA_TEXT_MAX_CHARS: usize = 320;
+const MINI_SCALAR_TEXT_MAX_CHARS: usize = 320;
+const MINI_NOTIFICATION_TARGET_MAX_COUNT: usize = 8;
 const EMBEDDED_CONTROL_FIELDS: &[&str] = &["revision", "globalSettings"];
 const DETAIL_METADATA_FIELDS: &[&str] = &["spawn", "sources", "tags"];
+const COMPACT_SESSION_MINI_FIELDS: &[&str] = &[
+    "id",
+    "sessionId",
+    "seq",
+    "assistantSurface",
+    "ref",
+    "status",
+    "effectiveMode",
+    "canSendPrompt",
+    "lastUpdatedAt",
+    "createdAtMs",
+    "updatedAtMs",
+    "latestMessageAtMs",
+    "lastActivityAtMs",
+    "lastActivityAt",
+    "lastMessageAtMs",
+    "lastMessageAt",
+    "isArchived",
+    "title",
+    "promptDeliveryUnavailableReason",
+    "assistantPreview",
+    "metadata",
+    "replyable",
+    "blockedGoal",
+    "queueCount",
+    "lifecycle",
+    "notificationStatus",
+];
 #[cfg(test)]
 const SESSION_MINI_CONTROL_FRAME_MAX_BYTES: usize = 512 * 1024;
 #[cfg(test)]
@@ -97,6 +127,11 @@ pub fn mobile_session_mini_delta(
     replace: bool,
 ) -> Value {
     mobile_session_mini_response(latest_seq, records, replace)
+}
+
+pub fn compact_mobile_session_mini_record(record: &MobileSessionMiniRecord) -> Option<String> {
+    let payload = serde_json::from_str::<Value>(&record.body_json).ok()?;
+    compact_session_mini_payload(payload).map(|payload| payload.to_string())
 }
 
 pub fn session_mini_records_contain_session(
@@ -378,7 +413,24 @@ fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
             metadata.remove(*field);
         }
     }
-    Some(payload)
+
+    let mut compact = Map::new();
+    for field in COMPACT_SESSION_MINI_FIELDS {
+        let Some(value) = object.get(*field) else {
+            continue;
+        };
+        let bounded = match *field {
+            "title" => bounded_value(value, MINI_TITLE_MAX_CHARS),
+            "assistantPreview" => bounded_value(value, MINI_PREVIEW_MAX_CHARS),
+            "promptDeliveryUnavailableReason" => bounded_value(value, MINI_REASON_MAX_CHARS),
+            "metadata" => bounded_metadata(Some(value)).unwrap_or(Value::Null),
+            "blockedGoal" => bounded_blocked_goal_payload(value).unwrap_or(Value::Null),
+            "notificationStatus" => bounded_notification_status(value).unwrap_or(Value::Null),
+            _ => bounded_value(value, MINI_SCALAR_TEXT_MAX_CHARS),
+        };
+        compact.insert((*field).to_owned(), bounded);
+    }
+    Some(Value::Object(compact))
 }
 
 fn copy_summary_field(summary: &Map<String, Value>, mini: &mut Map<String, Value>, field: &str) {
@@ -508,6 +560,51 @@ fn bounded_metadata(metadata: Option<&Value>) -> Option<Value> {
     Some(Value::Object(bounded))
 }
 
+fn bounded_blocked_goal_payload(blocked_goal: &Value) -> Option<Value> {
+    if blocked_goal.is_null() {
+        return Some(Value::Null);
+    }
+    let blocked_goal = blocked_goal.as_object()?;
+    let mut bounded = Map::new();
+    for field in ["id", "title", "reason", "status"] {
+        if let Some(value) = blocked_goal.get(field) {
+            bounded.insert(
+                field.to_owned(),
+                bounded_value(value, MINI_METADATA_TEXT_MAX_CHARS),
+            );
+        }
+    }
+    Some(Value::Object(bounded))
+}
+
+fn bounded_notification_status(notification_status: &Value) -> Option<Value> {
+    if notification_status.is_null() {
+        return Some(Value::Null);
+    }
+    let notification_status = notification_status.as_object()?;
+    let mut bounded = Map::new();
+    for field in ["enabled", "usesDefault"] {
+        if let Some(value) = notification_status.get(field) {
+            bounded.insert(field.to_owned(), value.clone());
+        }
+    }
+    let target_ids = notification_status
+        .get("targetIds")
+        .and_then(Value::as_array)
+        .map(|target_ids| {
+            Value::Array(
+                target_ids
+                    .iter()
+                    .take(MINI_NOTIFICATION_TARGET_MAX_COUNT)
+                    .map(|target_id| bounded_value(target_id, MINI_METADATA_TEXT_MAX_CHARS))
+                    .collect(),
+            )
+        })
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    bounded.insert("targetIds".to_owned(), target_ids);
+    Some(Value::Object(bounded))
+}
+
 fn bounded_git_repository(git_repository: Option<&Value>) -> Option<Value> {
     let git_repository = git_repository?.as_object()?;
     let mut bounded = Map::new();
@@ -634,6 +731,7 @@ mod tests {
                 "tags": ["codex"]
             },
             "title": "Main task",
+            "unknownHuge": "x".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES),
         });
 
         let compacted = compact_session_mini_payload(payload).expect("compacted payload");
@@ -646,9 +744,11 @@ mod tests {
         );
         assert!(compacted.get("revision").is_none());
         assert!(compacted.get("globalSettings").is_none());
+        assert!(compacted.get("unknownHuge").is_none());
         assert!(compacted["metadata"].get("spawn").is_none());
         assert!(compacted["metadata"].get("sources").is_none());
         assert!(compacted["metadata"].get("tags").is_none());
+        assert!(compacted.to_string().len() < SESSION_MINI_CONTROL_FRAME_MAX_BYTES);
     }
 
     #[test]

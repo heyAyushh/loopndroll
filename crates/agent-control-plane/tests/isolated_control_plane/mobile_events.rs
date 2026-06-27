@@ -14,7 +14,9 @@ const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
 const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
+const SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST: usize = 512 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
+const OVERSIZED_LEGACY_SESSION_MINI_TEXT_CHARS: usize = 600 * 1024;
 const PROMPT_DELIVERY_WAIT_ATTEMPTS: usize = 200;
 const PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS: u64 = 100;
 
@@ -785,6 +787,82 @@ async fn grpc_session_stream_replays_unprojected_state_as_control_markers() {
         Some("projection-missing")
     );
     assert_eq!(state_delta_payload_delta(&replayed_third).as_deref(), None);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_compacts_single_oversized_session_mini_delta() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let previous = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input(
+            "thread-before",
+            "revision-before",
+            "before",
+        ))
+        .expect("record previous state delta");
+    let oversized_text = "x".repeat(OVERSIZED_LEGACY_SESSION_MINI_TEXT_CHARS);
+    let oversized = control_plane
+        .store()
+        .record_mobile_state_event_with_session_mini(
+            state_delta_input("thread-main", "revision-oversized-mini", "oversized"),
+            MobileSessionMiniProjectionInput {
+                session_id: "thread-main".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "seq": previous.seq + 1,
+                    "revision": oversized_text,
+                    "globalSettings": {
+                        "defaultPrompt": oversized_text,
+                    },
+                    "metadata": {
+                        "projectPath": "/Users/ay/Documents/looper",
+                        "spawn": {"rootThreadId": "thread-main"},
+                        "sources": [{"label": "Transcript", "value": oversized_text}],
+                        "tags": [oversized_text],
+                    },
+                    "title": oversized_text,
+                    "assistantPreview": oversized_text,
+                    "unknownHuge": oversized_text,
+                    "status": "waiting",
+                    "canSendPrompt": true,
+                }),
+            },
+        )
+        .expect("record oversized session mini state delta");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(previous.seq)],
+    )
+    .await;
+
+    let delta = next_session_state_delta(&mut stream, "oversized compact state delta").await;
+    assert_eq!(delta.seq, oversized.seq);
+    assert!(
+        delta.payload_json.len() < SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+        "payload should stay below control-frame cap, got {} bytes",
+        delta.payload_json.len()
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&delta.payload_json).expect("compact payload json");
+    assert_eq!(payload["sessionId"], "thread-main");
+    assert_eq!(payload["assistantSurface"], "codex");
+    assert_eq!(payload["status"], "waiting");
+    assert_eq!(payload["canSendPrompt"], true);
+    assert!(payload["title"].as_str().expect("bounded title").len() < oversized_text.len());
+    assert!(payload.get("revision").is_none());
+    assert!(payload.get("globalSettings").is_none());
+    assert!(payload.get("unknownHuge").is_none());
+    assert!(payload["metadata"].get("spawn").is_none());
+    assert!(payload["metadata"].get("sources").is_none());
+    assert!(payload["metadata"].get("tags").is_none());
 }
 
 #[tokio::test]
