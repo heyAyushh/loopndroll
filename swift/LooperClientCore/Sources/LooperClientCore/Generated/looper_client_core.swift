@@ -577,6 +577,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientNotificationReplyPersistResult
 
+    func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) async throws  -> ClientLocalStateSnapshot
+
     func saveDefaultPrompt(prompt: String) async throws  -> ClientSessionCommandIntentResult
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
@@ -821,6 +823,23 @@ open func persistNotificationReplyWithGeneratedMutation(notificationId: String, 
         FfiConverterString.lower(assistantSurface),$0
     )
 })
+}
+
+open func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String)async throws  -> ClientLocalStateSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_recover_state_mini_snapshot(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeClientEndpoint.lower(endpoints),FfiConverterString.lower(bearerToken),FfiConverterString.lower(mobileSessionHeader)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientLocalStateSnapshot_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
 }
 
 open func saveDefaultPrompt(prompt: String)async throws  -> ClientSessionCommandIntentResult  {
@@ -4803,6 +4822,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 47870) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_recover_state_mini_snapshot() != 5143) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_save_default_prompt() != 44743) {

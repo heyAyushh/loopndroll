@@ -42,6 +42,19 @@ enum CompanionLocalSessionReconcileReason: String {
             return false
         }
     }
+
+    var shouldRecoverStateMiniSnapshot: Bool {
+        switch self {
+        case .activeScene,
+             .sessionsPullRefresh,
+             .searchPullRefresh,
+             .unlockRecovery:
+            return true
+        case .fallbackTimer,
+             .continuationWithoutSession:
+            return false
+        }
+    }
 }
 
 @MainActor
@@ -79,6 +92,7 @@ final class CompanionAppModel {
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
+    @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
 
     init(
         environment: CompanionEnvironment,
@@ -546,6 +560,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
             )
+            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
             return
         }
 
@@ -553,6 +568,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "session-mini:local-reconcile-applied reason=\(reason.rawValue)"
             )
+            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
             return
         }
 
@@ -561,12 +577,59 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
             )
+            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
+            return
+        }
+
+        if await recoverStateMiniSnapshotIfNeeded(reason: reason) {
             return
         }
 
         CompanionDiagnostics.record(
             "session-mini:local-reconcile-wait reason=\(reason.rawValue)"
         )
+    }
+
+    private func recoverStateMiniSnapshotIfNeeded(
+        reason: CompanionLocalSessionReconcileReason
+    ) async -> Bool {
+        guard reason.shouldRecoverStateMiniSnapshot else {
+            return false
+        }
+        if reason == .activeScene {
+            guard !didAttemptForegroundSessionMiniRecovery else {
+                return false
+            }
+        }
+        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+            return false
+        }
+
+        if reason == .activeScene {
+            didAttemptForegroundSessionMiniRecovery = true
+        }
+
+        do {
+            guard let recoveredSnapshot = try await sessionRuntime.recoverStateMiniSnapshot() else {
+                CompanionDiagnostics.record(
+                    "session-mini:recovery-empty reason=\(reason.rawValue)"
+                )
+                return false
+            }
+            applyCachedSnapshot(
+                recoveredSnapshot,
+                reason: "session-mini-recovery-\(reason.rawValue)"
+            )
+            CompanionDiagnostics.record(
+                "session-mini:recovery-applied reason=\(reason.rawValue) sessions=\(recoveredSnapshot.sessions.count)"
+            )
+            return true
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:recovery-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
+            )
+            return false
+        }
     }
 
     private func adoptServerHealthBaseURLsIfNeeded(

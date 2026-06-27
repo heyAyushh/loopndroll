@@ -17,6 +17,7 @@ use crate::{
         ClientSessionPromptIntentResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
         ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
+    session_transport::fetch_state_mini_snapshot,
 };
 
 const MOBILE_SYNC_REASON_DELTA: &str = "delta";
@@ -131,6 +132,18 @@ impl LooperClientCoreSessionRuntime {
 
     pub fn local_snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         self.local_store.snapshot()
+    }
+
+    pub async fn recover_state_mini_snapshot(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+        bearer_token: String,
+        mobile_session_header: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        let snapshot =
+            fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await?;
+        self.client_core.replace_state_minis(snapshot.clone())?;
+        self.local_store.replace_state_minis(snapshot)
     }
 
     pub async fn set_mode(

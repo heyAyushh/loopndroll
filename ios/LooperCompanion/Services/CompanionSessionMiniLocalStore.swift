@@ -196,6 +196,24 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         localStore.currentStateMiniSnapshot()
     }
 
+    func recoverStateMiniSnapshot() async throws -> MobileSnapshot? {
+        guard let startConfiguration = currentStartConfiguration() else {
+            throw CompanionSessionRuntimeError.notConfigured
+        }
+        let endpoints = try await startConfiguration.endpointResolver().map {
+            ClientEndpoint(url: $0.absoluteString, lastGood: false)
+        }
+        guard !endpoints.isEmpty else {
+            throw CompanionSessionRuntimeError.noRealtimeEndpoint
+        }
+        let localSnapshot = try await sessionManager.recoverStateMiniSnapshot(
+            endpoints: endpoints,
+            bearerToken: startConfiguration.bearerToken ?? "",
+            mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
+        )
+        return try localStore.mobileSnapshot(from: localSnapshot)
+    }
+
     func enqueueNotificationReplyCommand(
         notificationID: String,
         threadID: String,

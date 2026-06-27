@@ -1500,7 +1500,9 @@ impl ClientCoreState {
         if delta.has_session {
             self.upsert_state_mini(delta.session);
         } else if !delta.sessions.is_empty() {
-            self.state_minis = normalize_state_minis(delta.sessions);
+            for session in normalize_state_minis(delta.sessions) {
+                self.upsert_state_mini(session);
+            }
         }
 
         self.latest_seq = self.latest_seq.max(delta.seq).max(delta.latest_seq);
@@ -2424,6 +2426,51 @@ mod tests {
             update.snapshot.state_minis[0].payload_json,
             r#"{"title":"recovered"}"#
         );
+    }
+
+    #[test]
+    fn stream_session_batch_merges_without_erasing_other_surfaces() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 10,
+            sessions: vec![
+                state_mini("thread-codex", "codex", 8, "rev-8", "old codex"),
+                state_mini("thread-devin", "devin", 9, "rev-9", "devin"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+
+        let result = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: "state_mini_delta".to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini(
+                    "thread-codex",
+                    "codex",
+                    11,
+                    "rev-11",
+                    "new codex",
+                )],
+            })
+            .expect("apply stream batch");
+
+        assert!(result.did_change);
+        assert_eq!(result.snapshot.state_minis.len(), 2);
+        assert!(result.snapshot.state_minis.iter().any(|session| {
+            session.session_id == "thread-devin" && session.assistant_surface == "devin"
+        }));
+        assert!(result.snapshot.state_minis.iter().any(|session| {
+            session.session_id == "thread-codex"
+                && session.assistant_surface == "codex"
+                && session.payload_json.contains("new codex")
+        }));
     }
 
     #[test]

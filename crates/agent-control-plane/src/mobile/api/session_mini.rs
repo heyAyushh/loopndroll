@@ -8,7 +8,6 @@ use crate::mobile::session::{
     MobileSessionState, NOTIFICATION_TARGET_IPHONE, NOTIFICATION_TARGET_MACOS,
 };
 
-use super::assistant_identity::thread_matches_assistant_surface;
 use super::overrides::{is_deleted, session_override};
 use super::settings::mobile_global_settings;
 use super::summary::session_summary;
@@ -215,9 +214,6 @@ fn session_mini_values(
         .iter()
         .enumerate()
         .filter(|(_, thread)| !is_deleted(thread, session_state))
-        .filter(|(_, thread)| {
-            thread_matches_assistant_surface(thread, &session_state.assistant_surface)
-        })
         .map(|(index, thread)| {
             session_mini_value(
                 thread,

@@ -54,6 +54,19 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         try runtime.localSnapshot()
     }
 
+    @discardableResult
+    public func recoverStateMiniSnapshot(
+        endpoints: [ClientEndpoint],
+        bearerToken: String,
+        mobileSessionHeader: String
+    ) async throws -> ClientLocalStateSnapshot {
+        try await runtime.recoverStateMiniSnapshot(
+            endpoints: endpoints,
+            bearerToken: bearerToken,
+            mobileSessionHeader: mobileSessionHeader
+        )
+    }
+
     public func stateSnapshot() throws -> ClientStateSnapshot {
         try runtime.stateSnapshot()
     }
