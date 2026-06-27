@@ -144,9 +144,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         mobileSessionHeader: String?,
         preferredRealtimeEndpointURLs: () async throws -> [URL]
     ) async throws -> ClientStateSnapshot? {
-        if (try? isConfigured()) == true {
-            return nil
-        }
         let endpoints = try await preferredRealtimeEndpointURLs().map {
             ClientEndpoint(url: $0.absoluteString, lastGood: false)
         }
@@ -172,10 +169,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     @discardableResult
     func stop() throws -> ClientStateSnapshot {
         try sessionManager.stop()
-    }
-
-    private func isConfigured() throws -> Bool {
-        try sessionManager.isRuntimeConfigured()
     }
 
     func cachedSnapshot() throws -> MobileSnapshot? {
@@ -368,6 +361,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
+        if let outboxDepth = try? outboxDepth(), outboxDepth == 0 {
+            return try await drainNotificationReplyOutbox()
+        }
+
         await prepareSessionRuntime()
         let result = try await drainNotificationReplyOutbox()
         let notificationID = result.notificationId

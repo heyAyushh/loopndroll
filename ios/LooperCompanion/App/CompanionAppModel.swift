@@ -177,7 +177,6 @@ final class CompanionAppModel {
     }
 
     func prepareForActiveState() async {
-        let didResetConnectionForActiveState: Bool
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
         if reloadsServiceFromStoredConnection,
@@ -189,9 +188,6 @@ final class CompanionAppModel {
                     ? CachedSnapshotRestoreReason.bundledConnectionChange
                     : CachedSnapshotRestoreReason.storedConnectionChange
             )
-            didResetConnectionForActiveState = true
-        } else {
-            didResetConnectionForActiveState = false
         }
 
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
@@ -203,9 +199,6 @@ final class CompanionAppModel {
         )
         configureStopQuickActions()
         await refreshLocalNotificationStatus()
-        if !didResetConnectionForActiveState {
-            prepareSessionRuntimeInBackground()
-        }
         startSessionRuntimeSyncIfNeeded()
         startNotificationReplyOutboxDrainIfNeeded()
 
@@ -1268,8 +1261,28 @@ final class CompanionAppModel {
         _ error: Error,
         suppressErrorWhenSnapshotUsable: Bool
     ) {
+        let mappedErrorState = connectionState(for: error)
+        if suppressErrorWhenSnapshotUsable {
+            let projection = reduceSnapshotLoadFailureOrCrash(
+                mappedErrorState: mappedErrorState,
+                currentState: connectionState,
+                hasUsableSnapshot: snapshot != nil,
+                hasServerHealth: serverHealth != nil,
+                hasReachedBaseURL: reachedBaseURL != nil
+            )
+            if projection.preservedConnectedState {
+                CompanionDiagnostics.record(
+                    "connection:local-state-preserved error=\(error.localizedDescription)"
+                )
+            }
+            connectionState = connectionState(rawValue: projection.connectionState)
+            clearConnectionRouteStateIfNeeded(shouldClear: projection.shouldClearRouteState)
+            errorMessage = projection.shouldSuppressError ? nil : error.localizedDescription
+            return
+        }
+
         let projection = reduceConnectionFailureOrCrash(
-            mappedErrorState: connectionState(for: error),
+            mappedErrorState: mappedErrorState,
             hasUsableSnapshot: snapshot != nil,
             suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
         )
@@ -1376,6 +1389,7 @@ final class CompanionAppModel {
             cachedSnapshot,
             preferredSurface: cachedSnapshot.globalSettings.assistantSurface
         )
+        promoteCachedSnapshotConnectionIfNeeded(reason: reason)
         lastUpdatedAt = Date()
         spotlightCoordinator.clearForCachedSnapshotIfNeeded()
         CompanionDiagnostics.record(
@@ -1394,6 +1408,16 @@ final class CompanionAppModel {
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
         )
+    }
+
+    private func promoteCachedSnapshotConnectionIfNeeded(reason: String) {
+        guard connectionState == .connecting, snapshotState.hasSnapshot else {
+            return
+        }
+
+        connectionState = .connected
+        errorMessage = nil
+        CompanionDiagnostics.record("connection:local-cache-ready reason=\(reason)")
     }
 
     private func scheduleLocalFallbackNotificationsIfNeeded(

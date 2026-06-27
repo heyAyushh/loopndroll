@@ -5,7 +5,7 @@ import Testing
 @Suite("CompanionSessionRuntime command core")
 struct CompanionSessionRuntimeCommandCoreTests {
     @Test
-    func sessionRuntimeStartIfNeededOwnsEndpointMapping() async throws {
+    func sessionRuntimeStartIfNeededLetsRustCoreOwnStreamRestart() async throws {
         let runtime = try Self.temporarySessionRuntime()
         let endpointURL = try #require(URL(string: "http://100.64.0.2:8765"))
         var endpointProviderCalls = 0
@@ -23,7 +23,7 @@ struct CompanionSessionRuntimeCommandCoreTests {
             mobileSessionHeader: "mobile-session"
         ) {
             endpointProviderCalls += 1
-            return []
+            return [endpointURL]
         }
         _ = try runtime.stop()
         let restartedSnapshot = try await runtime.startIfNeeded(
@@ -36,10 +36,11 @@ struct CompanionSessionRuntimeCommandCoreTests {
 
         #expect(snapshot?.phase == .ready)
         #expect(snapshot?.endpointUrl == endpointURL.absoluteString)
-        #expect(secondStart == nil)
+        #expect(secondStart?.phase == .ready)
+        #expect(secondStart?.endpointUrl == endpointURL.absoluteString)
         #expect(restartedSnapshot?.phase == .ready)
         #expect(restartedSnapshot?.endpointUrl == endpointURL.absoluteString)
-        #expect(endpointProviderCalls == 2)
+        #expect(endpointProviderCalls == 3)
     }
 
     @Test

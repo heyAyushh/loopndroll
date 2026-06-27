@@ -30,7 +30,10 @@ final class CompanionSessionMiniController {
             return
         }
 
-        syncTask = Task { @MainActor in
+        syncTask = Task { @MainActor [weak self] in
+            defer {
+                self?.syncTask = nil
+            }
             await sessionRuntime.prepareSessionRuntime()
             await sessionRuntime.runStateMiniSync(
                 onUpdate: { update in
