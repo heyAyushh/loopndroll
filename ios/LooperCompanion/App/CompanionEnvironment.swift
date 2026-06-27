@@ -36,11 +36,7 @@ struct CompanionEnvironment {
                 CompanionSessionRuntimeStartConfiguration(
                     bearerToken: connection.bearerToken,
                     endpointResolver: {
-                        let resolvedHealth = try await service.resolveServerHealth()
-                        let health = resolvedHealth.health
-                        return CompanionConfiguration.uniqueAttemptableBaseURLs(
-                            ([health.grpcBaseURL] + health.grpcBaseURLs).compactMap(URL.init(string:))
-                        )
+                        CompanionConfiguration.uniqueAttemptableBaseURLs(baseURLs)
                     }
                 )
             )
