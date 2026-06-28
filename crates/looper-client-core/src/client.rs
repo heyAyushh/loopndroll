@@ -515,6 +515,9 @@ impl LooperClientCore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
+        if snapshot.latest_seq < state.latest_seq {
+            return Ok(state.snapshot());
+        }
         state.latest_seq = snapshot.latest_seq;
         state.server_time = snapshot.server_time;
         state.state_minis = normalize_state_minis(snapshot.sessions);
@@ -1476,20 +1479,31 @@ impl LooperClientCore {
             } => {
                 require_valid_sequence(snapshot.latest_seq)?;
                 validate_state_minis(&snapshot.sessions)?;
-                state.latest_seq = snapshot.latest_seq;
-                state.server_time = snapshot.server_time;
-                state.state_minis = normalize_state_minis(snapshot.sessions);
-                if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
-                    state.revision = revision;
+                if snapshot.latest_seq < state.latest_seq {
+                    state.phase = ConnectionPhase::Ready;
+                    state.last_error.clear();
+                    (
+                        ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                        false,
+                        state.latest_seq,
+                        error_description,
+                    )
+                } else {
+                    state.latest_seq = snapshot.latest_seq;
+                    state.server_time = snapshot.server_time;
+                    state.state_minis = normalize_state_minis(snapshot.sessions);
+                    if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
+                        state.revision = revision;
+                    }
+                    state.phase = ConnectionPhase::Ready;
+                    state.last_error.clear();
+                    (
+                        ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                        true,
+                        state.latest_seq,
+                        error_description,
+                    )
                 }
-                state.phase = ConnectionPhase::Ready;
-                state.last_error.clear();
-                (
-                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
-                    true,
-                    state.latest_seq,
-                    error_description,
-                )
             }
             StateMiniStreamEvent::Reconnecting {
                 latest_seq,
@@ -3362,6 +3376,39 @@ mod tests {
             update.snapshot.state_minis[0].payload_json,
             r#"{"title":"recovered"}"#
         );
+    }
+
+    #[test]
+    fn recovered_snapshot_does_not_rewind_state() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 20,
+            sessions: vec![state_mini("thread-zed", "zed", 20, "rev-20", "zed")],
+            server_time: "2026-06-25T00:00:20Z".to_owned(),
+        })
+        .expect("seed realtime state mini");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
+                snapshot: ClientStateMiniSnapshot {
+                    latest_seq: 10,
+                    sessions: vec![state_mini("thread-codex", "codex", 10, "rev-10", "codex")],
+                    server_time: "2026-06-25T00:00:10Z".to_owned(),
+                },
+                error_description: "seq_gap".to_owned(),
+            })
+            .expect("stale stream recovery snapshot");
+
+        assert_eq!(
+            update.reason,
+            ClientStateMiniStreamUpdateReason::RecoveryRequired
+        );
+        assert!(!update.did_change);
+        assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(update.snapshot.latest_seq, 20);
+        assert_eq!(update.snapshot.state_minis.len(), 1);
+        assert_eq!(update.snapshot.state_minis[0].session_id, "thread-zed");
+        assert_eq!(update.snapshot.state_minis[0].assistant_surface, "zed");
     }
 
     #[test]

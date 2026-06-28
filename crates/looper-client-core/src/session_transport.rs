@@ -468,9 +468,10 @@ async fn drive_state_mini_stream_session(
                             })?;
                     }
                     Some(proto::server_frame::Frame::StateDelta(delta)) => {
-                        latest_seq = state_mini_data_cursor_after_delta(latest_seq, delta.seq);
+                        let delta = client_state_mini_delta(delta)?;
+                        latest_seq = state_mini_data_cursor_after_delta(latest_seq, &delta);
                         events
-                            .send(StateMiniStreamEvent::Delta(client_state_mini_delta(delta)?))
+                            .send(StateMiniStreamEvent::Delta(delta))
                             .await
                             .map_err(|error| StateMiniTransportError::Transport {
                                 latest_seq,
@@ -500,15 +501,24 @@ async fn drive_state_mini_stream_session(
 }
 
 fn state_mini_data_cursor_after_ack(current_seq: i64, ack_seq: i64) -> i64 {
-    current_seq.max(ack_seq)
+    let _ = ack_seq;
+    current_seq
 }
 
-fn state_mini_data_cursor_after_delta(current_seq: i64, delta_seq: i64) -> i64 {
-    current_seq.max(delta_seq)
+fn state_mini_data_cursor_after_delta(current_seq: i64, delta: &ClientStateMiniDelta) -> i64 {
+    if is_state_mini_bulk_delta(delta) {
+        current_seq
+    } else {
+        current_seq.max(delta.seq)
+    }
 }
 
 fn state_mini_data_cursor_after_heartbeat(current_seq: i64, heartbeat_seq: i64) -> i64 {
     current_seq.max(heartbeat_seq)
+}
+
+fn is_state_mini_bulk_delta(delta: &ClientStateMiniDelta) -> bool {
+    !delta.has_session && (delta.kind == STATE_MINI_REPLACEMENT_KIND || !delta.sessions.is_empty())
 }
 
 fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
@@ -1460,14 +1470,92 @@ mod tests {
     #[test]
     fn state_mini_replay_cursor_advances_on_server_finality_frames() {
         let current_seq = 10;
+        let single_delta = ClientStateMiniDelta {
+            seq: 11,
+            latest_seq: 11,
+            entity_id: "thread-1".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-11".to_owned(),
+            server_time: "2026-06-27T00:00:11Z".to_owned(),
+            has_session: true,
+            session: ClientStateMini {
+                session_id: "thread-1".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                seq: 11,
+                revision: "rev-11".to_owned(),
+                payload_json: r#"{"title":"One"}"#.to_owned(),
+            },
+            sessions: Vec::new(),
+        };
 
-        assert_eq!(state_mini_data_cursor_after_ack(current_seq, 20), 20);
-        assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 30), 30);
         assert_eq!(
-            state_mini_data_cursor_after_delta(current_seq, 9),
+            state_mini_data_cursor_after_ack(current_seq, 20),
             current_seq
         );
-        assert_eq!(state_mini_data_cursor_after_delta(current_seq, 11), 11);
+        assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 30), 30);
+        assert_eq!(
+            state_mini_data_cursor_after_delta(current_seq, &single_delta),
+            11
+        );
+    }
+
+    #[test]
+    fn partial_replacement_chunk_reconnect_waits_for_heartbeat_finality() {
+        let current_seq = 10;
+        let replacement = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 11,
+            entity_id: "mobile".to_owned(),
+            kind: "session_changed".to_owned(),
+            revision: "rev-11".to_owned(),
+            server_time: "2026-06-27T00:00:11Z".to_owned(),
+            payload_json: json!({
+                "latestSeq": 11,
+                "replace": true,
+                "sessions": [
+                    {
+                        "sessionId": "thread-1",
+                        "assistantSurface": "codex",
+                        "seq": 11,
+                        "revision": "rev-11",
+                        "title": "One"
+                    }
+                ]
+            })
+            .to_string(),
+        })
+        .expect("replacement chunk");
+        let continuation = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 11,
+            entity_id: "mobile".to_owned(),
+            kind: "session_mini_batch".to_owned(),
+            revision: "rev-11".to_owned(),
+            server_time: "2026-06-27T00:00:11Z".to_owned(),
+            payload_json: json!({
+                "latestSeq": 11,
+                "replace": false,
+                "sessions": [
+                    {
+                        "sessionId": "thread-zed",
+                        "assistantSurface": "zed",
+                        "seq": 11,
+                        "revision": "rev-11",
+                        "title": "Zed"
+                    }
+                ]
+            })
+            .to_string(),
+        })
+        .expect("continuation chunk");
+
+        assert_eq!(
+            state_mini_data_cursor_after_delta(current_seq, &replacement),
+            current_seq
+        );
+        assert_eq!(
+            state_mini_data_cursor_after_delta(current_seq, &continuation),
+            current_seq
+        );
+        assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 11), 11);
     }
 
     #[test]

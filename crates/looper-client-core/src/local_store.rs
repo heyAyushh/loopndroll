@@ -93,6 +93,9 @@ impl LooperClientCoreLocalStore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
+        if snapshot.latest_seq < state.latest_seq {
+            return Ok(state.snapshot());
+        }
         state.latest_seq = snapshot.latest_seq;
         state.sessions = normalize_state_minis(snapshot.sessions);
         state.server_time = non_empty(snapshot.server_time);
