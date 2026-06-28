@@ -408,7 +408,8 @@ struct SessionSummaryTimingTests {
         )
         let store = CompanionSnapshotStateStore()
 
-        store.applySnapshot(snapshot)
+        #expect(store.applySnapshotResult(snapshot).didChangeVisibleSnapshot)
+        #expect(!store.applySnapshotResult(snapshot).didChangeVisibleSnapshot)
         #expect(store.selectedAssistantSurface == .codex)
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
         #expect(store.detail(for: "thread-main")?.effectiveMode == .maxTurns1)

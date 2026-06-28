@@ -1807,10 +1807,18 @@ final class CompanionAppModel {
     }
 
     private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {
-        let visibleSnapshot = snapshotState.applySnapshot(
+        let result = snapshotState.applySnapshotResult(
             cachedSnapshot
         )
+        let visibleSnapshot = result.visibleSnapshot
         markCachedSnapshotReadyIfNeeded(reason: reason)
+        guard result.didChangeVisibleSnapshot else {
+            CompanionDiagnostics.record(
+                "snapshot:cache-restore-noop reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
+            )
+            return
+        }
+
         lastUpdatedAt = Date()
         spotlightCoordinator.clearForCachedSnapshotIfNeeded()
         CompanionDiagnostics.record(
