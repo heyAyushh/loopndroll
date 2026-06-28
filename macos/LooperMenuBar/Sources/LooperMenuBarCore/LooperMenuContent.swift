@@ -66,7 +66,6 @@ public enum LooperMenuContent {
     }
 
     private enum SurfaceLabel {
-        static let tailscale = "Tailscale"
         static let zedACP = "Zed ACP"
     }
 
@@ -228,7 +227,6 @@ public enum LooperMenuContent {
 
         return [
             fields.contains(where: containsZedACPReference) ? SurfaceLabel.zedACP : nil,
-            fields.contains(where: containsTailscaleReference) ? SurfaceLabel.tailscale : nil,
         ]
         .compactMap { $0 }
     }
@@ -245,11 +243,4 @@ public enum LooperMenuContent {
         return normalized.contains("zed acp") || normalized.contains("zed.dev")
     }
 
-    private static func containsTailscaleReference(_ value: String?) -> Bool {
-        guard let value else {
-            return false
-        }
-
-        return TailscaleNetworkPattern.containsTailscaleReference(in: value)
-    }
 }

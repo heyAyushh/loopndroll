@@ -17,26 +17,10 @@ enum TailscaleNetworkPattern {
             || isTailscaleIPv4Address(normalizedHost)
     }
 
-    static func containsTailscaleReference(in value: String) -> Bool {
-        let normalized = value.lowercased()
-        return normalized.contains("tailscale")
-            || normalized.contains(Constants.magicDNSSuffix)
-            || normalized.contains(Constants.legacyMagicDNSSuffix)
-            || containsTailscaleIPv4Reference(in: normalized)
-    }
-
     private static func normalizedHost(_ host: String) -> String {
         host
             .lowercased()
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-    }
-
-    private static func containsTailscaleIPv4Reference(in value: String) -> Bool {
-        value
-            .split(whereSeparator: { !$0.isNumber && $0 != "." })
-            .contains { candidate in
-                isTailscaleIPv4Address(String(candidate))
-            }
     }
 
     private static func isTailscaleIPv4Address(_ host: String) -> Bool {

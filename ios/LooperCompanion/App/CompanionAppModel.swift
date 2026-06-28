@@ -1012,6 +1012,7 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 archived: archived
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "archive")
             errorMessage = nil
             lastUpdatedAt = Date()
         } catch {
@@ -1032,6 +1033,7 @@ final class CompanionAppModel {
 
         do {
             try await targetRuntime.deleteSession(threadID: sessionID)
+            applyAcceptedClientCoreLocalSnapshot(reason: "delete")
             errorMessage = nil
             lastUpdatedAt = Date()
         } catch {
@@ -1075,6 +1077,7 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 preset: preset
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "mode")
             recordModeAccepted(result, sessionID: sessionID)
             return true
         } catch {
@@ -1122,6 +1125,7 @@ final class CompanionAppModel {
                 assistantSurface: targetSurface,
                 promptIntent: intent
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "prompt")
             recordPromptAccepted(
                 result,
                 sessionID: sessionID
@@ -1199,6 +1203,7 @@ final class CompanionAppModel {
                 prompt: prompt,
                 assistantSurface: nil
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "notification-reply")
             recordNotificationReplyAccepted(
                 response,
                 sessionID: sessionID,
@@ -1225,6 +1230,7 @@ final class CompanionAppModel {
 
         do {
             let response = try await sessionRuntime.submitPendingNotificationReply()
+            applyAcceptedClientCoreLocalSnapshot(reason: "notification-reply-pending")
             recordNotificationReplyAccepted(
                 response,
                 sessionID: Self.nonEmptyText(response.entityId) ?? "unknown",
@@ -1279,6 +1285,7 @@ final class CompanionAppModel {
 
         do {
             try await targetRuntime.muteSession(threadID: sessionID)
+            applyAcceptedClientCoreLocalSnapshot(reason: "mute")
             errorMessage = nil
             lastUpdatedAt = Date()
         } catch {
@@ -1302,6 +1309,12 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 assistantSurface: targetSurface
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "siri-default")
+            snapshotState.applyAcceptedSiriDefaultSession(
+                sessionID: sessionID,
+                assistantSurface: targetSurface
+            )
+            publishSnapshotStateChange(reason: "siri-default-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
@@ -1347,6 +1360,12 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 assistantSurface: targetSurface
             )
+            applyAcceptedClientCoreLocalSnapshot(reason: "siri-current")
+            snapshotState.applyAcceptedSiriCurrentSession(
+                sessionID: sessionID,
+                assistantSurface: targetSurface
+            )
+            publishSnapshotStateChange(reason: "siri-current-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             return
@@ -1436,6 +1455,9 @@ final class CompanionAppModel {
 
         do {
             try await targetRuntime.saveDefaultPrompt(defaultPrompt)
+            applyAcceptedClientCoreLocalSnapshot(reason: "default-prompt")
+            snapshotState.applyAcceptedDefaultPrompt(defaultPrompt)
+            publishSnapshotStateChange(reason: "default-prompt-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             return
@@ -1468,6 +1490,8 @@ final class CompanionAppModel {
                 guard self.assistantSurfaceSelectionGeneration == selectionGeneration else {
                     return
                 }
+                self.applyAcceptedClientCoreLocalSnapshot(reason: "assistant-surface")
+                self.snapshotState.applyAcceptedAssistantSurface(surface)
                 guard self.snapshotState.selectAssistantSurface(surface) else {
                     return
                 }
@@ -1638,6 +1662,11 @@ final class CompanionAppModel {
                 latestSeq: latestSeq
             )
         }
+    }
+
+    @discardableResult
+    private func applyAcceptedClientCoreLocalSnapshot(reason: String) -> Bool {
+        restoreCachedSessionMiniSnapshotIfAvailable(reason: "client-core-\(reason)")
     }
 
     @discardableResult

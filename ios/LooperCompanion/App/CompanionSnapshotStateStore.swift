@@ -3,6 +3,10 @@ import LooperClientCore
 import LooperCompanionCore
 import Observation
 
+private enum CompanionSnapshotSettingsTime {
+    static let millisecondsPerSecond: TimeInterval = 1_000
+}
+
 @MainActor
 @Observable
 final class CompanionSnapshotStateStore {
@@ -115,6 +119,44 @@ final class CompanionSnapshotStateStore {
         return true
     }
 
+    @discardableResult
+    func applyAcceptedAssistantSurface(_ surface: CompanionAssistantSurface) -> Bool {
+        applyGlobalSettingsMutation(preferredSurface: surface) { settings in
+            settings.assistantSurface = surface
+        }
+    }
+
+    @discardableResult
+    func applyAcceptedSiriCurrentSession(
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface,
+        updatedAt: Date = Date()
+    ) -> Bool {
+        applyGlobalSettingsMutation { settings in
+            settings.siriCurrentSessionId = sessionID
+            settings.siriCurrentAssistantSurface = assistantSurface
+            settings.siriCurrentUpdatedAtMs = Self.millisecondsSinceEpoch(updatedAt)
+        }
+    }
+
+    @discardableResult
+    func applyAcceptedSiriDefaultSession(
+        sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> Bool {
+        applyGlobalSettingsMutation { settings in
+            settings.siriDefaultSessionId = sessionID
+            settings.siriDefaultAssistantSurface = assistantSurface
+        }
+    }
+
+    @discardableResult
+    func applyAcceptedDefaultPrompt(_ prompt: String) -> Bool {
+        applyGlobalSettingsMutation { settings in
+            settings.defaultPrompt = prompt
+        }
+    }
+
     func session(withID sessionID: String) -> SessionSummary? {
         sessionIndex.session(withID: sessionID)
     }
@@ -199,6 +241,24 @@ final class CompanionSnapshotStateStore {
         selectedAssistantSurface = selectedSurface
         sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
         sessionIndex = SessionIndex(snapshot: visibleSnapshot)
+    }
+
+    @discardableResult
+    private func applyGlobalSettingsMutation(
+        preferredSurface: CompanionAssistantSurface? = nil,
+        _ mutate: (inout GlobalSettings) -> Void
+    ) -> Bool {
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
+            return false
+        }
+
+        mutate(&nextSnapshot.globalSettings)
+        applySnapshot(nextSnapshot, preferredSurface: preferredSurface ?? selectedAssistantSurface)
+        return true
+    }
+
+    private static func millisecondsSinceEpoch(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSince1970 * CompanionSnapshotSettingsTime.millisecondsPerSecond)
     }
 
     private func applySnapshotWithoutProjection(

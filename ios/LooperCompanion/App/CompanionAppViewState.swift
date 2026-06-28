@@ -116,9 +116,9 @@ struct CompanionAppViewState {
         if isShowingUsableLocalState {
             switch model.connectionState {
             case .connecting:
-                return "Connecting to your Mac"
+                return localStateHeadline
             case .offline:
-                return "Mac connection offline"
+                return localStateHeadline
             case .connected, .unauthorized, .locked, .unpaired:
                 break
             }
@@ -146,7 +146,7 @@ struct CompanionAppViewState {
             case .connected:
                 return connectedStatusSummary
             case .connecting:
-                return "Showing local sessions; live connection is not ready."
+                return "Showing local sessions while Looper reconnects."
             case .offline:
                 return "Showing local sessions; commands will retry when Looper reconnects."
             case .unauthorized, .locked, .unpaired:
@@ -337,6 +337,10 @@ struct CompanionAppViewState {
         }
 
         return parts.isEmpty ? "Connected." : "\(parts.joined(separator: " · "))."
+    }
+
+    private var localStateHeadline: String {
+        snapshotState.snapshot?.host.name ?? "Looper"
     }
 
     private var shouldUseSessionListEmptyState: Bool {

@@ -407,27 +407,6 @@ struct SessionSummaryTimingTests {
             completionChecks: []
         )
         let store = CompanionSnapshotStateStore()
-        store.setDetail(
-            SessionDetail(
-                id: "thread-main",
-                ref: "S2",
-                title: "thread-main",
-                status: .stopped,
-                effectiveMode: .infinite,
-                lastUpdatedAt: "2026-06-16T07:00:00Z",
-                lastActivityAt: "2026-06-16T07:00:00Z",
-                lastMessageAt: "2026-06-16T07:00:00Z",
-                assistantPreview: "Old detail",
-                latestAssistantMessage: nil,
-                isArchived: true,
-                notificationIds: [],
-                completionCheckID: nil,
-                completionCheckWaitForReply: false,
-                availableNotifications: [],
-                availableCompletionChecks: []
-            ),
-            for: "thread-main"
-        )
 
         store.applySnapshot(snapshot)
         #expect(store.selectedAssistantSurface == .codex)
