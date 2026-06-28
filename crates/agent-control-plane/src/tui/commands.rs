@@ -50,20 +50,15 @@ pub(crate) async fn execute_command(
             let (preset, prompt) = command_arg_and_body(command, name)?;
             prompt_threads(client, thread_ids, prompt, Some(preset)).await?;
         }
-        (TuiTab::Sessions, "archive") => archive_session(client, app, true).await?,
-        (TuiTab::Sessions, "unarchive") => archive_session(client, app, false).await?,
+        (TuiTab::Sessions, "archive") => archive_session(app, true).await?,
+        (TuiTab::Sessions, "unarchive") => archive_session(app, false).await?,
         (TuiTab::Sessions, "mute") => {
             let thread_id = selected_thread_id(app)?;
-            post_json(
-                client,
-                &format!("/desktop/sessions/{thread_id}/mute"),
-                Value::Null,
-            )
-            .await?;
+            submit_mute_session(&thread_id).await?;
         }
         (TuiTab::Sessions, "delete") => {
             let thread_id = selected_thread_id(app)?;
-            delete_json(client, &format!("/desktop/sessions/{thread_id}")).await?;
+            submit_delete_session(&thread_id).await?;
         }
         (TuiTab::Sessions, "notifications") => {
             let thread_id = selected_thread_id(app)?;
@@ -125,12 +120,7 @@ pub(crate) async fn execute_command(
             .await?;
         }
         (TuiTab::Settings, "default-prompt") => {
-            post_json(
-                client,
-                "/desktop/settings/default-prompt",
-                serde_json::json!({ "defaultPrompt": command_body(command, name)? }),
-            )
-            .await?;
+            submit_default_prompt(command_body(command, name)?).await?;
         }
         (TuiTab::Settings, "scope") => {
             post_json(
@@ -242,14 +232,9 @@ pub(crate) async fn execute_command(
     Ok(())
 }
 
-async fn archive_session(client: &Client, app: &TuiState, archived: bool) -> Result<()> {
+async fn archive_session(app: &TuiState, archived: bool) -> Result<()> {
     let thread_id = selected_thread_id(app)?;
-    post_json(
-        client,
-        &format!("/desktop/sessions/{thread_id}/archive"),
-        serde_json::json!({ "archived": archived }),
-    )
-    .await
+    submit_archive_session(&thread_id, archived).await
 }
 
 async fn prompt_threads(
@@ -279,13 +264,7 @@ async fn submit_session_mode(thread_id: &str, preset: Option<&str>) -> Result<()
             },
         )),
     };
-    crate::grpc::submit_local_session_command(
-        &crate::runtime::default_server_base_url(),
-        command,
-        &client_mutation_id,
-    )
-    .await?;
-    Ok(())
+    submit_local_session_command(command, &client_mutation_id).await
 }
 
 async fn submit_session_prompt(thread_id: &str, prompt: &str) -> Result<()> {
@@ -301,10 +280,70 @@ async fn submit_session_prompt(thread_id: &str, prompt: &str) -> Result<()> {
             },
         )),
     };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_archive_session(thread_id: &str, archived: bool) -> Result<()> {
+    let client_mutation_id = format!("tui-archive-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetSessionArchived(
+            proto::SetSessionArchivedRequest {
+                thread_id: thread_id.to_owned(),
+                archived,
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_delete_session(thread_id: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-delete-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::DeleteSession(
+            proto::DeleteSessionRequest {
+                thread_id: thread_id.to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_mute_session(thread_id: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-mute-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::MuteSession(
+            proto::MuteSessionRequest {
+                thread_id: thread_id.to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_default_prompt(prompt: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-default-prompt-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SaveDefaultPrompt(
+            proto::SaveDefaultPromptRequest {
+                prompt: prompt.to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_local_session_command(
+    command: proto::Command,
+    client_mutation_id: &str,
+) -> Result<()> {
     crate::grpc::submit_local_session_command(
         &crate::runtime::default_server_base_url(),
         command,
-        &client_mutation_id,
+        client_mutation_id,
     )
     .await?;
     Ok(())
