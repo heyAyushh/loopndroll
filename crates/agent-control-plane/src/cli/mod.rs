@@ -419,12 +419,16 @@ async fn run_settings_command(args: &[String], format: OutputFormat) -> Result<(
     match args.first().map(String::as_str) {
         Some("get") => print_get("/desktop/mobile-state", format).await,
         Some("default-prompt") if args.len() >= 2 => {
-            post_json(
-                "/desktop/settings/default-prompt",
-                serde_json::json!({ "defaultPrompt": joined_args(&args[1..]) }),
+            let mutation_id = format!("cli-default-prompt-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                default_prompt_command(&joined_args(&args[1..]), mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SaveDefaultPrompt", &ack),
                 format,
             )
-            .await
         }
         Some("scope") if args.len() >= 2 => {
             post_json(
@@ -473,9 +477,10 @@ async fn run_sessions_command(args: &[String], format: OutputFormat) -> Result<(
             print_get(&format!("/desktop/sessions/{}", args[1]), format).await
         }
         Some("mode") if args.len() >= 3 => {
+            let mutation_id = format!("cli-mode-{}", uuid::Uuid::new_v4());
             let ack = submit_session_command(
-                session_mode_command(&args[1], nullable_id(&args[2])),
-                format!("cli-mode-{}", uuid::Uuid::new_v4()),
+                session_mode_command(&args[1], nullable_id(&args[2]), mutation_id.clone()),
+                mutation_id,
             )
             .await?;
             print_value(&session_command_ack_value("SetSessionMode", &ack), format)
@@ -483,24 +488,28 @@ async fn run_sessions_command(args: &[String], format: OutputFormat) -> Result<(
         Some("archive") if args.len() >= 2 => session_archive(&args[1], true, format).await,
         Some("unarchive") if args.len() >= 2 => session_archive(&args[1], false, format).await,
         Some("delete") if args.len() >= 2 => {
-            delete_json(&format!("/desktop/sessions/{}", args[1]), format).await
+            let mutation_id = format!("cli-delete-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                session_delete_command(&args[1], mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(&session_command_ack_value("DeleteSession", &ack), format)
         }
         Some("mute") if args.len() >= 2 => {
-            post_json(
-                &format!("/desktop/sessions/{}/mute", args[1]),
-                Value::Null,
-                format,
+            let mutation_id = format!("cli-mute-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                session_mute_command(&args[1], mutation_id.clone()),
+                mutation_id,
             )
-            .await
+            .await?;
+            print_value(&session_command_ack_value("MuteSession", &ack), format)
         }
         Some("prompt") if args.len() >= 3 => {
+            let mutation_id = format!("cli-prompt-{}", uuid::Uuid::new_v4());
             let ack = submit_session_command(
-                session_prompt_command(
-                    &args[1],
-                    &joined_args(&args[2..]),
-                    format!("cli-prompt-{}", uuid::Uuid::new_v4()),
-                ),
-                String::new(),
+                session_prompt_command(&args[1], &joined_args(&args[2..]), mutation_id.clone()),
+                mutation_id,
             )
             .await?;
             print_value(
@@ -711,12 +720,16 @@ async fn run_wait_command(args: &[String], format: OutputFormat) -> Result<()> {
 }
 
 async fn session_archive(thread_id: &str, archived: bool, format: OutputFormat) -> Result<()> {
-    post_json(
-        &format!("/desktop/sessions/{thread_id}/archive"),
-        serde_json::json!({ "archived": archived }),
+    let mutation_id = format!("cli-archive-{}", uuid::Uuid::new_v4());
+    let ack = submit_session_command(
+        session_archive_command(thread_id, archived, mutation_id.clone()),
+        mutation_id,
+    )
+    .await?;
+    print_value(
+        &session_command_ack_value("SetSessionArchived", &ack),
         format,
     )
-    .await
 }
 
 async fn post_session_prompts(
@@ -730,15 +743,15 @@ async fn post_session_prompts(
         if let Some(preset) = preset {
             let mutation_id = format!("cli-mode-{}", uuid::Uuid::new_v4());
             submit_session_command(
-                session_mode_command(&thread_id, nullable_id(preset)),
+                session_mode_command(&thread_id, nullable_id(preset), mutation_id.clone()),
                 mutation_id,
             )
             .await?;
         }
         let mutation_id = format!("cli-prompt-{}", uuid::Uuid::new_v4());
         submit_session_command(
-            session_prompt_command(&thread_id, prompt, mutation_id),
-            String::new(),
+            session_prompt_command(&thread_id, prompt, mutation_id.clone()),
+            mutation_id,
         )
         .await?;
         accepted.push(thread_id);
@@ -762,13 +775,17 @@ async fn submit_session_command(
     crate::grpc::submit_local_session_command(&base_url(), command, &client_mutation_id).await
 }
 
-fn session_mode_command(thread_id: &str, preset: Option<&str>) -> proto::Command {
+fn session_mode_command(
+    thread_id: &str,
+    preset: Option<&str>,
+    client_mutation_id: String,
+) -> proto::Command {
     proto::Command {
         command: Some(proto::command::Command::SetSessionMode(
             proto::SetSessionModeRequest {
                 thread_id: thread_id.to_owned(),
                 preset: preset.unwrap_or_default().to_owned(),
-                client_mutation_id: format!("cli-mode-{}", uuid::Uuid::new_v4()),
+                client_mutation_id,
             },
         )),
     }
@@ -787,6 +804,55 @@ fn session_prompt_command(
                 assistant_surface: String::new(),
                 client_mutation_id,
                 prompt_intent: "queue".to_owned(),
+            },
+        )),
+    }
+}
+
+fn session_archive_command(
+    thread_id: &str,
+    archived: bool,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetSessionArchived(
+            proto::SetSessionArchivedRequest {
+                thread_id: thread_id.to_owned(),
+                archived,
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn session_delete_command(thread_id: &str, client_mutation_id: String) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::DeleteSession(
+            proto::DeleteSessionRequest {
+                thread_id: thread_id.to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn session_mute_command(thread_id: &str, client_mutation_id: String) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::MuteSession(
+            proto::MuteSessionRequest {
+                thread_id: thread_id.to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn default_prompt_command(prompt: &str, client_mutation_id: String) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SaveDefaultPrompt(
+            proto::SaveDefaultPromptRequest {
+                prompt: prompt.to_owned(),
+                client_mutation_id,
             },
         )),
     }
