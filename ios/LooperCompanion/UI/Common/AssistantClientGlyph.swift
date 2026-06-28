@@ -50,25 +50,36 @@ struct AssistantSurfacePicker: View {
     var isDisabled = false
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
-                ForEach(CompanionAssistantSurface.allCases) { surface in
-                    Button {
-                        selection = surface
-                    } label: {
-                        AssistantSurfacePickerItem(
-                            surface: surface,
-                            isSelected: selection == surface
-                        )
+        ScrollViewReader { scrollProxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
+                    ForEach(CompanionAssistantSurface.allCases) { surface in
+                        Button {
+                            selection = surface
+                            scrollProxy.scrollTo(surface.id, anchor: .center)
+                        } label: {
+                            AssistantSurfacePickerItem(
+                                surface: surface,
+                                isSelected: selection == surface
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isDisabled)
+                        .id(surface.id)
+                        .accessibilityLabel(surface.displayTitle)
+                        .accessibilityIdentifier("assistant.surface.\(surface.rawValue)")
+                        .accessibilityAddTraits(selection == surface ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isDisabled)
-                    .accessibilityLabel(surface.displayTitle)
-                    .accessibilityIdentifier("assistant.surface.\(surface.rawValue)")
-                    .accessibilityAddTraits(selection == surface ? .isSelected : [])
                 }
+                .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
             }
-            .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
+            .frame(height: AssistantSurfacePickerMetrics.controlHeight)
+            .onChange(of: selection) { _, selectedSurface in
+                scrollProxy.scrollTo(selectedSurface.id, anchor: .center)
+            }
+            .onAppear {
+                scrollProxy.scrollTo(selection.id, anchor: .center)
+            }
         }
         .disabled(isDisabled)
         .accessibilityLabel("Assistant")
@@ -217,6 +228,7 @@ private enum AssistantSurfacePickerMetrics {
     static let verticalPadding: CGFloat = 2
     static let horizontalPadding: CGFloat = 9
     static let height: CGFloat = 32
+    static let controlHeight = height + verticalPadding * 2
     static let iconSize: CGFloat = 18
 }
 
