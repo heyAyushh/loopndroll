@@ -351,6 +351,73 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testSiriClientReadsAcceptedDefaultSessionFromPendingClientCoreCommand() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 8, revision: "mini-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let client = LooperSiriSessionClient(
+            service: service,
+            sessionRuntime: runtime
+        )
+
+        try await client.saveDefaultSiriSession(
+            LooperSessionEntity(session: cachedSession, assistantSurface: .codex)
+        )
+        let defaultEntity = try await client.defaultSiriSessionEntity()
+
+        #expect(defaultEntity.sessionID == Constants.cachedThreadID)
+        #expect(defaultEntity.assistantSurfaceRawValue == CompanionAssistantSurface.codex.rawValue)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testCachedSnapshotAppliesPendingDetailAndListCommands() async throws {
+        let archivedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let deletedSession = Self.sessionSummary(
+            id: "deleted-thread",
+            title: "Deleted Mini",
+            ref: "D1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: archivedSession, seq: 8, revision: "mini-revision-8"),
+                Self.miniRecord(session: deletedSession, seq: 8, revision: "mini-revision-8"),
+            ]
+        )
+
+        try await runtime.setMode(threadID: Constants.cachedThreadID, preset: .maxTurns2)
+        try await runtime.setSessionArchived(threadID: Constants.cachedThreadID, archived: true)
+        try await runtime.deleteSession(threadID: deletedSession.id)
+        let snapshot = try #require(try runtime.cachedSnapshot())
+        let detail = try #require(snapshot.session(withID: Constants.cachedThreadID))
+
+        #expect(detail.effectiveMode == .maxTurns2)
+        #expect(detail.isArchived)
+        #expect(detail.status == .archived)
+        #expect(snapshot.session(withID: deletedSession.id) == nil)
+        #expect(snapshot.sessionsAcrossSurfaces.map(\.id) == [Constants.cachedThreadID])
+    }
+
+    @MainActor
+    @Test
     func testConfiguredRouteDoesNotRenderAsConnectedBeforeLiveSessionEndpoint() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
