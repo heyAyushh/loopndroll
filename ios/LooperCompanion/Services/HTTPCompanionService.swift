@@ -69,12 +69,8 @@ private struct HTTPCompanionBaseURLRaceState {
 struct HTTPCompanionService: CompanionService {
     private static let healthPath = "/api/mobile/health"
     private static let snapshotPath = "/api/mobile/snapshot"
-    private static let sessionPathPrefix = "/api/mobile/sessions"
     private static let pathSeparator = "/"
-    private static let assistantSurfaceQueryItemName = "assistantSurface"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
-    private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
-        .subtracting(pathSegmentReservedCharacters)
 
     let baseURLs: [URL]
     let bearerToken: String?
@@ -109,16 +105,6 @@ struct HTTPCompanionService: CompanionService {
 
     func loadSnapshot() async throws -> MobileSnapshot {
         try await request(path: Self.snapshotPath, method: HTTPMethod.get)
-    }
-
-    func loadSessionDetail(
-        id: String,
-        surface: CompanionAssistantSurface?
-    ) async throws -> SessionDetail {
-        try await request(
-            path: path(sessionPath(id: id), assistantSurface: surface),
-            method: HTTPMethod.get
-        )
     }
 
     func registerPushDevice(
@@ -375,20 +361,6 @@ struct HTTPCompanionService: CompanionService {
         method == .get
     }
 
-    private func sessionPath(id: String, suffix: String? = nil) throws -> String {
-        guard let encodedID = id.addingPercentEncoding(
-            withAllowedCharacters: Self.pathSegmentAllowedCharacters
-        ), !encodedID.isEmpty
-        else {
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-
-        if let suffix = normalizedPathSuffix(suffix) {
-            return "\(Self.sessionPathPrefix)\(Self.pathSeparator)\(encodedID)\(Self.pathSeparator)\(suffix)"
-        }
-        return "\(Self.sessionPathPrefix)\(Self.pathSeparator)\(encodedID)"
-    }
-
     private func requestURL(baseURL: URL, path: String) throws -> URL {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw HTTPCompanionServiceError.invalidResponse
@@ -410,33 +382,6 @@ struct HTTPCompanionService: CompanionService {
             throw HTTPCompanionServiceError.invalidResponse
         }
         return url
-    }
-
-    private func path(
-        _ path: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) -> String {
-        guard let assistantSurface else {
-            return path
-        }
-
-        var components = URLComponents()
-        components.path = path
-        components.queryItems = [
-            URLQueryItem(
-                name: Self.assistantSurfaceQueryItemName,
-                value: assistantSurface.rawValue
-            )
-        ]
-        return components.string ?? path
-    }
-
-    private func normalizedPathSuffix(_ suffix: String?) -> String? {
-        let trimmedSuffix = suffix?.trimmingCharacters(in: Self.pathSegmentReservedCharacters)
-        guard let trimmedSuffix, !trimmedSuffix.isEmpty else {
-            return nil
-        }
-        return trimmedSuffix
     }
 
     private static func baseURLRaceCandidates(

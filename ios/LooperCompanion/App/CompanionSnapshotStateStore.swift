@@ -11,7 +11,6 @@ final class CompanionSnapshotStateStore {
     }
 
     var snapshot: MobileSnapshot?
-    var detailBySessionID: [String: SessionDetail] = [:]
     var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
     private(set) var sessionSections = SessionSections.empty
     private(set) var sessionIndex = SessionIndex.empty
@@ -34,15 +33,10 @@ final class CompanionSnapshotStateStore {
     func reset() {
         snapshot = nil
         canonicalSnapshot = nil
-        detailBySessionID = [:]
         selectedAssistantSurface = .defaultSurface
         sessionSections = .empty
         sessionIndex = .empty
         hasUserSelectedAssistantSurface = false
-    }
-
-    func clearDetails() {
-        detailBySessionID = [:]
     }
 
     @discardableResult
@@ -91,10 +85,6 @@ final class CompanionSnapshotStateStore {
 
         selectedAssistantSurface = surface
         applyReducedVisibleSnapshot(visibleSnapshot, projection: projection)
-        syncDetailCache(
-            withVisibleSnapshot: visibleSnapshot,
-            visibleSnapshotJSON: projection.visibleSnapshotJson
-        )
         return visibleSnapshot
     }
 
@@ -177,19 +167,17 @@ final class CompanionSnapshotStateStore {
     }
 
     func detail(for sessionID: String) -> SessionDetail? {
-        detailBySessionID[sessionID]
+        guard let sourceSnapshot = sourceSnapshotForProjection(),
+              let session = session(withID: sessionID) ?? sourceSnapshot.session(withID: sessionID)
+        else {
+            return nil
+        }
+
+        return SessionDetail(summary: session, snapshot: sourceSnapshot)
     }
 
     func hasDetail(for sessionID: String) -> Bool {
-        detailBySessionID[sessionID] != nil
-    }
-
-    func setDetail(_ detail: SessionDetail, for sessionID: String) {
-        detailBySessionID[sessionID] = detail
-    }
-
-    func removeDetail(for sessionID: String) {
-        detailBySessionID[sessionID] = nil
+        detail(for: sessionID) != nil
     }
 
     @discardableResult
@@ -268,12 +256,6 @@ final class CompanionSnapshotStateStore {
             return true
         }
 
-        if var detail = detailBySessionID[sessionID] {
-            detail.isArchived = archived
-            detail.status = desiredStatus
-            detailBySessionID[sessionID] = detail
-        }
-
         guard didChange else {
             return nil
         }
@@ -291,26 +273,11 @@ final class CompanionSnapshotStateStore {
         nextSnapshot.surfaceSessions = nextSnapshot.surfaceSessions.mapValues { sessions in
             sessions.filter { $0.id != sessionID }
         }
-        removeDetail(for: sessionID)
 
         guard sessionCount(in: nextSnapshot) != originalCount else {
             return nil
         }
         return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
-    @discardableResult
-    func applySessionMuted(sessionID: String) -> MobileSnapshot? {
-        guard var detail = detailBySessionID[sessionID] else {
-            return nil
-        }
-        guard !detail.notificationIds.isEmpty else {
-            return nil
-        }
-
-        detail.notificationIds = []
-        detailBySessionID[sessionID] = detail
-        return snapshot
     }
 
     private func applyReducedVisibleSnapshot(
@@ -348,7 +315,6 @@ final class CompanionSnapshotStateStore {
         )
         let visibleSnapshot = nextSnapshot.visibleSnapshot(for: surface)
         applyFallbackVisibleSnapshot(visibleSnapshot, selectedSurface: surface)
-        syncDetailCacheFallback(withVisibleSnapshot: visibleSnapshot)
         return visibleSnapshot
     }
 
@@ -401,29 +367,6 @@ final class CompanionSnapshotStateStore {
         return snapshot.sessions.count + surfaceCount
     }
 
-    private func syncDetailCache(
-        withVisibleSnapshot visibleSnapshot: MobileSnapshot,
-        visibleSnapshotJSON: String
-    ) {
-        guard let projection = SnapshotProjectionCodec.reduceDetailCache(
-            visibleSnapshotJSON: visibleSnapshotJSON,
-            detailBySessionID: detailBySessionID
-        ),
-            let detailMap = SnapshotProjectionCodec.decodeDetailMap(projection.detailBySessionIdJson)
-        else {
-            syncDetailCacheFallback(withVisibleSnapshot: visibleSnapshot)
-            return
-        }
-        detailBySessionID = detailMap
-    }
-
-    private func syncDetailCacheFallback(withVisibleSnapshot visibleSnapshot: MobileSnapshot) {
-        let visibleSessionIDs = Set(visibleSnapshot.sessions.map(\.id))
-        detailBySessionID = detailBySessionID.filter { sessionID, _ in
-            visibleSessionIDs.contains(sessionID)
-        }
-    }
-
 }
 
 private enum SnapshotProjectionCodec {
@@ -446,24 +389,6 @@ private enum SnapshotProjectionCodec {
             )
         } catch {
             recordFailure("snapshot:projection-failed", error: error)
-            return nil
-        }
-    }
-
-    static func reduceDetailCache(
-        visibleSnapshotJSON: String,
-        detailBySessionID: [String: SessionDetail]
-    ) -> ClientDetailCacheProjection? {
-        guard let detailBySessionIDJSON = encode(detailBySessionID) else {
-            return nil
-        }
-        do {
-            return try reduceMobileSnapshotDetailCache(
-                visibleSnapshotJson: visibleSnapshotJSON,
-                detailBySessionIdJson: detailBySessionIDJSON
-            )
-        } catch {
-            recordFailure("snapshot:detail-cache-projection-failed", error: error)
             return nil
         }
     }
@@ -491,10 +416,6 @@ private enum SnapshotProjectionCodec {
 
     static func decodeSnapshot(_ json: String) -> MobileSnapshot? {
         decode(MobileSnapshot.self, from: json)
-    }
-
-    static func decodeDetailMap(_ json: String) -> [String: SessionDetail]? {
-        decode([String: SessionDetail].self, from: json)
     }
 
     private static func encode<Value: Encodable>(_ value: Value) -> String? {

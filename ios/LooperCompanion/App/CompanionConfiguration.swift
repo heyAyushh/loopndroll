@@ -628,10 +628,6 @@ struct UnconfiguredCompanionService: CompanionService {
 
     func loadServerHealth() async throws -> CompanionServerHealth { throw error }
     func loadSnapshot() async throws -> MobileSnapshot { throw error }
-    func loadSessionDetail(
-        id _: String,
-        surface _: CompanionAssistantSurface?
-    ) async throws -> SessionDetail { throw error }
     func registerPushDevice(
         _: RemotePushRegistrationRequest
     ) async throws -> RemotePushRegistrationResponse {

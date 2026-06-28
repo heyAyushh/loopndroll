@@ -3,13 +3,10 @@ import LooperClientCore
 import LooperCompanionCore
 
 private let mockCompanionBaseURL = "preview://looper"
-private let millisecondsPerSecond: TimeInterval = 1_000
 
 actor MockCompanionStore {
-    private var allSessions: [SessionSummary]
-    private var allDetails: [String: SessionDetail]
+    private let allSessions: [SessionSummary]
     var snapshot: MobileSnapshot
-    private var details: [String: SessionDetail]
     var remotePushRegistration = RemotePushRegistrationResponse(
         state: .enabled,
         environment: .development,
@@ -20,117 +17,12 @@ actor MockCompanionStore {
     init() {
         let initialSnapshot = PreviewFixtures.snapshot
         allSessions = initialSnapshot.sessions
-        allDetails = PreviewFixtures.sessionDetails
         snapshot = initialSnapshot
         snapshot.sessions = Self.filteredSessions(
             allSessions,
             surface: initialSnapshot.globalSettings.assistantSurface
         )
         snapshot.surfaceSessions = Self.surfaceSessions(allSessions)
-        details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
-    }
-
-    func sessionDetail(id: String, surface: CompanionAssistantSurface?) -> SessionDetail {
-        let visibleDetails: [String: SessionDetail]
-        if let surface {
-            visibleDetails = Self.filteredDetails(
-                allDetails,
-                visibleSessions: Self.filteredSessions(allSessions, surface: surface)
-            )
-        } else {
-            visibleDetails = details
-        }
-
-        return visibleDetails[id] ?? visibleDetails.values.first ?? SessionDetail(
-            id: id,
-            ref: "C0",
-            title: "Unknown Session",
-            status: .stopped,
-            effectiveMode: nil,
-            lastUpdatedAt: Date().ISO8601Format(),
-            assistantPreview: nil,
-            latestAssistantMessage: nil,
-            isArchived: false,
-            assistantClient: .unknown,
-            notificationIds: [],
-            completionCheckID: nil,
-            completionCheckWaitForReply: false,
-            availableNotifications: snapshot.notifications,
-            availableCompletionChecks: snapshot.completionChecks
-        )
-    }
-
-    func setMode(id: String, preset: SessionMode?) -> MobileSnapshot {
-        let timestamp = Date().ISO8601Format()
-        allSessions = allSessions.map {
-            guard $0.id == id else { return $0 }
-            return SessionSummary(
-                id: $0.id,
-                ref: $0.ref,
-                title: $0.title,
-                status: $0.status,
-                effectiveMode: preset,
-                lastUpdatedAt: timestamp,
-                lastActivityAt: timestamp,
-                lastMessageAt: $0.lastMessageAt,
-                assistantPreview: $0.assistantPreview,
-                isArchived: $0.isArchived,
-                assistantClient: $0.assistantClient,
-                metadata: $0.metadata
-            )
-        }
-
-        if var detail = allDetails[id] {
-            detail.effectiveMode = preset
-            detail.lastUpdatedAt = timestamp
-            detail.lastActivityAt = detail.lastUpdatedAt
-            allDetails[id] = detail
-        }
-
-        return publishSnapshot()
-    }
-
-    func sendPrompt(id: String, prompt: String) -> MobileSnapshot {
-        let timestamp = Date().ISO8601Format()
-        let preview = "Prompt sent: \(prompt)"
-
-        allSessions = allSessions.map {
-            guard $0.id == id else { return $0 }
-            return SessionSummary(
-                id: $0.id,
-                ref: $0.ref,
-                title: $0.title,
-                status: $0.status,
-                effectiveMode: $0.effectiveMode,
-                lastUpdatedAt: timestamp,
-                lastActivityAt: timestamp,
-                lastMessageAt: timestamp,
-                assistantPreview: preview,
-                isArchived: $0.isArchived,
-                assistantClient: $0.assistantClient,
-                metadata: $0.metadata
-            )
-        }
-
-        if var detail = allDetails[id] {
-            detail.assistantPreview = preview
-            detail.latestAssistantMessage = preview
-            detail.lastUpdatedAt = timestamp
-            detail.lastActivityAt = timestamp
-            detail.lastMessageAt = timestamp
-            allDetails[id] = detail
-        }
-
-        return publishSnapshot()
-    }
-
-    @discardableResult
-    private func publishSnapshot() -> MobileSnapshot {
-        let surface = snapshot.globalSettings.assistantSurface
-        snapshot.sessions = Self.filteredSessions(allSessions, surface: surface)
-        snapshot.surfaceSessions = Self.surfaceSessions(allSessions)
-        details = Self.filteredDetails(allDetails, visibleSessions: snapshot.sessions)
-        return snapshot
     }
 
     private static func filteredSessions(
@@ -151,14 +43,6 @@ actor MockCompanionStore {
         Dictionary(uniqueKeysWithValues: CompanionAssistantSurface.allCases.map { surface in
             (surface.rawValue, filteredSessions(sessions, surface: surface))
         })
-    }
-
-    private static func filteredDetails(
-        _ details: [String: SessionDetail],
-        visibleSessions: [SessionSummary]
-    ) -> [String: SessionDetail] {
-        let visibleSessionIDs = Set(visibleSessions.map(\.id))
-        return details.filter { visibleSessionIDs.contains($0.key) }
     }
 
     func registerPushDevice(
@@ -194,13 +78,6 @@ struct MockCompanionService: CompanionService {
 
     func loadSnapshot() async throws -> MobileSnapshot {
         await store.snapshot
-    }
-
-    func loadSessionDetail(
-        id: String,
-        surface: CompanionAssistantSurface? = nil
-    ) async throws -> SessionDetail {
-        await store.sessionDetail(id: id, surface: surface)
     }
 
     func registerPushDevice(

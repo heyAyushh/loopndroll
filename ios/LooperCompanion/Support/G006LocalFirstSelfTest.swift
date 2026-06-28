@@ -1030,10 +1030,6 @@ private final class G006LocalFirstServiceSpy: CompanionService, @unchecked Senda
         return snapshot
     }
 
-    func loadSessionDetail(id _: String, surface _: CompanionAssistantSurface?) async throws -> SessionDetail {
-        throw ServiceError.promptFailed
-    }
-
     func registerPushDevice(_: RemotePushRegistrationRequest) async throws -> RemotePushRegistrationResponse {
         RemotePushRegistrationResponse(
             state: .storedAwaitingProvider,

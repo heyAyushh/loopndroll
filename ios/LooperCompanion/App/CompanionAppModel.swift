@@ -180,16 +180,6 @@ final class CompanionAppModel {
         }
     }
 
-    var detailBySessionID: [String: SessionDetail] {
-        get {
-            snapshotState.detailBySessionID
-        }
-        set {
-            snapshotState.detailBySessionID = newValue
-            publishSnapshotStateChange(reason: "details-property-set")
-        }
-    }
-
     var sessionSections: SessionSections {
         snapshotState.sessionSections
     }
@@ -420,7 +410,6 @@ final class CompanionAppModel {
         realtimeLatestSeq = 0
         realtimeStreamIsLive = false
         connectionState = .connecting
-        snapshotState.clearDetails()
         pendingOpenSessionID = nil
         errorMessage = nil
 
@@ -464,7 +453,6 @@ final class CompanionAppModel {
         serverHealth = nil
         reachedBaseURL = nil
         activeSessionRouteBaseURL = nil
-        snapshotState.clearDetails()
         errorMessage = nil
         if let cachedSnapshotRestoreReason {
             snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
@@ -866,12 +854,14 @@ final class CompanionAppModel {
             await reconcileLocalSessionState(reason: .sessionOpen)
         }
 
-        let sessionSurface = requestedAssistantSurfaceIfAvailable(
+        if requestedAssistantSurfaceIfAvailable(
             request.assistantSurface,
             sessionID: sessionID
-        ) ?? selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+        ) == nil {
+            _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+        }
         pendingOpenSessionID = sessionID
-        await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
+        refreshSessionDetail(id: sessionID)
     }
 
     func consumePendingSettingsTarget() -> SettingsSearchTarget? {
@@ -910,9 +900,8 @@ final class CompanionAppModel {
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
             await reconcileLocalSessionState(reason: .sessionOpen)
         }
-        let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
-
-        await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
+        _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+        refreshSessionDetail(id: sessionID)
     }
 
     private func requestedAssistantSurfaceIfAvailable(
@@ -990,62 +979,14 @@ final class CompanionAppModel {
         startSessionRuntimeSyncIfNeeded()
     }
 
-    func loadSessionDetail(id: String) async {
-        applyLocalSessionDetailIfAvailable(id: id)
-        let outcome = await sessionDetailCoordinator.loadIfNeeded(
+    func refreshSessionDetail(id: String) {
+        let didRefreshLocalDetail = sessionDetailCoordinator.refresh(
             id: id,
-            service: service,
-            snapshotState: snapshotState,
-            selectedAssistantSurface: selectedAssistantSurface,
-            connectionRevision: connectionRevision,
-            isCurrentConnectionRevision: { [weak self] revision in
-                self?.connectionRevision == revision
-            }
+            snapshotState: snapshotState
         )
-        applySessionDetailLoadOutcome(outcome)
-    }
-
-    func refreshSessionDetail(
-        id: String,
-        assistantSurface: CompanionAssistantSurface? = nil
-    ) async {
-        applyLocalSessionDetailIfAvailable(id: id)
-        let outcome = await sessionDetailCoordinator.refresh(
-            id: id,
-            assistantSurface: assistantSurface,
-            service: service,
-            snapshotState: snapshotState,
-            selectedAssistantSurface: selectedAssistantSurface,
-            connectionRevision: connectionRevision,
-            isCurrentConnectionRevision: { [weak self] revision in
-                self?.connectionRevision == revision
-            }
-        )
-        applySessionDetailLoadOutcome(outcome)
-    }
-
-    private func applySessionDetailLoadOutcome(_ outcome: CompanionSessionDetailLoadOutcome) {
-        switch outcome {
-        case .loaded:
+        if didRefreshLocalDetail {
             publishSnapshotStateChange(reason: "session-detail-loaded")
-        case .failed(let lastError):
-            errorMessage = lastError.localizedDescription
-        case .skipped, .stale:
-            break
         }
-    }
-
-    @discardableResult
-    private func applyLocalSessionDetailIfAvailable(id: String) -> Bool {
-        guard let snapshot,
-              let session = snapshotState.session(withID: id) ?? snapshot.session(withID: id)
-        else {
-            return false
-        }
-
-        snapshotState.setDetail(SessionDetail(summary: session, snapshot: snapshot), for: id)
-        publishSnapshotStateChange(reason: "session-detail-local")
-        return true
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
@@ -1354,10 +1295,6 @@ final class CompanionAppModel {
             Haptics.error()
             return
         }
-
-        if snapshotState.applySessionMuted(sessionID: sessionID) != nil {
-            publishSnapshotStateChange(reason: "session-muted")
-        }
     }
 
     func setSiriDefaultSession(_ session: SessionSummary) async {
@@ -1460,9 +1397,9 @@ final class CompanionAppModel {
             if snapshot == nil || !snapshotState.containsSession(sessionID) {
                 await reconcileLocalSessionState(reason: .sessionOpen)
             }
-            let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
+            _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
             pendingOpenSessionID = sessionID
-            await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
+            refreshSessionDetail(id: sessionID)
         case .continueChat:
             if snapshot == nil {
                 await reconcileLocalSessionState(reason: .sessionOpen)

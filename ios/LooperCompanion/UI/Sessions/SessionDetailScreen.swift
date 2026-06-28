@@ -143,7 +143,7 @@ struct SessionDetailScreen: View {
             }
         }
         .task {
-            await model.refreshSessionDetail(id: session.id)
+            model.refreshSessionDetail(id: session.id)
             await markCurrentSiriSessionIfNeeded()
             await model.donateOpenedSiriSession(session)
         }
@@ -151,7 +151,7 @@ struct SessionDetailScreen: View {
             await refreshPromptSuggestions()
         }
         .refreshable {
-            await model.refreshSessionDetail(id: session.id)
+            model.refreshSessionDetail(id: session.id)
             await markCurrentSiriSessionIfNeeded()
         }
         .confirmationDialog(
