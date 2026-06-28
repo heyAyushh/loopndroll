@@ -1547,13 +1547,11 @@ impl ClientCoreState {
         if is_latest_wins_outbox_command(frame.command_kind) {
             self.pending_mutations.retain(|mutation| {
                 mutation.client_mutation_id == frame.client_mutation_id
-                    || mutation.command_kind != frame.command_kind
-                    || mutation.thread_id != frame.thread_id
+                    || !same_latest_wins_mutation_target(mutation, &frame)
             });
             self.outbox.retain(|queued| {
                 queued.client_mutation_id == frame.client_mutation_id
-                    || queued.command_kind != frame.command_kind
-                    || queued.thread_id != frame.thread_id
+                    || !same_latest_wins_outbox_target(queued, &frame)
             });
         }
 
@@ -2029,7 +2027,42 @@ fn should_retry_command_flush(error: &ClientCoreError) -> bool {
 }
 
 fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
-    matches!(command_kind, ClientCommandKind::SetAssistantSurface)
+    matches!(
+        command_kind,
+        ClientCommandKind::SetSessionMode
+            | ClientCommandKind::SetAssistantSurface
+            | ClientCommandKind::SetSiriCurrentSession
+            | ClientCommandKind::SetSiriDefaultSession
+            | ClientCommandKind::SaveDefaultPrompt
+    )
+}
+
+fn latest_wins_outbox_command_is_global(command_kind: ClientCommandKind) -> bool {
+    matches!(
+        command_kind,
+        ClientCommandKind::SetAssistantSurface
+            | ClientCommandKind::SetSiriCurrentSession
+            | ClientCommandKind::SetSiriDefaultSession
+            | ClientCommandKind::SaveDefaultPrompt
+    )
+}
+
+fn same_latest_wins_mutation_target(
+    mutation: &ClientPendingMutation,
+    frame: &OutboundSessionFrame,
+) -> bool {
+    mutation.command_kind == frame.command_kind
+        && (latest_wins_outbox_command_is_global(frame.command_kind)
+            || mutation.thread_id == frame.thread_id)
+}
+
+fn same_latest_wins_outbox_target(
+    queued: &OutboundSessionFrame,
+    frame: &OutboundSessionFrame,
+) -> bool {
+    queued.command_kind == frame.command_kind
+        && (latest_wins_outbox_command_is_global(frame.command_kind)
+            || queued.thread_id == frame.thread_id)
 }
 
 fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCoreError> {
@@ -2634,6 +2667,64 @@ mod tests {
         assert_eq!(outbox.len(), 1);
         assert_eq!(outbox[0].client_mutation_id, "cmid-grok");
         assert_eq!(outbox[0].assistant_surface, "grok-build");
+    }
+
+    #[test]
+    fn singleton_settings_and_mode_outbox_are_latest_wins() {
+        let core = LooperClientCore::new();
+        core.set_siri_current_session(
+            "thread-old".to_owned(),
+            "codex".to_owned(),
+            "cmid-siri-old".to_owned(),
+        )
+        .expect("queue old siri current");
+        core.set_siri_current_session(
+            "thread-new".to_owned(),
+            "zed".to_owned(),
+            "cmid-siri-new".to_owned(),
+        )
+        .expect("queue new siri current");
+        core.set_mode(
+            "thread-1".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode-old".to_owned(),
+        )
+        .expect("queue old mode");
+        core.set_mode(
+            "thread-1".to_owned(),
+            "max-turns-1".to_owned(),
+            "cmid-mode-new".to_owned(),
+        )
+        .expect("queue new mode");
+        core.set_mode(
+            "thread-2".to_owned(),
+            "await-reply".to_owned(),
+            "cmid-mode-other".to_owned(),
+        )
+        .expect("queue other thread mode");
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 3);
+        assert_eq!(
+            snapshot
+                .pending_mutations
+                .iter()
+                .map(|mutation| mutation.client_mutation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cmid-siri-new", "cmid-mode-new", "cmid-mode-other"]
+        );
+
+        let outbox = core.take_outbox().expect("outbox");
+        assert_eq!(
+            outbox
+                .iter()
+                .map(|frame| frame.client_mutation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cmid-siri-new", "cmid-mode-new", "cmid-mode-other"]
+        );
+        assert_eq!(outbox[0].thread_id, "thread-new");
+        assert_eq!(outbox[0].assistant_surface, "zed");
+        assert_eq!(outbox[1].preset, "max-turns-1");
     }
 
     #[test]

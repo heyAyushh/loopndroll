@@ -689,14 +689,33 @@ fn normalized_endpoint_url(endpoint_url: &str) -> Result<String, ClientCoreError
 }
 
 fn latest_pending_command_wins(kind: ClientPendingCommandKind) -> bool {
-    matches!(kind, ClientPendingCommandKind::SetAssistantSurface)
+    matches!(
+        kind,
+        ClientPendingCommandKind::SetSessionMode
+            | ClientPendingCommandKind::SetAssistantSurface
+            | ClientPendingCommandKind::SetSiriCurrentSession
+            | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SaveDefaultPrompt
+    )
 }
 
 fn same_pending_command_target(
     existing: &StoredPendingCommand,
     command: &StoredPendingCommand,
 ) -> bool {
-    existing.kind == command.kind && existing.thread_id == command.thread_id
+    existing.kind == command.kind
+        && (pending_command_latest_wins_globally(command.kind)
+            || existing.thread_id == command.thread_id)
+}
+
+fn pending_command_latest_wins_globally(kind: ClientPendingCommandKind) -> bool {
+    matches!(
+        kind,
+        ClientPendingCommandKind::SetAssistantSurface
+            | ClientPendingCommandKind::SetSiriCurrentSession
+            | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SaveDefaultPrompt
+    )
 }
 
 fn notification_reply_retry_delay(attempt_count: u32) -> u64 {
@@ -944,6 +963,100 @@ mod tests {
         assert_eq!(
             persisted["pendingCommands"][0]["clientMutationID"],
             "mutation-devin"
+        );
+    }
+
+    #[test]
+    fn local_store_coalesces_siri_current_session_to_latest_command() {
+        let path = temp_store_path("siri-current-latest-wins");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_set_siri_current_session_command(
+                "thread-old".to_owned(),
+                "codex".to_owned(),
+                "mutation-old".to_owned(),
+            )
+            .expect("enqueue old current session");
+        store
+            .mark_attempted("mutation-old".to_owned())
+            .expect("attempt old current session");
+        let snapshot = store
+            .enqueue_set_siri_current_session_command(
+                "thread-new".to_owned(),
+                "zed".to_owned(),
+                "mutation-new".to_owned(),
+            )
+            .expect("enqueue new current session");
+
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetSiriCurrentSession
+        );
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-new"
+        );
+        assert_eq!(snapshot.pending_commands[0].thread_id, "thread-new");
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "zed");
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 0);
+    }
+
+    #[test]
+    fn local_store_repairs_stale_siri_current_sessions_on_load() {
+        let path = temp_store_path("siri-current-load-repair");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 5,
+                "pendingCommands": [
+                    {
+                        "kind": "SetSiriCurrentSession",
+                        "clientMutationID": "mutation-old",
+                        "threadID": "thread-old",
+                        "assistantSurface": "codex",
+                        "attemptCount": 109
+                    },
+                    {
+                        "kind": "SetSiriCurrentSession",
+                        "clientMutationID": "mutation-new",
+                        "threadID": "thread-new",
+                        "assistantSurface": "zed",
+                        "attemptCount": 0
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write stale cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let snapshot = store.snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-new"
+        );
+        assert_eq!(snapshot.pending_commands[0].thread_id, "thread-new");
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "zed");
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
+                .expect("repaired json");
+        assert_eq!(
+            persisted["pendingCommands"]
+                .as_array()
+                .expect("pending commands")
+                .len(),
+            1
+        );
+        assert_eq!(
+            persisted["pendingCommands"][0]["clientMutationID"],
+            "mutation-new"
         );
     }
 
