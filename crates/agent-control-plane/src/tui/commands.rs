@@ -63,23 +63,17 @@ pub(crate) async fn execute_command(
         (TuiTab::Sessions, "notifications") => {
             let thread_id = selected_thread_id(app)?;
             let raw_ids = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                &format!("/desktop/sessions/{thread_id}/notifications"),
-                serde_json::json!({ "notificationIds": nullable_id_list(raw_ids) }),
-            )
-            .await?;
+            let _ = client;
+            submit_session_notifications(&thread_id, nullable_id_list(raw_ids)).await?;
         }
         (TuiTab::Sessions, "completion-check") => {
             let thread_id = selected_thread_id(app)?;
             let check_id = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                &format!("/desktop/sessions/{thread_id}/completion-check"),
-                serde_json::json!({
-                    "completionCheckId": nullable_id(check_id),
-                    "waitForReplyAfterCompletion": command_has_token(command, WAIT_COMMAND_TOKEN),
-                }),
+            let _ = client;
+            submit_session_completion_check(
+                &thread_id,
+                nullable_id(check_id),
+                command_has_token(command, WAIT_COMMAND_TOKEN),
             )
             .await?;
         }
@@ -123,40 +117,25 @@ pub(crate) async fn execute_command(
             submit_default_prompt(command_body(command, name)?).await?;
         }
         (TuiTab::Settings, "scope") => {
-            post_json(
-                client,
-                "/desktop/settings/scope",
-                serde_json::json!({ "scope": parts.next().unwrap_or("global") }),
-            )
-            .await?;
+            let _ = client;
+            submit_scope(parts.next().unwrap_or("global")).await?;
         }
         (TuiTab::Settings, "global-preset") => {
             let preset = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                "/desktop/settings/global-preset",
-                serde_json::json!({ "preset": nullable_id(preset) }),
-            )
-            .await?;
+            let _ = client;
+            submit_global_preset(nullable_id(preset)).await?;
         }
         (TuiTab::Settings, "global-notification") => {
             let notification_id = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                "/desktop/settings/global-notification",
-                serde_json::json!({ "notificationId": nullable_id(notification_id) }),
-            )
-            .await?;
+            let _ = client;
+            submit_global_notification(nullable_id(notification_id)).await?;
         }
         (TuiTab::Settings, "global-check") => {
             let check_id = parts.next().unwrap_or(OFF_VALUE);
-            post_json(
-                client,
-                "/desktop/settings/global-completion-check",
-                serde_json::json!({
-                    "completionCheckId": nullable_id(check_id),
-                    "waitForReplyAfterCompletion": command_has_token(command, WAIT_COMMAND_TOKEN),
-                }),
+            let _ = client;
+            submit_global_completion_check(
+                nullable_id(check_id),
+                command_has_token(command, WAIT_COMMAND_TOKEN),
             )
             .await?;
         }
@@ -165,14 +144,14 @@ pub(crate) async fn execute_command(
             if args.len() < 2 {
                 bail!("usage: notify-slack <label> <webhook>");
             }
-            post_json(
-                client,
-                "/desktop/notifications",
-                serde_json::json!({
-                    "label": args[0],
-                    "channel": "slack",
-                    "webhookUrl": args[1],
-                }),
+            let _ = client;
+            submit_upsert_notification_route(
+                &new_record_id("notification"),
+                &args[0],
+                "slack",
+                Some(&args[1]),
+                None,
+                None,
             )
             .await?;
         }
@@ -181,40 +160,39 @@ pub(crate) async fn execute_command(
             if args.len() < 3 {
                 bail!("usage: notify-telegram <label> <bot-token> <chat-id>");
             }
-            post_json(
-                client,
-                "/desktop/notifications",
-                serde_json::json!({
-                    "label": args[0],
-                    "channel": "telegram",
-                    "botToken": args[1],
-                    "chatId": args[2],
-                }),
+            let _ = client;
+            submit_upsert_notification_route(
+                &new_record_id("notification"),
+                &args[0],
+                "telegram",
+                None,
+                Some(&args[2]),
+                Some(&args[1]),
             )
             .await?;
         }
         (TuiTab::Settings, "delete-notification") => {
             let notification_id = parts.next().context("missing notification id")?;
-            delete_json(client, &format!("/desktop/notifications/{notification_id}")).await?;
+            let _ = client;
+            submit_delete_notification_route(notification_id).await?;
         }
         (TuiTab::Settings, "check") => {
             let args = command_args(command, name)?;
             if args.len() < 2 {
                 bail!("usage: check <label> <command>");
             }
-            post_json(
-                client,
-                "/desktop/completion-checks",
-                serde_json::json!({
-                    "label": args[0],
-                    "commands": [args[1..].join(" ")],
-                }),
+            let _ = client;
+            submit_upsert_completion_check(
+                &new_record_id("check"),
+                &args[0],
+                vec![args[1..].join(" ")],
             )
             .await?;
         }
         (TuiTab::Settings, "delete-check") => {
             let check_id = parts.next().context("missing check id")?;
-            delete_json(client, &format!("/desktop/completion-checks/{check_id}")).await?;
+            let _ = client;
+            submit_delete_completion_check(check_id).await?;
         }
         (TuiTab::Settings, "test-push") => {
             let installation_id = parts.next().context("missing installation id")?;
@@ -336,6 +314,168 @@ async fn submit_default_prompt(prompt: &str) -> Result<()> {
     submit_local_session_command(command, &client_mutation_id).await
 }
 
+async fn submit_scope(scope: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-scope-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetScope(proto::SetScopeRequest {
+            scope: scope.to_owned(),
+            client_mutation_id: client_mutation_id.clone(),
+        })),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_global_preset(preset: Option<&str>) -> Result<()> {
+    let client_mutation_id = format!("tui-global-preset-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetGlobalPreset(
+            proto::SetGlobalPresetRequest {
+                preset: preset.unwrap_or_default().to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_global_notification(notification_id: Option<&str>) -> Result<()> {
+    let client_mutation_id = format!("tui-global-notification-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetGlobalNotification(
+            proto::SetGlobalNotificationRequest {
+                notification_id: notification_id.unwrap_or_default().to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_global_completion_check(
+    completion_check_id: Option<&str>,
+    wait_for_reply_after_completion: bool,
+) -> Result<()> {
+    let client_mutation_id = format!("tui-global-completion-check-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetGlobalCompletionCheck(
+            proto::SetGlobalCompletionCheckRequest {
+                completion_check_id: completion_check_id.unwrap_or_default().to_owned(),
+                wait_for_reply_after_completion,
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_session_notifications(
+    thread_id: &str,
+    notification_ids: Vec<String>,
+) -> Result<()> {
+    let client_mutation_id = format!("tui-session-notifications-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetSessionNotifications(
+            proto::SetSessionNotificationsRequest {
+                thread_id: thread_id.to_owned(),
+                notification_ids,
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_session_completion_check(
+    thread_id: &str,
+    completion_check_id: Option<&str>,
+    wait_for_reply_after_completion: bool,
+) -> Result<()> {
+    let client_mutation_id = format!("tui-session-completion-check-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::SetSessionCompletionCheck(
+            proto::SetSessionCompletionCheckRequest {
+                thread_id: thread_id.to_owned(),
+                completion_check_id: completion_check_id.unwrap_or_default().to_owned(),
+                wait_for_reply_after_completion,
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_upsert_notification_route(
+    notification_id: &str,
+    label: &str,
+    channel: &str,
+    webhook_url: Option<&str>,
+    chat_id: Option<&str>,
+    bot_token: Option<&str>,
+) -> Result<()> {
+    let client_mutation_id = format!("tui-upsert-notification-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::UpsertNotificationRoute(
+            proto::UpsertNotificationRouteRequest {
+                notification_id: notification_id.to_owned(),
+                label: label.to_owned(),
+                channel: channel.to_owned(),
+                webhook_url: webhook_url.unwrap_or_default().to_owned(),
+                chat_id: chat_id.unwrap_or_default().to_owned(),
+                bot_token: bot_token.unwrap_or_default().to_owned(),
+                chat_username: String::new(),
+                chat_display_name: String::new(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_delete_notification_route(notification_id: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-delete-notification-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::DeleteNotificationRoute(
+            proto::DeleteNotificationRouteRequest {
+                notification_id: notification_id.to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_upsert_completion_check(
+    completion_check_id: &str,
+    label: &str,
+    commands: Vec<String>,
+) -> Result<()> {
+    let client_mutation_id = format!("tui-upsert-completion-check-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::UpsertCompletionCheck(
+            proto::UpsertCompletionCheckRequest {
+                completion_check_id: completion_check_id.to_owned(),
+                label: label.to_owned(),
+                commands,
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
+async fn submit_delete_completion_check(completion_check_id: &str) -> Result<()> {
+    let client_mutation_id = format!("tui-delete-completion-check-{}", uuid::Uuid::new_v4());
+    let command = proto::Command {
+        command: Some(proto::command::Command::DeleteCompletionCheck(
+            proto::DeleteCompletionCheckRequest {
+                completion_check_id: completion_check_id.to_owned(),
+                client_mutation_id: client_mutation_id.clone(),
+            },
+        )),
+    };
+    submit_local_session_command(command, &client_mutation_id).await
+}
+
 async fn submit_local_session_command(
     command: proto::Command,
     client_mutation_id: &str,
@@ -347,6 +487,10 @@ async fn submit_local_session_command(
     )
     .await?;
     Ok(())
+}
+
+fn new_record_id(prefix: &str) -> String {
+    format!("{prefix}-{}", uuid::Uuid::new_v4())
 }
 
 fn selected_thread_id(app: &TuiState) -> Result<String> {

@@ -15,8 +15,10 @@ use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
     ClientFrame, Command, DeleteSessionRequest, HealthRequest, MuteSessionRequest, Resume,
     SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame, SetAssistantSurfaceRequest,
-    SetSessionArchivedRequest, SetSessionModeRequest, SetSiriDefaultSessionRequest,
-    SubmitNotificationReplyRequest, client_frame, command,
+    SetDefaultNotificationTargetsRequest, SetGlobalCompletionCheckRequest, SetScopeRequest,
+    SetSessionArchivedRequest, SetSessionCompletionCheckRequest, SetSessionModeRequest,
+    SetSessionNotificationsRequest, SetSiriDefaultSessionRequest, SubmitNotificationReplyRequest,
+    UpsertCompletionCheckRequest, UpsertNotificationRouteRequest, client_frame, command,
     looper_realtime_client::LooperRealtimeClient, server_frame,
 };
 use agent_control_plane::http::build_router;

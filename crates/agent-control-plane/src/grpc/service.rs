@@ -19,11 +19,16 @@ use crate::mobile::realtime_ack::CommandAckError;
 use crate::mobile::realtime_commands::{
     COMMAND_KIND_SET_SIRI_CURRENT_SESSION, COMMAND_KIND_SET_SIRI_DEFAULT_SESSION,
     RealtimeCommandError, SessionCommandAckResponse, SiriSessionTarget,
-    SubmitNotificationReplyInput, delete_session_command, mute_session_command,
+    SubmitNotificationReplyInput, delete_completion_check_command,
+    delete_notification_route_command, delete_session_command, mute_session_command,
     save_default_prompt_command, send_session_prompt_command, set_assistant_surface_command,
-    set_session_archived_command, set_session_mode_command, set_siri_session_command,
-    submit_notification_reply_command,
+    set_default_notification_targets_command, set_global_completion_check_command,
+    set_global_notification_command, set_global_preset_command, set_scope_command,
+    set_session_archived_command, set_session_completion_check_command, set_session_mode_command,
+    set_session_notifications_command, set_siri_session_command, submit_notification_reply_command,
+    upsert_completion_check_command, upsert_notification_route_command,
 };
+use crate::mobile::session::UpsertMobileNotificationRoute;
 
 const HEALTH_SERVICE_NAME: &str = "looper-realtime";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
@@ -370,6 +375,179 @@ fn handle_session_command(
             .map(command_ack_from_command)
             .map_err(realtime_command_status),
         ),
+        Some(proto::command::Command::SetScope(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            set_scope_command(control_plane, request.scope, &request.client_mutation_id)
+                .map(command_ack_from_command)
+                .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::SetGlobalPreset(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            set_global_preset_command(
+                control_plane,
+                Some(request.preset),
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::SetGlobalNotification(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            set_global_notification_command(
+                control_plane,
+                Some(request.notification_id),
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::SetDefaultNotificationTargets(request)) => {
+            session_command_frames(
+                control_plane,
+                last_seq,
+                request.client_mutation_id.clone(),
+                MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+                set_default_notification_targets_command(
+                    control_plane,
+                    request.notification_target_ids,
+                    &request.client_mutation_id,
+                )
+                .map(command_ack_from_command)
+                .map_err(realtime_command_status),
+            )
+        }
+        Some(proto::command::Command::SetGlobalCompletionCheck(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            set_global_completion_check_command(
+                control_plane,
+                Some(request.completion_check_id),
+                request.wait_for_reply_after_completion,
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::UpsertNotificationRoute(request)) => {
+            let result =
+                ensure_command_text_size("notification label", &request.label).and_then(|_| {
+                    upsert_notification_route_command(
+                        control_plane,
+                        UpsertMobileNotificationRoute {
+                            id: Some(request.notification_id.clone()),
+                            label: Some(request.label),
+                            channel: request.channel,
+                            webhook_url: optional_proto_string(request.webhook_url),
+                            chat_id: optional_proto_string(request.chat_id),
+                            bot_token: optional_proto_string(request.bot_token),
+                            chat_username: optional_proto_string(request.chat_username),
+                            chat_display_name: optional_proto_string(request.chat_display_name),
+                        },
+                        &request.client_mutation_id,
+                    )
+                    .map(command_ack_from_command)
+                    .map_err(realtime_command_status)
+                });
+            session_command_frames(
+                control_plane,
+                last_seq,
+                request.client_mutation_id,
+                request.notification_id,
+                result,
+            )
+        }
+        Some(proto::command::Command::DeleteNotificationRoute(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.notification_id.clone(),
+            delete_notification_route_command(
+                control_plane,
+                request.notification_id,
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::UpsertCompletionCheck(request)) => {
+            let result = ensure_command_text_size("completion check label", &request.label)
+                .and_then(|_| {
+                    ensure_command_text_list_size("completion check command", &request.commands)
+                })
+                .and_then(|_| {
+                    upsert_completion_check_command(
+                        control_plane,
+                        request.completion_check_id.clone(),
+                        request.label,
+                        request.commands,
+                        &request.client_mutation_id,
+                    )
+                    .map(command_ack_from_command)
+                    .map_err(realtime_command_status)
+                });
+            session_command_frames(
+                control_plane,
+                last_seq,
+                request.client_mutation_id,
+                request.completion_check_id,
+                result,
+            )
+        }
+        Some(proto::command::Command::DeleteCompletionCheck(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.completion_check_id.clone(),
+            delete_completion_check_command(
+                control_plane,
+                request.completion_check_id,
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::SetSessionNotifications(request)) => session_command_frames(
+            control_plane,
+            last_seq,
+            request.client_mutation_id.clone(),
+            request.thread_id.clone(),
+            set_session_notifications_command(
+                control_plane,
+                request.thread_id,
+                request.notification_ids,
+                &request.client_mutation_id,
+            )
+            .map(command_ack_from_command)
+            .map_err(realtime_command_status),
+        ),
+        Some(proto::command::Command::SetSessionCompletionCheck(request)) => {
+            session_command_frames(
+                control_plane,
+                last_seq,
+                request.client_mutation_id.clone(),
+                request.thread_id.clone(),
+                set_session_completion_check_command(
+                    control_plane,
+                    request.thread_id,
+                    Some(request.completion_check_id),
+                    request.wait_for_reply_after_completion,
+                    &request.client_mutation_id,
+                )
+                .map(command_ack_from_command)
+                .map_err(realtime_command_status),
+            )
+        }
         None => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
             String::new(),
             String::new(),
@@ -623,6 +801,18 @@ fn ensure_command_text_size(field_name: &str, value: &str) -> Result<(), Status>
         )));
     }
     Ok(())
+}
+
+fn ensure_command_text_list_size(field_name: &str, values: &[String]) -> Result<(), Status> {
+    for value in values {
+        ensure_command_text_size(field_name, value)?;
+    }
+    Ok(())
+}
+
+fn optional_proto_string(value: String) -> Option<String> {
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
 }
 
 fn heartbeat_frame(control_plane: &ControlPlane) -> proto::ServerFrame {

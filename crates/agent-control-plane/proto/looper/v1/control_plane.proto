@@ -44,6 +44,17 @@ message Command {
     SetSessionArchivedRequest set_session_archived = 8;
     DeleteSessionRequest delete_session = 9;
     MuteSessionRequest mute_session = 10;
+    SetScopeRequest set_scope = 11;
+    SetGlobalPresetRequest set_global_preset = 12;
+    SetGlobalNotificationRequest set_global_notification = 13;
+    SetDefaultNotificationTargetsRequest set_default_notification_targets = 14;
+    SetGlobalCompletionCheckRequest set_global_completion_check = 15;
+    UpsertNotificationRouteRequest upsert_notification_route = 16;
+    DeleteNotificationRouteRequest delete_notification_route = 17;
+    UpsertCompletionCheckRequest upsert_completion_check = 18;
+    DeleteCompletionCheckRequest delete_completion_check = 19;
+    SetSessionNotificationsRequest set_session_notifications = 20;
+    SetSessionCompletionCheckRequest set_session_completion_check = 21;
   }
 }
 
@@ -109,6 +120,74 @@ message DeleteSessionRequest {
 message MuteSessionRequest {
   string thread_id = 1;
   string client_mutation_id = 2;
+}
+
+message SetScopeRequest {
+  string scope = 1;
+  string client_mutation_id = 2;
+}
+
+message SetGlobalPresetRequest {
+  string preset = 1;
+  string client_mutation_id = 2;
+}
+
+message SetGlobalNotificationRequest {
+  string notification_id = 1;
+  string client_mutation_id = 2;
+}
+
+message SetDefaultNotificationTargetsRequest {
+  repeated string notification_target_ids = 1;
+  string client_mutation_id = 2;
+}
+
+message SetGlobalCompletionCheckRequest {
+  string completion_check_id = 1;
+  bool wait_for_reply_after_completion = 2;
+  string client_mutation_id = 3;
+}
+
+message UpsertNotificationRouteRequest {
+  string notification_id = 1;
+  string label = 2;
+  string channel = 3;
+  string webhook_url = 4;
+  string chat_id = 5;
+  string bot_token = 6;
+  string chat_username = 7;
+  string chat_display_name = 8;
+  string client_mutation_id = 9;
+}
+
+message DeleteNotificationRouteRequest {
+  string notification_id = 1;
+  string client_mutation_id = 2;
+}
+
+message UpsertCompletionCheckRequest {
+  string completion_check_id = 1;
+  string label = 2;
+  repeated string commands = 3;
+  string client_mutation_id = 4;
+}
+
+message DeleteCompletionCheckRequest {
+  string completion_check_id = 1;
+  string client_mutation_id = 2;
+}
+
+message SetSessionNotificationsRequest {
+  string thread_id = 1;
+  repeated string notification_ids = 2;
+  string client_mutation_id = 3;
+}
+
+message SetSessionCompletionCheckRequest {
+  string thread_id = 1;
+  string completion_check_id = 2;
+  bool wait_for_reply_after_completion = 3;
+  string client_mutation_id = 4;
 }
 
 message CommandAck {

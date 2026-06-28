@@ -431,38 +431,49 @@ async fn run_settings_command(args: &[String], format: OutputFormat) -> Result<(
             )
         }
         Some("scope") if args.len() >= 2 => {
-            post_json(
-                "/desktop/settings/scope",
-                serde_json::json!({ "scope": args[1] }),
-                format,
-            )
-            .await
+            let mutation_id = format!("cli-scope-{}", uuid::Uuid::new_v4());
+            let ack =
+                submit_session_command(scope_command(&args[1], mutation_id.clone()), mutation_id)
+                    .await?;
+            print_value(&session_command_ack_value("SetScope", &ack), format)
         }
         Some("global-preset") if args.len() >= 2 => {
-            post_json(
-                "/desktop/settings/global-preset",
-                serde_json::json!({ "preset": nullable_id(&args[1]) }),
-                format,
+            let mutation_id = format!("cli-global-preset-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                global_preset_command(nullable_id(&args[1]), mutation_id.clone()),
+                mutation_id,
             )
-            .await
+            .await?;
+            print_value(&session_command_ack_value("SetGlobalPreset", &ack), format)
         }
         Some("global-notification") if args.len() >= 2 => {
-            post_json(
-                "/desktop/settings/global-notification",
-                serde_json::json!({ "notificationId": nullable_id(&args[1]) }),
+            let mutation_id = format!("cli-global-notification-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                global_notification_command(nullable_id(&args[1]), mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SetGlobalNotification", &ack),
                 format,
             )
-            .await
         }
-        Some("global-completion-check") if args.len() >= 2 => post_json(
-            "/desktop/settings/global-completion-check",
-            serde_json::json!({
-                "completionCheckId": nullable_id(&args[1]),
-                "waitForReplyAfterCompletion": args.iter().any(|arg| arg == WAIT_FOR_REPLY_FLAG),
-            }),
-            format,
-        )
-        .await,
+        Some("global-completion-check") if args.len() >= 2 => {
+            let mutation_id = format!("cli-global-completion-check-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                global_completion_check_command(
+                    nullable_id(&args[1]),
+                    args.iter().any(|arg| arg == WAIT_FOR_REPLY_FLAG),
+                    mutation_id.clone(),
+                ),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SetGlobalCompletionCheck", &ack),
+                format,
+            )
+        }
         _ => bail!(
             "usage: looper settings [get|default-prompt <text>|scope <global|per-task>|global-preset <preset|off>|global-notification <id|off>|global-completion-check <id|off>]"
         ),
@@ -541,22 +552,34 @@ async fn run_sessions_command(args: &[String], format: OutputFormat) -> Result<(
             .await
         }
         Some("notifications") if args.len() >= 3 => {
-            post_json(
-                &format!("/desktop/sessions/{}/notifications", args[1]),
-                serde_json::json!({ "notificationIds": split_csv(&args[2]) }),
+            let mutation_id = format!("cli-session-notifications-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                session_notifications_command(&args[1], split_csv(&args[2]), mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SetSessionNotifications", &ack),
                 format,
             )
-            .await
         }
-        Some("completion-check") if args.len() >= 3 => post_json(
-            &format!("/desktop/sessions/{}/completion-check", args[1]),
-            serde_json::json!({
-                "completionCheckId": nullable_id(&args[2]),
-                "waitForReplyAfterCompletion": args.iter().any(|arg| arg == WAIT_FOR_REPLY_FLAG),
-            }),
-            format,
-        )
-        .await,
+        Some("completion-check") if args.len() >= 3 => {
+            let mutation_id = format!("cli-session-completion-check-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                session_completion_check_command(
+                    &args[1],
+                    nullable_id(&args[2]),
+                    args.iter().any(|arg| arg == WAIT_FOR_REPLY_FLAG),
+                    mutation_id.clone(),
+                ),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("SetSessionCompletionCheck", &ack),
+                format,
+            )
+        }
         _ => bail!(
             "usage: looper sessions [list|show <id>|mode <id> <preset|off>|archive <id>|unarchive <id>|delete <id>|mute <id>|prompt <id> <text>|prompt-mode <id> <preset> <text>|prompt-active <text>|prompt-active-mode <preset> <text>|notifications <id> <ids>|completion-check <id> <check|off>]"
         ),
@@ -567,34 +590,60 @@ async fn run_notifications_command(args: &[String], format: OutputFormat) -> Res
     match args.first().map(String::as_str) {
         Some("list") => print_get("/desktop/mobile-state", format).await,
         Some("create-slack") if args.len() >= 3 => {
-            post_json(
-                "/desktop/notifications",
-                serde_json::json!({
-                    "label": args[1],
-                    "channel": "slack",
-                    "webhookUrl": args[2],
-                }),
+            let mutation_id = format!("cli-upsert-notification-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                upsert_notification_route_command(
+                    &new_record_id("notification"),
+                    &args[1],
+                    "slack",
+                    Some(&args[2]),
+                    None,
+                    None,
+                    None,
+                    None,
+                    mutation_id.clone(),
+                ),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("UpsertNotificationRoute", &ack),
                 format,
             )
-            .await
         }
         Some("create-telegram") if args.len() >= 4 => {
-            post_json(
-                "/desktop/notifications",
-                serde_json::json!({
-                    "label": args[1],
-                    "channel": "telegram",
-                    "botToken": args[2],
-                    "chatId": args[3],
-                    "chatUsername": args.get(4),
-                    "chatDisplayName": args.get(5),
-                }),
+            let mutation_id = format!("cli-upsert-notification-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                upsert_notification_route_command(
+                    &new_record_id("notification"),
+                    &args[1],
+                    "telegram",
+                    None,
+                    Some(&args[3]),
+                    Some(&args[2]),
+                    args.get(4).map(String::as_str),
+                    args.get(5).map(String::as_str),
+                    mutation_id.clone(),
+                ),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("UpsertNotificationRoute", &ack),
                 format,
             )
-            .await
         }
         Some("delete") if args.len() >= 2 => {
-            delete_json(&format!("/desktop/notifications/{}", args[1]), format).await
+            let mutation_id = format!("cli-delete-notification-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                delete_notification_route_command(&args[1], mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("DeleteNotificationRoute", &ack),
+                format,
+            )
         }
         Some("telegram-chats") if args.len() >= 2 => {
             post_json(
@@ -617,18 +666,33 @@ async fn run_checks_command(args: &[String], format: OutputFormat) -> Result<()>
     match args.first().map(String::as_str) {
         Some("list") => print_get("/desktop/mobile-state", format).await,
         Some("create") if args.len() >= 3 => {
-            post_json(
-                "/desktop/completion-checks",
-                serde_json::json!({
-                    "label": args[1],
-                    "commands": [joined_args(&args[2..])],
-                }),
+            let mutation_id = format!("cli-upsert-completion-check-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                upsert_completion_check_command(
+                    &new_record_id("check"),
+                    &args[1],
+                    vec![joined_args(&args[2..])],
+                    mutation_id.clone(),
+                ),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("UpsertCompletionCheck", &ack),
                 format,
             )
-            .await
         }
         Some("delete") if args.len() >= 2 => {
-            delete_json(&format!("/desktop/completion-checks/{}", args[1]), format).await
+            let mutation_id = format!("cli-delete-completion-check-{}", uuid::Uuid::new_v4());
+            let ack = submit_session_command(
+                delete_completion_check_command(&args[1], mutation_id.clone()),
+                mutation_id,
+            )
+            .await?;
+            print_value(
+                &session_command_ack_value("DeleteCompletionCheck", &ack),
+                format,
+            )
         }
         _ => bail!("usage: looper checks [list|create <label> <command>|delete <id>]"),
     }
@@ -858,6 +922,168 @@ fn default_prompt_command(prompt: &str, client_mutation_id: String) -> proto::Co
     }
 }
 
+fn scope_command(scope: &str, client_mutation_id: String) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetScope(proto::SetScopeRequest {
+            scope: scope.to_owned(),
+            client_mutation_id,
+        })),
+    }
+}
+
+fn global_preset_command(preset: Option<&str>, client_mutation_id: String) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetGlobalPreset(
+            proto::SetGlobalPresetRequest {
+                preset: preset.unwrap_or_default().to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn global_notification_command(
+    notification_id: Option<&str>,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetGlobalNotification(
+            proto::SetGlobalNotificationRequest {
+                notification_id: notification_id.unwrap_or_default().to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn global_completion_check_command(
+    completion_check_id: Option<&str>,
+    wait_for_reply_after_completion: bool,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetGlobalCompletionCheck(
+            proto::SetGlobalCompletionCheckRequest {
+                completion_check_id: completion_check_id.unwrap_or_default().to_owned(),
+                wait_for_reply_after_completion,
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn upsert_notification_route_command(
+    notification_id: &str,
+    label: &str,
+    channel: &str,
+    webhook_url: Option<&str>,
+    chat_id: Option<&str>,
+    bot_token: Option<&str>,
+    chat_username: Option<&str>,
+    chat_display_name: Option<&str>,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::UpsertNotificationRoute(
+            proto::UpsertNotificationRouteRequest {
+                notification_id: notification_id.to_owned(),
+                label: label.to_owned(),
+                channel: channel.to_owned(),
+                webhook_url: webhook_url.unwrap_or_default().to_owned(),
+                chat_id: chat_id.unwrap_or_default().to_owned(),
+                bot_token: bot_token.unwrap_or_default().to_owned(),
+                chat_username: chat_username.unwrap_or_default().to_owned(),
+                chat_display_name: chat_display_name.unwrap_or_default().to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn delete_notification_route_command(
+    notification_id: &str,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::DeleteNotificationRoute(
+            proto::DeleteNotificationRouteRequest {
+                notification_id: notification_id.to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn upsert_completion_check_command(
+    completion_check_id: &str,
+    label: &str,
+    commands: Vec<String>,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::UpsertCompletionCheck(
+            proto::UpsertCompletionCheckRequest {
+                completion_check_id: completion_check_id.to_owned(),
+                label: label.to_owned(),
+                commands,
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn delete_completion_check_command(
+    completion_check_id: &str,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::DeleteCompletionCheck(
+            proto::DeleteCompletionCheckRequest {
+                completion_check_id: completion_check_id.to_owned(),
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn session_notifications_command(
+    thread_id: &str,
+    notification_ids: Vec<String>,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetSessionNotifications(
+            proto::SetSessionNotificationsRequest {
+                thread_id: thread_id.to_owned(),
+                notification_ids,
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn session_completion_check_command(
+    thread_id: &str,
+    completion_check_id: Option<&str>,
+    wait_for_reply_after_completion: bool,
+    client_mutation_id: String,
+) -> proto::Command {
+    proto::Command {
+        command: Some(proto::command::Command::SetSessionCompletionCheck(
+            proto::SetSessionCompletionCheckRequest {
+                thread_id: thread_id.to_owned(),
+                completion_check_id: completion_check_id.unwrap_or_default().to_owned(),
+                wait_for_reply_after_completion,
+                client_mutation_id,
+            },
+        )),
+    }
+}
+
+fn new_record_id(prefix: &str) -> String {
+    format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
 fn command_client_mutation_id(command: &proto::Command) -> Option<String> {
     match command.command.as_ref()? {
         proto::command::Command::SetSessionMode(request) => {
@@ -886,6 +1112,37 @@ fn command_client_mutation_id(command: &proto::Command) -> Option<String> {
         }
         proto::command::Command::DeleteSession(request) => Some(request.client_mutation_id.clone()),
         proto::command::Command::MuteSession(request) => Some(request.client_mutation_id.clone()),
+        proto::command::Command::SetScope(request) => Some(request.client_mutation_id.clone()),
+        proto::command::Command::SetGlobalPreset(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetGlobalNotification(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetDefaultNotificationTargets(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetGlobalCompletionCheck(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::UpsertNotificationRoute(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::DeleteNotificationRoute(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::UpsertCompletionCheck(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::DeleteCompletionCheck(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetSessionNotifications(request) => {
+            Some(request.client_mutation_id.clone())
+        }
+        proto::command::Command::SetSessionCompletionCheck(request) => {
+            Some(request.client_mutation_id.clone())
+        }
     }
 }
 

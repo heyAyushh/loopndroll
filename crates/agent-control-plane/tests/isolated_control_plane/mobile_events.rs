@@ -945,6 +945,140 @@ async fn grpc_session_stream_rejects_invalid_command_as_ack_frame() {
 }
 
 #[tokio::test]
+async fn grpc_session_stream_accepts_settings_and_route_commands() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, "mini-revision-settings-session-command", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let commands = vec![
+        (
+            "session-settings-upsert-notification",
+            command_session_frame(command::Command::UpsertNotificationRoute(
+                UpsertNotificationRouteRequest {
+                    notification_id: "route-session-settings".to_owned(),
+                    label: "Session alerts".to_owned(),
+                    channel: "slack".to_owned(),
+                    webhook_url: "https://hooks.slack.com/services/test".to_owned(),
+                    chat_id: String::new(),
+                    bot_token: String::new(),
+                    chat_username: String::new(),
+                    chat_display_name: String::new(),
+                    client_mutation_id: "session-settings-upsert-notification".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-default-targets",
+            command_session_frame(command::Command::SetDefaultNotificationTargets(
+                SetDefaultNotificationTargetsRequest {
+                    notification_target_ids: vec![
+                        "macos".to_owned(),
+                        "route-session-settings".to_owned(),
+                    ],
+                    client_mutation_id: "session-settings-default-targets".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-upsert-check",
+            command_session_frame(command::Command::UpsertCompletionCheck(
+                UpsertCompletionCheckRequest {
+                    completion_check_id: "check-session-settings".to_owned(),
+                    label: "Cargo checks".to_owned(),
+                    commands: vec!["cargo test".to_owned()],
+                    client_mutation_id: "session-settings-upsert-check".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-global-check",
+            command_session_frame(command::Command::SetGlobalCompletionCheck(
+                SetGlobalCompletionCheckRequest {
+                    completion_check_id: "check-session-settings".to_owned(),
+                    wait_for_reply_after_completion: true,
+                    client_mutation_id: "session-settings-global-check".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-thread-notifications",
+            command_session_frame(command::Command::SetSessionNotifications(
+                SetSessionNotificationsRequest {
+                    thread_id: "thread-main".to_owned(),
+                    notification_ids: vec!["route-session-settings".to_owned()],
+                    client_mutation_id: "session-settings-thread-notifications".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-thread-check",
+            command_session_frame(command::Command::SetSessionCompletionCheck(
+                SetSessionCompletionCheckRequest {
+                    thread_id: "thread-main".to_owned(),
+                    completion_check_id: "check-session-settings".to_owned(),
+                    wait_for_reply_after_completion: false,
+                    client_mutation_id: "session-settings-thread-check".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-scope",
+            command_session_frame(command::Command::SetScope(SetScopeRequest {
+                scope: "per-task".to_owned(),
+                client_mutation_id: "session-settings-scope".to_owned(),
+            })),
+        ),
+    ];
+    let expected_mutations = commands
+        .iter()
+        .map(|(mutation_id, _)| *mutation_id)
+        .collect::<Vec<_>>();
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        commands.into_iter().map(|(_, frame)| frame).collect(),
+    )
+    .await;
+
+    for mutation_id in expected_mutations {
+        let ack = next_session_ack_frame(&mut stream, mutation_id).await;
+        assert!(ack.accepted, "{mutation_id}: {}", ack.reject_reason);
+        assert_eq!(ack.client_mutation_id, mutation_id);
+        assert!(ack.ack_seq > 0);
+        assert!(!ack.revision.is_empty());
+        assert!(!ack.server_time.is_empty());
+    }
+
+    let state = control_plane
+        .mobile_session_service()
+        .state()
+        .expect("mobile state");
+    assert_eq!(state.scope, "per-task");
+    assert_eq!(
+        state.default_notification_target_ids,
+        vec!["macos".to_owned(), "route-session-settings".to_owned()]
+    );
+    assert_eq!(
+        state.global_completion_check_id.as_deref(),
+        Some("check-session-settings")
+    );
+    assert!(state.global_completion_check_wait_for_reply);
+    assert_eq!(state.notifications[0].id, "route-session-settings");
+    assert_eq!(state.completion_checks[0].id, "check-session-settings");
+    let session = state.sessions.get("thread-main").expect("thread override");
+    assert_eq!(session.notification_ids, vec!["route-session-settings"]);
+    assert_eq!(
+        session.completion_check_id.as_deref(),
+        Some("check-session-settings")
+    );
+    assert!(!session.completion_check_wait_for_reply);
+}
+
+#[tokio::test]
 async fn grpc_session_stream_mode_requires_hot_state_mini_cache_without_snapshot() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -1131,13 +1265,17 @@ async fn open_live_session_stream(
 }
 
 fn set_mode_session_frame(preset: &str, client_mutation_id: &str) -> ClientFrame {
+    command_session_frame(command::Command::SetSessionMode(SetSessionModeRequest {
+        thread_id: "thread-main".to_owned(),
+        preset: preset.to_owned(),
+        client_mutation_id: client_mutation_id.to_owned(),
+    }))
+}
+
+fn command_session_frame(command: command::Command) -> ClientFrame {
     ClientFrame {
         frame: Some(client_frame::Frame::Command(Command {
-            command: Some(command::Command::SetSessionMode(SetSessionModeRequest {
-                thread_id: "thread-main".to_owned(),
-                preset: preset.to_owned(),
-                client_mutation_id: client_mutation_id.to_owned(),
-            })),
+            command: Some(command),
         })),
     }
 }
