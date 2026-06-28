@@ -1020,13 +1020,7 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applySessionArchived(
-            sessionID: sessionID,
-            archived: archived
-        ) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "session-archived")
-        }
+        CompanionDiagnostics.record("archive:client-core-owned sessionID=\(sessionID) archived=\(archived)")
     }
 
     func deleteSession(_ sessionID: String) async {
@@ -1046,10 +1040,7 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applySessionDeleted(sessionID: sessionID) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "session-deleted")
-        }
+        CompanionDiagnostics.record("delete:client-core-owned sessionID=\(sessionID)")
     }
 
     @discardableResult
@@ -1317,16 +1308,9 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applyDefaultSiriSession(
-            sessionID: sessionID,
-            assistantSurface: targetSurface
-        ) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "siri-default-session")
-        }
-
         errorMessage = nil
         lastUpdatedAt = Date()
+        CompanionDiagnostics.record("siri-default:client-core-owned sessionID=\(sessionID)")
         Haptics.success()
         await donateSetDefaultSiriSession(session)
     }
@@ -1368,18 +1352,9 @@ final class CompanionAppModel {
             return
         }
 
-        guard let visibleSnapshot = snapshotState.applyCurrentSiriSession(
-            sessionID: sessionID,
-            assistantSurface: targetSurface
-        ) else {
-            return
-        }
-
-        CompanionSnapshotCache.save(visibleSnapshot)
-        publishSnapshotStateChange(reason: "siri-current-session")
-        CompanionDiagnostics.record("siri-current:local sessionID=\(sessionID)")
         errorMessage = nil
         lastUpdatedAt = Date()
+        CompanionDiagnostics.record("siri-current:client-core-owned sessionID=\(sessionID)")
     }
 
     func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
@@ -1466,13 +1441,9 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applyDefaultPrompt(defaultPrompt) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "default-prompt")
-        }
-
         errorMessage = nil
         lastUpdatedAt = Date()
+        CompanionDiagnostics.record("default-prompt:client-core-owned")
     }
 
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) {

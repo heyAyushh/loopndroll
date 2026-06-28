@@ -6,10 +6,6 @@ import Observation
 @MainActor
 @Observable
 final class CompanionSnapshotStateStore {
-    private enum Constants {
-        static let millisecondsPerSecond: TimeInterval = 1_000
-    }
-
     var snapshot: MobileSnapshot?
     var selectedAssistantSurface = CompanionAssistantSurface.defaultSurface
     private(set) var sessionSections = SessionSections.empty
@@ -180,106 +176,6 @@ final class CompanionSnapshotStateStore {
         detail(for: sessionID) != nil
     }
 
-    @discardableResult
-    func applyCurrentSiriSession(
-        sessionID: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) -> MobileSnapshot? {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return nil
-        }
-        guard nextSnapshot.globalSettings.siriCurrentSessionId != sessionID ||
-            nextSnapshot.globalSettings.siriCurrentAssistantSurface != assistantSurface
-        else {
-            return nil
-        }
-
-        nextSnapshot.globalSettings.siriCurrentSessionId = sessionID
-        nextSnapshot.globalSettings.siriCurrentAssistantSurface = assistantSurface
-        nextSnapshot.globalSettings.siriCurrentUpdatedAtMs = Int64(
-            Date().timeIntervalSince1970 * Constants.millisecondsPerSecond
-        )
-        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
-    @discardableResult
-    func applyDefaultSiriSession(
-        sessionID: String,
-        assistantSurface: CompanionAssistantSurface?
-    ) -> MobileSnapshot? {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return nil
-        }
-        guard nextSnapshot.globalSettings.siriDefaultSessionId != sessionID ||
-            nextSnapshot.globalSettings.siriDefaultAssistantSurface != assistantSurface
-        else {
-            return nil
-        }
-
-        nextSnapshot.globalSettings.siriDefaultSessionId = sessionID
-        nextSnapshot.globalSettings.siriDefaultAssistantSurface = assistantSurface
-        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
-    @discardableResult
-    func applyDefaultPrompt(_ prompt: String) -> MobileSnapshot? {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return nil
-        }
-        guard nextSnapshot.globalSettings.defaultPrompt != prompt else {
-            return nil
-        }
-
-        nextSnapshot.globalSettings.defaultPrompt = prompt
-        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
-    @discardableResult
-    func applySessionArchived(
-        sessionID: String,
-        archived: Bool
-    ) -> MobileSnapshot? {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return nil
-        }
-
-        let desiredStatus: SessionStatus = archived ? .archived : .stopped
-        let didChange = updateSessionSummary(
-            sessionID: sessionID,
-            in: &nextSnapshot
-        ) { session in
-            guard session.isArchived != archived || session.status != desiredStatus else {
-                return false
-            }
-            session.isArchived = archived
-            session.status = desiredStatus
-            return true
-        }
-
-        guard didChange else {
-            return nil
-        }
-        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
-    @discardableResult
-    func applySessionDeleted(sessionID: String) -> MobileSnapshot? {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return nil
-        }
-
-        let originalCount = sessionCount(in: nextSnapshot)
-        nextSnapshot.sessions.removeAll { $0.id == sessionID }
-        nextSnapshot.surfaceSessions = nextSnapshot.surfaceSessions.mapValues { sessions in
-            sessions.filter { $0.id != sessionID }
-        }
-
-        guard sessionCount(in: nextSnapshot) != originalCount else {
-            return nil
-        }
-        return applySnapshot(nextSnapshot, preferredSurface: selectedAssistantSurface)
-    }
-
     private func applyReducedVisibleSnapshot(
         _ visibleSnapshot: MobileSnapshot,
         projection: ClientSnapshotProjection
@@ -333,38 +229,6 @@ final class CompanionSnapshotStateStore {
 
     private func sourceSnapshotForProjection() -> MobileSnapshot? {
         canonicalSnapshot ?? snapshot
-    }
-
-    private func updateSessionSummary(
-        sessionID: String,
-        in snapshot: inout MobileSnapshot,
-        update: (inout SessionSummary) -> Bool
-    ) -> Bool {
-        var didChange = false
-        snapshot.sessions = snapshot.sessions.map { session in
-            var nextSession = session
-            if nextSession.id == sessionID {
-                didChange = update(&nextSession) || didChange
-            }
-            return nextSession
-        }
-        snapshot.surfaceSessions = snapshot.surfaceSessions.mapValues { sessions in
-            sessions.map { session in
-                var nextSession = session
-                if nextSession.id == sessionID {
-                    didChange = update(&nextSession) || didChange
-                }
-                return nextSession
-            }
-        }
-        return didChange
-    }
-
-    private func sessionCount(in snapshot: MobileSnapshot) -> Int {
-        let surfaceCount = snapshot.surfaceSessions.values.reduce(0) { total, sessions in
-            total + sessions.count
-        }
-        return snapshot.sessions.count + surfaceCount
     }
 
 }
