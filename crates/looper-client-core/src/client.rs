@@ -1750,11 +1750,16 @@ impl ClientCoreState {
     }
 
     fn apply_state_mini_delta(&mut self, delta: ClientStateMiniDelta) -> bool {
-        if delta.seq <= self.latest_seq {
+        let is_replacement = is_state_mini_replacement_delta(&delta);
+        let is_same_seq_continuation = is_state_mini_bulk_delta(&delta) && !is_replacement;
+        if delta.seq < self.latest_seq {
+            return false;
+        }
+        if delta.seq == self.latest_seq && !is_same_seq_continuation {
             return false;
         }
 
-        if is_state_mini_replacement_delta(&delta) {
+        if is_replacement {
             self.state_minis = normalize_state_minis(delta.sessions);
         } else {
             if delta.has_session {
@@ -1781,6 +1786,10 @@ impl ClientCoreState {
 
 fn is_state_mini_replacement_delta(delta: &ClientStateMiniDelta) -> bool {
     !delta.has_session && delta.kind == STATE_MINI_REPLACEMENT_KIND
+}
+
+fn is_state_mini_bulk_delta(delta: &ClientStateMiniDelta) -> bool {
+    !delta.has_session && !delta.sessions.is_empty()
 }
 
 #[cfg(test)]
@@ -3305,6 +3314,67 @@ mod tests {
             result.snapshot.state_minis[0]
                 .payload_json
                 .contains("new codex")
+        );
+    }
+
+    #[test]
+    fn state_mini_replacement_continuation_chunks_append_at_same_seq() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 10,
+            sessions: vec![state_mini("thread-old", "codex", 10, "rev-10", "old")],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+
+        let first = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini("thread-1", "codex", 11, "rev-11", "one")],
+            })
+            .expect("apply first replacement chunk");
+        assert!(first.did_change);
+        assert_eq!(
+            first
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-1"]
+        );
+
+        let second = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: "session_mini_batch".to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini("thread-2", "zed", 11, "rev-11", "two")],
+            })
+            .expect("apply continuation chunk");
+
+        assert!(second.did_change);
+        assert_eq!(second.snapshot.latest_seq, 11);
+        assert_eq!(
+            second
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-1", "thread-2"]
         );
     }
 

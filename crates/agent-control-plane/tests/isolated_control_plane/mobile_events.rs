@@ -17,7 +17,6 @@ const SESSION_REQUEST_BUFFER: usize = 8;
 const REPLAY_BATCH_BOUNDARY_COUNT: usize = 129;
 const REPLAY_BATCH_DRAIN_TIMEOUT_MILLIS: u64 = 150;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST: usize = 512 * 1024;
-const STATE_MINI_REPLACEMENT_FRAME_MAX_BYTES_FOR_TEST: usize = 4 * 1024 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
 const OVERSIZED_LEGACY_SESSION_MINI_TEXT_CHARS: usize = 600 * 1024;
 const LARGE_SESSION_MINI_REPLACEMENT_COUNT: usize = 2_308;
@@ -999,24 +998,32 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
     )
     .await;
 
-    let delta = next_session_state_delta(&mut stream, "large replacement state delta").await;
-    assert_eq!(delta.seq, replacement_seq);
-    assert!(
-        delta.payload_json.len() < STATE_MINI_REPLACEMENT_FRAME_MAX_BYTES_FOR_TEST,
-        "payload should stay below replacement-frame cap, got {} bytes",
-        delta.payload_json.len()
-    );
-    let payload: serde_json::Value =
-        serde_json::from_str(&delta.payload_json).expect("replacement payload json");
-    assert_eq!(payload["replace"], true);
-    assert_eq!(payload["latestSeq"], replacement_seq);
-    assert_eq!(
-        payload["sessions"]
+    let mut chunk_count = 0usize;
+    let mut replayed_session_count = 0usize;
+    while replayed_session_count < LARGE_SESSION_MINI_REPLACEMENT_COUNT {
+        let delta = next_session_state_delta(&mut stream, "large replacement state delta").await;
+        assert_eq!(delta.seq, replacement_seq);
+        assert!(
+            delta.payload_json.len() < SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+            "payload should stay below control-frame cap, got {} bytes",
+            delta.payload_json.len()
+        );
+        let payload: serde_json::Value =
+            serde_json::from_str(&delta.payload_json).expect("replacement payload json");
+        assert_eq!(payload["latestSeq"], replacement_seq);
+        assert_eq!(payload["replace"], chunk_count == 0);
+        let sessions = payload["sessions"]
             .as_array()
-            .expect("replacement sessions")
-            .len(),
-        LARGE_SESSION_MINI_REPLACEMENT_COUNT
+            .expect("replacement sessions");
+        assert!(!sessions.is_empty());
+        replayed_session_count += sessions.len();
+        chunk_count += 1;
+    }
+    assert!(
+        chunk_count > 1,
+        "large replacement should be split into bounded chunks"
     );
+    assert_eq!(replayed_session_count, LARGE_SESSION_MINI_REPLACEMENT_COUNT);
 }
 
 #[tokio::test]

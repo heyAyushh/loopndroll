@@ -851,6 +851,26 @@ fn client_state_mini_delta(
             sessions,
         });
     }
+    let sessions = state_mini_payload_sessions(&payload);
+    if !sessions.is_empty() {
+        return Ok(ClientStateMiniDelta {
+            seq: delta.seq,
+            latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
+            entity_id: delta.entity_id,
+            kind: delta.kind,
+            revision: delta.revision,
+            server_time: delta.server_time,
+            has_session: false,
+            session: ClientStateMini {
+                session_id: String::new(),
+                assistant_surface: String::new(),
+                seq: delta.seq,
+                revision: String::new(),
+                payload_json: String::new(),
+            },
+            sessions,
+        });
+    }
     let Some(session_id) = state_mini_payload_session_id(&payload) else {
         return Ok(seq_only_state_mini_delta(delta));
     };
@@ -1378,6 +1398,39 @@ mod tests {
         assert_eq!(delta.sessions.len(), 2);
         assert_eq!(delta.sessions[0].session_id, "thread-1");
         assert_eq!(delta.sessions[1].session_id, "thread-2");
+    }
+
+    #[test]
+    fn state_mini_delta_accepts_non_replacing_session_batch_payload() {
+        let delta = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 16,
+            entity_id: "mobile".to_owned(),
+            kind: "session_mini_batch".to_owned(),
+            revision: "rev-16".to_owned(),
+            server_time: "2026-06-27T00:00:16Z".to_owned(),
+            payload_json: json!({
+                "latestSeq": 16,
+                "replace": false,
+                "sessions": [
+                    {
+                        "sessionId": "thread-2",
+                        "assistantSurface": "zed",
+                        "seq": 16,
+                        "revision": "rev-16",
+                        "title": "Two"
+                    }
+                ]
+            })
+            .to_string(),
+        })
+        .expect("delta");
+
+        assert!(!delta.has_session);
+        assert_eq!(delta.kind, "session_mini_batch");
+        assert_eq!(delta.latest_seq, 16);
+        assert_eq!(delta.sessions.len(), 1);
+        assert_eq!(delta.sessions[0].session_id, "thread-2");
+        assert_eq!(delta.sessions[0].assistant_surface, "zed");
     }
 
     #[test]

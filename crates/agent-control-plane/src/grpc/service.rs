@@ -2,15 +2,16 @@ use std::{pin::Pin, time::Duration};
 
 use async_stream::stream;
 use futures_core::Stream;
+use serde_json::{Value, json};
 use tonic::{Request, Response, Status};
 
 use crate::control_plane::ControlPlane;
 use crate::control_plane::session_fsm::SessionReject;
-use crate::events::{MobileStateEventGap, MobileStateEventRecord};
+use crate::events::{MobileSessionMiniRecord, MobileStateEventGap, MobileStateEventRecord};
 use crate::grpc::auth::authorize_mobile_api_request_from_peer;
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
-use crate::mobile::api::{compact_mobile_session_mini_record, mobile_session_mini_delta};
+use crate::mobile::api::compact_mobile_session_mini_record;
 use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
     mobile_event_wire_name,
@@ -37,6 +38,7 @@ const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const BYTES_PER_MIB: usize = 1024 * 1024;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES: usize = 4 * BYTES_PER_MIB;
+const SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES: usize = 512 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES: usize = 64 * 1024;
 const SESSION_CONTROL_TEXT_MAX_CHARS: usize = 512;
 const REJECT_ERROR_CODE_EMPTY_FRAME: &str = "empty_client_frame";
@@ -633,7 +635,7 @@ fn replay_state_delta_frames(
         for record in records {
             replay_after_seq = replay_after_seq.max(record.seq);
             *last_seq = (*last_seq).max(record.seq);
-            frames.push(state_delta_frame(control_plane, &record)?);
+            frames.extend(state_delta_frames(control_plane, &record)?);
         }
         if record_count < SESSION_REPLAY_BATCH_SIZE {
             break;
@@ -686,11 +688,51 @@ fn rejected_command_ack(
     }
 }
 
-fn state_delta_frame(
+fn state_delta_frames(
     control_plane: &ControlPlane,
     record: &MobileStateEventRecord,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    let replacement = match control_plane
+        .store()
+        .mobile_session_minis_replaced_at_seq(record.seq)
+    {
+        Ok(replacement) => replacement,
+        Err(_) => {
+            return state_delta_frame(
+                record,
+                state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON),
+            )
+            .map(|frame| vec![frame]);
+        }
+    };
+    let Ok(minis) = control_plane
+        .store()
+        .mobile_session_minis_at_seq(record.seq)
+    else {
+        return state_delta_frame(
+            record,
+            state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON),
+        )
+        .map(|frame| vec![frame]);
+    };
+    if replacement {
+        return replacement_state_delta_frames(record, &minis);
+    }
+
+    let payload_json = if minis.len() == 1 && minis[0].session_id == record.entity_id {
+        compact_mobile_session_mini_record(&minis[0]).unwrap_or_else(|| {
+            state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
+        })
+    } else {
+        state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
+    };
+    state_delta_frame(record, payload_json).map(|frame| vec![frame])
+}
+
+fn state_delta_frame(
+    record: &MobileStateEventRecord,
+    payload_json: String,
 ) -> Result<proto::ServerFrame, Status> {
-    let payload_json = state_delta_payload_json(control_plane, record);
     ensure_frame_payload_size("StateMiniDelta", &payload_json)?;
     Ok(proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::StateDelta(
@@ -706,37 +748,56 @@ fn state_delta_frame(
     })
 }
 
-fn state_delta_payload_json(
-    control_plane: &ControlPlane,
+fn replacement_state_delta_frames(
     record: &MobileStateEventRecord,
-) -> String {
-    let replacement = match control_plane
-        .store()
-        .mobile_session_minis_replaced_at_seq(record.seq)
-    {
-        Ok(replacement) => replacement,
-        Err(_) => {
-            return state_delta_control_payload_json(
-                record,
-                STATE_DELTA_PROJECTION_READ_FAILED_REASON,
-            );
+    minis: &[MobileSessionMiniRecord],
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    let mut frames = Vec::new();
+    let mut chunk = Vec::new();
+    let mut chunk_replaces = true;
+
+    for mini in minis {
+        let Some(value) = compact_mobile_session_mini_value(mini) else {
+            continue;
+        };
+        chunk.push(value);
+        let payload_json = replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
+        if payload_json.len() > SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES && chunk.len() > 1 {
+            let overflow = chunk.pop().expect("overflow item");
+            let payload_json =
+                replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
+            frames.push(state_delta_frame(record, payload_json)?);
+            chunk.clear();
+            chunk.push(overflow);
+            chunk_replaces = false;
         }
-    };
-    let Ok(minis) = control_plane
-        .store()
-        .mobile_session_minis_at_seq(record.seq)
-    else {
-        return state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON);
-    };
-    if replacement {
-        return mobile_session_mini_delta(record.seq, &minis, true).to_string();
     }
-    if minis.len() == 1 && minis[0].session_id == record.entity_id {
-        return compact_mobile_session_mini_record(&minis[0]).unwrap_or_else(|| {
-            state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
-        });
+
+    if frames.is_empty() || !chunk.is_empty() {
+        let payload_json = replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
+        frames.push(state_delta_frame(record, payload_json)?);
     }
-    state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
+
+    Ok(frames)
+}
+
+fn compact_mobile_session_mini_value(record: &MobileSessionMiniRecord) -> Option<Value> {
+    let payload = compact_mobile_session_mini_record(record)?;
+    serde_json::from_str(&payload).ok()
+}
+
+fn replacement_state_delta_payload_json(
+    latest_seq: i64,
+    sessions: &[Value],
+    replace: bool,
+) -> String {
+    json!({
+        "latest_seq": latest_seq,
+        "latestSeq": latest_seq,
+        "replace": replace,
+        "sessions": sessions,
+    })
+    .to_string()
 }
 
 fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {
