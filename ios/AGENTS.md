@@ -29,6 +29,7 @@ ios/
 | Core helpers | `LooperCompanionCore/Sources/LooperCompanionCore/` | URL routing, freshness, surface filtering, Siri entity support. |
 | Realtime architecture cuts | `../.agents/skills/looper-realtime-cutter/SKILL.md`, `../docs/architecture/realtime-cutter-workflow.md` | Use when iOS symptoms require server/client-core/iOS/macOS/device-truth coordination. |
 | Session sync and command ordering | `../.agents/skills/ios-session-sync-debugging/SKILL.md`, `LooperCompanion/Services/`, `../swift/LooperClientCore`, `../crates/looper-client-core` | Use for assistant switcher, Siri/default-session, state-mini, pending command, latest-wins, and stale async result bugs. |
+| Primary app proof surface | `../.agents/skills/ios-browser-simulator-proof/SKILL.md` | Use XcodeBuildMCP + `serve-sim` + Codex in-app Browser before physical-phone install unless the behavior is device-only. |
 | Simulator diagnostics | `../scripts/ios-diagnostics.sh`, `../.agents/skills/ios-perf-diagnostics/SKILL.md` | Use oslog-live, lldb-trap, perf-loop/xctrace, and ETTrace for latency, switcher, hang, and crash proof. |
 
 ## CONVENTIONS
@@ -43,12 +44,14 @@ ios/
 - Keep first prompt, Codex title, work status, assistant surface, and launched-by/subagent metadata visible through models before UI.
 - Use `../.agents/skills/looper-realtime-cutter/SKILL.md` before broad iOS realtime edits. Missing/stale session bugs must compare Codex sqlite truth, phone local store truth, Rust client-core projection, and iOS surface projection before patching UI.
 - Use `../.agents/skills/ios-session-sync-debugging/SKILL.md` for assistant switcher and session command lifecycle bugs. Command queues, latest-wins coalescing, mutation identity, and stale-result policy belong in `SessionSyncEngine` or another Services-layer client manager, not ad hoc presenter tasks in `CompanionAppModel`.
+- Use `../.agents/skills/ios-browser-simulator-proof/SKILL.md` as the default observable iOS workflow. The primary loop is XcodeBuildMCP simulator launch, `serve-sim` for that simulator UDID, and Codex in-app Browser proof. Physical iPhone install is second priority unless the user asks for the phone or the bug needs real-device behavior.
 - Keep iOS diagnostic instrumentation on existing `CompanionDiagnostics` categories; capture artifacts belong under `build/ios-diagnostics/`.
 - For simulator performance captures, pass `--device <simulator-udid>` to `scripts/ios-diagnostics.sh perf-loop` or `capture`; otherwise host processes with the same name can be profiled by mistake.
 
 ## ANTI-PATTERNS
 
 - Do not call iPhone work done from SwiftPM tests alone when the requested surface is simulator/device behavior.
+- Do not use static JPEG pages, standalone Chromium, or raw Playwright as iOS app proof when the Codex in-app Browser was requested.
 - Do not reintroduce `AskLatestCodexSessionIntent`; `scripts/check-ios.sh` rejects stale intent names.
 - Do not hardcode simulator/device assumptions outside test launch arguments or scripts.
 - Do not edit `OrbCodeKit/Frameworks/OrbCodeFFI.xcframework` manually; rebuild it from Rust.

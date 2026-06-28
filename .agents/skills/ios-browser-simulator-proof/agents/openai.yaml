@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Browser Simulator Proof"
+  short_description: "Mirror Looper iOS simulator in Codex Browser"
+  default_prompt: "Use $ios-browser-simulator-proof to launch Looper in Simulator and prove it through the Codex in-app Browser."

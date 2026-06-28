@@ -20,6 +20,7 @@
 | Task | Location | Notes |
 | --- | --- | --- |
 | Realtime architecture cuts | `looper-realtime-cutter/SKILL.md` | Session stream, state-mini visibility, endpoint switching, local store truth, and bounded teammode cutters. |
+| iOS Browser simulator proof | `ios-browser-simulator-proof/SKILL.md` | XcodeBuildMCP + `serve-sim` + Codex in-app Browser as the primary observable iOS app surface. |
 | iOS command lifecycle debugging | `ios-session-sync-debugging/SKILL.md` | Assistant switcher, Siri/default-session, latest-wins, pending command bugs. |
 | iOS diagnostics/perf proof | `ios-perf-diagnostics/SKILL.md` | oslog-live, lldb-trap, perf-loop/xctrace, ETTrace, simulator proof artifacts. |
 | macOS release flow | `macos-release-looper/SKILL.md` | Menu bar packaging/release guardrails. |
@@ -33,6 +34,7 @@
 - When a skill becomes first-class for a subsystem, add a pointer from the nearest `AGENTS.md`.
 - Keep subagent YAML focused on roles that save time and produce concrete files/evidence.
 - For Looper realtime/state bugs, start with `looper-realtime-cutter` before creating new audit docs or running broad gates.
+- For Looper iOS app observation, start with `ios-browser-simulator-proof`; use physical-phone install only when the requested behavior needs the device or the user asks for it.
 - Treat plugin/cache skill files as external references; do not copy broad generic text into repo skills.
 
 ## ANTI-PATTERNS
@@ -46,5 +48,5 @@
 
 ```bash
 find .agents/skills -maxdepth 2 -name SKILL.md -print | sort
-rg -n "looper-realtime-cutter|ios-session-sync-debugging|ios-perf-diagnostics" AGENTS.md ios/AGENTS.md scripts/AGENTS.md .agents/skills
+rg -n "looper-realtime-cutter|ios-browser-simulator-proof|ios-session-sync-debugging|ios-perf-diagnostics" AGENTS.md ios/AGENTS.md scripts/AGENTS.md .agents/skills
 ```

@@ -37,6 +37,7 @@ looper/
 | QA/proof docs | `docs/qa`, `GOAL*.md` | Record observed control surfaces, not speculative status. |
 | Realtime architecture-lock workflow | `.agents/skills/looper-realtime-cutter/SKILL.md`, `docs/architecture/realtime-cutter-workflow.md` | Use before broad Looper realtime/state cuts; splits server/client-core/iOS/macOS/device truth into bounded cutters. |
 | iOS command lifecycle and switcher debugging | `.agents/skills/ios-session-sync-debugging/SKILL.md`, `ios/LooperCompanion/Services/`, `swift/LooperClientCore`, `crates/looper-client-core` | Use for assistant switcher, Siri/default-session, state-mini, pending command, latest-wins, and stale async result bugs. |
+| Primary iOS app proof surface | `.agents/skills/ios-browser-simulator-proof/SKILL.md` | Use XcodeBuildMCP + `serve-sim` + Codex in-app Browser to launch, watch, tap, and prove Looper iOS behavior. |
 | iOS simulator diagnostics and profiling | `.agents/skills/ios-perf-diagnostics/SKILL.md`, `scripts/ios-diagnostics.sh` | Use OSLog, LLDB traps, perf-loop/xctrace, and ETTrace for app latency, switcher, hang, and crash proof. |
 
 ## CODE MAP
@@ -57,6 +58,7 @@ looper/
 - Keep macOS, iOS, and TUI surfaces as clients of Rust control-plane APIs: HTTP only for health/bootstrap, Session gRPC through Rust client-core for commands/state.
 - For cross-surface realtime/state regressions, use `.agents/skills/looper-realtime-cutter/SKILL.md` before editing: read `docs/architecture/decisions.md`, check Codex sqlite plus device local store truth, split bounded cutters, and run full gates/install only at acceptance.
 - For iOS assistant switcher or session command bugs, use `.agents/skills/ios-session-sync-debugging/SKILL.md`: Rust/LooperClientCore stays the source of truth, iOS command ordering belongs in a sync engine/client manager, and `CompanionAppModel` stays presenter/view-state coordinator.
+- For observable iOS app work, use `.agents/skills/ios-browser-simulator-proof/SKILL.md` first: XcodeBuildMCP runs the app in Simulator, `serve-sim` mirrors the exact simulator, and the Codex in-app Browser is the proof surface. Physical iPhone install is secondary for device-only behavior, continuity, signing, APNs, or explicit phone-install requests.
 - Local-first is the default. Tailscale-style reachable URLs are a remote-control boundary; hosted/cloud paths are not the default.
 - `looper` is the primary terminal command. `looper-cli` exists for compatibility callers and should not become the preferred product surface.
 - Apple projects are XcodeGen-driven. Update `ios/project.yml` or `macos/LooperMenuBar/project.yml` when target/package wiring changes, then regenerate and review the tracked project diff.
@@ -73,6 +75,7 @@ looper/
 - Do not silently edit user config files touched by Looper (`~/.codex/hooks.json`, `~/.codex/config.toml`, `~/.claude/settings.json`, `~/.grok/hooks/looper.json`, `~/.config/devin/config.json`) without a matching product path and verification.
 - Do not hand-edit generated Swift protobuf/gRPC files.
 - Do not call native Apple work done from build/test proof alone when installed-app, simulator, or paired-device behavior is the requested surface.
+- Do not prove iOS app behavior with static screenshots, standalone Chromium, or raw Playwright when the user asks for the Codex in-app Browser. Use the live `serve-sim` Browser mirror.
 - Do not widen install/release actions beyond the repo script target; report exact target paths first for `/Applications`, device installs, or external config writes.
 
 ## COMMANDS
@@ -105,5 +108,6 @@ bash scripts/release-macos.sh
 - `scripts/check-ios.sh` is an App Intents/Siri gate, not just a compile check.
 - Reusable realtime architecture-cut workflow lives in `.agents/skills/looper-realtime-cutter/SKILL.md`; use it when session visibility, route switching, client-core store, or cross-surface realtime truth is the failure.
 - Reusable iOS behavior debugging lives in `.agents/skills/ios-session-sync-debugging/SKILL.md`; use it before perf tracing for switcher/session command ordering bugs.
+- Reusable iOS Browser proof lives in `.agents/skills/ios-browser-simulator-proof/SKILL.md`; this is the primary app-observation workflow before physical phone install.
 - Reusable iOS diagnostics live in `.agents/skills/ios-perf-diagnostics/SKILL.md`; keep capture artifacts under `build/ios-diagnostics/` and keep ETTrace wiring temporary unless explicitly requested.
 - The canonical main checkout is `/Users/ay/Documents/looper`; this worktree may be ahead of it.
