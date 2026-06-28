@@ -47,6 +47,7 @@ pub(crate) enum StateMiniStreamEvent {
     Delta(ClientStateMiniDelta),
     RecoveredSnapshot {
         snapshot: ClientStateMiniSnapshot,
+        endpoint_url: String,
         error_description: String,
     },
     Heartbeat {
@@ -64,11 +65,17 @@ pub(crate) enum StateMiniStreamEvent {
     },
 }
 
+#[derive(Debug)]
+pub(crate) struct RecoveredStateMiniSnapshot {
+    pub(crate) snapshot: ClientStateMiniSnapshot,
+    pub(crate) endpoint_url: String,
+}
+
 pub(crate) async fn fetch_state_mini_snapshot(
     endpoints: Vec<ClientEndpoint>,
     bearer_token: String,
     mobile_session_header: String,
-) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
+) -> Result<RecoveredStateMiniSnapshot, ClientCoreError> {
     let candidates = snapshot_recovery_endpoints(&endpoints)?;
     let mut last_error = ClientCoreError::StateMiniSnapshotTransportFailed;
     let (result_sender, mut result_receiver) = mpsc::channel(candidates.len());
@@ -86,7 +93,11 @@ pub(crate) async fn fetch_state_mini_snapshot(
                 bearer_token.as_str(),
                 mobile_session_header.as_str(),
             )
-            .await;
+            .await
+            .map(|snapshot| RecoveredStateMiniSnapshot {
+                snapshot,
+                endpoint_url: normalized_endpoint_url(&endpoint.url),
+            });
             let _ = result_sender.send(result).await;
         }));
     }
@@ -94,11 +105,11 @@ pub(crate) async fn fetch_state_mini_snapshot(
 
     while let Some(result) = result_receiver.recv().await {
         match result {
-            Ok(snapshot) => {
+            Ok(recovered) => {
                 for handle in handles {
                     handle.abort();
                 }
-                return Ok(snapshot);
+                return Ok(recovered);
             }
             Err(error) => {
                 last_error = error;
@@ -199,11 +210,13 @@ pub(crate) async fn run_state_mini_stream(
                 )
                 .await
                 {
-                    Ok(snapshot) => {
-                        next_after_seq = next_after_seq.max(snapshot.latest_seq);
+                    Ok(recovered) => {
+                        next_after_seq = next_after_seq.max(recovered.snapshot.latest_seq);
+                        mark_endpoint_last_good(&mut endpoints, &recovered.endpoint_url);
                         let _ = events
                             .send(StateMiniStreamEvent::RecoveredSnapshot {
-                                snapshot,
+                                snapshot: recovered.snapshot,
+                                endpoint_url: recovered.endpoint_url,
                                 error_description,
                             })
                             .await;
@@ -1089,7 +1102,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
         let start = Instant::now();
-        let snapshot = runtime
+        let recovered = runtime
             .block_on(fetch_state_mini_snapshot(
                 vec![
                     ClientEndpoint {
@@ -1097,7 +1110,7 @@ mod tests {
                         last_good: true,
                     },
                     ClientEndpoint {
-                        url: fast_url,
+                        url: fast_url.clone(),
                         last_good: false,
                     },
                 ],
@@ -1106,8 +1119,9 @@ mod tests {
             ))
             .expect("first ready snapshot");
 
-        assert_eq!(snapshot.latest_seq, 42);
-        assert_eq!(snapshot.sessions[0].session_id, "thread-fast");
+        assert_eq!(recovered.endpoint_url, fast_url);
+        assert_eq!(recovered.snapshot.latest_seq, 42);
+        assert_eq!(recovered.snapshot.sessions[0].session_id, "thread-fast");
         assert!(start.elapsed() < Duration::from_millis(500));
         let _ = slow_server.join();
         let _ = fast_server.join();

@@ -148,13 +148,14 @@ impl LooperClientCoreSessionRuntime {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        let snapshot = self.client_core.recover_state_mini_snapshot(
+        let recovered = self.client_core.recover_state_mini_snapshot(
             endpoints,
             bearer_token,
             mobile_session_header,
         )?;
         self.local_store
-            .replace_state_minis(ClientStateMiniSnapshot::from(snapshot))
+            .mark_last_good_endpoint(recovered.endpoint_url)?;
+        self.local_store.replace_state_minis(recovered.snapshot)
     }
 
     pub async fn set_mode(

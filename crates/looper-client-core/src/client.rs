@@ -21,7 +21,7 @@ use crate::model::{
     ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind, STATE_MINI_REPLACEMENT_KIND,
 };
-use crate::session_transport::fetch_state_mini_snapshot;
+use crate::session_transport::{RecoveredStateMiniSnapshot, fetch_state_mini_snapshot};
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
 #[cfg(test)]
 use crate::state_mini::validate_state_mini_delta;
@@ -923,17 +923,21 @@ impl LooperClientCore {
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
         mobile_session_header: String,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+    ) -> Result<RecoveredStateMiniSnapshot, ClientCoreError> {
         let (sender, receiver) = std_mpsc::sync_channel(1);
         self.runtime.spawn(async move {
             let result =
                 fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await;
             let _ = sender.send(result);
         });
-        let snapshot = receiver
+        let recovered = receiver
             .recv()
             .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
-        self.replace_state_minis(snapshot)
+        let state_snapshot = self.replace_state_minis(recovered.snapshot)?;
+        Ok(RecoveredStateMiniSnapshot {
+            snapshot: ClientStateMiniSnapshot::from(state_snapshot),
+            endpoint_url: recovered.endpoint_url,
+        })
     }
 
     fn start_state_mini_stream(
@@ -1487,10 +1491,14 @@ impl LooperClientCore {
             }
             StateMiniStreamEvent::RecoveredSnapshot {
                 snapshot,
+                endpoint_url,
                 error_description,
             } => {
                 require_valid_sequence(snapshot.latest_seq)?;
                 validate_state_minis(&snapshot.sessions)?;
+                if !endpoint_url.is_empty() {
+                    state.endpoint_url = endpoint_url;
+                }
                 if snapshot.latest_seq < state.latest_seq {
                     state.phase = ConnectionPhase::Ready;
                     state.last_error.clear();
@@ -3444,6 +3452,7 @@ mod tests {
                     sessions: vec![state_mini("thread-1", "codex", 9, "rev-9", "recovered")],
                     server_time: SERVER_TIME.to_owned(),
                 },
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
                 error_description: "seq_gap".to_owned(),
             })
             .expect("stream recovery snapshot");
@@ -3454,6 +3463,7 @@ mod tests {
         );
         assert!(update.did_change);
         assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(update.snapshot.latest_seq, 9);
         assert_eq!(update.snapshot.revision, "rev-9");
         assert!(update.snapshot.last_error.is_empty());
@@ -3480,6 +3490,7 @@ mod tests {
                     sessions: vec![state_mini("thread-codex", "codex", 10, "rev-10", "codex")],
                     server_time: "2026-06-25T00:00:10Z".to_owned(),
                 },
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
                 error_description: "seq_gap".to_owned(),
             })
             .expect("stale stream recovery snapshot");
@@ -3490,6 +3501,7 @@ mod tests {
         );
         assert!(!update.did_change);
         assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
+        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(update.snapshot.latest_seq, 20);
         assert_eq!(update.snapshot.state_minis.len(), 1);
         assert_eq!(update.snapshot.state_minis[0].session_id, "thread-zed");
