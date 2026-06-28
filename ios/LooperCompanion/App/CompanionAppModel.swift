@@ -133,7 +133,6 @@ final class CompanionAppModel {
     var reachedBaseURL: URL?
     var activeSessionRouteBaseURL: URL?
     var snapshotState = CompanionSnapshotStateStore()
-    private(set) var snapshotRenderRevision = 0
     var connectionState: ConnectivityState = .connecting
     var errorMessage: String?
     var isLoading = false
@@ -225,10 +224,6 @@ final class CompanionAppModel {
         CompanionAppViewState(model: self)
     }
 
-    private func publishSnapshotStateChange(reason _: String) {
-        snapshotRenderRevision += 1
-    }
-
     var snapshot: MobileSnapshot? {
         get {
             snapshotState.snapshot
@@ -242,7 +237,6 @@ final class CompanionAppModel {
             } else {
                 snapshotState.reset()
             }
-            publishSnapshotStateChange(reason: "snapshot-property-set")
         }
     }
 
@@ -256,7 +250,6 @@ final class CompanionAppModel {
         }
         set {
             snapshotState.applyVisibleAssistantSurface(newValue)
-            publishSnapshotStateChange(reason: "assistant-surface-property-set")
         }
     }
 
@@ -396,9 +389,7 @@ final class CompanionAppModel {
     ) {
         if !serverTime.isEmpty {
             realtimeServerTime = serverTime
-            if snapshotState.applyHostSyncTime(serverTime) {
-                publishSnapshotStateChange(reason: "session-mini-liveness")
-            }
+            _ = snapshotState.applyHostSyncTime(serverTime)
         }
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
         realtimeStreamIsLive = isLive
@@ -525,7 +516,6 @@ final class CompanionAppModel {
         }
 
         snapshotState.reset()
-        publishSnapshotStateChange(reason: "snapshot-reset")
     }
 
     func refreshLocalNotificationStatus() async {
@@ -1004,7 +994,6 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "siri-open:surface-match sessionID=\(sessionID) surface=\(requestedSurface.rawValue)"
         )
-        publishSnapshotStateChange(reason: "siri-open-surface-match")
         return requestedSurface
     }
 
@@ -1065,13 +1054,10 @@ final class CompanionAppModel {
     }
 
     func refreshSessionDetail(id: String) {
-        let didRefreshLocalDetail = sessionDetailCoordinator.refresh(
+        _ = sessionDetailCoordinator.refresh(
             id: id,
             snapshotState: snapshotState
         )
-        if didRefreshLocalDetail {
-            publishSnapshotStateChange(reason: "session-detail-loaded")
-        }
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
@@ -1401,7 +1387,6 @@ final class CompanionAppModel {
                 sessionID: sessionID,
                 assistantSurface: targetSurface
             )
-            publishSnapshotStateChange(reason: "siri-default-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
@@ -1453,7 +1438,6 @@ final class CompanionAppModel {
                 sessionID: sessionID,
                 assistantSurface: targetSurface
             )
-            publishSnapshotStateChange(reason: "siri-current-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             return false
@@ -1546,7 +1530,6 @@ final class CompanionAppModel {
         do {
             try await targetRuntime.saveDefaultPrompt(defaultPrompt)
             snapshotState.applyAcceptedDefaultPrompt(defaultPrompt)
-            publishSnapshotStateChange(reason: "default-prompt-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             return false
@@ -1578,10 +1561,7 @@ final class CompanionAppModel {
         }
 
         let previousSurface = snapshotState.selectedAssistantSurface
-        let didSelectDesiredSurface = snapshotState.selectAssistantSurface(surface)
-        if didSelectDesiredSurface {
-            publishSnapshotStateChange(reason: "assistant-surface-desired")
-        }
+        _ = snapshotState.selectAssistantSurface(surface)
 
         return Task { @MainActor [weak self] in
             let result = await selectionTask.value
@@ -1601,9 +1581,7 @@ final class CompanionAppModel {
 
                 let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(appliedSurface)
                 let didSelectSurface = self.snapshotState.selectAssistantSurface(appliedSurface)
-                if didApplySurface || didSelectSurface {
-                    self.publishSnapshotStateChange(reason: "assistant-surface-selected")
-                } else {
+                if !(didApplySurface || didSelectSurface) {
                     CompanionDiagnostics.assistantSurface.debug(
                         "Selection accepted without visible change surface=\(appliedSurface.rawValue, privacy: .public) generation=\(result.generation, privacy: .public)"
                     )
@@ -1619,10 +1597,8 @@ final class CompanionAppModel {
             case .stale:
                 return false
             case let .failed(message):
-                if self.snapshotState.selectedAssistantSurface == surface,
-                   self.snapshotState.selectAssistantSurface(previousSurface)
-                {
-                    self.publishSnapshotStateChange(reason: "assistant-surface-rollback")
+                if self.snapshotState.selectedAssistantSurface == surface {
+                    _ = self.snapshotState.selectAssistantSurface(previousSurface)
                 }
                 self.applyConnectionFailure(
                     AssistantSurfaceSelectionFailure(message: message),
@@ -1835,7 +1811,6 @@ final class CompanionAppModel {
         markCachedSnapshotReadyIfNeeded(reason: reason)
         lastUpdatedAt = Date()
         spotlightCoordinator.clearForCachedSnapshotIfNeeded()
-        publishSnapshotStateChange(reason: reason)
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
@@ -1859,7 +1834,6 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)
         spotlightCoordinator.sync(with: snapshotState.allSessions)
-        publishSnapshotStateChange(reason: "snapshot-load")
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
             currentSnapshot: visibleSnapshot
@@ -1966,7 +1940,6 @@ final class CompanionAppModel {
 
     private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
         snapshotState.applyVisibleAssistantSurface(surface)
-        publishSnapshotStateChange(reason: "visible-assistant-surface")
     }
 
     private func selectAssistantSurfaceContainingSessionIfAvailable(_ sessionID: String) -> CompanionAssistantSurface? {
@@ -1978,7 +1951,6 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "continuation:surface-match sessionID=\(sessionID) surface=\(surface.rawValue)"
         )
-        publishSnapshotStateChange(reason: "continuation-surface-match")
         return surface
     }
 

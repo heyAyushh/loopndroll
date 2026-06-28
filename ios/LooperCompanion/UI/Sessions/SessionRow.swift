@@ -1,6 +1,15 @@
 import AppIntents
 import SwiftUI
 
+struct SessionRowDisplayItem: Identifiable, Hashable {
+    let session: SessionSummary
+    let assistantSurface: CompanionAssistantSurface
+
+    var id: String {
+        "\(assistantSurface.rawValue):\(session.id)"
+    }
+}
+
 struct SessionRow: View {
     let session: SessionSummary
     let assistantSurface: CompanionAssistantSurface

@@ -112,6 +112,16 @@ bash scripts/ios-diagnostics.sh oslog --timeout 30s --category AssistantSurface
 
 For switcher bugs, preserve lines for requested, coalesced, dispatch, applied, stale, and failed states.
 
+## Diagnostics Pairing
+
+Use the repo diagnostics wrapper first; it is wired to the globally installed tools:
+
+- `~/.local/bin/oslog-live` for bounded Unified Logging captures.
+- `~/.local/bin/lldb-trap` for focused debugger traps when the UI crashes or hangs.
+- `~/.local/bin/perf-loop` for repeatable xctrace captures when visual proof or OSLog does not explain latency.
+
+For SwiftUI flicker, capture Browser-visible taps plus `AssistantSurface` OSLog before reaching for xctrace. If `perf-loop --attach Looper` cannot find the simulator process, try a short all-processes capture once and record the blocker instead of looping on Instruments.
+
 ## Stop Conditions
 
 Report:

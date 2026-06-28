@@ -11,8 +11,7 @@ struct CompanionAppViewState {
     }
 
     private var snapshotState: CompanionSnapshotStateStore {
-        _ = model.snapshotRenderRevision
-        return model.snapshotState
+        model.snapshotState
     }
 
     var activeSessions: [SessionSummary] {
@@ -110,6 +109,10 @@ struct CompanionAppViewState {
 
     func session(withID sessionID: String) -> SessionSummary? {
         snapshotState.session(withID: sessionID)
+    }
+
+    func assistantSurface(for sessionID: String) -> CompanionAssistantSurface {
+        snapshotState.assistantSurface(for: sessionID)
     }
 
     var connectivityHeadline: String {

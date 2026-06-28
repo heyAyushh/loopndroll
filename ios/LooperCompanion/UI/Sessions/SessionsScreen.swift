@@ -196,16 +196,17 @@ struct SessionsScreen: View {
         allowsExpansion: Bool = true,
         footerText: String? = nil
     ) -> some View {
-        let visibleSessions = visibleSessions(
+        let visibleItems = visibleSessionItems(
             from: sessions,
+            assistantSurface: model.viewState.selectedAssistantSurface,
             isExpanded: allowsExpansion && isExpanded.wrappedValue
         )
         return Section {
-            ForEach(visibleSessions) { session in
-                NavigationLink(value: session) {
+            ForEach(visibleItems) { item in
+                NavigationLink(value: item.session) {
                     SessionRow(
-                        session: session,
-                        assistantSurface: model.viewState.selectedAssistantSurface
+                        session: item.session,
+                        assistantSurface: item.assistantSurface
                     )
                 }
                 .companionCardRowSurface()
@@ -241,6 +242,16 @@ struct SessionsScreen: View {
     ) -> ArraySlice<SessionSummary> {
         let limit = isExpanded ? sessions.count : SessionDisplayPolicy.collapsedSectionLimit
         return sessions.prefix(limit)
+    }
+
+    private func visibleSessionItems(
+        from sessions: [SessionSummary],
+        assistantSurface: CompanionAssistantSurface,
+        isExpanded: Bool
+    ) -> [SessionRowDisplayItem] {
+        visibleSessions(from: sessions, isExpanded: isExpanded).map { session in
+            SessionRowDisplayItem(session: session, assistantSurface: assistantSurface)
+        }
     }
 
     private var recentSectionFooter: String {

@@ -442,6 +442,29 @@ struct SessionSummaryTimingTests {
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
     }
 
+    @Test("Session row display identity includes assistant surface")
+    func sessionRowDisplayIdentityIncludesAssistantSurface() throws {
+        let session = try sessionSummary(
+            id: "thread-main",
+            ref: "S1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+
+        let codexItem = SessionRowDisplayItem(
+            session: session,
+            assistantSurface: .codex
+        )
+        let devinItem = SessionRowDisplayItem(
+            session: session,
+            assistantSurface: .devin
+        )
+
+        #expect(codexItem.id == "codex:thread-main")
+        #expect(devinItem.id == "devin:thread-main")
+        #expect(codexItem.id != devinItem.id)
+    }
+
     private func sessionSummary(
         id: String,
         ref: String,

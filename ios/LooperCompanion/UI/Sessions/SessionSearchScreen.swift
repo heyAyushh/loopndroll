@@ -172,11 +172,11 @@ struct SessionSearchScreen: View {
     private func searchSessionSection(title: String, sessions: [SessionSummary]) -> some View {
         if !sessions.isEmpty {
             Section(title) {
-                ForEach(sessions) { session in
-                    NavigationLink(value: session) {
+                ForEach(sessionRowItems(for: sessions)) { item in
+                    NavigationLink(value: item.session) {
                         SearchSessionRow(
-                            session: session,
-                            assistantSurface: model.viewState.selectedAssistantSurface
+                            session: item.session,
+                            assistantSurface: item.assistantSurface
                         )
                     }
                 }
@@ -229,10 +229,11 @@ struct SessionSearchScreen: View {
     private func resultRow(for result: GlobalSearchResult) -> some View {
         switch result {
         case let .session(session):
+            let item = sessionRowItem(for: session)
             NavigationLink(value: session) {
                 SearchSessionRow(
-                    session: session,
-                    assistantSurface: model.viewState.selectedAssistantSurface
+                    session: item.session,
+                    assistantSurface: item.assistantSurface
                 )
             }
         case let .settings(target):
@@ -352,6 +353,17 @@ struct SessionSearchScreen: View {
 
     private var allSessions: [SessionSummary] {
         model.viewState.allSessions
+    }
+
+    private func sessionRowItems(for sessions: [SessionSummary]) -> [SessionRowDisplayItem] {
+        sessions.map(sessionRowItem(for:))
+    }
+
+    private func sessionRowItem(for session: SessionSummary) -> SessionRowDisplayItem {
+        SessionRowDisplayItem(
+            session: session,
+            assistantSurface: model.viewState.assistantSurface(for: session.id)
+        )
     }
 
     private var recentSearches: [String] {
