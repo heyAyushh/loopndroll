@@ -52,6 +52,7 @@ struct ClientCoreState {
     mode_rollbacks: Vec<ClientModeRollback>,
     outbox: Vec<OutboundSessionFrame>,
     command_ack_backlog: Vec<ClientCommandAck>,
+    pending_replacement: Option<PendingStateMiniReplacement>,
     last_error: String,
 }
 
@@ -59,6 +60,15 @@ struct ClientCoreState {
 struct ClientModeRollback {
     client_mutation_id: String,
     thread_id: String,
+    sessions: Vec<ClientStateMini>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingStateMiniReplacement {
+    seq: i64,
+    latest_seq: i64,
+    revision: String,
+    server_time: String,
     sessions: Vec<ClientStateMini>,
 }
 
@@ -521,6 +531,7 @@ impl LooperClientCore {
         state.latest_seq = snapshot.latest_seq;
         state.server_time = snapshot.server_time;
         state.state_minis = normalize_state_minis(snapshot.sessions);
+        state.pending_replacement = None;
         if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
             state.revision = revision;
         }
@@ -1462,14 +1473,15 @@ impl LooperClientCore {
                 endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
+                let did_change = state.finalize_pending_replacement(latest_seq);
                 update_server_time_if_newer(&mut state.server_time, server_time);
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
                 }
                 (
                     ClientStateMiniStreamUpdateReason::Heartbeat,
-                    false,
-                    latest_seq,
+                    did_change,
+                    state.latest_seq.max(latest_seq),
                     String::new(),
                 )
             }
@@ -1492,6 +1504,7 @@ impl LooperClientCore {
                     state.latest_seq = snapshot.latest_seq;
                     state.server_time = snapshot.server_time;
                     state.state_minis = normalize_state_minis(snapshot.sessions);
+                    state.pending_replacement = None;
                     if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
                         state.revision = revision;
                     }
@@ -1764,6 +1777,11 @@ impl ClientCoreState {
     fn apply_state_mini_delta(&mut self, delta: ClientStateMiniDelta) -> bool {
         let is_replacement = is_state_mini_replacement_delta(&delta);
         let is_same_seq_continuation = is_state_mini_bulk_delta(&delta) && !is_replacement;
+        if !is_replacement && self.append_pending_replacement_continuation(&delta) {
+            self.last_error.clear();
+            return false;
+        }
+
         if delta.seq < self.latest_seq {
             return false;
         }
@@ -1772,11 +1790,23 @@ impl ClientCoreState {
         }
 
         if is_replacement {
-            self.state_minis = normalize_state_minis(delta.sessions);
+            self.stage_state_mini_replacement(delta);
+            self.last_error.clear();
+            return false;
+        }
+
+        if self
+            .pending_replacement
+            .as_ref()
+            .map(|replacement| delta.seq > replacement.seq)
+            .unwrap_or(false)
+        {
+            self.pending_replacement = None;
+        }
+
+        if delta.has_session {
+            self.upsert_state_mini(delta.session);
         } else {
-            if delta.has_session {
-                self.upsert_state_mini(delta.session);
-            }
             for session in delta.sessions {
                 self.upsert_state_mini(session);
             }
@@ -1791,6 +1821,61 @@ impl ClientCoreState {
         if !delta.server_time.is_empty() {
             self.server_time = delta.server_time;
         }
+        self.last_error.clear();
+        true
+    }
+
+    fn stage_state_mini_replacement(&mut self, delta: ClientStateMiniDelta) {
+        self.pending_replacement = Some(PendingStateMiniReplacement {
+            seq: delta.seq,
+            latest_seq: delta.latest_seq.max(delta.seq),
+            revision: delta.revision,
+            server_time: delta.server_time,
+            sessions: delta.sessions,
+        });
+    }
+
+    fn append_pending_replacement_continuation(&mut self, delta: &ClientStateMiniDelta) -> bool {
+        let Some(replacement) = self.pending_replacement.as_mut() else {
+            return false;
+        };
+        if replacement.seq != delta.seq || !is_state_mini_bulk_delta(delta) {
+            return false;
+        }
+
+        replacement.latest_seq = replacement.latest_seq.max(delta.latest_seq).max(delta.seq);
+        if !delta.revision.is_empty() {
+            replacement.revision = delta.revision.clone();
+        }
+        update_server_time_if_newer(&mut replacement.server_time, delta.server_time.clone());
+        replacement.sessions.extend(delta.sessions.clone());
+        true
+    }
+
+    fn finalize_pending_replacement(&mut self, heartbeat_latest_seq: i64) -> bool {
+        let Some(replacement) = self.pending_replacement.as_ref() else {
+            return false;
+        };
+        if heartbeat_latest_seq < replacement.seq {
+            return false;
+        }
+
+        let replacement = self
+            .pending_replacement
+            .take()
+            .expect("pending replacement existed");
+        self.state_minis = normalize_state_minis(replacement.sessions);
+        self.latest_seq = self
+            .latest_seq
+            .max(replacement.seq)
+            .max(replacement.latest_seq)
+            .max(heartbeat_latest_seq);
+        if !replacement.revision.is_empty() {
+            self.revision = replacement.revision;
+        } else if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
+            self.revision = revision;
+        }
+        update_server_time_if_newer(&mut self.server_time, replacement.server_time);
         self.last_error.clear();
         true
     }
@@ -3412,7 +3497,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_batch_replaces_missing_sessions() {
+    fn state_mini_replacement_batch_waits_for_heartbeat_finality() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -3424,7 +3509,7 @@ mod tests {
         })
         .expect("seed minis");
 
-        let result = core
+        let staged = core
             .apply_state_mini_delta_with_result(ClientStateMiniDelta {
                 seq: 11,
                 latest_seq: 11,
@@ -3442,21 +3527,45 @@ mod tests {
                     "new codex",
                 )],
             })
-            .expect("apply stream batch");
+            .expect("stage replacement chunk");
 
-        assert!(result.did_change);
-        assert_eq!(result.snapshot.state_minis.len(), 1);
-        assert_eq!(result.snapshot.state_minis[0].session_id, "thread-codex");
-        assert_eq!(result.snapshot.state_minis[0].assistant_surface, "codex");
+        assert!(!staged.did_change);
+        assert_eq!(staged.snapshot.latest_seq, 10);
+        assert_eq!(
+            staged
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-codex", "thread-devin"]
+        );
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 11,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("replacement finality heartbeat");
+
+        assert_eq!(
+            finalized.reason,
+            ClientStateMiniStreamUpdateReason::Heartbeat
+        );
+        assert!(finalized.did_change);
+        assert_eq!(finalized.snapshot.state_minis.len(), 1);
+        assert_eq!(finalized.snapshot.state_minis[0].session_id, "thread-codex");
+        assert_eq!(finalized.snapshot.state_minis[0].assistant_surface, "codex");
         assert!(
-            result.snapshot.state_minis[0]
+            finalized.snapshot.state_minis[0]
                 .payload_json
                 .contains("new codex")
         );
     }
 
     #[test]
-    fn state_mini_replacement_continuation_chunks_append_at_same_seq() {
+    fn state_mini_replacement_continuation_chunks_publish_together_at_finality() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -3478,7 +3587,8 @@ mod tests {
                 sessions: vec![state_mini("thread-1", "codex", 11, "rev-11", "one")],
             })
             .expect("apply first replacement chunk");
-        assert!(first.did_change);
+        assert!(!first.did_change);
+        assert_eq!(first.snapshot.latest_seq, 10);
         assert_eq!(
             first
                 .snapshot
@@ -3486,7 +3596,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-1"]
+            vec!["thread-old"]
         );
 
         let second = core
@@ -3503,10 +3613,116 @@ mod tests {
             })
             .expect("apply continuation chunk");
 
-        assert!(second.did_change);
-        assert_eq!(second.snapshot.latest_seq, 11);
+        assert!(!second.did_change);
+        assert_eq!(second.snapshot.latest_seq, 10);
         assert_eq!(
             second
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-old"]
+        );
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 11,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("replacement finality heartbeat");
+
+        assert!(finalized.did_change);
+        assert_eq!(finalized.snapshot.latest_seq, 11);
+        assert_eq!(
+            finalized
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-1", "thread-2"]
+        );
+    }
+
+    #[test]
+    fn state_mini_replacement_continuation_survives_interleaved_ack() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 10,
+            sessions: vec![state_mini("thread-old", "codex", 10, "rev-10", "old")],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+
+        let first = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini("thread-1", "codex", 11, "rev-11", "one")],
+            })
+            .expect("stage first replacement chunk");
+        assert!(!first.did_change);
+
+        let acked = core
+            .apply_command_ack(ClientCommandAck {
+                accepted: true,
+                client_mutation_id: "cmid-surface".to_owned(),
+                ack_seq: 12,
+                entity_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+                revision: "rev-12".to_owned(),
+                server_time: "2026-06-25T00:00:12Z".to_owned(),
+                idempotent_replay: false,
+                error_code: String::new(),
+                reject_reason: String::new(),
+                current_state: String::new(),
+            })
+            .expect("interleaved ack");
+        assert_eq!(acked.latest_seq, 12);
+
+        let second = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: "session_mini_batch".to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini("thread-2", "zed", 11, "rev-11", "two")],
+            })
+            .expect("stage continuation after ack");
+        assert!(!second.did_change);
+        assert_eq!(
+            second
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-old"]
+        );
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 11,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("replacement finality heartbeat");
+
+        assert!(finalized.did_change);
+        assert_eq!(finalized.snapshot.latest_seq, 12);
+        assert_eq!(
+            finalized
                 .snapshot
                 .state_minis
                 .iter()
@@ -3820,7 +4036,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_delta_can_clear_local_projection() {
+    fn state_mini_replacement_delta_can_clear_local_projection_after_heartbeat() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 5,
@@ -3841,12 +4057,25 @@ mod tests {
                 session: state_mini("", "", 0, "", ""),
                 sessions: vec![],
             })
-            .expect("apply replacement");
+            .expect("stage replacement");
 
-        assert!(result.did_change);
-        assert_eq!(result.snapshot.latest_seq, 6);
-        assert!(result.snapshot.state_minis.is_empty());
-        assert_eq!(result.snapshot.revision, "rev-6");
+        assert!(!result.did_change);
+        assert_eq!(result.snapshot.latest_seq, 5);
+        assert_eq!(result.snapshot.state_minis.len(), 1);
+        assert_eq!(result.snapshot.revision, "rev-5");
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 6,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("replacement finality heartbeat");
+
+        assert!(finalized.did_change);
+        assert_eq!(finalized.snapshot.latest_seq, 6);
+        assert!(finalized.snapshot.state_minis.is_empty());
+        assert_eq!(finalized.snapshot.revision, "rev-6");
     }
 
     #[test]
