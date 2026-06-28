@@ -111,7 +111,7 @@ final class CompanionSnapshotStateStore {
             return nil
         }
 
-        return applySnapshot(snapshot, preferredSurface: surface)
+        return applyVisibleSnapshot(snapshot, surface: surface)
     }
 
     @discardableResult
@@ -135,9 +135,13 @@ final class CompanionSnapshotStateStore {
 
     @discardableResult
     func applyAcceptedAssistantSurface(_ surface: CompanionAssistantSurface) -> Bool {
-        applyGlobalSettingsMutation(preferredSurface: surface) { settings in
-            settings.assistantSurface = surface
+        guard var nextSnapshot = sourceSnapshotForProjection() else {
+            return false
         }
+        nextSnapshot.globalSettings.assistantSurface = surface
+        canonicalSnapshot = nextSnapshot
+        applyVisibleSnapshot(nextSnapshot, surface: surface)
+        return true
     }
 
     @discardableResult
@@ -270,6 +274,22 @@ final class CompanionSnapshotStateStore {
         sessionIndex = SessionIndex(snapshot: visibleSnapshot)
         lastVisibleSnapshotFingerprint = nil
         return true
+    }
+
+    @discardableResult
+    private func applyVisibleSnapshot(
+        _ sourceSnapshot: MobileSnapshot,
+        surface: CompanionAssistantSurface
+    ) -> MobileSnapshot {
+        let visibleSnapshot = sourceSnapshot.visibleSnapshot(for: surface)
+        snapshot = visibleSnapshot
+        selectedAssistantSurface = surface
+        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
+        if sessionIndex == .empty {
+            sessionIndex = SessionIndex(snapshot: sourceSnapshot)
+        }
+        lastVisibleSnapshotFingerprint = nil
+        return visibleSnapshot
     }
 
     @discardableResult
