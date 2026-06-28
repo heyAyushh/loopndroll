@@ -3,6 +3,8 @@ import Foundation
 private enum CompanionSessionMiniControllerRetry {
     static let delay: Duration = .milliseconds(750)
     static let restartReason = "runtime-restart"
+    static let restartLatestSeq: Int64 = 0
+    static let restartServerTime = ""
 }
 
 @MainActor
@@ -21,7 +23,7 @@ final class CompanionSessionMiniController {
     let sessionRuntime: CompanionSessionRuntime?
 
     private var syncTask: Task<Void, Never>?
-    private var notificationReplyOutboxDrainTask: Task<Void, Never>?
+    private var notificationReplyOutboxDrainTask: Task<Bool, Never>?
 
     var isSyncing: Bool {
         syncTask != nil
@@ -62,29 +64,21 @@ final class CompanionSessionMiniController {
                     return
                 }
 
-                do {
-                    let localSnapshot = try sessionRuntime.currentStateMiniSnapshot()
-                    onLiveness(
-                        CompanionSessionMiniLivenessUpdate(
-                            reason: CompanionSessionMiniControllerRetry.restartReason,
-                            latestSeq: localSnapshot.latestSeq,
-                            serverTime: localSnapshot.serverTime,
-                            isLive: false,
-                            endpointURL: nil
-                        ),
-                        connectionRevision
-                    )
-                } catch {
-                    CompanionDiagnostics.record(
-                        "session-mini:restart-snapshot-failed error=\(error.localizedDescription)"
-                    )
-                    try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
-                    continue
-                }
+                onLiveness(Self.restartLivenessUpdate(), connectionRevision)
                 CompanionDiagnostics.record("session-mini:sync-restarting")
                 try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
             }
         }
+    }
+
+    static func restartLivenessUpdate() -> CompanionSessionMiniLivenessUpdate {
+        CompanionSessionMiniLivenessUpdate(
+            reason: CompanionSessionMiniControllerRetry.restartReason,
+            latestSeq: CompanionSessionMiniControllerRetry.restartLatestSeq,
+            serverTime: CompanionSessionMiniControllerRetry.restartServerTime,
+            isLive: false,
+            endpointURL: nil
+        )
     }
 
     func stopSync() {
@@ -137,21 +131,22 @@ final class CompanionSessionMiniController {
     @discardableResult
     func startNotificationReplyOutboxDrainIfNeeded(
         submit: @escaping NotificationReplySubmitter
-    ) -> Task<Void, Never>? {
+    ) -> Task<Bool, Never>? {
         guard notificationReplyOutboxDrainTask == nil else {
             return notificationReplyOutboxDrainTask
         }
 
         let drainTask = Task { @MainActor [weak self] in
             guard let self else {
-                return
+                return false
             }
             defer {
                 self.notificationReplyOutboxDrainTask = nil
             }
             if !Task.isCancelled {
-                _ = await submit()
+                return await submit()
             }
+            return false
         }
         notificationReplyOutboxDrainTask = drainTask
         return drainTask

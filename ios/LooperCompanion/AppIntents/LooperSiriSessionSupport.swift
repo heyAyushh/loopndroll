@@ -32,6 +32,7 @@ private enum LooperSiriConstants {
 enum LooperSiriError: LocalizedError {
     case noDefaultSession
     case defaultSessionUnavailable(String)
+    case defaultSessionUpdateRequiresSelection
     case noPromptDelivery(LooperSessionEntity)
 
     var errorDescription: String? {
@@ -40,6 +41,8 @@ enum LooperSiriError: LocalizedError {
             "Set a default Looper session before asking Siri to send prompts without naming a session."
         case .defaultSessionUnavailable(let sessionID):
             "Looper could not find the default Siri session \(sessionID)."
+        case .defaultSessionUpdateRequiresSelection:
+            "Choose a Looper session or clear the default before updating the Siri default."
         case .noPromptDelivery(let session):
             session.promptDeliveryUnavailableReason.isEmpty
                 ? "Looper cannot send a prompt to \(session.title)."

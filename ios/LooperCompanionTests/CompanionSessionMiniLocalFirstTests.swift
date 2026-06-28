@@ -249,6 +249,51 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testSiriAndSettingsStateChangesOnlyAfterAcceptedCommand() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 8, revision: "mini-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        let didMarkCurrent = await model.markCurrentSiriSession(cachedSession)
+        let didSetDefault = await model.setSiriDefaultSession(cachedSession)
+        let didSavePrompt = await model.saveDefaultPrompt("Continue safely")
+        let didSelectSurface = await model.selectAssistantSurface(.devin)?.value
+
+        #expect(didMarkCurrent)
+        #expect(didSetDefault)
+        #expect(didSavePrompt)
+        #expect(didSelectSurface == true)
+        #expect(model.snapshot?.globalSettings.siriCurrentSessionId == Constants.cachedThreadID)
+        #expect(model.snapshot?.globalSettings.siriDefaultSessionId == Constants.cachedThreadID)
+        #expect(model.snapshot?.globalSettings.defaultPrompt == "Continue safely")
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(
+            runtime.pendingCommands().map(\.kind) == [
+                .setSiriCurrentSession,
+                .setSiriDefaultSession,
+                .saveDefaultPrompt,
+                .setAssistantSurface,
+            ]
+        )
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testConfiguredRouteDoesNotRenderAsConnectedBeforeLiveSessionEndpoint() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -703,6 +748,43 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(elapsedNanoseconds < Constants.quickActionSubmitBudgetNanoseconds)
         #expect(runtime.pendingCommands().count == 1)
         #expect(runtime.pendingCommands().first?.notificationID == notificationID)
+    }
+
+    @MainActor
+    @Test
+    func testNotificationReplyDrainReturnsFalseWhenNothingQueued() async throws {
+        let runtime = try Self.temporarySessionRuntime()
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        let didDrain = await model.drainPendingNotificationReplies()
+
+        #expect(!didDrain)
+        #expect(runtime.pendingCommands().isEmpty)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testStreamRestartLivenessDoesNotReplayLocalSnapshot() {
+        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+
+        #expect(restart.reason == "runtime-restart")
+        #expect(restart.latestSeq == 0)
+        #expect(restart.serverTime.isEmpty)
+        #expect(!restart.isLive)
+        #expect(restart.endpointURL == nil)
+    }
+
+    @Test
+    func testStateMiniRecoveryEmptyResultIsNotApplied() {
+        #expect(!StateMiniRecoveryResult.empty.didApplySnapshot)
+        #expect(!StateMiniRecoveryResult.failed("transport").didApplySnapshot)
+        #expect(!StateMiniRecoveryResult.skipped.didApplySnapshot)
+        #expect(StateMiniRecoveryResult.applied.didApplySnapshot)
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {

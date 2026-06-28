@@ -10,8 +10,8 @@ private enum LooperSiriIntentConstants {
     static let snippetSpacing: CGFloat = 10
 }
 
-private enum LooperDefaultSessionUpdate {
-    case unchanged
+enum LooperDefaultSessionUpdate {
+    case requiresSelection
     case clear
     case set(LooperSessionEntity)
 }
@@ -228,7 +228,7 @@ struct SetDefaultLooperSessionIntent: AppIntent {
 
 struct UpdateDefaultLooperSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "Update Default Looper Session"
-    static let description = IntentDescription("Change, clear, or leave unchanged the Looper session Siri uses by default.")
+    static let description = IntentDescription("Change or clear the Looper session Siri uses by default.")
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     @available(iOS 27.0, macOS 27.0, watchOS 27.0, tvOS 27.0, visionOS 27.0, *)
     static var allowedExecutionTargets: IntentExecutionTargets { .main }
@@ -244,15 +244,8 @@ struct UpdateDefaultLooperSessionIntent: AppIntent {
         let client = LooperSiriSessionClient()
 
         switch defaultSessionUpdate {
-        case .unchanged:
-            let currentSession = try? await client.defaultSiriSessionEntity()
-            return .result(dialog: "Looper left the default Siri session unchanged.") {
-                LooperDefaultSessionSnippetView(
-                    label: "No Change",
-                    detail: "The current Siri default session was not changed.",
-                    session: currentSession
-                )
-            }
+        case .requiresSelection:
+            throw LooperSiriError.defaultSessionUpdateRequiresSelection
         case .clear:
             try await client.saveDefaultSiriSession(nil)
             return .result(dialog: "Looper cleared the default Siri session.") {
@@ -274,11 +267,11 @@ struct UpdateDefaultLooperSessionIntent: AppIntent {
         }
     }
 
-    private var defaultSessionUpdate: LooperDefaultSessionUpdate {
+    var defaultSessionUpdate: LooperDefaultSessionUpdate {
         if #available(iOS 18.2, macOS 15.2, watchOS 11.2, tvOS 18.2, visionOS 2.2, *) {
             switch $session.valueState {
             case .unset:
-                return .unchanged
+                return .requiresSelection
             case .set(let selectedSession):
                 if let selectedSession {
                     return .set(selectedSession)
@@ -286,7 +279,7 @@ struct UpdateDefaultLooperSessionIntent: AppIntent {
 
                 return .clear
             @unknown default:
-                return .unchanged
+                return .requiresSelection
             }
         }
 

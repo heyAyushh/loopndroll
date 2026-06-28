@@ -527,7 +527,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     func submitPendingNotificationReply() async throws -> ClientNotificationReplyIntentResult {
         if let outboxDepth = try? outboxDepth(), outboxDepth == 0 {
-            return try await drainNotificationReplyOutbox()
+            throw ClientCoreError.NoPendingNotificationReply
         }
 
         await prepareSessionRuntime()

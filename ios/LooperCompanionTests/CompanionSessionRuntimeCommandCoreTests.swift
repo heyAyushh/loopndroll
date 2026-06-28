@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import Testing
 @testable import Looper
 
@@ -87,6 +88,50 @@ struct CompanionSessionRuntimeCommandCoreTests {
         #expect(runtime.pendingCommands().map(\.kind) == [.setSessionMode, .sendSessionPrompt])
         #expect(runtime.pendingCommands()[0].clientMutationID.hasPrefix("mode-"))
         #expect(runtime.pendingCommands()[1].clientMutationID.hasPrefix("prompt-"))
+    }
+
+    @Test
+    func siriAndSettingsCommandsRequireClientCoreAcceptance() async throws {
+        let runtime = try Self.temporarySessionRuntime()
+
+        let assistantResult = try await runtime.setAssistantSurface(.devin)
+        let currentResult = try await runtime.setSiriCurrentSession(
+            threadID: "thread-current",
+            assistantSurface: .devin
+        )
+        let defaultResult = try await runtime.setSiriDefaultSession(
+            threadID: "thread-default",
+            assistantSurface: .codex
+        )
+        let defaultPromptResult = try await runtime.saveDefaultPrompt("Continue safely")
+
+        #expect(assistantResult.accepted)
+        #expect(currentResult.accepted)
+        #expect(defaultResult.accepted)
+        #expect(defaultPromptResult.accepted)
+        #expect(
+            runtime.pendingCommands().map(\.kind) == [
+                .setAssistantSurface,
+                .setSiriCurrentSession,
+                .setSiriDefaultSession,
+                .saveDefaultPrompt,
+            ]
+        )
+        #expect(try runtime.outboxDepth() == 4)
+    }
+
+    @Test
+    func emptyNotificationReplyOutboxIsNotSuccessfulDrain() async throws {
+        let runtime = try Self.temporarySessionRuntime()
+
+        do {
+            _ = try await runtime.submitPendingNotificationReply()
+            #expect(Bool(false), "Expected no pending notification reply error")
+        } catch ClientCoreError.NoPendingNotificationReply {
+            #expect(runtime.pendingCommands().isEmpty)
+        } catch {
+            #expect(Bool(false), "Unexpected error: \(error)")
+        }
     }
 
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {

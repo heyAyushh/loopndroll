@@ -22,6 +22,31 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
+enum StateMiniRecoveryResult: Equatable {
+    case skipped
+    case applied
+    case empty
+    case failed(String)
+
+    var didApplySnapshot: Bool {
+        if case .applied = self {
+            return true
+        }
+        return false
+    }
+}
+
+private enum StateMiniRecoveryError: LocalizedError {
+    case emptySnapshot
+
+    var errorDescription: String? {
+        switch self {
+        case .emptySnapshot:
+            "Looper did not return a state-mini snapshot."
+        }
+    }
+}
+
 enum CompanionLocalSessionReconcileReason: String {
     case activeScene = "active-scene"
     case fallbackTimer = "fallback-timer"
@@ -620,7 +645,7 @@ final class CompanionAppModel {
             return
         }
 
-        if await recoverStateMiniSnapshotIfNeeded(reason: reason) {
+        if (await recoverStateMiniSnapshotIfNeeded(reason: reason)).didApplySnapshot {
             return
         }
 
@@ -631,23 +656,25 @@ final class CompanionAppModel {
 
     private func recoverStateMiniSnapshotIfNeeded(
         reason: CompanionLocalSessionReconcileReason
-    ) async -> Bool {
+    ) async -> StateMiniRecoveryResult {
         guard reason.shouldRecoverStateMiniSnapshot else {
-            return false
+            return .skipped
         }
         if shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(reason: reason) {
             CompanionDiagnostics.record(
                 "session-mini:recovery-skip reason=\(reason.rawValue) local-ready"
             )
-            return false
+            return .skipped
         }
         if reason == .activeScene {
             guard !didAttemptForegroundSessionMiniRecovery else {
-                return false
+                return .skipped
             }
         }
         guard let sessionRuntime = sessionMiniController.sessionRuntime else {
-            return false
+            let error = HTTPCompanionServiceError.localStoreUnavailable
+            applyStateMiniRecoveryFailure(error, reason: reason)
+            return .failed(error.localizedDescription)
         }
 
         if reason == .activeScene {
@@ -659,7 +686,8 @@ final class CompanionAppModel {
                 CompanionDiagnostics.record(
                     "session-mini:recovery-empty reason=\(reason.rawValue)"
                 )
-                return false
+                applyStateMiniRecoveryFailure(StateMiniRecoveryError.emptySnapshot, reason: reason)
+                return .empty
             }
             applyCachedSnapshot(
                 recoveredSnapshot,
@@ -668,13 +696,24 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "session-mini:recovery-applied reason=\(reason.rawValue) sessions=\(recoveredSnapshot.sessions.count)"
             )
-            return true
+            return .applied
         } catch {
             CompanionDiagnostics.record(
                 "session-mini:recovery-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
             )
-            return false
+            applyStateMiniRecoveryFailure(error, reason: reason)
+            return .failed(error.localizedDescription)
         }
+    }
+
+    private func applyStateMiniRecoveryFailure(
+        _ error: Error,
+        reason: CompanionLocalSessionReconcileReason
+    ) {
+        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+        CompanionDiagnostics.record(
+            "session-mini:recovery-truth-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
+        )
     }
 
     private func shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(
@@ -1162,13 +1201,14 @@ final class CompanionAppModel {
         )
     }
 
-    func drainPendingNotificationReplies() async {
+    @discardableResult
+    func drainPendingNotificationReplies() async -> Bool {
         let drainTask = startNotificationReplyOutboxDrainIfNeeded()
-        await drainTask?.value
+        return await drainTask?.value ?? false
     }
 
     @discardableResult
-    private func startNotificationReplyOutboxDrainIfNeeded() -> Task<Void, Never>? {
+    private func startNotificationReplyOutboxDrainIfNeeded() -> Task<Bool, Never>? {
         sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(
             submit: { [weak self] in
                 await self?.submitPendingNotificationReply() ?? false
@@ -1238,7 +1278,8 @@ final class CompanionAppModel {
             )
             return true
         } catch ClientCoreError.NoPendingNotificationReply {
-            return true
+            CompanionDiagnostics.record("notification-reply:pending-drain-empty")
+            return false
         } catch {
             CompanionDiagnostics.record(
                 "notification-reply:pending-drain-failed error=\(error.localizedDescription)"
@@ -1295,13 +1336,14 @@ final class CompanionAppModel {
         }
     }
 
-    func setSiriDefaultSession(_ session: SessionSummary) async {
+    @discardableResult
+    func setSiriDefaultSession(_ session: SessionSummary) async -> Bool {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
-            return
+            return false
         }
 
         do {
@@ -1309,7 +1351,6 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 assistantSurface: targetSurface
             )
-            applyAcceptedClientCoreLocalSnapshot(reason: "siri-default")
             snapshotState.applyAcceptedSiriDefaultSession(
                 sessionID: sessionID,
                 assistantSurface: targetSurface
@@ -1318,7 +1359,7 @@ final class CompanionAppModel {
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
-            return
+            return false
         }
 
         errorMessage = nil
@@ -1326,6 +1367,7 @@ final class CompanionAppModel {
         CompanionDiagnostics.record("siri-default:client-core-owned sessionID=\(sessionID)")
         Haptics.success()
         await donateSetDefaultSiriSession(session)
+        return true
     }
 
     func donateOpenedSiriSession(_ session: SessionSummary) async {
@@ -1347,12 +1389,13 @@ final class CompanionAppModel {
         }
     }
 
-    func markCurrentSiriSession(_ session: SessionSummary) async {
+    @discardableResult
+    func markCurrentSiriSession(_ session: SessionSummary) async -> Bool {
         let sessionID = session.id
         let targetSurface = assistantSurface(for: sessionID)
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
-            return
+            return false
         }
 
         do {
@@ -1360,7 +1403,6 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 assistantSurface: targetSurface
             )
-            applyAcceptedClientCoreLocalSnapshot(reason: "siri-current")
             snapshotState.applyAcceptedSiriCurrentSession(
                 sessionID: sessionID,
                 assistantSurface: targetSurface
@@ -1368,12 +1410,13 @@ final class CompanionAppModel {
             publishSnapshotStateChange(reason: "siri-current-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-            return
+            return false
         }
 
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record("siri-current:client-core-owned sessionID=\(sessionID)")
+        return true
     }
 
     func siriAssistantSurface(for sessionID: String) -> CompanionAssistantSurface {
@@ -1439,13 +1482,14 @@ final class CompanionAppModel {
         return sessionID
     }
 
-    func saveDefaultPrompt(_ defaultPrompt: String) async {
+    @discardableResult
+    func saveDefaultPrompt(_ defaultPrompt: String) async -> Bool {
         guard !isSavingDefaultPrompt else {
-            return
+            return false
         }
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
-            return
+            return false
         }
 
         isSavingDefaultPrompt = true
@@ -1455,22 +1499,23 @@ final class CompanionAppModel {
 
         do {
             try await targetRuntime.saveDefaultPrompt(defaultPrompt)
-            applyAcceptedClientCoreLocalSnapshot(reason: "default-prompt")
             snapshotState.applyAcceptedDefaultPrompt(defaultPrompt)
             publishSnapshotStateChange(reason: "default-prompt-accepted")
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-            return
+            return false
         }
 
         errorMessage = nil
         lastUpdatedAt = Date()
         CompanionDiagnostics.record("default-prompt:client-core-owned")
+        return true
     }
 
-    func selectAssistantSurface(_ surface: CompanionAssistantSurface) {
+    @discardableResult
+    func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Task<Bool, Never>? {
         guard snapshotState.selectedAssistantSurface != surface else {
-            return
+            return nil
         }
         assistantSurfaceSelectionGeneration += 1
         let selectionGeneration = assistantSurfaceSelectionGeneration
@@ -1478,33 +1523,35 @@ final class CompanionAppModel {
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
-            return
+            return nil
         }
 
-        Task { @MainActor [weak self, targetRuntime] in
+        return Task { @MainActor [weak self, targetRuntime] in
             do {
                 try await targetRuntime.setAssistantSurface(surface)
                 guard let self else {
-                    return
+                    return false
                 }
                 guard self.assistantSurfaceSelectionGeneration == selectionGeneration else {
-                    return
+                    return false
                 }
-                self.applyAcceptedClientCoreLocalSnapshot(reason: "assistant-surface")
-                self.snapshotState.applyAcceptedAssistantSurface(surface)
-                guard self.snapshotState.selectAssistantSurface(surface) else {
-                    return
+                let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(surface)
+                let didSelectSurface = self.snapshotState.selectAssistantSurface(surface)
+                guard didApplySurface || didSelectSurface else {
+                    return false
                 }
                 self.publishSnapshotStateChange(reason: "assistant-surface-selected")
                 CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
                 self.errorMessage = nil
                 self.lastUpdatedAt = Date()
+                return true
             } catch {
                 guard self?.assistantSurfaceSelectionGeneration == selectionGeneration else {
-                    return
+                    return false
                 }
                 self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
                 Haptics.error()
+                return false
             }
         }
     }
