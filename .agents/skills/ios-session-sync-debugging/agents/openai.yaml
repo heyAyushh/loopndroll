@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Session Sync Debugging"
+  short_description: "Fix Looper iOS command ordering bugs"
+  default_prompt: "Use $ios-session-sync-debugging to debug a Looper iOS assistant switcher or session command ordering bug."

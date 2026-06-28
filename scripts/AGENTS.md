@@ -14,6 +14,7 @@
 | iOS gate | `check-ios.sh` | Regenerates project, runs Swift/Xcode checks, validates App Intents metadata. |
 | Xcode 27 beta 2 proof | `prove-xcode27-beta2.sh` | Fetches official release notes, verifies selected beta toolchain/runtime, `devicectl` JSON stdout, Siri surface proof, and guarded AI/debug capabilities. |
 | Siri runtime proof | `prove-ios-siri-runtime.sh` | Builds, installs, launches Looper on an iOS simulator, validates App Intents metadata, opens Siri, and optionally attempts physical iPhone proof. |
+| iOS diagnostics | `ios-diagnostics.sh` | Wraps oslog-live, lldb-trap, perf-loop/xctrace, and ETTrace for Looper iOS simulator proof; writes artifacts under `build/ios-diagnostics/`. |
 | CLI install | `install-looper-cli.sh` | Installs `looper`, `looper-cli`, `looper-server`; guarded against outside-root prefix. |
 | OrbCode XCFramework | `build-orb-code-ios-package.sh` | Recreates `ios/OrbCodeKit/Frameworks/OrbCodeFFI.xcframework`. |
 | Looper client core package | `build-looper-client-core-package.sh` | Generates UniFFI Swift bindings and creates `swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework`. |
@@ -34,6 +35,7 @@
 - Do not make release scripts ignore dirty trees by default.
 - Do not write outside the project root unless the script already has an explicit flag/target for that behavior.
 - Do not regenerate OrbCode or LooperClientCore frameworks without reviewing the resulting tracked diff.
+- Do not run `ios-diagnostics.sh perf-loop` or `capture` without a simulator UDID; host apps can share process names with simulator apps.
 
 ## COMMANDS
 
@@ -41,6 +43,8 @@
 bash scripts/build-macos-menu-bar-package.sh --no-install
 bash scripts/build-macos-menu-bar-xcode.sh --no-install
 bash scripts/check-ios.sh
+bash scripts/ios-diagnostics.sh doctor
+bash scripts/ios-diagnostics.sh perf-loop --device <simulator-udid> --dry-run
 bash scripts/prove-xcode27-beta2.sh
 bash scripts/prove-ios-siri-runtime.sh --simulator-only
 bash scripts/install-looper-cli.sh

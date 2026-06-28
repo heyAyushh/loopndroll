@@ -1,0 +1,3 @@
+interface:
+  display_name: "Looper iOS Diagnostics"
+  short_description: "Runs Looper iOS OSLog, LLDB trap, xctrace/perf-loop, and ETTrace diagnosis."

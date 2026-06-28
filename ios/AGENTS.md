@@ -27,6 +27,9 @@ ios/
 | Settings/scanner | `LooperCompanion/UI/Settings/`, `UI/Scanner/` | Connection setup and diagnostics surfaces. |
 | App Intents/Siri | `LooperCompanion/AppIntents/`, `LooperCompanionCore` | Current/default/session entity routing. |
 | Core helpers | `LooperCompanionCore/Sources/LooperCompanionCore/` | URL routing, freshness, surface filtering, Siri entity support. |
+| Realtime architecture cuts | `../.agents/skills/looper-realtime-cutter/SKILL.md`, `../docs/architecture/realtime-cutter-workflow.md` | Use when iOS symptoms require server/client-core/iOS/macOS/device-truth coordination. |
+| Session sync and command ordering | `../.agents/skills/ios-session-sync-debugging/SKILL.md`, `LooperCompanion/Services/`, `../swift/LooperClientCore`, `../crates/looper-client-core` | Use for assistant switcher, Siri/default-session, state-mini, pending command, latest-wins, and stale async result bugs. |
+| Simulator diagnostics | `../scripts/ios-diagnostics.sh`, `../.agents/skills/ios-perf-diagnostics/SKILL.md` | Use oslog-live, lldb-trap, perf-loop/xctrace, and ETTrace for latency, switcher, hang, and crash proof. |
 
 ## CONVENTIONS
 
@@ -38,6 +41,10 @@ ios/
   `/Applications/Xcode.app` details are stale for this repo's iOS proof.
 - Keep UI-test-only branches behind `UITestLaunchArguments`; do not leak mock behavior into normal runtime.
 - Keep first prompt, Codex title, work status, assistant surface, and launched-by/subagent metadata visible through models before UI.
+- Use `../.agents/skills/looper-realtime-cutter/SKILL.md` before broad iOS realtime edits. Missing/stale session bugs must compare Codex sqlite truth, phone local store truth, Rust client-core projection, and iOS surface projection before patching UI.
+- Use `../.agents/skills/ios-session-sync-debugging/SKILL.md` for assistant switcher and session command lifecycle bugs. Command queues, latest-wins coalescing, mutation identity, and stale-result policy belong in `SessionSyncEngine` or another Services-layer client manager, not ad hoc presenter tasks in `CompanionAppModel`.
+- Keep iOS diagnostic instrumentation on existing `CompanionDiagnostics` categories; capture artifacts belong under `build/ios-diagnostics/`.
+- For simulator performance captures, pass `--device <simulator-udid>` to `scripts/ios-diagnostics.sh perf-loop` or `capture`; otherwise host processes with the same name can be profiled by mistake.
 
 ## ANTI-PATTERNS
 
@@ -51,6 +58,7 @@ ios/
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios/LooperCompanionCore
 bash scripts/check-ios.sh
+bash scripts/ios-diagnostics.sh doctor
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'generic/platform=iOS' build
 xcodegen generate --spec ios/project.yml --project ios
 bash scripts/build-orb-code-ios-package.sh

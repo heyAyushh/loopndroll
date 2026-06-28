@@ -1,0 +1,4 @@
+interface:
+  display_name: "Looper Realtime Cutter"
+  short_description: "Orchestrates fast Looper Session/state-mini architecture-lock cuts."
+  default_prompt: "Use $looper-realtime-cutter to fix a Looper realtime, SessionMini, endpoint switching, or stale state bug with bounded server/client/iOS/macOS cutters."
