@@ -95,6 +95,7 @@ final class CompanionAppModel {
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
+    @ObservationIgnored private var assistantSurfaceSelectionGeneration = 0
 
     init(
         environment: CompanionEnvironment,
@@ -1534,11 +1535,8 @@ final class CompanionAppModel {
         guard snapshotState.selectedAssistantSurface != surface else {
             return
         }
-        guard snapshotState.selectAssistantSurface(surface) else {
-            return
-        }
-        publishSnapshotStateChange(reason: "assistant-surface-selected")
-        CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
+        assistantSurfaceSelectionGeneration += 1
+        let selectionGeneration = assistantSurfaceSelectionGeneration
 
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
@@ -1552,10 +1550,22 @@ final class CompanionAppModel {
                 guard let self else {
                     return
                 }
+                guard self.assistantSurfaceSelectionGeneration == selectionGeneration else {
+                    return
+                }
+                guard self.snapshotState.selectAssistantSurface(surface) else {
+                    return
+                }
+                self.publishSnapshotStateChange(reason: "assistant-surface-selected")
+                CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
                 self.errorMessage = nil
                 self.lastUpdatedAt = Date()
             } catch {
+                guard self?.assistantSurfaceSelectionGeneration == selectionGeneration else {
+                    return
+                }
                 self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+                Haptics.error()
             }
         }
     }

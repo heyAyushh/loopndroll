@@ -14,6 +14,8 @@ struct CompanionSessionMiniLocalFirstTests {
         static let delayedModeDrainProbeNanoseconds: UInt64 = 300_000_000
         static let slowQuickActionHandlerNanoseconds: UInt64 = 250_000_000
         static let quickActionSubmitBudgetNanoseconds: UInt64 = 100_000_000
+        static let assistantSurfaceAckPollNanoseconds: UInt64 = 10_000_000
+        static let assistantSurfaceAckPollAttempts = 20
     }
 
     @MainActor
@@ -170,6 +172,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         model.selectAssistantSurface(.claudeCode)
+        try await Self.waitForSelectedAssistantSurface(.claudeCode, model: model)
         model.connectionState = .connecting
         #expect(model.viewState.sessionsUnavailableTitle == "No Claude Code Sessions")
         #expect(model.viewState.sessionsUnavailableSystemImage == "tray")
@@ -235,6 +238,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         model.selectAssistantSurface(.devin)
+        try await Self.waitForSelectedAssistantSurface(.devin, model: model)
 
         #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(service.loadSnapshotCallCount == 0)
@@ -831,6 +835,19 @@ struct CompanionSessionMiniLocalFirstTests {
             notifications: [],
             completionChecks: []
         )
+    }
+
+    @MainActor
+    private static func waitForSelectedAssistantSurface(
+        _ surface: CompanionAssistantSurface,
+        model: CompanionAppModel
+    ) async throws {
+        for _ in 0..<Constants.assistantSurfaceAckPollAttempts {
+            if model.viewState.selectedAssistantSurface == surface {
+                return
+            }
+            try await Task.sleep(nanoseconds: Constants.assistantSurfaceAckPollNanoseconds)
+        }
     }
 
     private static func sessionSummary(
