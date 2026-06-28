@@ -51,7 +51,6 @@ const COMMAND_KIND_SAVE_DEFAULT_PROMPT: &str = "SaveDefaultPrompt";
 const COMMAND_KIND_SET_SESSION_ARCHIVED: &str = "SetSessionArchived";
 const COMMAND_KIND_DELETE_SESSION: &str = "DeleteSession";
 const COMMAND_KIND_MUTE_SESSION: &str = "MuteSession";
-const MOBILE_STATE_ENTITY_ID: &str = "mobile";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
 const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -521,22 +520,33 @@ fn state_delta_payload_json(
     control_plane: &ControlPlane,
     record: &MobileStateEventRecord,
 ) -> String {
+    let replacement = match control_plane
+        .store()
+        .mobile_session_minis_replaced_at_seq(record.seq)
+    {
+        Ok(replacement) => replacement,
+        Err(_) => {
+            return state_delta_control_payload_json(
+                record,
+                STATE_DELTA_PROJECTION_READ_FAILED_REASON,
+            );
+        }
+    };
     let Ok(minis) = control_plane
         .store()
         .mobile_session_minis_at_seq(record.seq)
     else {
         return state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON);
     };
-    if minis.is_empty() {
-        return state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON);
+    if replacement {
+        return mobile_session_mini_delta(record.seq, &minis, true).to_string();
     }
-    let replace = record.entity_id == MOBILE_STATE_ENTITY_ID;
-    if !replace && minis.len() == 1 {
+    if minis.len() == 1 && minis[0].session_id == record.entity_id {
         return compact_mobile_session_mini_record(&minis[0]).unwrap_or_else(|| {
             state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
         });
     }
-    mobile_session_mini_delta(record.seq, &minis, replace).to_string()
+    state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
 }
 
 fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {

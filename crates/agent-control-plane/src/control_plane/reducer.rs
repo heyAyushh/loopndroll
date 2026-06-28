@@ -72,27 +72,15 @@ pub fn session_state_for_thread(
     assistant_surface: Option<&str>,
 ) -> SessionState {
     let reduced = fold_mobile_state_events(events);
-    let projected = projected_session_state_from_minis(minis, thread_id, assistant_surface);
-    if let Some(projected_state) = projected.as_ref() {
-        if projected_state_has_runtime_lifecycle(projected_state) {
-            return projected_state.clone();
-        }
+    if let Some(projected_state) =
+        projected_session_state_from_minis(minis, thread_id, assistant_surface)
+    {
+        return projected_state;
     }
     if let Some(state) = reduced.state_for_thread(thread_id) {
         return state.clone();
     }
-    projected.unwrap_or_default()
-}
-
-fn projected_state_has_runtime_lifecycle(state: &SessionState) -> bool {
-    matches!(
-        state,
-        SessionState::AgentRunning { .. }
-            | SessionState::WaitReply { .. }
-            | SessionState::ContinuationPending { .. }
-            | SessionState::ChecksRunning { .. }
-            | SessionState::StopRequested { .. }
-    )
+    SessionState::default()
 }
 
 pub fn projected_session_state_from_minis(
@@ -361,6 +349,45 @@ mod tests {
             Some(SessionState::AgentRunning {
                 mode: SessionMode::Infinite
             })
+        );
+    }
+
+    #[test]
+    fn projected_minis_are_current_truth_over_folded_events() {
+        let events = vec![state_event(
+            1,
+            "thread-1",
+            MobileEventKind::SessionChanged,
+            Some(COMMAND_KIND_SET_SESSION_MODE),
+            Some("cmid-mode"),
+            serde_json::json!({
+                "threadId": "thread-1",
+                "preset": "await-reply",
+                "entityId": "thread-1",
+                "revision": "rev-1",
+                "serverTime": "now",
+            }),
+        )];
+        let minis = vec![MobileSessionMiniRecord {
+            session_id: "thread-1".to_owned(),
+            assistant_surface: "codex".to_owned(),
+            seq: 2,
+            revision: "rev-2".to_owned(),
+            body_json: serde_json::json!({
+                "sessionId": "thread-1",
+                "assistantSurface": "codex",
+                "effectiveMode": "max-turns-1",
+                "lifecycle": "idle",
+            })
+            .to_string(),
+            updated_at_ms: 2,
+        }];
+
+        assert_eq!(
+            session_state_for_thread(&events, &minis, "thread-1", Some("codex")),
+            SessionState::ModeArmed {
+                mode: SessionMode::MaxTurns1
+            }
         );
     }
 

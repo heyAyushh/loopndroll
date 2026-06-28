@@ -3,7 +3,7 @@ use agent_control_plane::events::{
     EventStore, MobileCommandAckInput, MobileCommandAckResult, MobileCommandReservationResult,
     MobileSessionMiniProjectionInput, MobileStateEventGap, MobileStateEventInput,
 };
-use agent_control_plane::mobile::events::{MobileEventInput, mobile_event_now};
+use agent_control_plane::mobile::events::{MobileEvent, MobileEventInput, mobile_event_now};
 use tokio_stream::wrappers::ReceiverStream;
 
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
@@ -787,6 +787,56 @@ async fn grpc_session_stream_replays_unprojected_state_as_control_markers() {
         Some("projection-missing")
     );
     assert_eq!(state_delta_payload_delta(&replayed_third).as_deref(), None);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_replays_empty_projection_as_replacement() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let previous = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input(
+            "thread-before",
+            "revision-before",
+            "before",
+        ))
+        .expect("record previous state delta");
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("projection-cleared".to_owned()),
+                server_time: mobile_event_now(),
+                revision: Some("revision-cleared".to_owned()),
+            },
+            Vec::new(),
+        )
+        .expect("record empty replacement projection");
+    let clear_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(previous.seq)],
+    )
+    .await;
+
+    let delta = next_session_state_delta(&mut stream, "empty replacement state delta").await;
+    assert_eq!(delta.seq, clear_seq);
+    let payload: serde_json::Value =
+        serde_json::from_str(&delta.payload_json).expect("replacement payload json");
+    assert_eq!(payload["replace"], true);
+    assert_eq!(payload["latestSeq"], clear_seq);
+    assert_eq!(payload["sessions"], serde_json::json!([]));
 }
 
 #[tokio::test]

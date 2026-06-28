@@ -85,6 +85,58 @@ impl ClientCoreStream {
     }
 }
 
+struct LocalUpdateReceiverLease<'a> {
+    core: &'a LooperClientCore,
+    receiver: Option<mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>>,
+}
+
+impl LocalUpdateReceiverLease<'_> {
+    async fn recv(&mut self) -> Option<ClientStateMiniStreamUpdate> {
+        let receiver = self.receiver.as_mut()?;
+        receiver.recv().await
+    }
+
+    fn restore(&mut self) -> Result<(), ClientCoreError> {
+        if let Some(receiver) = self.receiver.take() {
+            self.core
+                .restore_local_update_receiver_if_absent(receiver)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LocalUpdateReceiverLease<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+struct StreamEventReceiverLease<'a> {
+    core: &'a LooperClientCore,
+    receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
+}
+
+impl StreamEventReceiverLease<'_> {
+    async fn recv(&mut self) -> Option<StateMiniStreamEvent> {
+        let receiver = self.receiver.as_mut()?;
+        receiver.recv().await
+    }
+
+    fn restore(&mut self) -> Result<(), ClientCoreError> {
+        if let Some(receiver) = self.receiver.take() {
+            self.core
+                .restore_stream_event_receiver_if_absent(receiver)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StreamEventReceiverLease<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
 impl LooperClientCore {
     pub(crate) fn new() -> Arc<Self> {
         let (local_update_sender, local_updates) = mpsc::unbounded_channel();
@@ -937,49 +989,34 @@ impl LooperClientCore {
             return Ok(update);
         }
 
-        let mut local_receiver = self.take_local_update_receiver()?;
-        let maybe_stream_receiver = {
-            let mut stream = self.lock_stream()?;
-            stream.as_mut().and_then(|stream| stream.receiver.take())
-        };
+        let mut local_receiver = self.take_local_update_receiver_lease()?;
+        let maybe_stream_receiver = self.take_stream_event_receiver_lease()?;
 
         enum NextUpdate {
             Local(ClientStateMiniStreamUpdate),
             Stream(StateMiniStreamEvent),
         }
 
-        let (next, maybe_stream_receiver) = match maybe_stream_receiver {
+        let next = match maybe_stream_receiver {
             Some(mut stream_receiver) => {
                 let next = tokio::select! {
-                    local = local_receiver.recv() => {
-                        local.map(NextUpdate::Local)
-                            .ok_or(ClientCoreError::StateMiniStreamNotRunning)
-                    }
-                    stream = stream_receiver.recv() => {
-                        stream.map(NextUpdate::Stream)
-                            .ok_or(ClientCoreError::StateMiniStreamNotRunning)
-                    }
+                    local = local_receiver.recv() => local
+                        .map(NextUpdate::Local)
+                        .ok_or(ClientCoreError::StateMiniStreamNotRunning),
+                    stream = stream_receiver.recv() => stream
+                        .map(NextUpdate::Stream)
+                        .ok_or(ClientCoreError::StateMiniStreamNotRunning),
                 };
-                (next, Some(stream_receiver))
+                stream_receiver.restore()?;
+                next
             }
-            None => {
-                let next = local_receiver
-                    .recv()
-                    .await
-                    .map(NextUpdate::Local)
-                    .ok_or(ClientCoreError::StateMiniStreamNotRunning);
-                (next, None)
-            }
+            None => local_receiver
+                .recv()
+                .await
+                .map(NextUpdate::Local)
+                .ok_or(ClientCoreError::StateMiniStreamNotRunning),
         };
-
-        self.restore_local_update_receiver(local_receiver)?;
-        {
-            let mut stream = self.lock_stream()?;
-            if let (Some(stream), Some(stream_receiver)) = (stream.as_mut(), maybe_stream_receiver)
-            {
-                stream.receiver = Some(stream_receiver);
-            }
-        }
+        local_receiver.restore()?;
 
         match next? {
             NextUpdate::Local(update) => Ok(update),
@@ -1098,11 +1135,57 @@ impl LooperClientCore {
             .ok_or(ClientCoreError::StateMiniStreamNotRunning)
     }
 
+    fn take_local_update_receiver_lease(
+        &self,
+    ) -> Result<LocalUpdateReceiverLease<'_>, ClientCoreError> {
+        Ok(LocalUpdateReceiverLease {
+            core: self,
+            receiver: Some(self.take_local_update_receiver()?),
+        })
+    }
+
+    fn take_stream_event_receiver_lease(
+        &self,
+    ) -> Result<Option<StreamEventReceiverLease<'_>>, ClientCoreError> {
+        let receiver = {
+            let mut stream = self.lock_stream()?;
+            stream.as_mut().and_then(|stream| stream.receiver.take())
+        };
+        Ok(receiver.map(|receiver| StreamEventReceiverLease {
+            core: self,
+            receiver: Some(receiver),
+        }))
+    }
+
     fn restore_local_update_receiver(
         &self,
         receiver: mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>,
     ) -> Result<(), ClientCoreError> {
         *self.lock_local_updates()? = Some(receiver);
+        Ok(())
+    }
+
+    fn restore_local_update_receiver_if_absent(
+        &self,
+        receiver: mpsc::UnboundedReceiver<ClientStateMiniStreamUpdate>,
+    ) -> Result<(), ClientCoreError> {
+        let mut updates = self.lock_local_updates()?;
+        if updates.is_none() {
+            *updates = Some(receiver);
+        }
+        Ok(())
+    }
+
+    fn restore_stream_event_receiver_if_absent(
+        &self,
+        receiver: mpsc::Receiver<StateMiniStreamEvent>,
+    ) -> Result<(), ClientCoreError> {
+        let mut stream = self.lock_stream()?;
+        if let Some(stream) = stream.as_mut() {
+            if stream.receiver.is_none() {
+                stream.receiver = Some(receiver);
+            }
+        }
         Ok(())
     }
 
@@ -2104,6 +2187,30 @@ mod tests {
                     .reason,
                 ClientStateMiniStreamUpdateReason::Delta
             );
+        });
+    }
+
+    #[test]
+    fn cancelled_state_mini_observer_restores_receivers() {
+        let core = LooperClientCore::new();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (_commands_receiver, _acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let observer_core = core.clone();
+            let observer = tokio::spawn(async move { observer_core.observe().await });
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            observer.abort();
+            let _ = observer.await;
+
+            let snapshot = core.snapshot().expect("snapshot");
+            core.emit_local_state_update(snapshot);
+            let update = tokio::time::timeout(OBSERVE_TEST_TIMEOUT, core.observe())
+                .await
+                .expect("observer should recover after cancellation")
+                .expect("observe should not lose receivers");
+
+            assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Delta);
         });
     }
 

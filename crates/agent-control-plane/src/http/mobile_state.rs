@@ -103,12 +103,22 @@ pub(super) fn mobile_session_minis_delta_response(
     };
     match control_plane.store().latest_mobile_state_event_seq() {
         Ok(latest_seq) => {
-            let replace = latest_seq > after_seq
+            let has_changes = latest_seq > after_seq;
+            let delta_contains_complete_projection = has_changes
                 && records.len() == all_records.len()
                 && records.iter().all(|record| record.seq > after_seq);
+            let (payload_records, replace) = if has_changes && !delta_contains_complete_projection {
+                (all_records.as_slice(), true)
+            } else {
+                (records.as_slice(), delta_contains_complete_projection)
+            };
             (
                 StatusCode::OK,
-                Json(mobile_session_mini_delta(latest_seq, &records, replace)),
+                Json(mobile_session_mini_delta(
+                    latest_seq,
+                    payload_records,
+                    replace,
+                )),
             )
                 .into_response()
         }

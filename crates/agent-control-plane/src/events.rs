@@ -286,6 +286,12 @@ create table if not exists mobile_session_minis (
   updated_at_ms integer not null,
   primary key(session_id, assistant_surface)
 );
+
+create table if not exists mobile_session_mini_replacements (
+  seq integer primary key,
+  revision text not null,
+  updated_at_ms integer not null
+);
 "#,
         )?;
         migrate_mobile_session_minis_schema(&connection)?;
@@ -434,6 +440,12 @@ create index if not exists mobile_session_minis_seq
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_minis_at_seq(&connection, seq)
+    }
+
+    pub fn mobile_session_minis_replaced_at_seq(&self, seq: i64) -> Result<bool> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        mobile_session_minis_replaced_at_seq(&connection, seq)
     }
 
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
@@ -1177,6 +1189,12 @@ fn replace_mobile_session_minis_in_transaction(
     updated_at_ms: i64,
 ) -> Result<Vec<MobileSessionMiniRecord>> {
     connection.execute("delete from mobile_session_minis", [])?;
+    connection.execute(
+        "insert or replace into mobile_session_mini_replacements
+         (seq, revision, updated_at_ms)
+         values (?1, ?2, ?3)",
+        params![seq, revision, updated_at_ms],
+    )?;
     let mut records = Vec::with_capacity(minis.len());
     for mini in minis {
         records.push(upsert_mobile_session_mini(
@@ -1214,6 +1232,15 @@ fn mobile_session_minis_at_seq(
     let rows = statement.query_map(params![seq], mobile_session_mini_row)?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+fn mobile_session_minis_replaced_at_seq(connection: &Connection, seq: i64) -> Result<bool> {
+    let count: i64 = connection.query_row(
+        "select count(*) from mobile_session_mini_replacements where seq = ?1",
+        params![seq],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 fn mobile_session_mini_body_json(
