@@ -189,6 +189,13 @@ fn cached_mobile_session_mini_projection(
     if latest_projection_seq < latest_seq {
         return Ok(None);
     }
+    let has_complete_replacement_at_latest_seq = control_plane
+        .store()
+        .mobile_session_minis_replaced_at_seq(latest_seq)
+        .map_err(|error| error.to_string())?;
+    if !has_complete_replacement_at_latest_seq {
+        return Ok(None);
+    }
 
     Ok(Some((latest_seq, records)))
 }

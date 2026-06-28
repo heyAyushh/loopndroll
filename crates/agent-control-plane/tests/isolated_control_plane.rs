@@ -1963,6 +1963,88 @@ async fn session_mini_snapshot_includes_old_stopped_unarchived_sessions() {
 }
 
 #[tokio::test]
+async fn session_mini_snapshot_rebuilds_partial_cache_without_replacement_marker() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.append_newer_than_devin_state_threads(1);
+    let control_plane = fixture.control_plane();
+    let snapshot = control_plane
+        .desktop_mobile_snapshot()
+        .expect("desktop snapshot");
+    let session_state = control_plane
+        .mobile_session_service()
+        .state()
+        .expect("mobile session state");
+    let queued_prompt_counts = control_plane
+        .mobile_session_service()
+        .queued_prompt_counts()
+        .expect("queued prompt counts");
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile seq");
+    let minis = session_mini_projection_inputs(
+        &snapshot,
+        &session_state,
+        &queued_prompt_counts,
+        latest_seq,
+        &snapshot.revision,
+    );
+    assert!(
+        minis.len() > 1,
+        "fixture must have more than one mini so a partial cache can be detected"
+    );
+    let stale_mini = minis
+        .into_iter()
+        .find(|mini| mini.session_id == "thread-main")
+        .expect("thread-main mini");
+    control_plane
+        .store()
+        .upsert_mobile_session_mini(stale_mini, latest_seq, "stale-partial-cache")
+        .expect("seed stale partial mini");
+    assert!(
+        !control_plane
+            .store()
+            .mobile_session_minis_replaced_at_seq(latest_seq)
+            .expect("replacement marker check"),
+        "direct mini upserts must not masquerade as a full replacement snapshot"
+    );
+
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let recovered = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert!(session_mini_snapshot_has_session(&recovered, "thread-main"));
+    assert!(session_mini_snapshot_has_session(
+        &recovered,
+        "thread-extra-00"
+    ));
+    assert!(
+        control_plane
+            .store()
+            .mobile_session_minis_replaced_at_seq(latest_seq)
+            .expect("replacement marker after recovery"),
+        "recovery snapshot must leave a complete replacement marker behind"
+    );
+    assert!(
+        control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("recovered mini records")
+            .len()
+            > 1,
+        "recovery must replace the one-row stale cache with the full mini set"
+    );
+}
+
+#[tokio::test]
 async fn session_mini_projection_replays_default_notification_target_mutation() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
