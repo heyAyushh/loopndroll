@@ -26,6 +26,7 @@ enum CompanionLocalSessionReconcileReason: String {
     case activeScene = "active-scene"
     case fallbackTimer = "fallback-timer"
     case continuationWithoutSession = "continuation-without-session"
+    case sessionOpen = "session-open"
     case sessionsPullRefresh = "sessions-pull-refresh"
     case searchPullRefresh = "search-pull-refresh"
     case unlockRecovery = "unlock-recovery"
@@ -38,6 +39,7 @@ enum CompanionLocalSessionReconcileReason: String {
         case .activeScene,
              .fallbackTimer,
              .continuationWithoutSession,
+             .sessionOpen,
              .unlockRecovery:
             return false
         }
@@ -46,6 +48,7 @@ enum CompanionLocalSessionReconcileReason: String {
     var shouldRecoverStateMiniSnapshot: Bool {
         switch self {
         case .activeScene,
+             .sessionOpen,
              .sessionsPullRefresh,
              .searchPullRefresh,
              .unlockRecovery:
@@ -698,6 +701,7 @@ final class CompanionAppModel {
             return realtimeStreamIsLive
         case .sessionsPullRefresh,
              .searchPullRefresh,
+             .sessionOpen,
              .unlockRecovery:
             return false
         case .fallbackTimer,
@@ -859,7 +863,7 @@ final class CompanionAppModel {
 
         CompanionDiagnostics.record("siri-open:pending-session id=\(sessionID)")
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
-            await loadSnapshot()
+            await reconcileLocalSessionState(reason: .sessionOpen)
         }
 
         let sessionSurface = requestedAssistantSurfaceIfAvailable(
@@ -904,7 +908,7 @@ final class CompanionAppModel {
     private func continueFromMacSession(id sessionID: String) async {
         pendingOpenSessionID = sessionID
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
-            await loadSnapshot()
+            await reconcileLocalSessionState(reason: .sessionOpen)
         }
         let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
 
@@ -1454,14 +1458,14 @@ final class CompanionAppModel {
         switch action {
         case .openSession:
             if snapshot == nil || !snapshotState.containsSession(sessionID) {
-                await loadSnapshot()
+                await reconcileLocalSessionState(reason: .sessionOpen)
             }
             let sessionSurface = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
             pendingOpenSessionID = sessionID
             await refreshSessionDetail(id: sessionID, assistantSurface: sessionSurface)
         case .continueChat:
             if snapshot == nil {
-                await loadSnapshot()
+                await reconcileLocalSessionState(reason: .sessionOpen)
             }
             await sendSessionPrompt(snapshot?.globalSettings.defaultPrompt ?? "", to: sessionID)
         case .reply:
