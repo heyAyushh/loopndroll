@@ -777,16 +777,25 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
           self.sessionMiniSyncTask = nil
         }
       }
+      let routeReadinessGeneration = self.mobileRouteReadiness.generation
       do {
-        let stateSnapshot = try await self.configureSessionClientCoreRuntimeIfNeeded()
-        self.applySessionRuntimeState(stateSnapshot)
+        _ = try await self.configureSessionClientCoreRuntimeIfNeeded(
+          routeReadinessGeneration: routeReadinessGeneration
+        )
+        self.replaceMenu(
+          snapshot: nil,
+          sessionMiniSnapshot: self.currentSessionMiniSnapshot(),
+          error: nil
+        )
       } catch {
         os_log(.debug, log: .default, "session mini runtime failed: %{public}@", error.localizedDescription)
         return
       }
       await sessionRuntime.runStateMiniSync(
         onSnapshot: { [weak self] snapshot in
-          self?.applyCurrentSessionRuntimeState()
+          self?.applyCurrentSessionRuntimeState(
+            routeReadinessGeneration: routeReadinessGeneration
+          )
           self?.applySessionMiniSnapshot(snapshot)
         },
         onDebugMessage: { message in
@@ -796,7 +805,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
-  private func configureSessionClientCoreRuntimeIfNeeded() async throws -> ClientStateSnapshot? {
+  private func configureSessionClientCoreRuntimeIfNeeded(
+    routeReadinessGeneration: UInt64? = nil
+  ) async throws -> ClientStateSnapshot? {
     guard let sessionRuntime else {
       throw MenuBarSessionRuntimeError.noRealtimeEndpoint
     }
@@ -807,7 +818,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         preference: mobileRoutePreference
       )
     }
-    applySessionRuntimeState(stateSnapshot)
+    applySessionRuntimeState(
+      stateSnapshot,
+      routeReadinessGeneration: routeReadinessGeneration ?? mobileRouteReadiness.generation
+    )
     return stateSnapshot
   }
 
@@ -835,18 +849,25 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
-  private func applyCurrentSessionRuntimeState() {
-    applySessionRuntimeState(try? sessionRuntime?.runtimeStateSnapshot())
+  private func applyCurrentSessionRuntimeState(routeReadinessGeneration: UInt64) {
+    applySessionRuntimeState(
+      try? sessionRuntime?.runtimeStateSnapshot(),
+      routeReadinessGeneration: routeReadinessGeneration
+    )
   }
 
-  private func applySessionRuntimeState(_ snapshot: ClientStateSnapshot?) {
+  private func applySessionRuntimeState(
+    _ snapshot: ClientStateSnapshot?,
+    routeReadinessGeneration: UInt64
+  ) {
     guard let snapshot else {
       return
     }
 
     mobileRouteReadiness.applySessionState(
       phase: MobileRouteSessionPhase(snapshot.phase),
-      endpointURL: URL(string: snapshot.endpointUrl)
+      endpointURL: URL(string: snapshot.endpointUrl),
+      refreshGeneration: routeReadinessGeneration
     )
     continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }

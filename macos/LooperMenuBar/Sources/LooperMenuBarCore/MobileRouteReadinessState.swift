@@ -124,8 +124,13 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     public mutating func applySessionState(
         phase: MobileRouteSessionPhase,
-        endpointURL: URL?
+        endpointURL: URL?,
+        refreshGeneration: UInt64
     ) {
+        guard refreshGeneration == generation else {
+            return
+        }
+
         guard phase == .ready,
               let endpointURL,
               !endpointURL.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

@@ -162,7 +162,8 @@ struct MenuRefreshCoordinatorTests {
 
         readiness.applySessionState(
             phase: .connecting,
-            endpointURL: nil
+            endpointURL: nil,
+            refreshGeneration: nextGeneration
         )
         #expect(readiness.health != nil)
         #expect(!readiness.hasLiveRouteProof)
@@ -171,7 +172,16 @@ struct MenuRefreshCoordinatorTests {
         let provenEndpoint = try #require(URL(string: "http://100.119.200.69:8766"))
         readiness.applySessionState(
             phase: .ready,
-            endpointURL: provenEndpoint
+            endpointURL: provenEndpoint,
+            refreshGeneration: oldGeneration
+        )
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: provenEndpoint,
+            refreshGeneration: nextGeneration
         )
         #expect(!readiness.requiresLiveProof)
         #expect(readiness.hasLiveRouteProof)
