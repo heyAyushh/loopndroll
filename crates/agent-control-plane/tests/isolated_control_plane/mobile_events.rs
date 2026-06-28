@@ -15,8 +15,10 @@ const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST: usize = 512 * 1024;
+const STATE_MINI_REPLACEMENT_FRAME_MAX_BYTES_FOR_TEST: usize = 4 * 1024 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
 const OVERSIZED_LEGACY_SESSION_MINI_TEXT_CHARS: usize = 600 * 1024;
+const LARGE_SESSION_MINI_REPLACEMENT_COUNT: usize = 2_308;
 const PROMPT_DELIVERY_WAIT_ATTEMPTS: usize = 200;
 const PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS: u64 = 100;
 
@@ -837,6 +839,108 @@ async fn grpc_session_stream_replays_empty_projection_as_replacement() {
     assert_eq!(payload["replace"], true);
     assert_eq!(payload["latestSeq"], clear_seq);
     assert_eq!(payload["sessions"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn grpc_session_stream_replays_large_projection_replacement_under_frame_cap() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let previous = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input(
+            "thread-before",
+            "revision-before",
+            "before",
+        ))
+        .expect("record previous state delta");
+    let minis = (0..LARGE_SESSION_MINI_REPLACEMENT_COUNT)
+        .map(|index| {
+            let session_id = format!("thread-{index:04}");
+            MobileSessionMiniProjectionInput {
+                session_id: session_id.clone(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "id": session_id,
+                    "sessionId": session_id,
+                    "assistantSurface": "codex",
+                    "ref": format!("T{}", index + 1),
+                    "status": "stopped",
+                    "effectiveMode": null,
+                    "canSendPrompt": false,
+                    "createdAtMs": index,
+                    "updatedAtMs": index,
+                    "lastActivityAtMs": index,
+                    "isArchived": false,
+                    "title": format!("Session {index}"),
+                    "metadata": {
+                        "kind": "project",
+                        "source": "codex",
+                        "sourceDisplayName": "Codex",
+                        "assistantKind": "codex",
+                        "projectPath": "/tmp/project",
+                        "transcriptAvailable": false,
+                        "supportsSubagents": true,
+                    },
+                    "replyable": false,
+                    "blockedGoal": null,
+                    "queueCount": 0,
+                    "lifecycle": "stopped",
+                    "notificationStatus": {
+                        "enabled": false,
+                        "targetIds": [],
+                        "usesDefault": true,
+                    },
+                }),
+            }
+        })
+        .collect::<Vec<_>>();
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("large-projection-replaced".to_owned()),
+                server_time: mobile_event_now(),
+                revision: Some("revision-large-projection".to_owned()),
+            },
+            minis,
+        )
+        .expect("record large replacement projection");
+    let replacement_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(previous.seq)],
+    )
+    .await;
+
+    let delta = next_session_state_delta(&mut stream, "large replacement state delta").await;
+    assert_eq!(delta.seq, replacement_seq);
+    assert!(
+        delta.payload_json.len() < STATE_MINI_REPLACEMENT_FRAME_MAX_BYTES_FOR_TEST,
+        "payload should stay below replacement-frame cap, got {} bytes",
+        delta.payload_json.len()
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&delta.payload_json).expect("replacement payload json");
+    assert_eq!(payload["replace"], true);
+    assert_eq!(payload["latestSeq"], replacement_seq);
+    assert_eq!(
+        payload["sessions"]
+            .as_array()
+            .expect("replacement sessions")
+            .len(),
+        LARGE_SESSION_MINI_REPLACEMENT_COUNT
+    );
 }
 
 #[tokio::test]

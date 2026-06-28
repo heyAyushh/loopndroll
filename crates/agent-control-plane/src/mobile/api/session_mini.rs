@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 use crate::control_plane::{DesktopSnapshot, DesktopThread};
 use crate::events::{MobileSessionMiniProjectionInput, MobileSessionMiniRecord};
@@ -13,17 +11,6 @@ use super::overrides::{is_deleted, session_override};
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
-const ACTIONABLE_SESSION_STATUSES: &[&str] = &["active", "waiting"];
-const RECENT_SESSION_WINDOW_DAYS: i64 = 7;
-const HOURS_PER_DAY: i64 = 24;
-const MINUTES_PER_HOUR: i64 = 60;
-const SECONDS_PER_MINUTE: i64 = 60;
-const MILLIS_PER_SECOND: i64 = 1_000;
-const RECENT_SESSION_WINDOW_MS: i64 = RECENT_SESSION_WINDOW_DAYS
-    * HOURS_PER_DAY
-    * MINUTES_PER_HOUR
-    * SECONDS_PER_MINUTE
-    * MILLIS_PER_SECOND;
 const MINI_TITLE_MAX_CHARS: usize = 240;
 const MINI_PREVIEW_MAX_CHARS: usize = 600;
 const MINI_REASON_MAX_CHARS: usize = 240;
@@ -274,7 +261,7 @@ fn session_mini_values(
     seq: i64,
     revision: &str,
 ) -> Vec<Value> {
-    let minis = snapshot
+    snapshot
         .threads
         .iter()
         .enumerate()
@@ -289,18 +276,7 @@ fn session_mini_values(
                 revision,
             )
         })
-        .collect::<Vec<_>>();
-    let reference_times = surface_reference_times(&minis);
-    minis
-        .into_iter()
-        .filter(|mini| {
-            let reference_time_ms = mini
-                .get("assistantSurface")
-                .and_then(Value::as_str)
-                .and_then(|surface| reference_times.get(surface).copied())
-                .unwrap_or_else(current_time_millis);
-            session_mini_is_hot_path_visible(mini, reference_time_ms)
-        })
+        .filter(session_mini_is_unarchived)
         .collect()
 }
 
@@ -467,64 +443,11 @@ fn blocked_goal(goal: Option<&Value>) -> Option<Value> {
     Some(Value::Object(blocked_goal))
 }
 
-fn session_mini_is_hot_path_visible(mini: &Value, now_ms: i64) -> bool {
-    if mini
+fn session_mini_is_unarchived(mini: &Value) -> bool {
+    !mini
         .get("isArchived")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-    {
-        return false;
-    }
-    if mini
-        .get("status")
-        .and_then(Value::as_str)
-        .map(normalized_status)
-        .is_some_and(|status| ACTIONABLE_SESSION_STATUSES.contains(&status.as_str()))
-    {
-        return true;
-    }
-    if mini.get("blockedGoal").is_some_and(|goal| !goal.is_null()) {
-        return true;
-    }
-    if mini
-        .get("queueCount")
-        .and_then(Value::as_i64)
-        .is_some_and(|count| count > 0)
-    {
-        return true;
-    }
-    latest_mini_activity_ms(mini)
-        .is_some_and(|activity_ms| now_ms.saturating_sub(activity_ms) <= RECENT_SESSION_WINDOW_MS)
-}
-
-fn latest_mini_activity_ms(mini: &Value) -> Option<i64> {
-    [
-        "lastActivityAtMs",
-        "updatedAtMs",
-        "latestMessageAtMs",
-        "lastMessageAtMs",
-        "createdAtMs",
-    ]
-    .into_iter()
-    .filter_map(|field| mini.get(field).and_then(Value::as_i64))
-    .max()
-}
-
-fn surface_reference_times(minis: &[Value]) -> BTreeMap<String, i64> {
-    let mut reference_times: BTreeMap<String, i64> = BTreeMap::new();
-    for mini in minis {
-        let Some(surface) = mini.get("assistantSurface").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(activity_ms) = latest_mini_activity_ms(mini) else {
-            continue;
-        };
-        reference_times
-            .entry(surface.to_owned())
-            .and_modify(|reference_time| *reference_time = (*reference_time).max(activity_ms))
-            .or_insert(activity_ms);
-    }
-    reference_times
 }
 
 fn bounded_metadata(metadata: Option<&Value>) -> Option<Value> {
@@ -628,17 +551,6 @@ fn bounded_value(value: &Value, max_chars: usize) -> Value {
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
-}
-
-fn normalized_status(status: &str) -> String {
-    status.trim().to_ascii_lowercase().replace('_', "-")
-}
-
-fn current_time_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -794,45 +706,21 @@ mod tests {
     }
 
     #[test]
-    fn hot_path_visibility_is_recent_per_surface() {
-        let old_ms = 1_700_000_000_000;
-        let recent_ms = old_ms + RECENT_SESSION_WINDOW_MS + MILLIS_PER_SECOND;
-        let minis = vec![
-            json!({
-                "sessionId": "old-codex",
-                "assistantSurface": "codex",
-                "status": "stopped",
-                "isArchived": false,
-                "lastActivityAtMs": old_ms,
-            }),
-            json!({
-                "sessionId": "recent-codex",
-                "assistantSurface": "codex",
-                "status": "stopped",
-                "isArchived": false,
-                "lastActivityAtMs": recent_ms,
-            }),
-            json!({
-                "sessionId": "active-old-codex",
-                "assistantSurface": "codex",
-                "status": "active",
-                "isArchived": false,
-                "lastActivityAtMs": old_ms,
-            }),
-        ];
-        let reference_times = surface_reference_times(&minis);
-        let reference_time_ms = reference_times["codex"];
-        let session_ids = minis
-            .iter()
-            .filter(|mini| session_mini_is_hot_path_visible(mini, reference_time_ms))
-            .filter_map(|mini| {
-                mini.get("sessionId")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(session_ids, vec!["recent-codex", "active-old-codex"]);
+    fn session_mini_projection_keeps_unarchived_rows_without_recency_cutoff() {
+        assert!(session_mini_is_unarchived(&json!({
+            "sessionId": "old-stopped-codex",
+            "assistantSurface": "codex",
+            "status": "stopped",
+            "isArchived": false,
+            "lastActivityAtMs": 1,
+        })));
+        assert!(!session_mini_is_unarchived(&json!({
+            "sessionId": "archived-codex",
+            "assistantSurface": "codex",
+            "status": "archived",
+            "isArchived": true,
+            "lastActivityAtMs": 1,
+        })));
     }
 }
 

@@ -1937,6 +1937,32 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
 }
 
 #[tokio::test]
+async fn session_mini_snapshot_includes_old_stopped_unarchived_sessions() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    fixture.append_newer_than_devin_state_threads(1);
+    let control_plane = fixture.control_plane();
+    record_thread_stopped(&control_plane, "thread-main");
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert!(session_mini_snapshot_has_session(&snapshot, "thread-main"));
+    assert!(session_mini_snapshot_has_session(
+        &snapshot,
+        "thread-extra-00"
+    ));
+}
+
+#[tokio::test]
 async fn session_mini_projection_replays_default_notification_target_mutation() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -3891,6 +3917,22 @@ fn record_thread_active(control_plane: &ControlPlane, thread_id: &str) {
             false,
         )
         .expect("record active mobile lifecycle");
+}
+
+fn record_thread_stopped(control_plane: &ControlPlane, thread_id: &str) {
+    control_plane
+        .mobile_session_service()
+        .record_hook_lifecycle(
+            &MobileHookPayload {
+                hook_event_name: "Stop".to_owned(),
+                session_id: Some(thread_id.to_owned()),
+                turn_id: None,
+                cwd: None,
+                last_assistant_message: None,
+            },
+            false,
+        )
+        .expect("record stopped mobile lifecycle");
 }
 
 fn prime_state_mini_cache(control_plane: &ControlPlane) {
