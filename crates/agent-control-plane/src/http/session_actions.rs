@@ -1,5 +1,7 @@
 use crate::control_plane::ControlPlane;
-use crate::grpc::{delete_session_command, mute_session_command, set_session_archived_command};
+use crate::mobile::realtime_commands::{
+    delete_session_command, mute_session_command, set_session_archived_command,
+};
 use tonic::Status;
 
 const HTTP_ARCHIVE_MUTATION_PREFIX: &str = "http-session-archive";
@@ -17,6 +19,7 @@ pub(super) fn set_session_archived(
         archived,
         &http_session_mutation_id(HTTP_ARCHIVE_MUTATION_PREFIX),
     )
+    .map_err(|error| error.into_status())
     .map(|_| ())
 }
 
@@ -26,6 +29,7 @@ pub(super) fn mute_session(control_plane: &ControlPlane, thread_id: &str) -> Res
         thread_id.to_owned(),
         &http_session_mutation_id(HTTP_MUTE_MUTATION_PREFIX),
     )
+    .map_err(|error| error.into_status())
     .map(|_| ())
 }
 
@@ -35,6 +39,7 @@ pub(super) fn delete_session(control_plane: &ControlPlane, thread_id: &str) -> R
         thread_id.to_owned(),
         &http_session_mutation_id(HTTP_DELETE_MUTATION_PREFIX),
     )
+    .map_err(|error| error.into_status())
     .map(|_| ())
 }
 

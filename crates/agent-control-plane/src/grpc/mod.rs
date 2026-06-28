@@ -21,9 +21,6 @@ pub mod proto {
 
 pub(crate) use client_commands::submit_local_session_command;
 pub use service::LooperRealtimeService;
-pub(crate) use service::{
-    delete_session_command, mute_session_command, set_session_archived_command,
-};
 
 const GRPC_HTTP2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const GRPC_HTTP2_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
