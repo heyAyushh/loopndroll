@@ -33,6 +33,7 @@
 		B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */; };
 		E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */; };
 		EF37339ED81D19FD868EB2C2 /* DesktopThreadDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */; };
+		F1D3F9315B2E480B16841EA8 /* MobileRouteReadinessState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B7EDEED1DD2FE553D167DB /* MobileRouteReadinessState.swift */; };
 		F79DD085C531D488C88BCF21 /* LooperHandoffHoldDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81EC062A9CBC216699BF152D /* LooperHandoffHoldDuration.swift */; };
 		F8EA43DD1C7F6E38A41E5921 /* MenuBarSessionMiniLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */; };
 /* End PBXBuildFile section */
@@ -83,6 +84,7 @@
 		8EA18D48629D32130B01944A /* LooperMenuContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperMenuContent.swift; sourceTree = "<group>"; };
 		96F0764C78BFDF2404A48C88 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		978698B37A7E3A1009C2A782 /* DesktopThreadDisplayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopThreadDisplayText.swift; sourceTree = "<group>"; };
+		A8B7EDEED1DD2FE553D167DB /* MobileRouteReadinessState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRouteReadinessState.swift; sourceTree = "<group>"; };
 		AB38C2B27A76F7414EB67661 /* looper-cli */ = {isa = PBXFileReference; name = "looper-cli"; path = "../../crates/agent-control-plane/target/release/looper-cli"; sourceTree = "<group>"; };
 		C8414FFD10C5DCAAF9F91E32 /* LooperDiagnosticsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperDiagnosticsContent.swift; sourceTree = "<group>"; };
 		CBFBCDB83F66C00EDECF5667 /* LooperDiagnosticsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LooperDiagnosticsWindowController.swift; sourceTree = "<group>"; };
@@ -170,6 +172,7 @@
 				31A1DF58765A1F298BDF18E6 /* MenuBarSessionMiniLocalStore.swift */,
 				D88BB63063D6A6E7F55C1B64 /* MenuRefreshCoordinator.swift */,
 				758B0675F66E7A95BC7FF2C6 /* MobileRoutePreference.swift */,
+				A8B7EDEED1DD2FE553D167DB /* MobileRouteReadinessState.swift */,
 				2EC18895FE42D338F114FD11 /* ProjectNameResolver.swift */,
 				7348753865947E1D6D6468FC /* TailscaleNetworkPattern.swift */,
 			);
@@ -398,6 +401,7 @@
 				F8EA43DD1C7F6E38A41E5921 /* MenuBarSessionMiniLocalStore.swift in Sources */,
 				085DA2DD962A12011A477017 /* MenuRefreshCoordinator.swift in Sources */,
 				1D30DC9BAD7A8BAEC9086C40 /* MobileRoutePreference.swift in Sources */,
+				F1D3F9315B2E480B16841EA8 /* MobileRouteReadinessState.swift in Sources */,
 				B834A71199CA517F48308905 /* ProjectNameResolver.swift in Sources */,
 				E7154BB153DC43E02443EE74 /* TailscaleNetworkPattern.swift in Sources */,
 			);
