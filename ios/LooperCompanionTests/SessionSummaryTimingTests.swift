@@ -413,6 +413,9 @@ struct SessionSummaryTimingTests {
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
         #expect(store.detail(for: "thread-main")?.effectiveMode == .maxTurns1)
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Codex ready")
+        let visibleHostSyncTime = store.snapshot?.host.lastSyncedAt
+        #expect(store.applyHostSyncTime("2026-06-16T08:03:00Z"))
+        #expect(store.snapshot?.host.lastSyncedAt == visibleHostSyncTime)
         #expect(!store.selectAssistantSurface(.codex))
 
         #expect(store.selectAssistantSurface(.devin))

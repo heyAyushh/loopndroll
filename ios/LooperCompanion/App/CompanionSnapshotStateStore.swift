@@ -17,6 +17,7 @@ final class CompanionSnapshotStateStore {
 
     @ObservationIgnored private var canonicalSnapshot: MobileSnapshot?
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
+    @ObservationIgnored private var lastVisibleSnapshotFingerprint: VisibleSnapshotFingerprint?
 
     var hasSnapshot: Bool {
         snapshot != nil
@@ -37,6 +38,7 @@ final class CompanionSnapshotStateStore {
         sessionSections = .empty
         sessionIndex = .empty
         hasUserSelectedAssistantSurface = false
+        lastVisibleSnapshotFingerprint = nil
     }
 
     @discardableResult
@@ -51,10 +53,6 @@ final class CompanionSnapshotStateStore {
 
         nextSnapshot.host.lastSyncedAt = syncedAt
         canonicalSnapshot = nextSnapshot
-        if var visibleSnapshot = snapshot {
-            visibleSnapshot.host.lastSyncedAt = syncedAt
-            snapshot = visibleSnapshot
-        }
         return true
     }
 
@@ -158,7 +156,7 @@ final class CompanionSnapshotStateStore {
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
-        sessionIndex.session(withID: sessionID)
+        visibleSession(withID: sessionID) ?? sessionIndex.session(withID: sessionID)
     }
 
     func containsSession(_ sessionID: String) -> Bool {
@@ -170,7 +168,10 @@ final class CompanionSnapshotStateStore {
     }
 
     func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
-        sessionIndex.assistantSurface(containingSessionID: sessionID)
+        if visibleSession(withID: sessionID) != nil {
+            return selectedAssistantSurface
+        }
+        return sessionIndex.assistantSurface(containingSessionID: sessionID)
     }
 
     func assistantSurface(for sessionID: String) -> CompanionAssistantSurface {
@@ -206,7 +207,9 @@ final class CompanionSnapshotStateStore {
 
     func detail(for sessionID: String) -> SessionDetail? {
         guard let sourceSnapshot = sourceSnapshotForProjection(),
-              let session = session(withID: sessionID) ?? sourceSnapshot.session(withID: sessionID)
+              let session = visibleSession(withID: sessionID)
+                ?? sessionIndex.session(withID: sessionID)
+                ?? sourceSnapshot.session(withID: sessionID)
         else {
             return nil
         }
@@ -222,6 +225,11 @@ final class CompanionSnapshotStateStore {
         _ visibleSnapshot: MobileSnapshot,
         projection: ClientSnapshotProjection
     ) {
+        let nextFingerprint = VisibleSnapshotFingerprint(json: projection.visibleSnapshotJson)
+        guard nextFingerprint != lastVisibleSnapshotFingerprint else {
+            return
+        }
+
         snapshot = visibleSnapshot
         sessionSections = SessionSections(
             projection: projection.sessionSections,
@@ -231,6 +239,7 @@ final class CompanionSnapshotStateStore {
             projection: projection.sessionIndex,
             snapshot: visibleSnapshot
         )
+        lastVisibleSnapshotFingerprint = nextFingerprint
     }
 
     private func applyFallbackVisibleSnapshot(
@@ -241,6 +250,7 @@ final class CompanionSnapshotStateStore {
         selectedAssistantSurface = selectedSurface
         sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
         sessionIndex = SessionIndex(snapshot: visibleSnapshot)
+        lastVisibleSnapshotFingerprint = nil
     }
 
     @discardableResult
@@ -289,6 +299,12 @@ final class CompanionSnapshotStateStore {
 
     private func sourceSnapshotForProjection() -> MobileSnapshot? {
         canonicalSnapshot ?? snapshot
+    }
+
+    private func visibleSession(withID sessionID: String) -> SessionSummary? {
+        snapshot?.sessions.first { session in
+            session.id == sessionID
+        }
     }
 
 }
@@ -368,5 +384,15 @@ private enum SnapshotProjectionCodec {
 
     private static func recordFailure(_ message: String, error: Error) {
         CompanionDiagnostics.record("\(message) error=\(error.localizedDescription)")
+    }
+}
+
+private struct VisibleSnapshotFingerprint: Equatable {
+    let byteCount: Int
+    let contentHash: Int
+
+    init(json: String) {
+        byteCount = json.utf8.count
+        contentHash = json.hashValue
     }
 }

@@ -1580,7 +1580,9 @@ final class CompanionAppModel {
                 }
 
                 let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(appliedSurface)
-                let didSelectSurface = self.snapshotState.selectAssistantSurface(appliedSurface)
+                let didSelectSurface = self.snapshotState.selectedAssistantSurface == appliedSurface
+                    ? false
+                    : self.snapshotState.selectAssistantSurface(appliedSurface)
                 if !(didApplySurface || didSelectSurface) {
                     CompanionDiagnostics.assistantSurface.debug(
                         "Selection accepted without visible change surface=\(appliedSurface.rawValue, privacy: .public) generation=\(result.generation, privacy: .public)"
