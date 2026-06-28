@@ -15,7 +15,7 @@ final class CompanionSessionMiniController {
         CompanionSessionMiniLivenessUpdate,
         Int
     ) -> Void
-    typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String) -> Void
+    typealias SnapshotApplyHandler = @MainActor (MobileSnapshot, String, Int64) -> Void
     typealias NotificationReplySubmitter = @MainActor @Sendable () async -> Bool
 
     let sessionRuntime: CompanionSessionRuntime?
@@ -112,11 +112,12 @@ final class CompanionSessionMiniController {
         }
 
         do {
+            let localSnapshot = try sessionRuntime.currentStateMiniSnapshot()
             guard let cachedSnapshot = try sessionRuntime.cachedSnapshot() else {
                 return false
             }
 
-            applySnapshot(cachedSnapshot, "session-mini-\(reason)")
+            applySnapshot(cachedSnapshot, "session-mini-\(reason)", localSnapshot.latestSeq)
             CompanionDiagnostics.record(
                 "session-mini:cache-restore reason=\(reason) sessions=\(cachedSnapshot.sessions.count)"
             )

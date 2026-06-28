@@ -1706,8 +1706,12 @@ final class CompanionAppModel {
 
     @discardableResult
     private func restoreCachedSessionMiniSnapshotIfAvailable(reason: String) -> Bool {
-        sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason in
-            self?.applyCachedSnapshot(cachedSnapshot, reason: reason)
+        sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason, latestSeq in
+            self?.applyCachedSessionMiniSnapshot(
+                cachedSnapshot,
+                reason: reason,
+                latestSeq: latestSeq
+            )
         }
     }
 
@@ -1758,6 +1762,15 @@ final class CompanionAppModel {
         )
     }
 
+    private func applyCachedSessionMiniSnapshot(
+        _ cachedSnapshot: MobileSnapshot,
+        reason: String,
+        latestSeq: Int64
+    ) {
+        realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
+        applyCachedSnapshot(cachedSnapshot, reason: reason)
+    }
+
     private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {
         let previousSnapshot = snapshot
         let visibleSnapshot = snapshotState.applySnapshot(nextSnapshot)
@@ -1778,8 +1791,11 @@ final class CompanionAppModel {
         if snapshot == nil || !snapshotState.hasSnapshot {
             return true
         }
-        if !realtimeStreamIsLive || realtimeLatestSeq <= 0 {
+        if realtimeLatestSeq <= 0 {
             return true
+        }
+        if !realtimeStreamIsLive {
+            return false
         }
         return snapshotState.allSessions.isEmpty && !nextSnapshot.sessions.isEmpty
     }

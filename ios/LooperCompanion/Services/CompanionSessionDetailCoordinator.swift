@@ -56,6 +56,11 @@ final class CompanionSessionDetailCoordinator {
             id: id,
             snapshotState: snapshotState
         )
+        if didApplyLocalDetail {
+            CompanionDiagnostics.record("session-detail:local-wins id=\(id)")
+            return .loaded
+        }
+
         var lastError: Error?
         for surface in detailQuerySurfaces(
             for: id,

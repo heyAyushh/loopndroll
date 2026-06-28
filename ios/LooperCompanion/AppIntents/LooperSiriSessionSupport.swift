@@ -492,6 +492,11 @@ struct LooperSiriSessionClient: Sendable {
             return detail
         }
 
+        guard sessionRuntime == nil else {
+            CompanionDiagnostics.record("siri:local-detail-missing id=\(entity.sessionID)")
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
+
         return try await service.loadSessionDetail(
             id: entity.sessionID,
             surface: entity.assistantSurface ?? .codex
@@ -544,14 +549,13 @@ struct LooperSiriSessionClient: Sendable {
 
     private func loadSnapshotLocalFirst() async throws -> MobileSnapshot {
         if let sessionRuntime {
-            do {
-                if let snapshot = try sessionRuntime.cachedSnapshot() {
-                    CompanionDiagnostics.record("siri:local-snapshot")
-                    return snapshot
-                }
-            } catch {
-                CompanionDiagnostics.record("siri:local-snapshot-failed error=\(error.localizedDescription)")
+            if let snapshot = try sessionRuntime.cachedSnapshot() {
+                CompanionDiagnostics.record("siri:local-snapshot")
+                return snapshot
             }
+
+            CompanionDiagnostics.record("siri:local-snapshot-missing")
+            throw HTTPCompanionServiceError.localStoreUnavailable
         }
 
         CompanionDiagnostics.record("siri:http-snapshot-fallback")
