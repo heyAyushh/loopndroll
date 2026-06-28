@@ -17,7 +17,6 @@ use serde::Deserialize;
 use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
-use crate::control_plane::session_fsm::SessionReject;
 use crate::control_plane::{ControlPlane, HookMutationTarget};
 use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
@@ -30,9 +29,7 @@ use crate::mobile::auth::{
 use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
 use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 use crate::mobile::push::MobilePushRegistrationRequest;
-use crate::mobile::session::{
-    ASSISTANT_SURFACES, MobileSessionError, UpsertMobileNotificationRoute,
-};
+use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
 use tonic::{Code as GrpcCode, Status as GrpcStatus};
 
 mod handoff;
@@ -68,19 +65,8 @@ use self::responses::{
     mobile_session_not_found_response, telegram_error_response,
 };
 use self::session_actions::{
-    delete_completion_check as delete_completion_check_action,
-    delete_notification_route as delete_notification_route_action,
-    delete_session as delete_session_action, mute_session as mute_session_action,
-    save_default_prompt as save_default_prompt_action,
-    set_assistant_surface as set_assistant_surface_action,
+    disabled_http_session_state_mutation_response,
     set_default_notification_targets as set_default_notification_targets_action,
-    set_global_completion_check as set_global_completion_check_action,
-    set_global_notification as set_global_notification_action,
-    set_global_preset as set_global_preset_action, set_scope as set_scope_action,
-    set_session_archived, set_session_completion_check as set_session_completion_check_action,
-    set_session_notifications as set_session_notifications_action,
-    upsert_completion_check as upsert_completion_check_action,
-    upsert_notification_route as upsert_notification_route_action,
 };
 
 const SHUTDOWN_EXIT_DELAY: Duration = Duration::from_millis(50);
@@ -213,20 +199,20 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
     Router::new()
         .route(
             "/desktop/settings/default-prompt",
-            post(desktop_default_prompt),
+            post(disabled_desktop_default_prompt),
         )
-        .route("/desktop/settings/scope", post(desktop_scope))
+        .route("/desktop/settings/scope", post(disabled_desktop_scope))
         .route(
             "/desktop/settings/assistant-surface",
-            post(desktop_assistant_surface),
+            post(disabled_desktop_assistant_surface),
         )
         .route(
             "/desktop/settings/global-preset",
-            post(desktop_global_preset),
+            post(disabled_desktop_global_preset),
         )
         .route(
             "/desktop/settings/global-notification",
-            post(desktop_global_notification),
+            post(disabled_desktop_global_notification),
         )
         .route(
             "/desktop/settings/default-notification-targets",
@@ -234,21 +220,24 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
         )
         .route(
             "/desktop/settings/global-completion-check",
-            post(desktop_global_completion_check),
+            post(disabled_desktop_global_completion_check),
         )
-        .route("/desktop/notifications", post(desktop_notification_upsert))
+        .route(
+            "/desktop/notifications",
+            post(disabled_desktop_notification_upsert),
+        )
         .route(
             "/desktop/notifications/:notification_id",
-            delete(desktop_notification_delete),
+            delete(disabled_http_session_state_mutation),
         )
         .route("/desktop/telegram/chats", post(desktop_telegram_chats))
         .route(
             "/desktop/completion-checks",
-            post(desktop_completion_check_upsert),
+            post(disabled_desktop_completion_check_upsert),
         )
         .route(
             "/desktop/completion-checks/:completion_check_id",
-            delete(desktop_completion_check_delete),
+            delete(disabled_http_session_state_mutation),
         )
 }
 
@@ -256,23 +245,23 @@ fn desktop_session_routes() -> Router<ControlPlane> {
     Router::new()
         .route(
             "/desktop/sessions/:thread_id/notifications",
-            post(desktop_session_notifications),
+            post(disabled_desktop_session_notifications),
         )
         .route(
             "/desktop/sessions/:thread_id/completion-check",
-            post(desktop_session_completion_check),
+            post(disabled_desktop_session_completion_check),
         )
         .route(
             "/desktop/sessions/:thread_id/archive",
-            post(desktop_session_archive),
+            post(disabled_desktop_session_archive),
         )
         .route(
             "/desktop/sessions/:thread_id/mute",
-            post(desktop_session_mute),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/sessions/:thread_id",
-            get(desktop_session_detail).delete(desktop_session_delete),
+            get(desktop_session_detail).delete(disabled_http_session_state_mutation),
         )
         .route("/desktop/shutdown", post(desktop_shutdown))
 }
@@ -906,148 +895,6 @@ async fn desktop_push_test(
     }
 }
 
-async fn desktop_default_prompt(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopDefaultPromptRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match save_default_prompt_action(&control_plane, input.default_prompt) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_scope(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopScopeRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_scope_action(&control_plane, input.scope) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_assistant_surface(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopAssistantSurfaceRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_assistant_surface_action(&control_plane, input.assistant_surface) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_global_preset(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopSessionModeRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_global_preset_action(&control_plane, input.preset) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_global_notification(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopGlobalNotificationRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_global_notification_action(&control_plane, input.notification_id) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_default_notification_targets(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopDefaultNotificationTargetsRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_default_notification_targets_action(&control_plane, input.notification_target_ids) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_global_completion_check(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopCompletionCheckConfigRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_global_completion_check_action(
-        &control_plane,
-        input.completion_check_id,
-        input.wait_for_reply_after_completion,
-    ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_notification_upsert(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopNotificationRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match upsert_notification_route_action(
-        &control_plane,
-        UpsertMobileNotificationRoute {
-            id: input.id.or_else(|| Some(new_record_id("notification"))),
-            label: input.label,
-            channel: input.channel,
-            webhook_url: input.webhook_url,
-            chat_id: input.chat_id,
-            bot_token: input.bot_token,
-            chat_username: input.chat_username,
-            chat_display_name: input.chat_display_name,
-        },
-    ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_notification_delete(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(notification_id): Path<String>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match delete_notification_route_action(&control_plane, notification_id) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
 async fn desktop_telegram_chats(
     State(control_plane): State<ControlPlane>,
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
@@ -1066,52 +913,125 @@ async fn desktop_telegram_chats(
     }
 }
 
-async fn desktop_completion_check_upsert(
+async fn desktop_default_notification_targets(
     State(control_plane): State<ControlPlane>,
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopDefaultNotificationTargetsRequest>,
+) -> impl IntoResponse {
+    if let Some(response) = desktop_loopback_rejection(socket_addr) {
+        return response;
+    }
+    match set_default_notification_targets_action(&control_plane, input.notification_target_ids) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
+    }
+}
+
+async fn disabled_desktop_default_prompt(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopDefaultPromptRequest>,
+) -> Response {
+    let _ = input.default_prompt;
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_scope(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopScopeRequest>,
+) -> Response {
+    let _ = input.scope;
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_assistant_surface(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopAssistantSurfaceRequest>,
+) -> Response {
+    let _ = input.assistant_surface;
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_global_preset(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopSessionModeRequest>,
+) -> Response {
+    let _ = input.preset;
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_global_notification(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopGlobalNotificationRequest>,
+) -> Response {
+    let _ = input.notification_id;
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_global_completion_check(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopCompletionCheckConfigRequest>,
+) -> Response {
+    let _ = (
+        input.completion_check_id,
+        input.wait_for_reply_after_completion,
+    );
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_notification_upsert(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Json(input): Json<DesktopNotificationRequest>,
+) -> Response {
+    let _ = (
+        input.id,
+        input.label,
+        input.channel,
+        input.webhook_url,
+        input.chat_id,
+        input.bot_token,
+        input.chat_username,
+        input.chat_display_name,
+    );
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_completion_check_upsert(
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Json(input): Json<DesktopCompletionCheckRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match upsert_completion_check_action(
-        &control_plane,
-        input.id.unwrap_or_else(|| new_record_id("check")),
-        input.label,
-        input.commands,
-    ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
+) -> Response {
+    let _ = (input.id, input.label, input.commands);
+    disabled_http_session_state_mutation_for_socket(socket_addr)
 }
 
-async fn desktop_completion_check_delete(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(completion_check_id): Path<String>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match delete_completion_check_action(&control_plane, completion_check_id) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_session_notifications(
-    State(control_plane): State<ControlPlane>,
+async fn disabled_desktop_session_notifications(
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Path(thread_id): Path<String>,
     Json(input): Json<DesktopSessionNotificationsRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_session_notifications_action(&control_plane, thread_id, input.notification_ids) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
+) -> Response {
+    let _ = (thread_id, input.notification_ids);
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_session_completion_check(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(thread_id): Path<String>,
+    Json(input): Json<DesktopCompletionCheckConfigRequest>,
+) -> Response {
+    let _ = (
+        thread_id,
+        input.completion_check_id,
+        input.wait_for_reply_after_completion,
+    );
+    disabled_http_session_state_mutation_for_socket(socket_addr)
+}
+
+async fn disabled_desktop_session_archive(
+    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
+    Path(thread_id): Path<String>,
+    Json(input): Json<DesktopSessionArchiveRequest>,
+) -> Response {
+    let _ = (thread_id, input.archived);
+    disabled_http_session_state_mutation_for_socket(socket_addr)
 }
 
 async fn desktop_session_detail(
@@ -1136,67 +1056,17 @@ async fn desktop_session_detail(
     }
 }
 
-async fn desktop_session_completion_check(
-    State(control_plane): State<ControlPlane>,
+async fn disabled_http_session_state_mutation(
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopCompletionCheckConfigRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_session_completion_check_action(
-        &control_plane,
-        thread_id,
-        input.completion_check_id,
-        input.wait_for_reply_after_completion,
-    ) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
+) -> Response {
+    disabled_http_session_state_mutation_for_socket(socket_addr)
 }
 
-async fn desktop_session_archive(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopSessionArchiveRequest>,
-) -> impl IntoResponse {
+fn disabled_http_session_state_mutation_for_socket(socket_addr: SocketAddr) -> Response {
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match set_session_archived(&control_plane, &thread_id, input.archived) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_session_mute(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match mute_session_action(&control_plane, &thread_id) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
-async fn desktop_session_delete(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match delete_session_action(&control_plane, &thread_id) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
+    disabled_http_session_state_mutation_response()
 }
 
 async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
@@ -1211,18 +1081,6 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
 }
 
 fn session_command_status_response(status: GrpcStatus) -> Response {
-    if let Some(reject) = SessionReject::from_status_message(status.message()) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": reject.code_str(),
-                "message": reject.wire_reason(),
-                "currentState": reject.current_state.label(),
-            })),
-        )
-            .into_response();
-    }
-
     let http_status = match status.code() {
         GrpcCode::InvalidArgument => StatusCode::BAD_REQUEST,
         GrpcCode::NotFound => StatusCode::NOT_FOUND,
@@ -1699,10 +1557,6 @@ async fn thread_capabilities(
         )
             .into_response(),
     }
-}
-
-fn new_record_id(prefix: &str) -> String {
-    format!("{prefix}-{}", uuid::Uuid::new_v4())
 }
 
 fn desktop_pairing_response(connection_code: &MobileConnectionCode) -> serde_json::Value {

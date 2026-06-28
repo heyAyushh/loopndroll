@@ -3389,101 +3389,17 @@ async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
 }
 
 #[tokio::test]
-async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
+async fn http_session_state_mutation_routes_are_disabled() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    let control_plane = fixture.control_plane();
-    let router = build_router(control_plane.clone());
+    let router = build_router(fixture.control_plane());
     let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
-
-    let state = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/default-prompt",
-        serde_json::json!({ "defaultPrompt": "Continue from TUI." }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(state["defaultPrompt"], "Continue from TUI.");
-
-    let scoped = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/scope",
-        serde_json::json!({ "scope": "per-task" }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(scoped["scope"], "per-task");
-
-    let assistant_surface = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/assistant-surface",
-        serde_json::json!({ "assistantSurface": "devin" }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(assistant_surface["assistantSurface"], "devin");
-
-    let routed = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/notifications",
-        serde_json::json!({
-            "id": "route-slack",
-            "label": "Slack alerts",
-            "channel": "slack",
-            "webhookUrl": "https://hooks.slack.com/services/test"
-        }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(routed["notifications"][0]["id"], "route-slack");
-
-    let checked = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/completion-checks",
-        serde_json::json!({
-            "id": "check-test",
-            "label": "Tests",
-            "commands": ["cargo test"]
-        }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(checked["completionChecks"][0]["id"], "check-test");
-
-    let global = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/global-completion-check",
-        serde_json::json!({
-            "completionCheckId": "check-test",
-            "waitForReplyAfterCompletion": true
-        }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(global["globalCompletionCheckId"], "check-test");
-    assert_eq!(
-        global["globalCompletionCheckWaitForReply"],
-        serde_json::json!(true)
-    );
-
     let notification_targets = request_json_body_with_options(
         &router,
         Method::POST,
         "/desktop/settings/default-notification-targets",
         serde_json::json!({
-            "notificationTargetIds": ["macos", "route-slack"]
+            "notificationTargetIds": ["macos"]
         }),
         &[],
         loopback,
@@ -3491,50 +3407,130 @@ async fn desktop_mobile_state_mutations_replace_renderer_rpc() {
     .await;
     assert_eq!(
         notification_targets["defaultNotificationTargetIds"],
-        serde_json::json!(["macos", "route-slack"])
+        serde_json::json!(["macos"])
     );
+    let snapshot_before_disabled_routes = request_json(&router, "/desktop/snapshot").await;
 
-    let session = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/sessions/thread-main/notifications",
-        serde_json::json!({ "notificationIds": ["route-slack"] }),
-        &[],
-        loopback,
-    )
-    .await;
+    let disabled_routes = vec![
+        (
+            Method::POST,
+            "/desktop/settings/default-prompt",
+            Some(serde_json::json!({ "defaultPrompt": "Continue from TUI." })),
+        ),
+        (
+            Method::POST,
+            "/desktop/settings/scope",
+            Some(serde_json::json!({ "scope": "per-task" })),
+        ),
+        (
+            Method::POST,
+            "/desktop/settings/assistant-surface",
+            Some(serde_json::json!({ "assistantSurface": "devin" })),
+        ),
+        (
+            Method::POST,
+            "/desktop/settings/global-preset",
+            Some(serde_json::json!({ "preset": "await-reply" })),
+        ),
+        (
+            Method::POST,
+            "/desktop/settings/global-notification",
+            Some(serde_json::json!({ "notificationId": "route-slack" })),
+        ),
+        (
+            Method::POST,
+            "/desktop/settings/global-completion-check",
+            Some(serde_json::json!({
+                "completionCheckId": "check-test",
+                "waitForReplyAfterCompletion": true
+            })),
+        ),
+        (
+            Method::POST,
+            "/desktop/notifications",
+            Some(serde_json::json!({
+                "id": "route-slack",
+                "label": "Slack alerts",
+                "channel": "slack",
+                "webhookUrl": "https://hooks.slack.com/services/test"
+            })),
+        ),
+        (Method::DELETE, "/desktop/notifications/route-slack", None),
+        (
+            Method::POST,
+            "/desktop/completion-checks",
+            Some(serde_json::json!({
+                "id": "check-test",
+                "label": "Tests",
+                "commands": ["cargo test"]
+            })),
+        ),
+        (
+            Method::DELETE,
+            "/desktop/completion-checks/check-test",
+            None,
+        ),
+        (
+            Method::POST,
+            "/desktop/sessions/thread-main/notifications",
+            Some(serde_json::json!({ "notificationIds": ["route-slack"] })),
+        ),
+        (
+            Method::POST,
+            "/desktop/sessions/thread-main/completion-check",
+            Some(serde_json::json!({
+                "completionCheckId": "check-test",
+                "waitForReplyAfterCompletion": true
+            })),
+        ),
+        (
+            Method::POST,
+            "/desktop/sessions/thread-main/archive",
+            Some(serde_json::json!({ "archived": true })),
+        ),
+        (Method::POST, "/desktop/sessions/thread-main/mute", None),
+        (Method::DELETE, "/desktop/sessions/thread-main", None),
+    ];
+
+    for (method, path, body) in disabled_routes {
+        let response = match body {
+            Some(body) => {
+                request_with_body_options(
+                    &router,
+                    method,
+                    path,
+                    serde_json::to_vec(&body).expect("json body"),
+                    &[(axum::http::header::CONTENT_TYPE, "application/json")],
+                    loopback,
+                )
+                .await
+            }
+            None => request_with_options(&router, method, path, &[], loopback).await,
+        };
+        assert_eq!(response.status(), StatusCode::GONE, "{path}");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["error"], "http_session_state_mutation_disabled");
+        assert_eq!(payload["recovery"], "/api/mobile/session-minis/snapshot");
+    }
+
+    let snapshot_after = request_json(&router, "/desktop/snapshot").await;
     assert_eq!(
-        session["sessions"]["thread-main"]["notificationIds"][0],
-        "route-slack"
+        snapshot_after["thread_count"],
+        snapshot_before_disabled_routes["thread_count"]
     );
-
-    let archived = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/sessions/thread-main/archive",
-        serde_json::json!({ "archived": true }),
-        &[],
-        loopback,
-    )
-    .await;
     assert_eq!(
-        archived["sessions"]["thread-main"]["archived"],
-        serde_json::json!(true)
+        snapshot_after["active_thread_count"],
+        snapshot_before_disabled_routes["active_thread_count"]
     );
-
-    let deleted_route = request_json_with_options(
-        &router,
-        Method::DELETE,
-        "/desktop/notifications/route-slack",
-        &[],
-        loopback,
-    )
-    .await;
-    assert!(
-        deleted_route["notifications"]
-            .as_array()
-            .expect("notifications")
-            .is_empty()
+    assert_eq!(
+        snapshot_after["revision"], snapshot_before_disabled_routes["revision"],
+        "disabled HTTP routes must not change session state"
     );
 }
 
