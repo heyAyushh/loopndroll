@@ -21,7 +21,9 @@ use crate::mobile::realtime_ack::{
     json_string, publish_command_ack_event, record_command_ack, release_command_reservation,
     reserve_command_ack,
 };
-use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
+use crate::mobile::session::{
+    ASSISTANT_SURFACES, MobileSessionError, UpsertMobileNotificationRoute,
+};
 
 pub(crate) const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
 pub(crate) const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
@@ -33,6 +35,18 @@ pub(crate) const COMMAND_KIND_SAVE_DEFAULT_PROMPT: &str = "SaveDefaultPrompt";
 pub(crate) const COMMAND_KIND_SET_SESSION_ARCHIVED: &str = "SetSessionArchived";
 pub(crate) const COMMAND_KIND_DELETE_SESSION: &str = "DeleteSession";
 pub(crate) const COMMAND_KIND_MUTE_SESSION: &str = "MuteSession";
+pub(crate) const COMMAND_KIND_SET_SCOPE: &str = "SetScope";
+pub(crate) const COMMAND_KIND_SET_GLOBAL_PRESET: &str = "SetGlobalPreset";
+pub(crate) const COMMAND_KIND_SET_GLOBAL_NOTIFICATION: &str = "SetGlobalNotification";
+pub(crate) const COMMAND_KIND_SET_DEFAULT_NOTIFICATION_TARGETS: &str =
+    "SetDefaultNotificationTargets";
+pub(crate) const COMMAND_KIND_SET_GLOBAL_COMPLETION_CHECK: &str = "SetGlobalCompletionCheck";
+pub(crate) const COMMAND_KIND_UPSERT_NOTIFICATION_ROUTE: &str = "UpsertNotificationRoute";
+pub(crate) const COMMAND_KIND_DELETE_NOTIFICATION_ROUTE: &str = "DeleteNotificationRoute";
+pub(crate) const COMMAND_KIND_UPSERT_COMPLETION_CHECK: &str = "UpsertCompletionCheck";
+pub(crate) const COMMAND_KIND_DELETE_COMPLETION_CHECK: &str = "DeleteCompletionCheck";
+pub(crate) const COMMAND_KIND_SET_SESSION_NOTIFICATIONS: &str = "SetSessionNotifications";
+pub(crate) const COMMAND_KIND_SET_SESSION_COMPLETION_CHECK: &str = "SetSessionCompletionCheck";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const MODE_CLEARED_DETAIL: &str = "mode-cleared";
 const MODE_UPDATED_DETAIL: &str = "mode-updated";
@@ -493,6 +507,445 @@ pub(crate) fn save_default_prompt_command(
     )
 }
 
+pub(crate) fn set_scope_command(
+    control_plane: &ControlPlane,
+    scope: String,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let scope = normalized_required_string(scope, "scope")?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_SCOPE,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "scope": scope,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_scope(&scope)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "scope-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "scope": scope,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_global_preset_command(
+    control_plane: &ControlPlane,
+    preset: Option<String>,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let preset = preset.as_deref().and_then(normalized_optional_value);
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_GLOBAL_PRESET,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "preset": preset,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_global_preset(preset)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "global-preset-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "preset": preset,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_global_notification_command(
+    control_plane: &ControlPlane,
+    notification_id: Option<String>,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let notification_id = notification_id
+        .as_deref()
+        .and_then(normalized_optional_value);
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_GLOBAL_NOTIFICATION,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "notificationId": notification_id,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_global_notification(notification_id)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "global-notification-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "notificationId": notification_id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_default_notification_targets_command(
+    control_plane: &ControlPlane,
+    notification_target_ids: Vec<String>,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let notification_target_ids = normalized_string_list(notification_target_ids);
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_DEFAULT_NOTIFICATION_TARGETS,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "notificationTargetIds": notification_target_ids,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_default_notification_targets(&notification_target_ids)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "default-notification-targets-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "notificationTargetIds": notification_target_ids,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_global_completion_check_command(
+    control_plane: &ControlPlane,
+    completion_check_id: Option<String>,
+    wait_for_reply_after_completion: bool,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let completion_check_id = completion_check_id
+        .as_deref()
+        .and_then(normalized_optional_value);
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_GLOBAL_COMPLETION_CHECK,
+        client_mutation_id,
+        MOBILE_SETTINGS_ENTITY_ID,
+        serde_json::json!({
+            "completionCheckId": completion_check_id,
+            "waitForReplyAfterCompletion": wait_for_reply_after_completion,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_global_completion_check(completion_check_id, wait_for_reply_after_completion)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "global-completion-check-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
+                    "completionCheckId": completion_check_id,
+                    "waitForReplyAfterCompletion": wait_for_reply_after_completion,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn upsert_notification_route_command(
+    control_plane: &ControlPlane,
+    input: UpsertMobileNotificationRoute,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let entity_id = input
+        .id
+        .as_deref()
+        .and_then(normalized_optional_value)
+        .ok_or_else(|| RealtimeCommandError::InvalidArgument("notification id is required".into()))?
+        .to_owned();
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_UPSERT_NOTIFICATION_ROUTE,
+        client_mutation_id,
+        &entity_id,
+        serde_json::json!({
+            "id": entity_id,
+            "label": input.label.clone(),
+            "channel": input.channel.clone(),
+            "webhookUrl": input.webhook_url.clone(),
+            "chatId": input.chat_id.clone(),
+            "botToken": input.bot_token.clone(),
+            "chatUsername": input.chat_username.clone(),
+            "chatDisplayName": input.chat_display_name.clone(),
+        }),
+        |server_time| {
+            let route = control_plane
+                .mobile_session_service()
+                .upsert_notification_route(input)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "notification-route-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": route.id,
+                    "notificationId": route.id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn delete_notification_route_command(
+    control_plane: &ControlPlane,
+    notification_id: String,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let notification_id = normalized_required_string(notification_id, "notification_id")?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_DELETE_NOTIFICATION_ROUTE,
+        client_mutation_id,
+        &notification_id,
+        serde_json::json!({
+            "notificationId": notification_id,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .delete_notification_route(&notification_id)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "notification-route-deleted");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": notification_id,
+                    "notificationId": notification_id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn upsert_completion_check_command(
+    control_plane: &ControlPlane,
+    completion_check_id: String,
+    label: String,
+    commands: Vec<String>,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let completion_check_id =
+        normalized_required_string(completion_check_id, "completion_check_id")?;
+    let label = normalized_required_string(label, "label")?;
+    let commands = normalized_string_list(commands);
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_UPSERT_COMPLETION_CHECK,
+        client_mutation_id,
+        &completion_check_id,
+        serde_json::json!({
+            "completionCheckId": completion_check_id,
+            "label": label,
+            "commands": commands,
+        }),
+        |server_time| {
+            let check = control_plane
+                .mobile_session_service()
+                .upsert_completion_check(&completion_check_id, &label, &commands)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "completion-check-updated");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": check.id,
+                    "completionCheckId": check.id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn delete_completion_check_command(
+    control_plane: &ControlPlane,
+    completion_check_id: String,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let completion_check_id =
+        normalized_required_string(completion_check_id, "completion_check_id")?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_DELETE_COMPLETION_CHECK,
+        client_mutation_id,
+        &completion_check_id,
+        serde_json::json!({
+            "completionCheckId": completion_check_id,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .delete_completion_check(&completion_check_id)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_all_mobile_sessions_changed(control_plane, "completion-check-deleted");
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "entityId": completion_check_id,
+                    "completionCheckId": completion_check_id,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_session_notifications_command(
+    control_plane: &ControlPlane,
+    thread_id: String,
+    notification_ids: Vec<String>,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let thread_id = normalized_required_string(thread_id, "thread_id")?;
+    let notification_ids = normalized_string_list(notification_ids);
+    ensure_mobile_session_visible_from_minis(control_plane, &thread_id, None)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_SESSION_NOTIFICATIONS,
+        client_mutation_id,
+        &thread_id,
+        serde_json::json!({
+            "threadId": thread_id,
+            "notificationIds": notification_ids,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_session_notifications(&thread_id, &notification_ids)
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_mobile_session_changed(
+                control_plane,
+                Some(&thread_id),
+                Some("notifications-updated"),
+            );
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": thread_id,
+                    "entityId": thread_id,
+                    "notificationIds": notification_ids,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
+pub(crate) fn set_session_completion_check_command(
+    control_plane: &ControlPlane,
+    thread_id: String,
+    completion_check_id: Option<String>,
+    wait_for_reply_after_completion: bool,
+    client_mutation_id: &str,
+) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
+    let thread_id = normalized_required_string(thread_id, "thread_id")?;
+    let completion_check_id = completion_check_id
+        .as_deref()
+        .and_then(normalized_optional_value);
+    ensure_mobile_session_visible_from_minis(control_plane, &thread_id, None)?;
+    command_ack_with_idempotency(
+        control_plane,
+        COMMAND_KIND_SET_SESSION_COMPLETION_CHECK,
+        client_mutation_id,
+        &thread_id,
+        serde_json::json!({
+            "threadId": thread_id,
+            "completionCheckId": completion_check_id,
+            "waitForReplyAfterCompletion": wait_for_reply_after_completion,
+        }),
+        |server_time| {
+            control_plane
+                .mobile_session_service()
+                .set_session_completion_check(
+                    &thread_id,
+                    completion_check_id,
+                    wait_for_reply_after_completion,
+                )
+                .map_err(RealtimeCommandError::MobileSession)?;
+            emit_mobile_session_changed(
+                control_plane,
+                Some(&thread_id),
+                Some("completion-check-updated"),
+            );
+            let revision = current_mobile_revision(control_plane)?;
+            Ok((
+                revision.clone(),
+                serde_json::json!({
+                    "accepted": true,
+                    "threadId": thread_id,
+                    "entityId": thread_id,
+                    "completionCheckId": completion_check_id,
+                    "waitForReplyAfterCompletion": wait_for_reply_after_completion,
+                    "serverTime": server_time,
+                    "revision": revision,
+                }),
+            ))
+        },
+    )
+}
+
 pub(crate) fn set_session_archived_command(
     control_plane: &ControlPlane,
     thread_id: String,
@@ -642,6 +1095,14 @@ fn normalized_optional_string(value: &str) -> Option<String> {
 fn normalized_optional_value(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
+}
+
+fn normalized_string_list(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 fn normalized_assistant_surface(value: &str) -> Result<Option<&str>, RealtimeCommandError> {

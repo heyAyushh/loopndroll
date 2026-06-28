@@ -8,11 +8,8 @@ use crate::mobile::api::{
     mobile_session_mini_delta, mobile_session_mini_snapshot, mobile_snapshot,
     session_mini_projection_inputs,
 };
-use crate::mobile::events::{MobileEventInput, MobileEventKind};
 use crate::mobile::network::advertised_mobile_grpc_base_urls;
-use crate::mobile::prompt_delivery::{
-    invalidate_delivery_action_cache, mobile_desktop_snapshot, prime_delivery_action_cache,
-};
+use crate::mobile::prompt_delivery::{mobile_desktop_snapshot, prime_delivery_action_cache};
 
 use super::mobile_access::{current_mobile_time, request_advertised_mobile_base_urls};
 use super::responses::{internal_mobile_error_response, mobile_session_error_response};
@@ -155,33 +152,4 @@ fn rebuild_mobile_session_mini_projection(
         .replace_mobile_session_minis(minis, latest_seq, &snapshot.revision)
         .map_err(|error| error.to_string())?;
     Ok((latest_seq, records))
-}
-
-pub(super) fn emit_mobile_session_changed(
-    control_plane: &ControlPlane,
-    thread_id: Option<&str>,
-    detail: Option<&str>,
-) {
-    if let Some(thread_id) = thread_id {
-        invalidate_delivery_action_cache(control_plane, thread_id);
-    }
-    let input = MobileEventInput {
-        kind: MobileEventKind::SessionChanged,
-        thread_id: thread_id.map(str::to_owned),
-        prompt_id: None,
-        detail: detail.map(str::to_owned),
-    };
-    match thread_id {
-        Some(thread_id) => control_plane.emit_mobile_session_event(input, thread_id),
-        None => control_plane.emit_mobile_event(input),
-    }
-}
-
-pub(super) fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, detail: &str) {
-    control_plane.emit_mobile_all_sessions_event(MobileEventInput {
-        kind: MobileEventKind::SessionChanged,
-        thread_id: None,
-        prompt_id: None,
-        detail: Some(detail.to_owned()),
-    });
 }

@@ -49,9 +49,8 @@ use self::mobile_access::{
     request_advertised_mobile_pairing_base_urls,
 };
 use self::mobile_state::{
-    desktop_mobile_state_response, emit_all_mobile_sessions_changed, emit_mobile_session_changed,
-    mobile_session_minis_delta_response, mobile_session_minis_snapshot_response,
-    mobile_snapshot_response,
+    desktop_mobile_state_response, mobile_session_minis_delta_response,
+    mobile_session_minis_snapshot_response, mobile_snapshot_response,
 };
 use self::requests::{
     AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest, DesktopAssistantSurfaceRequest,
@@ -69,8 +68,19 @@ use self::responses::{
     mobile_session_not_found_response, telegram_error_response,
 };
 use self::session_actions::{
+    delete_completion_check as delete_completion_check_action,
+    delete_notification_route as delete_notification_route_action,
     delete_session as delete_session_action, mute_session as mute_session_action,
-    set_session_archived,
+    save_default_prompt as save_default_prompt_action,
+    set_assistant_surface as set_assistant_surface_action,
+    set_default_notification_targets as set_default_notification_targets_action,
+    set_global_completion_check as set_global_completion_check_action,
+    set_global_notification as set_global_notification_action,
+    set_global_preset as set_global_preset_action, set_scope as set_scope_action,
+    set_session_archived, set_session_completion_check as set_session_completion_check_action,
+    set_session_notifications as set_session_notifications_action,
+    upsert_completion_check as upsert_completion_check_action,
+    upsert_notification_route as upsert_notification_route_action,
 };
 
 const SHUTDOWN_EXIT_DELAY: Duration = Duration::from_millis(50);
@@ -904,12 +914,9 @@ async fn desktop_default_prompt(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .save_default_prompt(&input.default_prompt)
-    {
+    match save_default_prompt_action(&control_plane, input.default_prompt) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -921,12 +928,9 @@ async fn desktop_scope(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_scope(&input.scope)
-    {
+    match set_scope_action(&control_plane, input.scope) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -938,15 +942,9 @@ async fn desktop_assistant_surface(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_assistant_surface(&input.assistant_surface)
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "assistant-surface-updated");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_assistant_surface_action(&control_plane, input.assistant_surface) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -958,15 +956,9 @@ async fn desktop_global_preset(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_global_preset(input.preset.as_deref())
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "global-preset-updated");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_global_preset_action(&control_plane, input.preset) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -978,15 +970,9 @@ async fn desktop_global_notification(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_global_notification(input.notification_id.as_deref())
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "global-notification-updated");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_global_notification_action(&control_plane, input.notification_id) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -998,18 +984,9 @@ async fn desktop_default_notification_targets(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_default_notification_targets(&input.notification_target_ids)
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(
-                &control_plane,
-                "default-notification-targets-updated",
-            );
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_default_notification_targets_action(&control_plane, input.notification_target_ids) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1021,17 +998,13 @@ async fn desktop_global_completion_check(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_global_completion_check(
-            input.completion_check_id.as_deref(),
-            input.wait_for_reply_after_completion,
-        ) {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "global-completion-check-updated");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_global_completion_check_action(
+        &control_plane,
+        input.completion_check_id,
+        input.wait_for_reply_after_completion,
+    ) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1043,9 +1016,9 @@ async fn desktop_notification_upsert(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .upsert_notification_route(UpsertMobileNotificationRoute {
+    match upsert_notification_route_action(
+        &control_plane,
+        UpsertMobileNotificationRoute {
             id: input.id.or_else(|| Some(new_record_id("notification"))),
             label: input.label,
             channel: input.channel,
@@ -1054,12 +1027,10 @@ async fn desktop_notification_upsert(
             bot_token: input.bot_token,
             chat_username: input.chat_username,
             chat_display_name: input.chat_display_name,
-        }) {
-        Ok(_) => {
-            emit_all_mobile_sessions_changed(&control_plane, "notification-route-updated");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+        },
+    ) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1071,15 +1042,9 @@ async fn desktop_notification_delete(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .delete_notification_route(&notification_id)
-    {
-        Ok(()) => {
-            emit_all_mobile_sessions_changed(&control_plane, "notification-route-deleted");
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match delete_notification_route_action(&control_plane, notification_id) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1109,15 +1074,14 @@ async fn desktop_completion_check_upsert(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .upsert_completion_check(
-            input.id.as_deref().unwrap_or(&new_record_id("check")),
-            &input.label,
-            &input.commands,
-        ) {
-        Ok(_) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+    match upsert_completion_check_action(
+        &control_plane,
+        input.id.unwrap_or_else(|| new_record_id("check")),
+        input.label,
+        input.commands,
+    ) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1129,12 +1093,9 @@ async fn desktop_completion_check_delete(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .delete_completion_check(&completion_check_id)
-    {
+    match delete_completion_check_action(&control_plane, completion_check_id) {
         Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => mobile_session_error_response(error),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1147,19 +1108,9 @@ async fn desktop_session_notifications(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_session_notifications(&thread_id, &input.notification_ids)
-    {
-        Ok(()) => {
-            emit_mobile_session_changed(
-                &control_plane,
-                Some(&thread_id),
-                Some("notifications-updated"),
-            );
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_session_notifications_action(&control_plane, thread_id, input.notification_ids) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
@@ -1194,22 +1145,14 @@ async fn desktop_session_completion_check(
     if let Some(response) = desktop_loopback_rejection(socket_addr) {
         return response;
     }
-    match control_plane
-        .mobile_session_service()
-        .set_session_completion_check(
-            &thread_id,
-            input.completion_check_id.as_deref(),
-            input.wait_for_reply_after_completion,
-        ) {
-        Ok(()) => {
-            emit_mobile_session_changed(
-                &control_plane,
-                Some(&thread_id),
-                Some("completion-check-updated"),
-            );
-            desktop_mobile_state_response(&control_plane)
-        }
-        Err(error) => mobile_session_error_response(error),
+    match set_session_completion_check_action(
+        &control_plane,
+        thread_id,
+        input.completion_check_id,
+        input.wait_for_reply_after_completion,
+    ) {
+        Ok(()) => desktop_mobile_state_response(&control_plane),
+        Err(error) => session_command_status_response(error),
     }
 }
 
