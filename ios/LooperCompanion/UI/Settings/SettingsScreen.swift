@@ -128,7 +128,7 @@ struct SettingsScreen: View {
             openSettingsTarget(initialSearchTarget)
         }
         .refreshable {
-            await model.prepareForActiveState()
+            await model.reconcileLocalSessionState(reason: .manualRefresh)
         }
     }
 

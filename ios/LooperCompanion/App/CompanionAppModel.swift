@@ -91,12 +91,14 @@ enum CompanionLocalSessionReconcileReason: String {
     case sessionOpen = "session-open"
     case sessionsPullRefresh = "sessions-pull-refresh"
     case searchPullRefresh = "search-pull-refresh"
+    case manualRefresh = "manual-refresh"
     case unlockRecovery = "unlock-recovery"
 
     var shouldReplayCachedSnapshotWhenLoaded: Bool {
         switch self {
         case .sessionsPullRefresh,
-             .searchPullRefresh:
+             .searchPullRefresh,
+             .manualRefresh:
             return true
         case .activeScene,
              .fallbackTimer,
@@ -113,6 +115,7 @@ enum CompanionLocalSessionReconcileReason: String {
              .sessionOpen,
              .sessionsPullRefresh,
              .searchPullRefresh,
+             .manualRefresh,
              .unlockRecovery:
             return true
         case .fallbackTimer,
@@ -651,7 +654,7 @@ final class CompanionAppModel {
     }
 
     func refresh() async {
-        await loadSnapshot()
+        await reconcileLocalSessionState(reason: .manualRefresh)
     }
 
     func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
@@ -766,6 +769,7 @@ final class CompanionAppModel {
             return realtimeStreamIsLive
         case .sessionsPullRefresh,
              .searchPullRefresh,
+             .manualRefresh,
              .sessionOpen,
              .unlockRecovery:
             return false

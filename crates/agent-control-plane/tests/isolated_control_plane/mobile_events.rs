@@ -14,6 +14,8 @@ const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
 const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
+const REPLAY_BATCH_BOUNDARY_COUNT: usize = 129;
+const REPLAY_BATCH_DRAIN_TIMEOUT_MILLIS: u64 = 150;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST: usize = 512 * 1024;
 const STATE_MINI_REPLACEMENT_FRAME_MAX_BYTES_FOR_TEST: usize = 4 * 1024 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
@@ -369,6 +371,49 @@ async fn grpc_session_stream_replays_before_liveness_cursor() {
 
     let delta = next_session_state_delta(&mut event_stream, "initial replay delta").await;
     assert_eq!(delta.seq, expected_latest_seq);
+}
+
+#[tokio::test]
+async fn grpc_session_resume_drains_more_than_one_replay_batch_immediately() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let mut expected_seqs = Vec::with_capacity(REPLAY_BATCH_BOUNDARY_COUNT);
+    for index in 0..REPLAY_BATCH_BOUNDARY_COUNT {
+        let record = control_plane
+            .store()
+            .record_mobile_state_event(state_delta_input(
+                &format!("thread-replay-{index}"),
+                &format!("revision-replay-{index}"),
+                &format!("delta-replay-{index}"),
+            ))
+            .expect("record replay state delta");
+        expected_seqs.push(record.seq);
+    }
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let (_session_sender, mut stream) =
+        open_live_session_stream(&mut client, &authorization, vec![resume_session_frame(0)]).await;
+
+    let replayed_seqs = tokio::time::timeout(
+        tokio::time::Duration::from_millis(REPLAY_BATCH_DRAIN_TIMEOUT_MILLIS),
+        async {
+            let mut replayed_seqs = Vec::with_capacity(expected_seqs.len());
+            for _ in 0..expected_seqs.len() {
+                replayed_seqs.push(
+                    next_session_state_delta(&mut stream, "batched replay state delta")
+                        .await
+                        .seq,
+                );
+            }
+            replayed_seqs
+        },
+    )
+    .await
+    .expect("resume replay should not wait for the periodic state poll");
+
+    assert_eq!(replayed_seqs, expected_seqs);
 }
 
 #[tokio::test]

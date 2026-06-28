@@ -617,15 +617,29 @@ fn replay_state_delta_frames(
     after_seq: i64,
     last_seq: &mut i64,
 ) -> Result<Vec<proto::ServerFrame>, Status> {
-    let records = control_plane
-        .store()
-        .mobile_state_events_after_seq(after_seq, SESSION_REPLAY_BATCH_SIZE)
-        .map_err(state_replay_status)?;
-    let mut frames = Vec::with_capacity(records.len());
-    for record in records {
-        *last_seq = (*last_seq).max(record.seq);
-        frames.push(state_delta_frame(control_plane, &record)?);
+    let mut replay_after_seq = after_seq;
+    let mut frames = Vec::new();
+
+    loop {
+        let records = control_plane
+            .store()
+            .mobile_state_events_after_seq(replay_after_seq, SESSION_REPLAY_BATCH_SIZE)
+            .map_err(state_replay_status)?;
+        if records.is_empty() {
+            break;
+        }
+
+        let record_count = records.len();
+        for record in records {
+            replay_after_seq = replay_after_seq.max(record.seq);
+            *last_seq = (*last_seq).max(record.seq);
+            frames.push(state_delta_frame(control_plane, &record)?);
+        }
+        if record_count < SESSION_REPLAY_BATCH_SIZE {
+            break;
+        }
     }
+
     *last_seq = (*last_seq).max(after_seq);
     Ok(frames)
 }
