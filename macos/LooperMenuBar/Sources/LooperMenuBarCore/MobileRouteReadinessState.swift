@@ -8,17 +8,24 @@ public enum MobileRouteSessionPhase: Equatable, Sendable {
 }
 
 public struct MobileRouteReadinessState: Equatable, Sendable {
+    private enum Defaults {
+        static let minimumElapsedSeconds = 0
+    }
+
     public private(set) var health: MobileHealthResponse?
+    public private(set) var healthRecordedAt: Date?
     public private(set) var generation: UInt64
     public private(set) var provenRealtimeEndpoint: URL?
     private var pendingLiveProofGeneration: UInt64?
 
     public init(
         health: MobileHealthResponse? = nil,
+        healthRecordedAt: Date? = nil,
         generation: UInt64 = 0,
         provenRealtimeEndpoint: URL? = nil
     ) {
         self.health = health
+        self.healthRecordedAt = healthRecordedAt
         self.generation = generation
         self.provenRealtimeEndpoint = provenRealtimeEndpoint
         self.pendingLiveProofGeneration = nil
@@ -77,10 +84,26 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         return "Connected: \(provenRealtimeEndpoint.host ?? provenRealtimeEndpoint.absoluteString)"
     }
 
+    public func httpEnrichmentStatusTitle(now: Date = Date()) -> String? {
+        guard health != nil else {
+            return nil
+        }
+        guard let healthRecordedAt else {
+            return "HTTP enrichment: age unknown, not Session proof"
+        }
+
+        let elapsedSeconds = max(
+            Defaults.minimumElapsedSeconds,
+            Int(now.timeIntervalSince(healthRecordedAt))
+        )
+        return "HTTP enrichment: \(elapsedSeconds)s old, not Session proof"
+    }
+
     @discardableResult
     public mutating func invalidateForRouteSwitch() -> UInt64 {
         generation += 1
         health = nil
+        healthRecordedAt = nil
         provenRealtimeEndpoint = nil
         pendingLiveProofGeneration = generation
         return generation
@@ -88,13 +111,15 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     public mutating func applyHTTPHealth(
         _ nextHealth: MobileHealthResponse?,
-        refreshGeneration: UInt64
+        refreshGeneration: UInt64,
+        recordedAt: Date = Date()
     ) {
         guard refreshGeneration == generation else {
             return
         }
 
         health = nextHealth
+        healthRecordedAt = nextHealth == nil ? nil : recordedAt
     }
 
     public mutating func applySessionState(

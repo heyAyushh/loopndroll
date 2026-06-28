@@ -289,7 +289,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   ) {
     mobileRouteReadiness.applyHTTPHealth(
       health,
-      refreshGeneration: routeReadinessGeneration
+      refreshGeneration: routeReadinessGeneration,
+      recordedAt: Date()
     )
     continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }
@@ -1276,8 +1277,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func addMobileRouteStatusItems(to menu: NSMenu) {
     addDisabledItem("Current route: \(mobileRouteReadiness.routeStatusTitle)", to: menu)
     addDisabledItem("Tailscale: \(mobileRouteReadiness.tailscaleStatusTitle)", to: menu)
-    if mobileHealth != nil, !mobileRouteReadiness.hasLiveRouteProof {
-      addDisabledItem("HTTP enrichment: available, not Session proof", to: menu)
+    if !mobileRouteReadiness.hasLiveRouteProof,
+      let enrichmentStatus = mobileRouteReadiness.httpEnrichmentStatusTitle()
+    {
+      addDisabledItem(enrichmentStatus, to: menu)
     }
   }
 

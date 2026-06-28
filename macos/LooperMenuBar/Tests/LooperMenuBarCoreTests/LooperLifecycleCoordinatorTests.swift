@@ -261,12 +261,7 @@ struct HTTPControlPlaneClientTests {
 
         let status = LooperHumanStatus.from(
             snapshot: snapshot,
-            mobileHealth: MobileHealthResponse(
-                ok: true,
-                baseURL: "http://192.168.1.4:8765",
-                baseURLs: ["http://192.168.1.4:8765", "http://127.0.0.1:8765"],
-                requiresAuthentication: true
-            ),
+            mobileReady: true,
             detachOnQuit: false
         )
 
