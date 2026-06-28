@@ -1062,14 +1062,6 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applySessionArchived(
-            sessionID: sessionID,
-            archived: archived
-        ) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "session-archived")
-        }
-
         do {
             try await targetRuntime.setSessionArchived(
                 threadID: sessionID,
@@ -1080,6 +1072,15 @@ final class CompanionAppModel {
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
+            return
+        }
+
+        if let visibleSnapshot = snapshotState.applySessionArchived(
+            sessionID: sessionID,
+            archived: archived
+        ) {
+            CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "session-archived")
         }
     }
 
@@ -1090,11 +1091,6 @@ final class CompanionAppModel {
             return
         }
 
-        if let visibleSnapshot = snapshotState.applySessionDeleted(sessionID: sessionID) {
-            CompanionSnapshotCache.save(visibleSnapshot)
-            publishSnapshotStateChange(reason: "session-deleted")
-        }
-
         do {
             try await targetRuntime.deleteSession(threadID: sessionID)
             errorMessage = nil
@@ -1102,6 +1098,12 @@ final class CompanionAppModel {
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
+            return
+        }
+
+        if let visibleSnapshot = snapshotState.applySessionDeleted(sessionID: sessionID) {
+            CompanionSnapshotCache.save(visibleSnapshot)
+            publishSnapshotStateChange(reason: "session-deleted")
         }
     }
 
@@ -1339,10 +1341,6 @@ final class CompanionAppModel {
             return
         }
 
-        if snapshotState.applySessionMuted(sessionID: sessionID) != nil {
-            publishSnapshotStateChange(reason: "session-muted")
-        }
-
         do {
             try await targetRuntime.muteSession(threadID: sessionID)
             errorMessage = nil
@@ -1350,6 +1348,11 @@ final class CompanionAppModel {
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
+            return
+        }
+
+        if snapshotState.applySessionMuted(sessionID: sessionID) != nil {
+            publishSnapshotStateChange(reason: "session-muted")
         }
     }
 
