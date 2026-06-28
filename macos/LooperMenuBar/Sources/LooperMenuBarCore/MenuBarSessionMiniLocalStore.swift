@@ -187,6 +187,10 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         try localStore.currentStateMiniSnapshot()
     }
 
+    public func runtimeStateSnapshot() throws -> ClientStateSnapshot {
+        try sessionManager.stateSnapshot()
+    }
+
     public func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
         localStore.pendingCommands()
     }

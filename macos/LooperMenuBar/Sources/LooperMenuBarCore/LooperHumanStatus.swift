@@ -36,13 +36,12 @@ public struct LooperHumanStatus: Equatable, Sendable {
 
     public static func from(
         snapshot: DesktopSnapshotResponse,
-        mobileHealth: MobileHealthResponse?,
+        mobileReady: Bool,
         detachOnQuit: Bool
     ) -> Self {
         let sourceHealthy = snapshot.controlPlane.source.health == healthyValue
         let codexHooksHealthy = snapshot.controlPlane.hooks.health == healthyValue
         let grokHooksHealthy = snapshot.grokBuild.map { $0.hooks.health == healthyValue } ?? true
-        let mobileReady = mobileHealth?.ok == true && mobileHealth?.requiresAuthentication == true
         let detail = [
             "source=\(snapshot.controlPlane.source.health)",
             "codexHooks=\(snapshot.controlPlane.hooks.health)",
@@ -62,10 +61,9 @@ public struct LooperHumanStatus: Equatable, Sendable {
 
     public static func from(
         sessionMiniSnapshot snapshot: MenuBarSessionMiniLocalSnapshot,
-        mobileHealth: MobileHealthResponse?,
+        mobileReady: Bool,
         detachOnQuit: Bool
     ) -> Self {
-        let mobileReady = mobileHealth?.ok == true && mobileHealth?.requiresAuthentication == true
         let projection = reduceMenuSnapshotHumanStatus(
             snapshot: snapshot.clientCoreSnapshot,
             mobileReady: mobileReady,

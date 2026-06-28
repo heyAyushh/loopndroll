@@ -134,36 +134,57 @@ struct MenuRefreshCoordinatorTests {
         #expect(!result.hasReusableEnrichment)
     }
 
-    @Test("route switch hides reusable health until live proof")
-    func routeSwitchHidesReusableHealthUntilLiveProof() {
+    @Test("route switch keeps HTTP health as enrichment until Session proof")
+    func routeSwitchKeepsHTTPHealthAsEnrichmentUntilSessionProof() throws {
         var readiness = MobileRouteReadinessState(
             health: MenuRefreshRecordingClient.mobileHealth()
         )
         let oldGeneration = readiness.generation
         let nextGeneration = readiness.invalidateForRouteSwitch()
 
-        readiness.applyRefreshHealth(
+        readiness.applyHTTPHealth(
             MenuRefreshRecordingClient.mobileHealth(),
-            refreshGeneration: oldGeneration,
-            isLiveProof: true
+            refreshGeneration: oldGeneration
         )
         #expect(readiness.health == nil)
 
-        readiness.applyRefreshHealth(
+        readiness.applyHTTPHealth(
             MenuRefreshRecordingClient.mobileHealth(),
-            refreshGeneration: nextGeneration,
-            isLiveProof: false
-        )
-        #expect(readiness.health == nil)
-        #expect(readiness.requiresLiveProof)
-
-        readiness.applyRefreshHealth(
-            MenuRefreshRecordingClient.mobileHealth(),
-            refreshGeneration: nextGeneration,
-            isLiveProof: true
+            refreshGeneration: nextGeneration
         )
         #expect(readiness.health != nil)
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.requiresLiveProof)
+        #expect(readiness.mobileStatusTitle == "Waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
+        #expect(readiness.tailscaleStatusTitle == "Waiting for Session proof")
+        #expect(readiness.provenReachableHandoffBaseURL == nil)
+
+        readiness.applySessionState(
+            phase: .connecting,
+            endpointURL: nil
+        )
+        #expect(readiness.health != nil)
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.requiresLiveProof)
+
+        let provenEndpoint = try #require(URL(string: "http://100.119.200.69:8766"))
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: provenEndpoint
+        )
         #expect(!readiness.requiresLiveProof)
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.supportsNativeHandoff)
+        #expect(readiness.mobileStatusTitle == "Handoff route proven")
+        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
+        #expect(readiness.tailscaleStatusTitle == "Connected: 100.119.200.69")
+        #expect(readiness.provenReachableHandoffBaseURL?.absoluteString == "http://100.119.200.69:8765")
+
+        _ = readiness.invalidateForRouteSwitch()
+        #expect(readiness.health == nil)
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
     }
 
     @Test("ACP host failure keeps successful snapshot")

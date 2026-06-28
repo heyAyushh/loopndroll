@@ -186,8 +186,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     )
     applyHTTPRefreshStateIfPresent(
       result,
-      routeReadinessGeneration: routeReadinessGeneration,
-      isLiveRouteProof: force
+      routeReadinessGeneration: routeReadinessGeneration
     )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
@@ -239,8 +238,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     )
     applyHTTPRefreshStateIfPresent(
       result,
-      routeReadinessGeneration: routeReadinessGeneration,
-      isLiveRouteProof: false
+      routeReadinessGeneration: routeReadinessGeneration
     )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
@@ -271,8 +269,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     continuationPublisher.publish(
       LooperContinuationActivityBuilder.descriptor(
         from: snapshot,
-        handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL(
-          preference: mobileRoutePreference)
+        handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
       )
     )
   }
@@ -281,45 +278,39 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     continuationPublisher.publish(
       LooperContinuationActivityBuilder.descriptor(
         from: snapshot,
-        handoffBaseURL: mobileHealth?.preferredReachableHandoffBaseURL(
-          preference: mobileRoutePreference)
+        handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
       )
     )
   }
 
   private func updateMobileHealth(
     _ health: MobileHealthResponse?,
-    routeReadinessGeneration: UInt64,
-    isLiveRouteProof: Bool
+    routeReadinessGeneration: UInt64
   ) {
-    mobileRouteReadiness.applyRefreshHealth(
+    mobileRouteReadiness.applyHTTPHealth(
       health,
-      refreshGeneration: routeReadinessGeneration,
-      isLiveProof: isLiveRouteProof
+      refreshGeneration: routeReadinessGeneration
     )
-    continuationPublisher.isHandoffSupported = mobileHealth?.supportsNativeHandoff == true
+    continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }
 
   private func updateMobileState(
     _ state: DesktopMobileStateResponse?,
     pushDevices: DesktopPushDevicesResponse?,
     health: MobileHealthResponse?,
-    routeReadinessGeneration: UInt64,
-    isLiveRouteProof: Bool
+    routeReadinessGeneration: UInt64
   ) {
     mobileState = state
     self.pushDevices = pushDevices
     updateMobileHealth(
       health,
-      routeReadinessGeneration: routeReadinessGeneration,
-      isLiveRouteProof: isLiveRouteProof
+      routeReadinessGeneration: routeReadinessGeneration
     )
   }
 
   private func applyHTTPRefreshStateIfPresent(
     _ result: MenuRefreshResult,
-    routeReadinessGeneration: UInt64,
-    isLiveRouteProof: Bool
+    routeReadinessGeneration: UInt64
   ) {
     guard result.didFetchHTTP else {
       return
@@ -329,8 +320,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       result.mobileState,
       pushDevices: result.pushDevices,
       health: result.mobileHealth,
-      routeReadinessGeneration: routeReadinessGeneration,
-      isLiveRouteProof: isLiveRouteProof
+      routeReadinessGeneration: routeReadinessGeneration
     )
   }
 
@@ -401,8 +391,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     if let snapshot = result.snapshot {
       applyHTTPRefreshStateIfPresent(
         result,
-        routeReadinessGeneration: routeReadinessGeneration,
-        isLiveRouteProof: true
+        routeReadinessGeneration: routeReadinessGeneration
       )
       _ = openThread(
         openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: snapshot)
@@ -419,14 +408,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     prompt: String
   ) async {
     do {
-      try await configureSessionClientCoreRuntimeIfNeeded()
+      _ = try await configureSessionClientCoreRuntimeIfNeeded()
       _ = try await sessionCommandCenter.submitNotificationReply(
         notificationID: notificationID,
         threadID: threadID,
         prompt: prompt,
         assistantSurface: nil
       )
-      let updatedSnapshot = restoreCachedSessionMiniSnapshot() ?? currentSessionMiniSnapshot()
+      let updatedSnapshot = acceptedCommandSnapshot() ?? currentSessionMiniSnapshot()
       replaceMenu(
         snapshot: nil,
         sessionMiniSnapshot: updatedSnapshot,
@@ -616,7 +605,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   ) {
     let status = LooperHumanStatus.from(
       snapshot: snapshot,
-      mobileHealth: mobileHealth,
+      mobileReady: mobileRouteReadiness.supportsNativeHandoff,
       detachOnQuit: detachServerOnQuit
     )
     addDisabledItem("Status: \(status.title)", to: menu)
@@ -638,7 +627,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   ) {
     let status = LooperHumanStatus.from(
       snapshot: snapshot,
-      mobileHealth: mobileHealth,
+      mobileReady: mobileRouteReadiness.supportsNativeHandoff,
       detachOnQuit: detachServerOnQuit
     )
     addDisabledItem("Control plane: \(status.title)", to: menu)
@@ -649,23 +638,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func addMobileRouteDetails(to menu: NSMenu) {
-    guard let mobileHealth else {
-      return
-    }
-
-    addDisabledItem(
-      "Route: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))", to: menu)
-
-    guard let tailscale = mobileHealth.tailscale else {
-      return
-    }
-
-    let detail = tailscale.routeDetailTitle
-    addDisabledItem(
-      "Tailscale: \(tailscale.statusTitle)",
-      subtitle: detail.isEmpty ? nil : detail,
-      to: menu
-    )
+    addDisabledItem("Route: \(mobileRouteReadiness.routeStatusTitle)", to: menu)
+    addDisabledItem("Tailscale: \(mobileRouteReadiness.tailscaleStatusTitle)", to: menu)
   }
 
   private func addAgentDetails(
@@ -742,6 +716,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     return snapshot
   }
 
+  private func acceptedCommandSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
+    guard let snapshot = try? sessionRuntime?.cachedSnapshot() else {
+      return nil
+    }
+    cachedSessionMiniSnapshot = snapshot
+    return snapshot
+  }
+
   private func currentSessionMiniSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
     cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
   }
@@ -795,13 +777,15 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         }
       }
       do {
-        try await self.configureSessionClientCoreRuntimeIfNeeded()
+        let stateSnapshot = try await self.configureSessionClientCoreRuntimeIfNeeded()
+        self.applySessionRuntimeState(stateSnapshot)
       } catch {
         os_log(.debug, log: .default, "session mini runtime failed: %{public}@", error.localizedDescription)
         return
       }
       await sessionRuntime.runStateMiniSync(
         onSnapshot: { [weak self] snapshot in
+          self?.applyCurrentSessionRuntimeState()
           self?.applySessionMiniSnapshot(snapshot)
         },
         onDebugMessage: { message in
@@ -811,17 +795,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
-  private func configureSessionClientCoreRuntimeIfNeeded() async throws {
+  private func configureSessionClientCoreRuntimeIfNeeded() async throws -> ClientStateSnapshot? {
     guard let sessionRuntime else {
       throw MenuBarSessionRuntimeError.noRealtimeEndpoint
     }
-    _ = try await sessionRuntime.startIfNeeded {
+    let stateSnapshot = try await sessionRuntime.startIfNeeded {
       MenuBarRealtimeEndpointResolver.endpoints(
         controlPlaneBaseURL: endpointStore.baseURL,
         health: mobileHealth,
         preference: mobileRoutePreference
       )
     }
+    applySessionRuntimeState(stateSnapshot)
+    return stateSnapshot
   }
 
   private func stopSessionMiniSync() {
@@ -846,6 +832,22 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         nextSnapshot: snapshot
       )
     }
+  }
+
+  private func applyCurrentSessionRuntimeState() {
+    applySessionRuntimeState(try? sessionRuntime?.runtimeStateSnapshot())
+  }
+
+  private func applySessionRuntimeState(_ snapshot: ClientStateSnapshot?) {
+    guard let snapshot else {
+      return
+    }
+
+    mobileRouteReadiness.applySessionState(
+      phase: MobileRouteSessionPhase(snapshot.phase),
+      endpointURL: URL(string: snapshot.endpointUrl)
+    )
+    continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }
 
   private func deliverSessionMiniStopNotifications(
@@ -905,10 +907,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func mobileStatusTitle() -> String {
-    guard let mobileHealth else {
-      return "Unknown"
-    }
-    return mobileHealth.ok && mobileHealth.requiresAuthentication ? "Ready" : "Needs attention"
+    mobileRouteReadiness.mobileStatusTitle
   }
 
   private func devinStatusTitle(_ bridge: DevinAcpBridgeStatus) -> String {
@@ -1275,26 +1274,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func addMobileRouteStatusItems(to menu: NSMenu) {
-    guard let mobileHealth else {
-      addDisabledItem("Status: Loading", to: menu)
-      return
+    addDisabledItem("Current route: \(mobileRouteReadiness.routeStatusTitle)", to: menu)
+    addDisabledItem("Tailscale: \(mobileRouteReadiness.tailscaleStatusTitle)", to: menu)
+    if mobileHealth != nil, !mobileRouteReadiness.hasLiveRouteProof {
+      addDisabledItem("HTTP enrichment: available, not Session proof", to: menu)
     }
-
-    addDisabledItem(
-      "Current route: \(mobileHealth.routeSummaryTitle(preference: mobileRoutePreference))",
-      to: menu)
-
-    guard let tailscale = mobileHealth.tailscale else {
-      addDisabledItem("Tailscale: Unknown", to: menu)
-      return
-    }
-
-    let detail = tailscale.routeDetailTitle
-    addDisabledItem(
-      "Tailscale: \(tailscale.statusTitle)",
-      subtitle: detail.isEmpty ? nil : detail,
-      to: menu
-    )
   }
 
   private func addNotificationTargetsSettingsItem(to menu: NSMenu) {
@@ -1649,8 +1633,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(fallback: result.sessionMiniSnapshot)
     applyHTTPRefreshStateIfPresent(
       result,
-      routeReadinessGeneration: routeReadinessGeneration,
-      isLiveRouteProof: force
+      routeReadinessGeneration: routeReadinessGeneration
     )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
@@ -1933,13 +1916,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     if let sessionMiniSnapshot {
       status = .from(
         sessionMiniSnapshot: sessionMiniSnapshot,
-        mobileHealth: mobileHealth,
+        mobileReady: mobileRouteReadiness.supportsNativeHandoff,
         detachOnQuit: detachServerOnQuit
       )
     } else if let snapshot {
       status = .from(
         snapshot: snapshot,
-        mobileHealth: mobileHealth,
+        mobileReady: mobileRouteReadiness.supportsNativeHandoff,
         detachOnQuit: detachServerOnQuit
       )
     } else if error != nil {
@@ -2100,6 +2083,21 @@ private enum FourCharacterCode {
     precondition(characters.utf8.count == expectedByteCount)
     return characters.utf8.reduce(OSType(0)) { partialResult, character in
       (partialResult << bitsPerByte) + OSType(character)
+    }
+  }
+}
+
+private extension MobileRouteSessionPhase {
+  init(_ phase: ConnectionPhase) {
+    switch phase {
+    case .disconnected:
+      self = .disconnected
+    case .connecting:
+      self = .connecting
+    case .ready:
+      self = .ready
+    case .reconnecting:
+      self = .reconnecting
     }
   }
 }

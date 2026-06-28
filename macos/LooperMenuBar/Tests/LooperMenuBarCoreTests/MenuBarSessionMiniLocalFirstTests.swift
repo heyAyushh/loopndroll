@@ -65,7 +65,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         let snapshot = try #require(try runtime.cachedSnapshot())
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
-            mobileHealth: nil,
+            mobileReady: false,
             detachOnQuit: true
         )
 
@@ -91,12 +91,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         let snapshot = try #require(try runtime.cachedSnapshot())
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
-            mobileHealth: MobileHealthResponse(
-                ok: true,
-                baseURL: "http://100.119.200.69:8765",
-                baseURLs: ["http://100.119.200.69:8765"],
-                requiresAuthentication: true
-            ),
+            mobileReady: true,
             detachOnQuit: false
         )
 
@@ -212,6 +207,36 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.notificationID == "notif-main")
         #expect(pendingCommands.first?.prompt == "continue from notification")
         #expect(pendingCommands.first?.attemptCount == 1)
+    }
+
+    @Test("notification reply redraw can use local accepted snapshot before stream echo")
+    func testNotificationReplyRedrawCanUseLocalAcceptedSnapshotBeforeStreamEcho() async throws {
+        let runtime = try seededRuntime(latestSeq: 203, records: [
+            miniRecord(
+                id: "thread-main",
+                title: "Waiting task",
+                mode: "await-reply",
+                notificationTargetIds: ["macos"],
+                lastActivityAtMs: 203
+            ),
+        ])
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
+
+        let result = try await commandCenter.submitNotificationReply(
+            notificationID: "notif-main",
+            threadID: "thread-main",
+            prompt: "continue locally",
+            assistantSurface: nil,
+            clientMutationID: "notification-reply:notif-main"
+        )
+        let snapshot = try #require(try runtime.cachedSnapshot())
+
+        #expect(result.accepted)
+        #expect(snapshot.sessions.map(\.sessionID) == ["thread-main"])
+        #expect(snapshot.pendingCommands.count == 1)
+        #expect(snapshot.pendingCommands.first?.kind == .submitNotificationReply)
+        #expect(snapshot.pendingCommands.first?.notificationID == "notif-main")
+        #expect(snapshot.pendingCommands.first?.prompt == "continue locally")
     }
 
     @Test("realtime endpoint resolver seeds Session without mobile health")

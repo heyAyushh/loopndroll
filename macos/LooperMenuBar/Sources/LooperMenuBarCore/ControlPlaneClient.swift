@@ -1967,6 +1967,18 @@ public enum MobileRouteURLPolicy {
     baseURL.canonicalRealtimeGRPCBaseURL
   }
 
+  public static func canonicalHTTPAPIBaseURL(for realtimeBaseURL: URL) -> URL {
+    realtimeBaseURL.canonicalHTTPAPIBaseURL
+  }
+
+  public static func isLoopbackURL(_ url: URL) -> Bool {
+    url.isLoopbackHost
+  }
+
+  public static func routeTitle(for url: URL) -> String {
+    url.routeTitle
+  }
+
   public static func sortedUniqueURLs(
     _ urls: [URL],
     preference: MobileRoutePreference
@@ -2068,6 +2080,19 @@ extension URL {
     }
 
     components.port = MobileRouteURLPolicy.defaultRealtimeGRPCPort
+    return components.url ?? self
+  }
+
+  fileprivate var canonicalHTTPAPIBaseURL: URL {
+    guard port == MobileRouteURLPolicy.defaultRealtimeGRPCPort,
+      scheme?.lowercased() == "http",
+      allowsRealtimePortRepair,
+      var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+    else {
+      return self
+    }
+
+    components.port = MobileRouteURLPolicy.defaultHTTPAPIPort
     return components.url ?? self
   }
 
