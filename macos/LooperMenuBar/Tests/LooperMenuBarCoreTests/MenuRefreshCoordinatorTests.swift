@@ -85,6 +85,87 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.error == nil)
     }
 
+    @Test("reusable enrichment does not carry stale mobile health")
+    func reusableEnrichmentDoesNotCarryStaleMobileHealth() {
+        let cached = MenuRefreshResult(
+            didFetchHTTP: true,
+            sessionMiniSnapshot: nil,
+            snapshot: MenuRefreshRecordingClient.snapshot(),
+            connections: nil,
+            acpClientHosts: nil,
+            mobileState: nil,
+            pushDevices: nil,
+            mobileHealth: MenuRefreshRecordingClient.mobileHealth(),
+            error: nil
+        )
+        let next = MenuRefreshResult(
+            didFetchHTTP: true,
+            sessionMiniSnapshot: nil,
+            snapshot: nil,
+            connections: MenuRefreshRecordingClient.desktopConnections(),
+            acpClientHosts: nil,
+            mobileState: nil,
+            pushDevices: nil,
+            mobileHealth: nil,
+            error: nil
+        )
+
+        let merged = next.mergingReusableEnrichment(from: cached)
+
+        #expect(merged.snapshot == cached.snapshot)
+        #expect(merged.connections == next.connections)
+        #expect(merged.mobileHealth == nil)
+    }
+
+    @Test("mobile health alone is not reusable menu enrichment")
+    func mobileHealthAloneIsNotReusableMenuEnrichment() {
+        let result = MenuRefreshResult(
+            didFetchHTTP: true,
+            sessionMiniSnapshot: nil,
+            snapshot: nil,
+            connections: nil,
+            acpClientHosts: nil,
+            mobileState: nil,
+            pushDevices: nil,
+            mobileHealth: MenuRefreshRecordingClient.mobileHealth(),
+            error: nil
+        )
+
+        #expect(!result.hasReusableEnrichment)
+    }
+
+    @Test("route switch hides reusable health until live proof")
+    func routeSwitchHidesReusableHealthUntilLiveProof() {
+        var readiness = MobileRouteReadinessState(
+            health: MenuRefreshRecordingClient.mobileHealth()
+        )
+        let oldGeneration = readiness.generation
+        let nextGeneration = readiness.invalidateForRouteSwitch()
+
+        readiness.applyRefreshHealth(
+            MenuRefreshRecordingClient.mobileHealth(),
+            refreshGeneration: oldGeneration,
+            isLiveProof: true
+        )
+        #expect(readiness.health == nil)
+
+        readiness.applyRefreshHealth(
+            MenuRefreshRecordingClient.mobileHealth(),
+            refreshGeneration: nextGeneration,
+            isLiveProof: false
+        )
+        #expect(readiness.health == nil)
+        #expect(readiness.requiresLiveProof)
+
+        readiness.applyRefreshHealth(
+            MenuRefreshRecordingClient.mobileHealth(),
+            refreshGeneration: nextGeneration,
+            isLiveProof: true
+        )
+        #expect(readiness.health != nil)
+        #expect(!readiness.requiresLiveProof)
+    }
+
     @Test("ACP host failure keeps successful snapshot")
     func acpHostFailureKeepsSuccessfulSnapshot() async {
         let client = MenuRefreshRecordingClient(
@@ -168,6 +249,29 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
+    }
+
+    @Test("SessionMini diagnostics do not label local cache connected")
+    func sessionMiniDiagnosticsDoNotLabelLocalCacheConnected() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 304,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient(
+            snapshotResult: .failure(ControlPlaneClientError.timeout)
+        )
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .zero
+        )
+
+        let result = await coordinator.refresh(force: true)
+        let report = LooperDiagnosticsContent.report(from: result)
+
+        #expect(report.contains("State: local-state"))
+        #expect(!report.contains("State: connected"))
     }
 
     @Test("force refresh keeps SessionMini as menu truth when HTTP succeeds")

@@ -60,7 +60,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private var continuationRefreshTask: Task<Void, Never>?
   private var sessionMiniSyncTask: Task<Void, Never>?
   private var sessionMiniSyncGeneration = 0
-  private var mobileHealth: MobileHealthResponse?
+  private var mobileRouteReadiness = MobileRouteReadinessState()
+  private var mobileHealth: MobileHealthResponse? {
+    mobileRouteReadiness.health
+  }
   private var mobileState: DesktopMobileStateResponse?
   private var pushDevices: DesktopPushDevicesResponse?
   private var devinProbe: DevinAcpBridgeProbe?
@@ -169,6 +172,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshMenu(force: Bool = false) async {
+    let routeReadinessGeneration = mobileRouteReadiness.generation
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if !force, let sessionMiniSnapshot {
       replaceMenu(snapshot: nil, sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
@@ -180,7 +184,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
-    applyHTTPRefreshStateIfPresent(result)
+    applyHTTPRefreshStateIfPresent(
+      result,
+      routeReadinessGeneration: routeReadinessGeneration,
+      isLiveRouteProof: force
+    )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
@@ -217,6 +225,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshContinuationActivity() async {
+    let routeReadinessGeneration = mobileRouteReadiness.generation
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let sessionMiniSnapshot {
       publishContinuationActivity(from: sessionMiniSnapshot)
@@ -228,7 +237,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
-    applyHTTPRefreshStateIfPresent(result)
+    applyHTTPRefreshStateIfPresent(
+      result,
+      routeReadinessGeneration: routeReadinessGeneration,
+      isLiveRouteProof: false
+    )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
@@ -274,22 +287,40 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     )
   }
 
-  private func updateMobileHealth(_ health: MobileHealthResponse?) {
-    mobileHealth = health
-    continuationPublisher.isHandoffSupported = health?.supportsNativeHandoff == true
+  private func updateMobileHealth(
+    _ health: MobileHealthResponse?,
+    routeReadinessGeneration: UInt64,
+    isLiveRouteProof: Bool
+  ) {
+    mobileRouteReadiness.applyRefreshHealth(
+      health,
+      refreshGeneration: routeReadinessGeneration,
+      isLiveProof: isLiveRouteProof
+    )
+    continuationPublisher.isHandoffSupported = mobileHealth?.supportsNativeHandoff == true
   }
 
   private func updateMobileState(
     _ state: DesktopMobileStateResponse?,
     pushDevices: DesktopPushDevicesResponse?,
-    health: MobileHealthResponse?
+    health: MobileHealthResponse?,
+    routeReadinessGeneration: UInt64,
+    isLiveRouteProof: Bool
   ) {
     mobileState = state
     self.pushDevices = pushDevices
-    updateMobileHealth(health)
+    updateMobileHealth(
+      health,
+      routeReadinessGeneration: routeReadinessGeneration,
+      isLiveRouteProof: isLiveRouteProof
+    )
   }
 
-  private func applyHTTPRefreshStateIfPresent(_ result: MenuRefreshResult) {
+  private func applyHTTPRefreshStateIfPresent(
+    _ result: MenuRefreshResult,
+    routeReadinessGeneration: UInt64,
+    isLiveRouteProof: Bool
+  ) {
     guard result.didFetchHTTP else {
       return
     }
@@ -297,7 +328,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     updateMobileState(
       result.mobileState,
       pushDevices: result.pushDevices,
-      health: result.mobileHealth
+      health: result.mobileHealth,
+      routeReadinessGeneration: routeReadinessGeneration,
+      isLiveRouteProof: isLiveRouteProof
     )
   }
 
@@ -352,6 +385,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func openThreadFromNotification(_ threadID: String) async {
+    let routeReadinessGeneration = mobileRouteReadiness.generation
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
       _ = openThread(target)
@@ -365,7 +399,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
     if let snapshot = result.snapshot {
-      applyHTTPRefreshStateIfPresent(result)
+      applyHTTPRefreshStateIfPresent(
+        result,
+        routeReadinessGeneration: routeReadinessGeneration,
+        isLiveRouteProof: true
+      )
       _ = openThread(
         openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: snapshot)
       )
@@ -1603,12 +1641,17 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func showDiagnosticsWindow(force: Bool) async {
+    let routeReadinessGeneration = mobileRouteReadiness.generation
     diagnosticsWindowController.showLoading()
     let result = await menuRefreshCoordinator.refresh(force: force)
     cacheMenuEnrichmentIfAvailable(result)
     cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(fallback: result.sessionMiniSnapshot)
-    applyHTTPRefreshStateIfPresent(result)
+    applyHTTPRefreshStateIfPresent(
+      result,
+      routeReadinessGeneration: routeReadinessGeneration,
+      isLiveRouteProof: force
+    )
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
@@ -1826,7 +1869,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     mobileRoutePreference = preference
+    mobileRouteReadiness.invalidateForRouteSwitch()
+    continuationPublisher.isHandoffSupported = false
+    replaceMenu(snapshot: nil, sessionMiniSnapshot: currentSessionMiniSnapshot(), error: nil)
     Task {
+      await menuRefreshCoordinator.clearCache()
       await refreshMenu(force: true)
       restartSessionMiniSync()
     }

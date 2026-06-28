@@ -29,7 +29,6 @@ public struct MenuRefreshResult: Equatable, Sendable {
             || acpClientHosts != nil
             || mobileState != nil
             || pushDevices != nil
-            || mobileHealth != nil
     }
 
     public func mergingReusableEnrichment(from cached: MenuRefreshResult?) -> MenuRefreshResult {
@@ -44,7 +43,7 @@ public struct MenuRefreshResult: Equatable, Sendable {
             acpClientHosts: acpClientHosts ?? cached.acpClientHosts,
             mobileState: mobileState ?? cached.mobileState,
             pushDevices: pushDevices ?? cached.pushDevices,
-            mobileHealth: mobileHealth ?? cached.mobileHealth,
+            mobileHealth: mobileHealth,
             error: error
         )
     }

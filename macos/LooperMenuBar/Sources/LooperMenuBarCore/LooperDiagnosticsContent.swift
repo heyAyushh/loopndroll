@@ -15,7 +15,7 @@ public enum LooperDiagnosticsContent {
     ) -> String {
         var lines = [
             "Looper Diagnostics",
-            "State: \(result.succeeded ? "connected" : "unavailable")",
+            "State: \(stateTitle(for: result))",
             "diagnostics_generated_at=\(ISO8601DateFormatter().string(from: generatedAt))",
         ]
 
@@ -39,6 +39,16 @@ public enum LooperDiagnosticsContent {
         appendClassification(snapshot, to: &lines)
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func stateTitle(for result: MenuRefreshResult) -> String {
+        if result.snapshot != nil {
+            return "connected"
+        }
+        if result.sessionMiniSnapshot != nil {
+            return "local-state"
+        }
+        return "unavailable"
     }
 
     private static func appendSessionMini(
