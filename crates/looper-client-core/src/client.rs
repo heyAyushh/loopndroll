@@ -1691,17 +1691,14 @@ fn require_endpoints(endpoints: &[ClientEndpoint]) -> Result<(), ClientCoreError
 }
 
 fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
-    endpoints
+    let mut endpoint_urls = endpoints
         .iter()
-        .map(|endpoint| {
-            format!(
-                "{}#{}",
-                endpoint.url.trim().trim_end_matches('/'),
-                endpoint.last_good
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .map(|endpoint| endpoint.url.trim().trim_end_matches('/').to_owned())
+        .filter(|endpoint_url| !endpoint_url.is_empty())
+        .collect::<Vec<_>>();
+    endpoint_urls.sort();
+    endpoint_urls.dedup();
+    endpoint_urls.join("\n")
 }
 
 fn restored_outbound_frame(
@@ -2038,7 +2035,7 @@ mod tests {
             .start_state_mini_stream(
                 vec![ClientEndpoint {
                     url: ENDPOINT_PRIMARY.to_owned(),
-                    last_good: false,
+                    last_good: true,
                 }],
                 "token".to_owned(),
                 "mobile-session".to_owned(),

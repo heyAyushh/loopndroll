@@ -60,6 +60,7 @@ impl LooperClientCoreSessionRuntime {
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let restored_client_mutation_ids = self.seed_core_from_local_store()?;
+        let endpoints = self.local_store.endpoints_with_last_good(endpoints)?;
         let snapshot = self
             .client_core
             .start(endpoints, bearer_token, mobile_session_header)?;
@@ -76,6 +77,7 @@ impl LooperClientCoreSessionRuntime {
 
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let update = self.client_core.observe().await?;
+        self.persist_last_good_endpoint(&update.snapshot)?;
         if update.did_change || update.reason == ClientStateMiniStreamUpdateReason::Heartbeat {
             self.persist_core_snapshot(&update.snapshot)?;
         }
@@ -443,6 +445,19 @@ impl LooperClientCoreSessionRuntime {
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         self.local_store
             .replace_state_minis(ClientStateMiniSnapshot::from(snapshot.clone()))
+    }
+
+    fn persist_last_good_endpoint(
+        &self,
+        snapshot: &ClientStateSnapshot,
+    ) -> Result<(), ClientCoreError> {
+        if snapshot.phase != crate::model::ConnectionPhase::Ready
+            || snapshot.endpoint_url.trim().is_empty()
+        {
+            return Ok(());
+        }
+        self.local_store
+            .mark_last_good_endpoint(snapshot.endpoint_url.clone())
     }
 
     fn local_state_stream_update(

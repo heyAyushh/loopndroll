@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::ClientCoreError,
     model::{
-        ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan, ClientPendingCommand,
-        ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
+        ClientEndpoint, ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan,
+        ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
     state_mini::{normalize_state_minis, require_valid_sequence, validate_state_minis},
 };
@@ -39,6 +39,13 @@ struct StoredState {
     pending_commands: Vec<StoredPendingCommand>,
     #[serde(rename = "serverTime", default)]
     server_time: Option<String>,
+    #[serde(
+        rename = "lastGoodEndpointURL",
+        alias = "lastGoodEndpointUrl",
+        alias = "last_good_endpoint_url",
+        default
+    )]
+    last_good_endpoint_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -91,6 +98,30 @@ impl LooperClientCoreLocalStore {
         state.server_time = non_empty(snapshot.server_time);
         self.persist_locked(&state)?;
         Ok(state.snapshot())
+    }
+
+    pub(crate) fn endpoints_with_last_good(
+        &self,
+        endpoints: Vec<ClientEndpoint>,
+    ) -> Result<Vec<ClientEndpoint>, ClientCoreError> {
+        let state = self.lock_state()?;
+        Ok(endpoints_with_last_good(
+            endpoints,
+            state.last_good_endpoint_url.as_deref(),
+        ))
+    }
+
+    pub(crate) fn mark_last_good_endpoint(
+        &self,
+        endpoint_url: String,
+    ) -> Result<(), ClientCoreError> {
+        let endpoint_url = normalized_endpoint_url(&endpoint_url)?;
+        let mut state = self.lock_state()?;
+        if state.last_good_endpoint_url.as_deref() == Some(endpoint_url.as_str()) {
+            return Ok(());
+        }
+        state.last_good_endpoint_url = Some(endpoint_url);
+        self.persist_locked(&state)
     }
 }
 
@@ -592,6 +623,42 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
+fn endpoints_with_last_good(
+    mut endpoints: Vec<ClientEndpoint>,
+    last_good_endpoint_url: Option<&str>,
+) -> Vec<ClientEndpoint> {
+    let Some(last_good_endpoint_url) =
+        last_good_endpoint_url.and_then(|url| normalized_endpoint_url(url).ok())
+    else {
+        return endpoints;
+    };
+    if !endpoints
+        .iter()
+        .any(|endpoint| endpoint_matches_url(endpoint, &last_good_endpoint_url))
+    {
+        return endpoints;
+    }
+
+    for endpoint in &mut endpoints {
+        endpoint.last_good = endpoint_matches_url(endpoint, &last_good_endpoint_url);
+    }
+    endpoints
+}
+
+fn endpoint_matches_url(endpoint: &ClientEndpoint, normalized_url: &str) -> bool {
+    normalized_endpoint_url(&endpoint.url)
+        .map(|url| url == normalized_url)
+        .unwrap_or(false)
+}
+
+fn normalized_endpoint_url(endpoint_url: &str) -> Result<String, ClientCoreError> {
+    let endpoint_url = endpoint_url.trim().trim_end_matches('/').to_owned();
+    if endpoint_url.is_empty() {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
+    Ok(endpoint_url)
+}
+
 fn notification_reply_retry_delay(attempt_count: u32) -> u64 {
     if attempt_count == 0 {
         return 0;
@@ -745,6 +812,36 @@ mod tests {
             reopened_snapshot.pending_commands[0].client_mutation_id,
             "mutation-pending"
         );
+    }
+
+    #[test]
+    fn local_store_persists_winning_endpoint_as_last_good() {
+        let path = temp_store_path("last-good-endpoint");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .mark_last_good_endpoint(" http://100.64.0.2:8766/ ".to_owned())
+            .expect("mark endpoint");
+        drop(store);
+
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let endpoints = reopened
+            .endpoints_with_last_good(vec![
+                ClientEndpoint {
+                    url: "http://127.0.0.1:8766".to_owned(),
+                    last_good: true,
+                },
+                ClientEndpoint {
+                    url: "http://100.64.0.2:8766".to_owned(),
+                    last_good: false,
+                },
+            ])
+            .expect("endpoints");
+
+        assert!(!endpoints[0].last_good);
+        assert!(endpoints[1].last_good);
     }
 
     #[test]

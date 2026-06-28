@@ -155,7 +155,7 @@ async fn fetch_state_mini_snapshot_from_endpoint(
 }
 
 pub(crate) async fn run_state_mini_stream(
-    endpoints: Vec<ClientEndpoint>,
+    mut endpoints: Vec<ClientEndpoint>,
     bearer_token: String,
     mobile_session_header: String,
     after_seq: i64,
@@ -170,7 +170,7 @@ pub(crate) async fn run_state_mini_stream(
         }
 
         match run_state_mini_stream_session(
-            &endpoints,
+            &mut endpoints,
             &bearer_token,
             &mobile_session_header,
             next_after_seq,
@@ -257,7 +257,7 @@ struct OpenStateMiniSession {
 }
 
 async fn run_state_mini_stream_session(
-    endpoints: &[ClientEndpoint],
+    endpoints: &mut [ClientEndpoint],
     bearer_token: &str,
     mobile_session_header: &str,
     after_seq: i64,
@@ -305,6 +305,7 @@ async fn run_state_mini_stream_session(
                     request_sender,
                     endpoint_url,
                 } = opened;
+                mark_endpoint_last_good(endpoints, &endpoint_url);
                 return drive_state_mini_stream_session(
                     stream,
                     request_sender,
@@ -551,6 +552,13 @@ fn ordered_client_endpoints(
     }
 
     Ok(ordered)
+}
+
+fn mark_endpoint_last_good(endpoints: &mut [ClientEndpoint], endpoint_url: &str) {
+    let endpoint_url = normalized_endpoint_url(endpoint_url);
+    for endpoint in endpoints {
+        endpoint.last_good = normalized_endpoint_url(&endpoint.url) == endpoint_url;
+    }
 }
 
 fn normalized_endpoint_url(endpoint_url: &str) -> String {
@@ -1111,6 +1119,98 @@ mod tests {
         );
     }
 
+    #[test]
+    fn successful_session_endpoint_becomes_next_last_good() {
+        let mut endpoints = vec![
+            ClientEndpoint {
+                url: "http://100.119.200.69:8766".to_owned(),
+                last_good: true,
+            },
+            ClientEndpoint {
+                url: "http://192.168.1.33:8766/".to_owned(),
+                last_good: false,
+            },
+            ClientEndpoint {
+                url: "http://127.0.0.1:8766".to_owned(),
+                last_good: false,
+            },
+        ];
+
+        mark_endpoint_last_good(&mut endpoints, " http://192.168.1.33:8766 ");
+
+        assert!(!endpoints[0].last_good);
+        assert!(endpoints[1].last_good);
+        assert!(!endpoints[2].last_good);
+        let urls = session_transport_endpoints(&endpoints)
+            .expect("endpoints")
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "http://192.168.1.33:8766/",
+                "http://100.119.200.69:8766",
+                "http://127.0.0.1:8766",
+            ]
+        );
+    }
+
+    #[test]
+    fn session_stream_falls_through_stale_last_good_and_marks_fallback() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let (fallback_url, server) = spawn_realtime_session_server().await;
+            let stale_url = unused_local_url();
+            let mut endpoints = vec![
+                ClientEndpoint {
+                    url: stale_url,
+                    last_good: true,
+                },
+                ClientEndpoint {
+                    url: fallback_url.clone(),
+                    last_good: false,
+                },
+            ];
+            let (command_sender, mut commands) = mpsc::channel(1);
+            drop(command_sender);
+            let (events_sender, mut events) = mpsc::channel(2);
+            let (command_acks_sender, _command_acks) = mpsc::channel(1);
+
+            let latest_seq = run_state_mini_stream_session(
+                &mut endpoints,
+                "",
+                "",
+                23,
+                &mut commands,
+                events_sender,
+                command_acks_sender,
+            )
+            .await
+            .expect("fallback session connects");
+
+            assert_eq!(latest_seq, 23);
+            let event = events.recv().await.expect("opened endpoint event");
+            match event {
+                StateMiniStreamEvent::Heartbeat {
+                    endpoint_url,
+                    latest_seq,
+                    ..
+                } => {
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&fallback_url));
+                    assert_eq!(latest_seq, 23);
+                }
+                other => panic!("expected endpoint heartbeat, got {other:?}"),
+            }
+            assert!(!endpoints[0].last_good);
+            assert!(endpoints[1].last_good);
+
+            server.abort();
+            let _ = server.await;
+        });
+    }
+
     fn spawn_snapshot_server(
         delay: Duration,
         latest_seq: i64,
@@ -1148,6 +1248,56 @@ mod tests {
             let _ = stream.write_all(response.as_bytes());
         });
         (url, handle)
+    }
+
+    fn unused_local_url() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused port");
+        let address = listener.local_addr().expect("unused addr");
+        drop(listener);
+        format!("http://{address}")
+    }
+
+    async fn spawn_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind realtime server port");
+        let address = listener.local_addr().expect("realtime server addr");
+        drop(listener);
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(
+                TestRealtimeSessionService,
+            );
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), handle)
+    }
+
+    struct TestRealtimeSessionService;
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for TestRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let (_sender, receiver) = mpsc::channel(1);
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
     }
 
     #[test]
