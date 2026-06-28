@@ -36,7 +36,10 @@ private enum LiveLatencyMetrics {
     static let detailTimeout: TimeInterval = 6
     static let mutationTimeout: TimeInterval = 6
     static let promptAckTimeout: TimeInterval = 6
+    static let pendingCommandDrainTimeout: TimeInterval = 30
     static let pollInterval: TimeInterval = 0.05
+    static let testRunnerEnvironmentPrefix = "TEST_RUNNER_"
+    static let pendingCommandDrainAccessibilityIdentifier = "debug.pending-command-count"
 }
 
 private struct LiveLatencyConfiguration {
@@ -456,6 +459,19 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         recordLiveLatencyResult(result, outputPath: configuration.outputPath)
     }
 
+    func testLiveAssistantSurfaceSwitcherTaps() throws {
+        let configuration = try liveLatencyConfiguration()
+
+        launchLiveLatencyApp(configuration)
+        XCTAssertTrue(pollForText("Sessions", timeout: LiveLatencyMetrics.connectionTimeout))
+        XCTAssertTrue(waitForLivePendingCommandsToDrain(timeout: LiveLatencyMetrics.pendingCommandDrainTimeout))
+        for surfaceID in ["claude-code", "devin", "grok-build", "codex"] {
+            tapAssistantSurface(surfaceID)
+        }
+        XCTAssertTrue(waitForLivePendingCommandsToDrain(timeout: LiveLatencyMetrics.pendingCommandDrainTimeout))
+        recordSurfaceEvidence("ios-live-assistant-switcher")
+    }
+
     private func launchApp(showOnboarding: Bool = false, extraArguments: [String] = []) {
         app = XCUIApplication()
         app.terminate()
@@ -486,20 +502,29 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
 
     private func liveLatencyConfiguration() throws -> LiveLatencyConfiguration {
         let environment = ProcessInfo.processInfo.environment
-        guard let baseURLs = nonEmptyEnvironmentValue(
-            LiveLatencyMetrics.baseURLsEnvironmentKey,
+        guard let baseURLs = firstNonEmptyEnvironmentValue(
+            [
+                LiveLatencyMetrics.baseURLsEnvironmentKey,
+                LiveLatencyMetrics.appBaseURLsEnvironmentKey
+            ],
             environment: environment
         ) else {
             throw XCTSkip("Live mobile latency check requires isolated server base URLs.")
         }
-        guard let bearerToken = nonEmptyEnvironmentValue(
-            LiveLatencyMetrics.bearerTokenEnvironmentKey,
+        guard let bearerToken = firstNonEmptyEnvironmentValue(
+            [
+                LiveLatencyMetrics.bearerTokenEnvironmentKey,
+                LiveLatencyMetrics.appBearerTokenEnvironmentKey
+            ],
             environment: environment
         ) else {
             throw XCTSkip("Live mobile latency check requires a pairing bearer token.")
         }
-        guard let mobileSession = nonEmptyEnvironmentValue(
-            LiveLatencyMetrics.mobileSessionEnvironmentKey,
+        guard let mobileSession = firstNonEmptyEnvironmentValue(
+            [
+                LiveLatencyMetrics.mobileSessionEnvironmentKey,
+                LiveLatencyMetrics.appMobileSessionEnvironmentKey
+            ],
             environment: environment
         ) else {
             throw XCTSkip("Live mobile latency check requires a passkey mobile session.")
@@ -509,15 +534,28 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
             baseURLs: baseURLs,
             bearerToken: bearerToken,
             mobileSession: mobileSession,
-            outputPath: nonEmptyEnvironmentValue(
-                LiveLatencyMetrics.outputEnvironmentKey,
+            outputPath: firstNonEmptyEnvironmentValue(
+                [LiveLatencyMetrics.outputEnvironmentKey],
                 environment: environment
             ),
-            sessionTitle: nonEmptyEnvironmentValue(
-                LiveLatencyMetrics.sessionTitleEnvironmentKey,
+            sessionTitle: firstNonEmptyEnvironmentValue(
+                [LiveLatencyMetrics.sessionTitleEnvironmentKey],
                 environment: environment
             ) ?? LiveLatencyMetrics.defaultSessionTitle
         )
+    }
+
+    private func firstNonEmptyEnvironmentValue(_ keys: [String], environment: [String: String]) -> String? {
+        for key in keys {
+            if let value = nonEmptyEnvironmentValue(key, environment: environment) {
+                return value
+            }
+            let testRunnerKey = LiveLatencyMetrics.testRunnerEnvironmentPrefix + key
+            if let value = nonEmptyEnvironmentValue(testRunnerKey, environment: environment) {
+                return value
+            }
+        }
+        return nil
     }
 
     private func nonEmptyEnvironmentValue(_ key: String, environment: [String: String]) -> String? {
@@ -780,6 +818,24 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         }
 
         XCTFail("Could not tap assistant surface: \(rawValue)")
+    }
+
+    private func waitForLivePendingCommandsToDrain(timeout: TimeInterval) -> Bool {
+        let marker = app.descendants(matching: .any)[
+            LiveLatencyMetrics.pendingCommandDrainAccessibilityIdentifier
+        ].firstMatch
+        let predicate = NSPredicate(format: "exists == true AND value == %@", "0")
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: marker)
+        let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
+        guard result != .completed else {
+            return true
+        }
+
+        let attachment = XCTAttachment(string: "pendingCommandCount=\(String(describing: marker.value))")
+        attachment.name = "live-pending-command-drain.txt"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        return false
     }
 
     private func assertScannerControls(canConnectPastedOrbID: Bool) {

@@ -35,6 +35,9 @@ use crate::transport::validate_endpoint_url;
 const INITIAL_SEQUENCE: i64 = 0;
 const EMPTY_SEQUENCE: i64 = 0;
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
+const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
+const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 
 #[derive(Debug, Default)]
@@ -48,6 +51,7 @@ struct ClientCoreState {
     pending_mutations: Vec<ClientPendingMutation>,
     mode_rollbacks: Vec<ClientModeRollback>,
     outbox: Vec<OutboundSessionFrame>,
+    command_ack_backlog: Vec<ClientCommandAck>,
     last_error: String,
 }
 
@@ -573,20 +577,9 @@ impl LooperClientCore {
         expected_client_mutation_ids: Vec<String>,
     ) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
         let mut state = self.lock_state()?;
-        let actual_client_mutation_ids: Vec<&str> = state
-            .outbox
-            .iter()
-            .map(|frame| frame.client_mutation_id.as_str())
-            .collect();
-        let expected_client_mutation_ids: Vec<&str> = expected_client_mutation_ids
-            .iter()
-            .map(String::as_str)
-            .collect();
-        if actual_client_mutation_ids != expected_client_mutation_ids {
-            return Err(ClientCoreError::UnexpectedOutboxMutations);
-        }
-
-        Ok(std::mem::take(&mut state.outbox))
+        let outbox = state.expected_outbox(&expected_client_mutation_ids)?;
+        state.drain_expected_outbox(&expected_client_mutation_ids)?;
+        Ok(outbox)
     }
 
     async fn submit_expected_outbox(
@@ -601,8 +594,8 @@ impl LooperClientCore {
             .iter()
             .map(command_metadata)
             .collect::<Result<Vec<_>, _>>()?;
+        let submitted_frames = frames.clone();
         let expected_ack_count = expected_client_mutation_ids.len();
-        let expected_client_mutation_ids_for_drain = expected_client_mutation_ids.clone();
         self.send_session_commands(frames).await?;
         let acks = self
             .recv_command_acks(expected_client_mutation_ids, expected_ack_count)
@@ -610,7 +603,7 @@ impl LooperClientCore {
         let response = build_command_batch_response(command_metadata, acks)?;
 
         let mut state = self.lock_state()?;
-        state.drain_expected_outbox(&expected_client_mutation_ids_for_drain)?;
+        state.drain_submitted_outbox(&submitted_frames)?;
         for envelope in &response.command_acks {
             state.reconcile_ack(envelope.ack.clone());
         }
@@ -1072,9 +1065,14 @@ impl LooperClientCore {
         }
         let expected_client_mutation_ids =
             std::collections::HashSet::<String>::from_iter(expected_client_mutation_ids);
+        let mut acks =
+            self.take_buffered_command_acks(&expected_client_mutation_ids, expected_ack_count)?;
+        if acks.len() >= expected_ack_count {
+            return Ok(acks);
+        }
+
         let mut receiver = self.take_command_ack_receiver()?;
         let result = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
-            let mut acks = Vec::with_capacity(expected_ack_count);
             while acks.len() < expected_ack_count {
                 let ack = receiver
                     .recv()
@@ -1086,6 +1084,8 @@ impl LooperClientCore {
                     })
                 {
                     acks.push(ack);
+                } else {
+                    self.buffer_command_ack(ack)?;
                 }
             }
             Ok::<_, ClientCoreError>(acks)
@@ -1113,6 +1113,46 @@ impl LooperClientCore {
         let mut stream = self.lock_stream()?;
         let stream = stream.as_mut().ok_or(ClientCoreError::NoEndpoint)?;
         stream.command_ack_receiver = Some(receiver);
+        Ok(())
+    }
+
+    fn take_buffered_command_acks(
+        &self,
+        expected_client_mutation_ids: &std::collections::HashSet<String>,
+        expected_ack_count: usize,
+    ) -> Result<Vec<ClientCommandAck>, ClientCoreError> {
+        let mut state = self.lock_state()?;
+        let mut matching_acks = Vec::with_capacity(expected_ack_count);
+        let mut remaining_acks = Vec::with_capacity(state.command_ack_backlog.len());
+        for ack in state.command_ack_backlog.drain(..) {
+            if expected_client_mutation_ids.contains(&ack.client_mutation_id)
+                && !matching_acks.iter().any(|seen: &ClientCommandAck| {
+                    seen.client_mutation_id == ack.client_mutation_id
+                })
+                && matching_acks.len() < expected_ack_count
+            {
+                matching_acks.push(ack);
+            } else {
+                remaining_acks.push(ack);
+            }
+        }
+        state.command_ack_backlog = remaining_acks;
+        Ok(matching_acks)
+    }
+
+    fn buffer_command_ack(&self, ack: ClientCommandAck) -> Result<(), ClientCoreError> {
+        let mut state = self.lock_state()?;
+        if state
+            .command_ack_backlog
+            .iter()
+            .any(|seen| seen.client_mutation_id == ack.client_mutation_id)
+        {
+            return Ok(());
+        }
+        state.command_ack_backlog.push(ack);
+        if state.command_ack_backlog.len() > COMMAND_ACK_BACKLOG_LIMIT {
+            state.command_ack_backlog.remove(0);
+        }
         Ok(())
     }
 
@@ -1222,29 +1262,11 @@ impl LooperClientCore {
         let client_core = self.clone();
         let handle = self.runtime.handle().clone();
         self.runtime.spawn_blocking(move || {
-            let flush_result = handle.block_on(async {
-                let _flush = client_core.command_flush.lock().await;
-                let expected_client_mutation_ids =
-                    client_core.pending_outbox_client_mutation_ids()?;
-                if !expected_client_mutation_ids.contains(&client_mutation_id) {
-                    return Ok(());
-                }
-                let response = client_core
-                    .submit_pending_outbox(expected_client_mutation_ids)
-                    .await?;
-                let mut received_target_ack = false;
-                for envelope in &response.command_acks {
-                    received_target_ack |= envelope.ack.client_mutation_id == client_mutation_id;
-                    client_core.mark_durable_command_final(&local_store, envelope)?;
-                }
-                if !received_target_ack {
-                    return Err(ClientCoreError::MissingCommandAcknowledgement);
-                }
-                let snapshot = client_core.snapshot()?;
-                persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
-                client_core.emit_local_state_update(snapshot);
-                Ok::<(), ClientCoreError>(())
-            });
+            let flush_result = handle.block_on(client_core.flush_pending_outbox_with_retries(
+                local_store,
+                vec![client_mutation_id],
+                false,
+            ));
             if let Err(error) = flush_result {
                 let _ = client_core.emit_command_flush_error(error);
             }
@@ -1264,51 +1286,98 @@ impl LooperClientCore {
         let client_core = self.clone();
         let handle = self.runtime.handle().clone();
         self.runtime.spawn_blocking(move || {
-            let flush_result = handle.block_on(async {
-                let _flush = client_core.command_flush.lock().await;
-                let expected_client_mutation_ids =
-                    client_core.pending_outbox_client_mutation_ids()?;
-                let restored_ids_still_pending = restored_client_mutation_ids
-                    .iter()
-                    .filter(|id| expected_client_mutation_ids.contains(id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if restored_ids_still_pending.is_empty() {
-                    return Ok(());
-                }
-
-                for client_mutation_id in &restored_ids_still_pending {
-                    local_store.mark_attempted(client_mutation_id.clone())?;
-                }
-
-                let response = client_core
-                    .submit_pending_outbox(expected_client_mutation_ids)
-                    .await?;
-                for envelope in &response.command_acks {
-                    client_core.mark_durable_command_final(&local_store, envelope)?;
-                }
-
-                let acknowledged_ids = response
-                    .command_acks
-                    .iter()
-                    .map(|envelope| envelope.ack.client_mutation_id.as_str())
-                    .collect::<std::collections::HashSet<_>>();
-                if restored_ids_still_pending
-                    .iter()
-                    .any(|id| !acknowledged_ids.contains(id.as_str()))
-                {
-                    return Err(ClientCoreError::MissingCommandAcknowledgement);
-                }
-
-                let snapshot = client_core.snapshot()?;
-                persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
-                client_core.emit_local_state_update(snapshot);
-                Ok::<(), ClientCoreError>(())
-            });
+            let flush_result = handle.block_on(client_core.flush_pending_outbox_with_retries(
+                local_store,
+                restored_client_mutation_ids,
+                true,
+            ));
             if let Err(error) = flush_result {
                 let _ = client_core.emit_command_flush_error(error);
             }
         });
+    }
+
+    async fn flush_pending_outbox_with_retries(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        required_client_mutation_ids: Vec<String>,
+        mark_required_attempted: bool,
+    ) -> Result<(), ClientCoreError> {
+        let required_client_mutation_ids = non_empty_unique(required_client_mutation_ids);
+        if required_client_mutation_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut last_error = None;
+        for attempt_index in 0..COMMAND_FLUSH_RETRY_ATTEMPTS {
+            let result = self
+                .flush_pending_outbox_once(
+                    local_store.clone(),
+                    &required_client_mutation_ids,
+                    mark_required_attempted,
+                )
+                .await;
+            match result {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if should_retry_command_flush(&error)
+                        && attempt_index + 1 < COMMAND_FLUSH_RETRY_ATTEMPTS =>
+                {
+                    last_error = Some(error);
+                    sleep(COMMAND_FLUSH_RETRY_DELAY).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_error.unwrap_or(ClientCoreError::MissingCommandAcknowledgement))
+    }
+
+    async fn flush_pending_outbox_once(
+        &self,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        required_client_mutation_ids: &[String],
+        mark_required_attempted: bool,
+    ) -> Result<(), ClientCoreError> {
+        let _flush = self.command_flush.lock().await;
+        let expected_client_mutation_ids = self.pending_outbox_client_mutation_ids()?;
+        let required_ids_still_pending = required_client_mutation_ids
+            .iter()
+            .filter(|id| expected_client_mutation_ids.contains(id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if required_ids_still_pending.is_empty() {
+            return Ok(());
+        }
+
+        if mark_required_attempted {
+            for client_mutation_id in &required_ids_still_pending {
+                local_store.mark_attempted(client_mutation_id.clone())?;
+            }
+        }
+
+        let response = self
+            .submit_pending_outbox(expected_client_mutation_ids)
+            .await?;
+        for envelope in &response.command_acks {
+            self.mark_durable_command_final(&local_store, envelope)?;
+        }
+
+        let acknowledged_ids = response
+            .command_acks
+            .iter()
+            .map(|envelope| envelope.ack.client_mutation_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if required_ids_still_pending
+            .iter()
+            .any(|id| !acknowledged_ids.contains(id.as_str()))
+        {
+            return Err(ClientCoreError::MissingCommandAcknowledgement);
+        }
+
+        let snapshot = self.snapshot()?;
+        persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+        self.emit_local_state_update(snapshot);
+        Ok(())
     }
 
     fn emit_command_flush_error(&self, error: ClientCoreError) -> Result<(), ClientCoreError> {
@@ -1390,7 +1459,6 @@ impl LooperClientCore {
                 endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
-                state.latest_seq = state.latest_seq.max(latest_seq);
                 update_server_time_if_newer(&mut state.server_time, server_time);
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
@@ -1476,6 +1544,19 @@ impl ClientCoreState {
     }
 
     fn queue_command(&mut self, frame: OutboundSessionFrame) {
+        if is_latest_wins_outbox_command(frame.command_kind) {
+            self.pending_mutations.retain(|mutation| {
+                mutation.client_mutation_id == frame.client_mutation_id
+                    || mutation.command_kind != frame.command_kind
+                    || mutation.thread_id != frame.thread_id
+            });
+            self.outbox.retain(|queued| {
+                queued.client_mutation_id == frame.client_mutation_id
+                    || queued.command_kind != frame.command_kind
+                    || queued.thread_id != frame.thread_id
+            });
+        }
+
         let pending_mutation = ClientPendingMutation {
             client_mutation_id: frame.client_mutation_id.clone(),
             command_kind: frame.command_kind,
@@ -1513,28 +1594,52 @@ impl ClientCoreState {
         &self,
         expected_client_mutation_ids: &[String],
     ) -> Result<Vec<OutboundSessionFrame>, ClientCoreError> {
-        let actual_client_mutation_ids: Vec<&str> = self
-            .outbox
-            .iter()
-            .map(|frame| frame.client_mutation_id.as_str())
-            .collect();
-        let expected_client_mutation_ids: Vec<&str> = expected_client_mutation_ids
-            .iter()
-            .map(String::as_str)
-            .collect();
-        if actual_client_mutation_ids != expected_client_mutation_ids {
-            return Err(ClientCoreError::UnexpectedOutboxMutations);
+        let mut frames = Vec::with_capacity(expected_client_mutation_ids.len());
+        for client_mutation_id in expected_client_mutation_ids {
+            let Some(frame) = self
+                .outbox
+                .iter()
+                .find(|frame| frame.client_mutation_id == *client_mutation_id)
+            else {
+                return Err(ClientCoreError::UnexpectedOutboxMutations);
+            };
+            frames.push(frame.clone());
         }
-
-        Ok(self.outbox.clone())
+        Ok(frames)
     }
 
+    #[cfg(test)]
     fn drain_expected_outbox(
         &mut self,
         expected_client_mutation_ids: &[String],
     ) -> Result<(), ClientCoreError> {
         let _ = self.expected_outbox(expected_client_mutation_ids)?;
-        self.outbox.clear();
+        self.outbox.retain(|frame| {
+            !expected_client_mutation_ids
+                .iter()
+                .any(|client_mutation_id| frame.client_mutation_id == *client_mutation_id)
+        });
+        Ok(())
+    }
+
+    fn drain_submitted_outbox(
+        &mut self,
+        submitted_frames: &[OutboundSessionFrame],
+    ) -> Result<(), ClientCoreError> {
+        for frame in submitted_frames {
+            let still_pending = self
+                .outbox
+                .iter()
+                .any(|queued| queued.client_mutation_id == frame.client_mutation_id);
+            if !still_pending && !is_latest_wins_outbox_command(frame.command_kind) {
+                return Err(ClientCoreError::UnexpectedOutboxMutations);
+            }
+        }
+        self.outbox.retain(|queued| {
+            !submitted_frames
+                .iter()
+                .any(|frame| frame.client_mutation_id == queued.client_mutation_id)
+        });
         Ok(())
     }
 
@@ -1649,10 +1754,15 @@ impl ClientCoreState {
             return false;
         }
 
-        if delta.has_session {
-            self.upsert_state_mini(delta.session);
-        } else if is_state_mini_replacement_delta(&delta) || !delta.sessions.is_empty() {
+        if is_state_mini_replacement_delta(&delta) {
             self.state_minis = normalize_state_minis(delta.sessions);
+        } else {
+            if delta.has_session {
+                self.upsert_state_mini(delta.session);
+            }
+            for session in delta.sessions {
+                self.upsert_state_mini(session);
+            }
         }
 
         self.latest_seq = self.latest_seq.max(delta.seq).max(delta.latest_seq);
@@ -1896,6 +2006,21 @@ fn should_retry_notification_reply_drain(error: &ClientCoreError) -> bool {
             | ClientCoreError::SessionCommandTransportFailed
             | ClientCoreError::SessionCommandAckTimedOut
     )
+}
+
+fn should_retry_command_flush(error: &ClientCoreError) -> bool {
+    matches!(
+        error,
+        ClientCoreError::NoEndpoint
+            | ClientCoreError::MissingCommandAcknowledgement
+            | ClientCoreError::SessionCommandTransportFailed
+            | ClientCoreError::SessionCommandAckTimedOut
+            | ClientCoreError::StateMiniStreamNotRunning
+    )
+}
+
+fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
+    matches!(command_kind, ClientCommandKind::SetAssistantSurface)
 }
 
 fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCoreError> {
@@ -2145,8 +2270,50 @@ mod tests {
         assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
         assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
         assert_eq!(update.latest_seq, 12);
-        assert_eq!(update.snapshot.latest_seq, 12);
+        assert_eq!(update.snapshot.latest_seq, 0);
         assert_eq!(update.snapshot.server_time, SERVER_TIME);
+    }
+
+    #[test]
+    fn heartbeat_latest_seq_does_not_skip_replay_delta() {
+        let core = LooperClientCore::new();
+        core.connect(vec![ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: true,
+        }])
+        .expect("connect primary");
+
+        core.apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+            latest_seq: 12,
+            server_time: SERVER_TIME.to_owned(),
+            endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+        })
+        .expect("heartbeat");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "thread-1".to_owned(),
+                kind: "session.changed".to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: "2026-06-26T00:00:11Z".to_owned(),
+                has_session: true,
+                session: ClientStateMini {
+                    session_id: "thread-1".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 11,
+                    revision: "rev-11".to_owned(),
+                    payload_json: r#"{"title":"Replay applied"}"#.to_owned(),
+                },
+                sessions: Vec::new(),
+            }))
+            .expect("replay delta");
+
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.latest_seq, 11);
+        assert_eq!(update.snapshot.state_minis.len(), 1);
+        assert_eq!(update.snapshot.state_minis[0].session_id, "thread-1");
     }
 
     #[test]
@@ -2234,6 +2401,57 @@ mod tests {
     }
 
     #[test]
+    fn command_flush_retries_only_transient_failures() {
+        assert!(should_retry_command_flush(&ClientCoreError::NoEndpoint));
+        assert!(should_retry_command_flush(
+            &ClientCoreError::SessionCommandTransportFailed
+        ));
+        assert!(should_retry_command_flush(
+            &ClientCoreError::SessionCommandAckTimedOut
+        ));
+        assert!(should_retry_command_flush(
+            &ClientCoreError::MissingCommandAcknowledgement
+        ));
+        assert!(should_retry_command_flush(
+            &ClientCoreError::StateMiniStreamNotRunning
+        ));
+        assert!(!should_retry_command_flush(&ClientCoreError::EmptyPrompt));
+        assert!(!should_retry_command_flush(&ClientCoreError::EmptyThreadId));
+    }
+
+    #[test]
+    fn command_ack_receiver_buffers_unexpected_acks() {
+        let core = LooperClientCore::new();
+        let (_commands_receiver, acks_sender) = install_test_session_stream(&core);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        runtime.block_on(async {
+            acks_sender
+                .send(accepted_ack("cmid-later", 43, "rev-43"))
+                .await
+                .expect("send later ack");
+            acks_sender
+                .send(accepted_ack("cmid-current", 42, "rev-42"))
+                .await
+                .expect("send current ack");
+
+            let current = core
+                .recv_command_acks(vec!["cmid-current".to_owned()], 1)
+                .await
+                .expect("current ack");
+            assert_eq!(current.len(), 1);
+            assert_eq!(current[0].client_mutation_id, "cmid-current");
+
+            let later = core
+                .recv_command_acks(vec!["cmid-later".to_owned()], 1)
+                .await
+                .expect("buffered later ack");
+            assert_eq!(later.len(), 1);
+            assert_eq!(later[0].client_mutation_id, "cmid-later");
+        });
+    }
+
+    #[test]
     fn notification_reply_drain_lifecycle_is_serialized_in_rust_core() {
         let core = LooperClientCore::new();
         let store_path = temp_store_path("notification-drain-serialized");
@@ -2308,19 +2526,24 @@ mod tests {
         )
         .expect("queue prompt");
 
-        let mismatch = core
-            .take_expected_outbox(vec!["cmid-prompt".to_owned(), "cmid-mode".to_owned()])
-            .expect_err("mutation order mismatch");
-        assert_eq!(mismatch, ClientCoreError::UnexpectedOutboxMutations);
-        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 2);
+        let prompt_outbox = core
+            .take_expected_outbox(vec!["cmid-prompt".to_owned()])
+            .expect("matching prompt outbox");
+        assert_eq!(prompt_outbox.len(), 1);
+        assert_eq!(prompt_outbox[0].client_mutation_id, "cmid-prompt");
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 1);
+
+        let missing = core
+            .take_expected_outbox(vec!["cmid-prompt".to_owned()])
+            .expect_err("delivered mutation is no longer pending");
+        assert_eq!(missing, ClientCoreError::UnexpectedOutboxMutations);
 
         let outbox = core
-            .take_expected_outbox(vec!["cmid-mode".to_owned(), "cmid-prompt".to_owned()])
-            .expect("matching outbox");
+            .take_expected_outbox(vec!["cmid-mode".to_owned()])
+            .expect("remaining mode outbox");
 
-        assert_eq!(outbox.len(), 2);
+        assert_eq!(outbox.len(), 1);
         assert_eq!(outbox[0].client_mutation_id, "cmid-mode");
-        assert_eq!(outbox[1].client_mutation_id, "cmid-prompt");
         assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
     }
 
@@ -2381,6 +2604,79 @@ mod tests {
     }
 
     #[test]
+    fn assistant_surface_outbox_is_latest_wins() {
+        let core = LooperClientCore::new();
+        core.set_assistant_surface("claude-code".to_owned(), "cmid-claude".to_owned())
+            .expect("queue claude");
+        core.set_assistant_surface("devin".to_owned(), "cmid-devin".to_owned())
+            .expect("queue devin");
+        core.set_assistant_surface("grok-build".to_owned(), "cmid-grok".to_owned())
+            .expect("queue grok");
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            snapshot.pending_mutations[0].client_mutation_id,
+            "cmid-grok"
+        );
+
+        let outbox = core.take_outbox().expect("outbox");
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].client_mutation_id, "cmid-grok");
+        assert_eq!(outbox[0].assistant_surface, "grok-build");
+    }
+
+    #[test]
+    fn superseded_assistant_surface_ack_preserves_newer_outbox() {
+        let core = LooperClientCore::new();
+        core.set_assistant_surface("claude-code".to_owned(), "cmid-claude".to_owned())
+            .expect("queue claude");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let submit_core = core.clone();
+            let submit_task = tokio::spawn(async move {
+                submit_core
+                    .submit_expected_outbox(vec!["cmid-claude".to_owned()])
+                    .await
+            });
+            let frame = commands_receiver.recv().await.expect("command frame");
+            assert_eq!(frame.client_mutation_id, "cmid-claude");
+            assert_eq!(frame.command_kind, ClientCommandKind::SetAssistantSurface);
+
+            core.set_assistant_surface("grok-build".to_owned(), "cmid-grok".to_owned())
+                .expect("queue newer surface while old ack is pending");
+            acks_sender
+                .send(accepted_ack("cmid-claude", 42, "rev-42"))
+                .await
+                .expect("send old ack");
+
+            let response = submit_task
+                .await
+                .expect("submit task")
+                .expect("superseded latest-wins ack is still valid");
+            assert!(response.accepted);
+        });
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            snapshot.pending_mutations[0].client_mutation_id,
+            "cmid-grok"
+        );
+
+        let outbox = core
+            .take_expected_outbox(vec!["cmid-grok".to_owned()])
+            .expect("newer surface remains pending");
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].assistant_surface, "grok-build");
+    }
+
+    #[test]
     fn submit_expected_outbox_keeps_commands_queued_when_transport_fails() {
         let core = LooperClientCore::new();
         core.send_prompt(
@@ -2403,6 +2699,59 @@ mod tests {
             core.snapshot().expect("snapshot").pending_mutations.len(),
             1
         );
+    }
+
+    #[test]
+    fn flush_pending_outbox_retries_until_stream_is_available() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("flush-retry-stream");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        core.set_assistant_surface("grok-build".to_owned(), "cmid-surface".to_owned())
+            .expect("queue assistant surface");
+        store
+            .enqueue_set_assistant_surface_command(
+                "grok-build".to_owned(),
+                "cmid-surface".to_owned(),
+            )
+            .expect("persist assistant surface");
+        store
+            .mark_attempted("cmid-surface".to_owned())
+            .expect("mark initial attempt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let install_core = core.clone();
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                sleep(Duration::from_millis(50)).await;
+                let (mut commands_receiver, acks_sender) =
+                    install_test_session_stream(&install_core);
+                let frame = commands_receiver.recv().await.expect("retried command");
+                assert_eq!(frame.client_mutation_id, "cmid-surface");
+                assert_eq!(frame.command_kind, ClientCommandKind::SetAssistantSurface);
+                assert_eq!(frame.assistant_surface, "grok-build");
+                acks_sender
+                    .send(accepted_ack("cmid-surface", 44, "rev-44"))
+                    .await
+                    .expect("send ack");
+            });
+
+            core.flush_pending_outbox_with_retries(
+                store.clone(),
+                vec!["cmid-surface".to_owned()],
+                false,
+            )
+            .await
+            .expect("flush retries after endpoint appears");
+            ack_task.await.expect("ack task");
+        });
+
+        let local_snapshot = store.snapshot().expect("local snapshot");
+        assert!(local_snapshot.pending_commands.is_empty());
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 0);
+        assert_eq!(snapshot.latest_seq, 44);
+        assert_eq!(snapshot.revision, "rev-44");
     }
 
     #[test]
@@ -2445,6 +2794,62 @@ mod tests {
         assert_eq!(snapshot.latest_seq, 42);
         assert_eq!(snapshot.revision, "rev-42");
         assert_eq!(snapshot.server_time, "2026-06-25T00:00:42Z");
+    }
+
+    #[test]
+    fn submit_expected_outbox_keeps_commands_queued_while_ack_is_pending() {
+        let core = LooperClientCore::new();
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "queue".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let submit_core = core.clone();
+            let submit_task = tokio::spawn(async move {
+                submit_core
+                    .submit_expected_outbox(vec!["cmid-prompt".to_owned()])
+                    .await
+            });
+            let frame = commands_receiver.recv().await.expect("command frame");
+            assert_eq!(frame.client_mutation_id, "cmid-prompt");
+            assert_eq!(frame.command_kind, ClientCommandKind::SendSessionPrompt);
+
+            core.set_mode(
+                "thread-1".to_owned(),
+                "await-reply".to_owned(),
+                "cmid-mode".to_owned(),
+            )
+            .expect("queue newer mode while prompt ack is pending");
+            acks_sender
+                .send(accepted_ack("cmid-prompt", 42, "rev-42"))
+                .await
+                .expect("send prompt ack");
+
+            let response = submit_task
+                .await
+                .expect("submit task")
+                .expect("submit over existing stream");
+            assert!(response.accepted);
+            assert_eq!(response.command_acks.len(), 1);
+        });
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            snapshot.pending_mutations[0].client_mutation_id,
+            "cmid-mode"
+        );
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.revision, "rev-42");
     }
 
     #[test]
@@ -2860,7 +3265,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_session_batch_replaces_missing_sessions() {
+    fn state_mini_replacement_batch_replaces_missing_sessions() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -2877,7 +3282,7 @@ mod tests {
                 seq: 11,
                 latest_seq: 11,
                 entity_id: "mobile".to_owned(),
-                kind: "state_mini_delta".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
                 revision: "rev-11".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
                 has_session: false,
@@ -3234,6 +3639,60 @@ mod tests {
         assert_eq!(result.snapshot.latest_seq, 6);
         assert!(result.snapshot.state_minis.is_empty());
         assert_eq!(result.snapshot.revision, "rev-6");
+    }
+
+    #[test]
+    fn state_mini_batch_delta_merges_without_clearing_existing_sessions() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 5,
+            sessions: vec![
+                state_mini("thread-1", "codex", 5, "rev-5", "old"),
+                state_mini("thread-2", "codex", 4, "rev-4", "kept"),
+            ],
+            server_time: String::new(),
+        })
+        .expect("seed minis");
+
+        let result = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 6,
+                latest_seq: 6,
+                entity_id: "thread-1".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-6".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini("thread-1", "codex", 6, "rev-6", "new")],
+            })
+            .expect("apply batch delta");
+
+        assert!(result.did_change);
+        assert_eq!(result.snapshot.latest_seq, 6);
+        assert_eq!(
+            result
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2", "thread-1"]
+        );
+        let thread_1 = result
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-1")
+            .expect("updated thread");
+        let thread_2 = result
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-2")
+            .expect("preserved thread");
+        assert_eq!(thread_1.payload_json, r#"{"title":"new"}"#);
+        assert_eq!(thread_2.payload_json, r#"{"title":"kept"}"#);
     }
 
     #[test]

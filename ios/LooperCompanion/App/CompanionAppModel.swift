@@ -22,6 +22,43 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
+private struct AssistantSurfaceSelectionFailure: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        message
+    }
+}
+
+private enum AssistantSurfaceETTraceMetric {
+    static let startedNotification = Notification.Name(rawValue: "EmergeMetricStarted")
+    static let endedNotification = Notification.Name(rawValue: "EmergeMetricEnded")
+    static let metricUserInfoKey = "metric"
+    static let namePrefix = "assistant_surface_selection"
+
+    static func name(for surface: CompanionAssistantSurface) -> String {
+        "\(namePrefix).\(surface.rawValue)"
+    }
+
+    static func postStarted(for surface: CompanionAssistantSurface) {
+        post(startedNotification, surface: surface)
+    }
+
+    static func postEnded(for surface: CompanionAssistantSurface) {
+        post(endedNotification, surface: surface)
+    }
+
+    private static func post(_ notification: Notification.Name, surface: CompanionAssistantSurface) {
+        #if DEBUG
+        NotificationCenter.default.post(
+            name: notification,
+            object: nil,
+            userInfo: [metricUserInfoKey: name(for: surface)]
+        )
+        #endif
+    }
+}
+
 enum StateMiniRecoveryResult: Equatable {
     case skipped
     case applied
@@ -116,6 +153,7 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
     @ObservationIgnored private let sessionDetailCoordinator = CompanionSessionDetailCoordinator()
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
+    @ObservationIgnored private let sessionSyncEngine: SessionSyncEngine
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
@@ -123,7 +161,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
-    @ObservationIgnored private var assistantSurfaceSelectionGeneration = 0
 
     init(
         environment: CompanionEnvironment,
@@ -139,6 +176,7 @@ final class CompanionAppModel {
             ?? providedSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
+        self.sessionSyncEngine = SessionSyncEngine(commandDispatcher: sessionRuntime)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
@@ -786,6 +824,10 @@ final class CompanionAppModel {
         }
 
         return activeSessionRouteBaseURL
+    }
+
+    var pendingSessionRuntimeCommandCount: Int {
+        sessionSyncEngine.pendingCommandCount
     }
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
@@ -1515,41 +1557,73 @@ final class CompanionAppModel {
     @discardableResult
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Task<Bool, Never>? {
         guard snapshotState.selectedAssistantSurface != surface else {
+            CompanionDiagnostics.assistantSurface.debug(
+                "Selection ignored surface=\(surface.rawValue, privacy: .public) reason=no-change"
+            )
+            CompanionDiagnostics.record("assistant-surface:ignored surface=\(surface.rawValue) reason=no-change")
             return nil
         }
-        assistantSurfaceSelectionGeneration += 1
-        let selectionGeneration = assistantSurfaceSelectionGeneration
 
-        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+        AssistantSurfaceETTraceMetric.postStarted(for: surface)
+
+        guard let selectionTask = sessionSyncEngine.selectAssistantSurface(surface) else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
+            AssistantSurfaceETTraceMetric.postEnded(for: surface)
             return nil
         }
 
-        return Task { @MainActor [weak self, targetRuntime] in
-            do {
-                try await targetRuntime.setAssistantSurface(surface)
-                guard let self else {
+        let previousSurface = snapshotState.selectedAssistantSurface
+        let didSelectDesiredSurface = snapshotState.selectAssistantSurface(surface)
+        if didSelectDesiredSurface {
+            publishSnapshotStateChange(reason: "assistant-surface-desired")
+        }
+
+        return Task { @MainActor [weak self] in
+            let result = await selectionTask.value
+            guard let self else {
+                AssistantSurfaceETTraceMetric.postEnded(for: surface)
+                return false
+            }
+            defer {
+                AssistantSurfaceETTraceMetric.postEnded(for: surface)
+            }
+
+            switch result.status {
+            case .applied:
+                guard let appliedSurface = result.appliedSurface else {
                     return false
                 }
-                guard self.assistantSurfaceSelectionGeneration == selectionGeneration else {
-                    return false
+
+                let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(appliedSurface)
+                let didSelectSurface = self.snapshotState.selectAssistantSurface(appliedSurface)
+                if didApplySurface || didSelectSurface {
+                    self.publishSnapshotStateChange(reason: "assistant-surface-selected")
+                } else {
+                    CompanionDiagnostics.assistantSurface.debug(
+                        "Selection accepted without visible change surface=\(appliedSurface.rawValue, privacy: .public) generation=\(result.generation, privacy: .public)"
+                    )
+                    CompanionDiagnostics.record(
+                        "assistant-surface:no-visible-change surface=\(appliedSurface.rawValue) generation=\(result.generation)"
+                    )
                 }
-                let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(surface)
-                let didSelectSurface = self.snapshotState.selectAssistantSurface(surface)
-                guard didApplySurface || didSelectSurface else {
-                    return false
-                }
-                self.publishSnapshotStateChange(reason: "assistant-surface-selected")
-                CompanionDiagnostics.record("assistant-surface:selected surface=\(surface.rawValue)")
+
+                CompanionDiagnostics.record("assistant-surface:selected surface=\(appliedSurface.rawValue)")
                 self.errorMessage = nil
                 self.lastUpdatedAt = Date()
                 return true
-            } catch {
-                guard self?.assistantSurfaceSelectionGeneration == selectionGeneration else {
-                    return false
+            case .stale:
+                return false
+            case let .failed(message):
+                if self.snapshotState.selectedAssistantSurface == surface,
+                   self.snapshotState.selectAssistantSurface(previousSurface)
+                {
+                    self.publishSnapshotStateChange(reason: "assistant-surface-rollback")
                 }
-                self?.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
+                self.applyConnectionFailure(
+                    AssistantSurfaceSelectionFailure(message: message),
+                    suppressErrorWhenSnapshotUsable: true
+                )
                 Haptics.error()
                 return false
             }

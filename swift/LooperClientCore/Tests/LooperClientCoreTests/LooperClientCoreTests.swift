@@ -62,6 +62,36 @@ struct LooperClientCoreTests {
     }
 
     @Test
+    func mobileProjectionBucketsCodexCompatibleClientsUnderCodex() throws {
+        let projection = try reduceStateMinisMobileSnapshot(
+            latestSeq: 12,
+            sessions: [
+                stateMini(
+                    sessionID: "thread-cursor",
+                    surface: "cursor",
+                    seq: 12,
+                    revision: "rev-12",
+                    title: "cursor"
+                ),
+                stateMini(sessionID: threadID, seq: 11, revision: "rev-11", title: "codex"),
+            ],
+            serverTime: serverTime
+        )
+        let snapshot = try decodedSnapshot(projection.snapshotJson)
+        let surfaceSessions = try #require(
+            snapshot["surfaceSessions"] as? [String: [[String: Any]]]
+        )
+        let codexSessions = try #require(surfaceSessions["codex"])
+
+        #expect(projection.hasSnapshot)
+        #expect(snapshot["sessions"] as? [[String: Any]] != nil)
+        #expect(surfaceSessions["cursor"] == nil)
+        #expect(codexSessions.count == 2)
+        #expect(codexSessions[0]["id"] as? String == "thread-cursor")
+        #expect(codexSessions[0]["assistantClient"] as? String == "cursor")
+    }
+
+    @Test
     func cachedSnapshotFailureDoesNotReportConnected() throws {
         let projection = try reduceSnapshotLoadFailure(
             mappedErrorState: "offline",
@@ -104,6 +134,11 @@ struct LooperClientCoreTests {
             revision: revision,
             payloadJson: #"{"id":"\#(sessionID)","sessionId":"\#(sessionID)","assistantSurface":"\#(surface)","title":"\#(title)","ref":"\#(sessionID)","status":"active","lastActivityAtMs":\#(seq)}"#
         )
+    }
+
+    private func decodedSnapshot(_ snapshotJson: String) throws -> [String: Any] {
+        let data = try #require(snapshotJson.data(using: .utf8))
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     private func temporarySessionManager() throws -> LooperClientCoreSessionManager {

@@ -54,6 +54,18 @@ pub(super) fn mobile_snapshot_response(
 }
 
 pub(super) fn mobile_session_minis_snapshot_response(control_plane: &ControlPlane) -> Response {
+    match cached_mobile_session_mini_projection(control_plane) {
+        Ok(Some((latest_seq, records))) => {
+            return (
+                StatusCode::OK,
+                Json(mobile_session_mini_snapshot(latest_seq, &records)),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(error) => return internal_mobile_error_response(error),
+    }
+
     match rebuild_mobile_session_mini_projection(control_plane) {
         Ok((latest_seq, records)) => (
             StatusCode::OK,
@@ -152,4 +164,31 @@ fn rebuild_mobile_session_mini_projection(
         .replace_mobile_session_minis(minis, latest_seq, &snapshot.revision)
         .map_err(|error| error.to_string())?;
     Ok((latest_seq, records))
+}
+
+fn cached_mobile_session_mini_projection(
+    control_plane: &ControlPlane,
+) -> Result<Option<(i64, Vec<crate::events::MobileSessionMiniRecord>)>, String> {
+    let records = control_plane
+        .store()
+        .mobile_session_minis()
+        .map_err(|error| error.to_string())?;
+    if records.is_empty() {
+        return Ok(None);
+    }
+
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .map_err(|error| error.to_string())?;
+    let latest_projection_seq = records
+        .iter()
+        .map(|record| record.seq)
+        .max()
+        .unwrap_or_default();
+    if latest_projection_seq < latest_seq {
+        return Ok(None);
+    }
+
+    Ok(Some((latest_seq, records)))
 }

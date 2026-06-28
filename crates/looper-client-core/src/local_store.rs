@@ -140,6 +140,12 @@ impl LooperClientCoreLocalStore {
 
         let mut state = self.lock_state()?;
         let command = StoredPendingCommand::from(command);
+        if latest_pending_command_wins(command.kind) {
+            state.pending_commands.retain(|pending| {
+                pending.client_mutation_id == command.client_mutation_id
+                    || !same_pending_command_target(pending, &command)
+            });
+        }
         if let Some(existing) = state
             .pending_commands
             .iter_mut()
@@ -427,21 +433,14 @@ impl LooperClientCoreLocalStore {
     }
 
     fn persist_locked(&self, state: &StoredState) -> Result<(), ClientCoreError> {
-        if let Some(parent) = self.file_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
-        }
-        let data = serde_json::to_vec(state).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
-        let temp_path = temporary_path(&self.file_path)?;
-        std::fs::write(&temp_path, data).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
-        std::fs::rename(temp_path, &self.file_path)
-            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)
+        persist_state(&self.file_path, state)
     }
 }
 
 impl StoredState {
-    fn repair_legacy_control_payload_cursor(&mut self) {
+    fn repair_legacy_control_payload_cursor(&mut self) -> bool {
         if self.sessions.is_empty() || !has_legacy_control_payload(&self.sessions) {
-            return;
+            return false;
         }
 
         let latest_materialized_seq = self
@@ -452,7 +451,23 @@ impl StoredState {
             .unwrap_or_default();
         if self.latest_seq > latest_materialized_seq {
             self.latest_seq = latest_materialized_seq;
+            return true;
         }
+        false
+    }
+
+    fn coalesce_latest_pending_commands(&mut self) -> bool {
+        let original_pending_commands = self.pending_commands.clone();
+        let mut pending_commands = Vec::with_capacity(self.pending_commands.len());
+        for command in self.pending_commands.drain(..) {
+            if latest_pending_command_wins(command.kind) {
+                pending_commands.retain(|pending| !same_pending_command_target(pending, &command));
+            }
+            pending_commands.push(command);
+        }
+        let changed = pending_commands != original_pending_commands;
+        self.pending_commands = pending_commands;
+        changed
     }
 
     fn snapshot(&self) -> ClientLocalStateSnapshot {
@@ -537,7 +552,11 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
 fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     match load(file_path) {
         Ok(mut state) => {
-            state.repair_legacy_control_payload_cursor();
+            let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
+            let coalesced_pending_commands = state.coalesce_latest_pending_commands();
+            if repaired_legacy_cursor || coalesced_pending_commands {
+                persist_state(file_path, &state)?;
+            }
             Ok(state)
         }
         Err(ClientCoreError::InvalidSnapshotJson) => {
@@ -557,6 +576,16 @@ fn load(file_path: &Path) -> Result<StoredState, ClientCoreError> {
         return Ok(StoredState::default());
     }
     serde_json::from_slice(&data).map_err(|_| ClientCoreError::InvalidSnapshotJson)
+}
+
+fn persist_state(file_path: &Path, state: &StoredState) -> Result<(), ClientCoreError> {
+    if let Some(parent) = file_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+    }
+    let data = serde_json::to_vec(state).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+    let temp_path = temporary_path(file_path)?;
+    std::fs::write(&temp_path, data).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+    std::fs::rename(temp_path, file_path).map_err(|_| ClientCoreError::LocalStoreWriteFailed)
 }
 
 fn temporary_path(file_path: &Path) -> Result<PathBuf, ClientCoreError> {
@@ -657,6 +686,17 @@ fn normalized_endpoint_url(endpoint_url: &str) -> Result<String, ClientCoreError
         return Err(ClientCoreError::InvalidEndpoint);
     }
     Ok(endpoint_url)
+}
+
+fn latest_pending_command_wins(kind: ClientPendingCommandKind) -> bool {
+    matches!(kind, ClientPendingCommandKind::SetAssistantSurface)
+}
+
+fn same_pending_command_target(
+    existing: &StoredPendingCommand,
+    command: &StoredPendingCommand,
+) -> bool {
+    existing.kind == command.kind && existing.thread_id == command.thread_id
 }
 
 fn notification_reply_retry_delay(attempt_count: u32) -> u64 {
@@ -811,6 +851,99 @@ mod tests {
         assert_eq!(
             reopened_snapshot.pending_commands[0].client_mutation_id,
             "mutation-pending"
+        );
+    }
+
+    #[test]
+    fn local_store_coalesces_assistant_surface_switches_to_latest_command() {
+        let path = temp_store_path("assistant-surface-latest-wins");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_set_assistant_surface_command(
+                "claude-code".to_owned(),
+                "mutation-claude".to_owned(),
+            )
+            .expect("enqueue first surface");
+        store
+            .mark_attempted("mutation-claude".to_owned())
+            .expect("attempt first surface");
+        let snapshot = store
+            .enqueue_set_assistant_surface_command("devin".to_owned(), "mutation-devin".to_owned())
+            .expect("enqueue latest surface");
+
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-devin"
+        );
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 0);
+
+        drop(store);
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let reopened_snapshot = reopened.snapshot().expect("snapshot");
+        assert_eq!(reopened_snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            reopened_snapshot.pending_commands[0].client_mutation_id,
+            "mutation-devin"
+        );
+    }
+
+    #[test]
+    fn local_store_repairs_stale_assistant_surface_switches_on_load() {
+        let path = temp_store_path("assistant-surface-load-repair");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 5,
+                "pendingCommands": [
+                    {
+                        "kind": "SetAssistantSurface",
+                        "clientMutationID": "mutation-claude",
+                        "threadID": "mobile-settings",
+                        "assistantSurface": "claude-code",
+                        "attemptCount": 1
+                    },
+                    {
+                        "kind": "SetAssistantSurface",
+                        "clientMutationID": "mutation-devin",
+                        "threadID": "mobile-settings",
+                        "assistantSurface": "devin",
+                        "attemptCount": 0
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write stale cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let snapshot = store.snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-devin"
+        );
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
+                .expect("repaired json");
+        assert_eq!(
+            persisted["pendingCommands"]
+                .as_array()
+                .expect("pending commands")
+                .len(),
+            1
+        );
+        assert_eq!(
+            persisted["pendingCommands"][0]["clientMutationID"],
+            "mutation-devin"
         );
     }
 
@@ -1002,6 +1135,96 @@ mod tests {
                 .expect("capped retry plan")
                 .delay_nanoseconds,
             NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS
+        );
+    }
+
+    #[test]
+    fn assistant_surface_pending_requires_ack_after_matching_recovery_snapshot() {
+        let path = temp_store_path("assistant-surface-pending-requires-ack");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_set_assistant_surface_command(
+                "codex".to_owned(),
+                "mutation-surface".to_owned(),
+            )
+            .expect("enqueue surface");
+        store
+            .mark_attempted("mutation-surface".to_owned())
+            .expect("attempt surface");
+
+        let snapshot = store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 42,
+                sessions: vec![state_mini("thread-main", "codex", 42, "rev-42", "Cached")],
+                server_time: "2026-06-24T00:00:42Z".to_owned(),
+            })
+            .expect("recover state minis");
+
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-surface"
+        );
+
+        store
+            .mark_delivered("mutation-surface".to_owned())
+            .expect("ack finality");
+        assert!(
+            store
+                .snapshot()
+                .expect("snapshot")
+                .pending_commands
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn assistant_surface_pending_requires_ack_after_matching_compact_revision() {
+        let path = temp_store_path("assistant-surface-pending-requires-ack-compact-revision");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_set_assistant_surface_command(
+                "claude-code".to_owned(),
+                "mutation-surface".to_owned(),
+            )
+            .expect("enqueue surface");
+        store
+            .mark_attempted("mutation-surface".to_owned())
+            .expect("attempt surface");
+
+        let snapshot = store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 42,
+                sessions: vec![state_mini(
+                    "thread-main",
+                    "codex",
+                    42,
+                    "threads=thread-main:surface=claude-code:mobile-state=hash",
+                    "Cached",
+                )],
+                server_time: "2026-06-24T00:00:42Z".to_owned(),
+            })
+            .expect("recover compact state minis");
+
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-surface"
+        );
+
+        store
+            .mark_delivered("mutation-surface".to_owned())
+            .expect("ack finality");
+        assert!(
+            store
+                .snapshot()
+                .expect("snapshot")
+                .pending_commands
+                .is_empty()
         );
     }
 

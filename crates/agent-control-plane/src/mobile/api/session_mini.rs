@@ -531,7 +531,7 @@ fn bounded_notification_status(notification_status: &Value) -> Option<Value> {
 fn bounded_git_repository(git_repository: Option<&Value>) -> Option<Value> {
     let git_repository = git_repository?.as_object()?;
     let mut bounded = Map::new();
-    for field in ["repositoryName", "remoteURL", "branch"] {
+    for field in ["repositoryName", "repositoryPath", "remoteURL", "branch"] {
         if let Some(value) = git_repository.get(field) {
             bounded.insert(
                 field.to_owned(),
@@ -600,6 +600,11 @@ mod tests {
             "source": "codex",
             "sourceDisplayName": "Codex",
             "projectPath": "/".to_owned() + &"project/".repeat(100),
+            "gitRepository": {
+                "repositoryName": "looper",
+                "repositoryPath": "/".to_owned() + &"looper/".repeat(100),
+                "branch": "main",
+            },
             "tags": vec!["tag".repeat(40); METADATA_DETAIL_FIXTURE_TAG_COUNT],
             "sources": vec![json!({"kind": "source", "label": "Transcript", "value": "value"})],
             "spawn": {"rootThreadId": "thread-main"},
@@ -616,6 +621,16 @@ mod tests {
                 .count()
                 <= MINI_METADATA_TEXT_MAX_CHARS
         );
+        assert_eq!(bounded["gitRepository"]["repositoryName"], "looper");
+        assert!(
+            bounded["gitRepository"]["repositoryPath"]
+                .as_str()
+                .expect("repository path")
+                .chars()
+                .count()
+                <= MINI_METADATA_TEXT_MAX_CHARS
+        );
+        assert_eq!(bounded["gitRepository"]["branch"], "main");
         assert!(bounded.get("tags").is_none());
         assert!(bounded.get("sources").is_none());
         assert!(bounded.get("spawn").is_none());

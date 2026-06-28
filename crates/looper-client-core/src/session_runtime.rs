@@ -34,6 +34,7 @@ const ARCHIVE_MUTATION_PREFIX: &str = "archive";
 const DELETE_MUTATION_PREFIX: &str = "delete";
 const MUTE_MUTATION_PREFIX: &str = "mute";
 const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "accepted";
+const EMPTY_LOCAL_REPLAY_SEQUENCE: i64 = 0;
 
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreSessionRuntime {
@@ -434,7 +435,7 @@ impl LooperClientCoreSessionRuntime {
     fn seed_core_from_local_store(&self) -> Result<Vec<String>, ClientCoreError> {
         let snapshot = self.local_store.snapshot()?;
         self.client_core
-            .replace_state_minis(ClientStateMiniSnapshot::from(snapshot.clone()))?;
+            .replace_state_minis(resume_seed_snapshot(snapshot.clone()))?;
         self.client_core
             .restore_pending_commands(snapshot.pending_commands)
     }
@@ -541,6 +542,19 @@ impl LooperClientCoreSessionRuntime {
             error_description: update.error_description,
             debug_message,
         })
+    }
+}
+
+fn resume_seed_snapshot(snapshot: ClientLocalStateSnapshot) -> ClientStateMiniSnapshot {
+    let latest_seq = if snapshot.sessions.is_empty() {
+        EMPTY_LOCAL_REPLAY_SEQUENCE
+    } else {
+        snapshot.latest_seq
+    };
+    ClientStateMiniSnapshot {
+        latest_seq,
+        sessions: snapshot.sessions,
+        server_time: snapshot.server_time,
     }
 }
 
@@ -861,6 +875,41 @@ mod tests {
         assert_eq!(
             runtime.local_snapshot().expect("local snapshot").latest_seq,
             7
+        );
+    }
+
+    #[test]
+    fn runtime_does_not_seed_empty_durable_state_as_replay_cursor() {
+        let path = temp_store_path("empty-state-mini-cursor");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+        runtime
+            .local_store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 42,
+                sessions: Vec::new(),
+                server_time: "2026-06-26T00:00:42Z".to_owned(),
+            })
+            .expect("poison empty local cursor");
+        drop(runtime);
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        assert_eq!(
+            reopened
+                .local_snapshot()
+                .expect("local snapshot")
+                .latest_seq,
+            42
+        );
+        assert_eq!(
+            reopened.state_snapshot().expect("core snapshot").latest_seq,
+            EMPTY_LOCAL_REPLAY_SEQUENCE
+        );
+        assert!(
+            reopened
+                .state_snapshot()
+                .expect("core snapshot")
+                .state_minis
+                .is_empty()
         );
     }
 

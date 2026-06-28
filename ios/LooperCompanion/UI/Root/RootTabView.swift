@@ -67,6 +67,12 @@ struct RootTabView: View {
                 AppUnlockScreen(authenticator: authenticator)
                     .transition(.opacity)
             }
+
+            #if DEBUG
+            if UITestLaunchArguments.isUITestEnabled {
+                UITestPendingCommandDrainMarker(model: model)
+            }
+            #endif
         }
         .task(id: refreshTaskID) {
             await refreshForActiveSceneIfNeeded()
@@ -275,6 +281,38 @@ struct RootTabView: View {
         }
     }
 }
+
+#if DEBUG
+private enum UITestPendingCommandDrainMetrics {
+    static let accessibilityIdentifier = "debug.pending-command-count"
+    static let pollingInterval: Duration = .milliseconds(100)
+    static let markerSize: CGFloat = 1
+}
+
+private struct UITestPendingCommandDrainMarker: View {
+    let model: CompanionAppModel
+
+    @State private var pendingCommandCount = Int.max
+
+    var body: some View {
+        Color.clear
+            .frame(
+                width: UITestPendingCommandDrainMetrics.markerSize,
+                height: UITestPendingCommandDrainMetrics.markerSize
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier(UITestPendingCommandDrainMetrics.accessibilityIdentifier)
+            .accessibilityLabel("pending command count")
+            .accessibilityValue("\(pendingCommandCount)")
+            .task {
+                while !Task.isCancelled {
+                    pendingCommandCount = model.pendingSessionRuntimeCommandCount
+                    try? await Task.sleep(for: UITestPendingCommandDrainMetrics.pollingInterval)
+                }
+            }
+    }
+}
+#endif
 
 private struct AppUnlockScreen: View {
     let authenticator: CompanionAppAuthenticator

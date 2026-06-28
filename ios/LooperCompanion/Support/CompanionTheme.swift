@@ -55,6 +55,7 @@ enum CompanionDiagnostics {
     static let configuration = Logger(subsystem: subsystem, category: "Configuration")
     static let lifecycle = Logger(subsystem: subsystem, category: "Lifecycle")
     static let networking = Logger(subsystem: subsystem, category: "Networking")
+    static let assistantSurface = Logger(subsystem: subsystem, category: "AssistantSurface")
 
     static func record(_ message: String) {
         #if DEBUG

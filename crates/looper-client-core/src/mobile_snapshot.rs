@@ -13,8 +13,15 @@ const GLOBAL_SCOPE: &str = "global";
 const HOST_ID: &str = "local-session-mini-cache";
 const HOST_NAME: &str = "Looper";
 const REVISION_PREFIX: &str = "mini:";
+const REVISION_SURFACE_FIELD_PREFIX: &str = "surface=";
 
 const KNOWN_ASSISTANT_SURFACES: [&str; 5] = ["codex", "claude-code", "devin", "grok-build", "zed"];
+const CODEX_SURFACE_ASSISTANT_CLIENTS: [&str; 4] = [
+    DEFAULT_ASSISTANT_SURFACE,
+    "cursor",
+    "super-engineering",
+    "openclaw",
+];
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientMobileSnapshotProjection {
@@ -49,7 +56,7 @@ pub fn reduce_state_minis_mobile_snapshot(
             }
         }
         sessions_by_surface
-            .entry(mini.assistant_surface.clone())
+            .entry(surface_bucket_for_assistant_client(&mini.assistant_surface).to_owned())
             .or_default()
             .push(session.clone());
     }
@@ -145,11 +152,9 @@ fn decode_session_payload(mini: &ClientStateMini) -> Result<Value, ClientCoreErr
         "sessionId".to_owned(),
         Value::String(mini.session_id.clone()),
     );
-    insert_string_default(
-        session,
-        "assistantSurface",
-        fallback_assistant_surface(&mini.assistant_surface),
-    );
+    let assistant_client = fallback_assistant_client(&mini.assistant_surface);
+    insert_string_default(session, "assistantSurface", assistant_client);
+    insert_string_default(session, "assistantClient", assistant_client);
     insert_string_default(session, "ref", &mini.session_id);
     insert_string_default(session, "title", &mini.session_id);
     insert_string_default(session, "status", DEFAULT_SESSION_STATUS);
@@ -160,6 +165,7 @@ fn decode_session_payload(mini: &ClientStateMini) -> Result<Value, ClientCoreErr
     session
         .entry("metadata".to_owned())
         .or_insert_with(|| json!({}));
+    repair_git_repository_metadata(session);
 
     Ok(Value::Object(session.clone()))
 }
@@ -195,18 +201,76 @@ fn insert_bool_default(session: &mut serde_json::Map<String, Value>, key: &str, 
     }
 }
 
-fn fallback_assistant_surface(surface: &str) -> &str {
-    if surface.trim().is_empty() {
+fn repair_git_repository_metadata(session: &mut serde_json::Map<String, Value>) {
+    let fallback_name = session
+        .get("metadata")
+        .and_then(|metadata| metadata.get("projectName"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            session
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        });
+    let Some(repository) = session
+        .get_mut("metadata")
+        .and_then(|metadata| metadata.as_object_mut())
+        .and_then(|metadata| metadata.get_mut("gitRepository"))
+        .and_then(|repository| repository.as_object_mut())
+    else {
+        return;
+    };
+    insert_string_default(repository, "repositoryName", &fallback_name);
+    insert_string_default(repository, "repositoryPath", "");
+}
+
+fn fallback_assistant_client(client: &str) -> &str {
+    if client.trim().is_empty() {
         DEFAULT_ASSISTANT_SURFACE
     } else {
-        surface
+        client
     }
 }
 
 fn selected_surface(sessions: &[(&ClientStateMini, Value)]) -> String {
+    if let Some(surface) = selected_surface_from_revision(sessions) {
+        return surface;
+    }
+
+    selected_surface_from_sessions(sessions)
+}
+
+fn selected_surface_from_revision(sessions: &[(&ClientStateMini, Value)]) -> Option<String> {
+    sessions
+        .iter()
+        .filter_map(|(session, _)| {
+            revision_assistant_surface(&session.revision)
+                .map(|surface| (session.seq, session.session_id.as_str(), surface))
+        })
+        .max_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(right.1)))
+        .map(|(_, _, surface)| surface)
+}
+
+fn revision_assistant_surface(revision: &str) -> Option<String> {
+    revision.split(':').find_map(|part| {
+        let surface = part
+            .trim()
+            .strip_prefix(REVISION_SURFACE_FIELD_PREFIX)?
+            .trim();
+        is_known_assistant_surface(surface).then(|| surface.to_owned())
+    })
+}
+
+fn selected_surface_from_sessions(sessions: &[(&ClientStateMini, Value)]) -> String {
     let mut candidates = sessions
         .iter()
-        .filter(|(session, _)| is_known_assistant_surface(&session.assistant_surface))
+        .filter(|(session, _)| {
+            is_known_assistant_surface(surface_bucket_for_assistant_client(
+                &session.assistant_surface,
+            ))
+        })
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         right
@@ -217,12 +281,23 @@ fn selected_surface(sessions: &[(&ClientStateMini, Value)]) -> String {
     });
     candidates
         .first()
-        .map(|(session, _)| session.assistant_surface.clone())
+        .map(|(session, _)| {
+            surface_bucket_for_assistant_client(&session.assistant_surface).to_owned()
+        })
         .unwrap_or_else(|| DEFAULT_ASSISTANT_SURFACE.to_owned())
 }
 
 fn is_known_assistant_surface(surface: &str) -> bool {
     KNOWN_ASSISTANT_SURFACES.contains(&surface)
+}
+
+fn surface_bucket_for_assistant_client(client: &str) -> &str {
+    let assistant_client = fallback_assistant_client(client);
+    if CODEX_SURFACE_ASSISTANT_CLIENTS.contains(&assistant_client) {
+        DEFAULT_ASSISTANT_SURFACE
+    } else {
+        assistant_client
+    }
 }
 
 fn revision(latest_seq: i64, sessions: &[(&ClientStateMini, Value)]) -> String {
@@ -327,6 +402,40 @@ mod tests {
     }
 
     #[test]
+    fn mobile_snapshot_selects_surface_from_compact_revision() {
+        let projection = reduce_state_minis_mobile_snapshot(
+            42,
+            vec![mini(
+                "thread-codex",
+                "codex",
+                42,
+                "threads=thread-codex:surface=claude-code:mobile-state=hash",
+                "C1",
+                1_781_596_920_123,
+            )],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+
+        assert!(projection.has_snapshot);
+        assert_eq!(
+            snapshot["globalSettings"]["assistantSurface"],
+            "claude-code"
+        );
+        assert!(
+            snapshot["sessions"]
+                .as_array()
+                .expect("sessions")
+                .is_empty()
+        );
+        assert_eq!(
+            snapshot["surfaceSessions"]["codex"][0]["id"],
+            "thread-codex"
+        );
+    }
+
+    #[test]
     fn mobile_snapshot_sorts_sessions_by_activity_then_ref() {
         let projection = reduce_state_minis_mobile_snapshot(
             14,
@@ -351,6 +460,46 @@ mod tests {
             session_ids,
             vec!["newer", "tie-lower-ref", "tie-higher-ref", "older"]
         );
+    }
+
+    #[test]
+    fn mobile_snapshot_groups_codex_compatible_clients_under_codex_surface() {
+        let projection = reduce_state_minis_mobile_snapshot(
+            31,
+            vec![
+                mini("thread-cursor", "cursor", 30, "rev-30", "C1", 300),
+                mini("thread-super", "super-engineering", 31, "rev-31", "S1", 200),
+                mini("thread-codex", "codex", 29, "rev-29", "Z1", 100),
+            ],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let codex_sessions = snapshot["surfaceSessions"]["codex"]
+            .as_array()
+            .expect("codex surface sessions");
+        let visible_session_ids = snapshot["sessions"]
+            .as_array()
+            .expect("visible sessions")
+            .iter()
+            .map(|session| session["id"].as_str().expect("id"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshot["globalSettings"]["assistantSurface"], "codex");
+        assert!(snapshot["surfaceSessions"].get("cursor").is_none());
+        assert!(
+            snapshot["surfaceSessions"]
+                .get("super-engineering")
+                .is_none()
+        );
+        assert_eq!(codex_sessions.len(), 3);
+        assert_eq!(
+            visible_session_ids,
+            vec!["thread-cursor", "thread-super", "thread-codex"]
+        );
+        assert_eq!(codex_sessions[0]["assistantClient"], "cursor");
+        assert_eq!(codex_sessions[1]["assistantClient"], "super-engineering");
+        assert_eq!(codex_sessions[2]["assistantClient"], "codex");
     }
 
     #[test]
@@ -423,6 +572,7 @@ mod tests {
         assert_eq!(session["id"], "thread-compact");
         assert_eq!(session["sessionId"], "thread-compact");
         assert_eq!(session["assistantSurface"], "codex");
+        assert_eq!(session["assistantClient"], "codex");
         assert_eq!(session["ref"], "thread-compact");
         assert_eq!(session["title"], "thread-compact");
         assert_eq!(session["status"], DEFAULT_SESSION_STATUS);
@@ -430,6 +580,45 @@ mod tests {
         assert_eq!(session["lastActivityAt"], "");
         assert_eq!(session["isArchived"], false);
         assert_eq!(session["canSendPrompt"], true);
+    }
+
+    #[test]
+    fn mobile_snapshot_repairs_partial_git_repository_metadata() {
+        let projection = reduce_state_minis_mobile_snapshot(
+            22,
+            vec![ClientStateMini {
+                session_id: "thread-partial-git".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                seq: 22,
+                revision: "rev-22".to_owned(),
+                payload_json: json!({
+                    "id": "thread-partial-git",
+                    "ref": "S22",
+                    "title": "Partial Git",
+                    "status": "active",
+                    "lastUpdatedAt": "2026-06-16T08:02:00Z",
+                    "lastActivityAt": "2026-06-16T08:02:00Z",
+                    "metadata": {
+                        "projectName": "looper",
+                        "gitRepository": {
+                            "repositoryName": "looper",
+                            "branch": "main",
+                            "remoteURL": null
+                        }
+                    }
+                })
+                .to_string(),
+            }],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("partial git metadata projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let repository = &snapshot["sessions"][0]["metadata"]["gitRepository"];
+
+        assert!(projection.has_snapshot);
+        assert_eq!(repository["repositoryName"], "looper");
+        assert_eq!(repository["repositoryPath"], "");
+        assert_eq!(repository["branch"], "main");
     }
 
     fn mini(

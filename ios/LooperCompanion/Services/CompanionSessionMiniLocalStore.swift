@@ -10,6 +10,7 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
     let kind: ClientPendingCommandKind
     let clientMutationID: String
     let threadID: String
+    let assistantSurface: String?
     let notificationID: String?
     let prompt: String?
     let attemptCount: Int
@@ -668,6 +669,7 @@ private extension CompanionSessionMiniPendingCommand {
             kind: command.kind,
             clientMutationID: command.clientMutationId,
             threadID: command.threadId,
+            assistantSurface: command.assistantSurface.nilIfEmpty,
             notificationID: command.notificationId.nilIfEmpty,
             prompt: command.prompt.nilIfEmpty,
             attemptCount: Int(command.attemptCount)

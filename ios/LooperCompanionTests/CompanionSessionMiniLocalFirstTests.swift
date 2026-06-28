@@ -218,6 +218,27 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testSessionSyncEngineCoalescesRapidAssistantSurfaceSwitchesToLatest() async throws {
+        let dispatcher = AssistantSurfaceDispatcherSpy()
+        let engine = SessionSyncEngine(commandDispatcher: dispatcher)
+
+        let claudeTask = try #require(engine.selectAssistantSurface(.claudeCode))
+        let devinTask = try #require(engine.selectAssistantSurface(.devin))
+
+        let claudeResult = await claudeTask.value
+        let devinResult = await devinTask.value
+
+        #expect(claudeResult.didApplySelection)
+        #expect(claudeResult.appliedSurface == .devin)
+        #expect(devinResult.didApplySelection)
+        #expect(devinResult.appliedSurface == .devin)
+        #expect(dispatcher.dispatchedSurfaces == [.devin])
+        #expect(engine.pendingCommandCount == 1)
+        #expect(dispatcher.pendingCommands().first?.assistantSurface == CompanionAssistantSurface.devin.rawValue)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -245,6 +266,42 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.connectionState == .connecting)
         #expect(model.errorMessage == nil)
         #expect(model.viewState.connectivityHeadline == "Looper")
+    }
+
+    @MainActor
+    @Test
+    func testRapidAssistantSurfaceSwitchesResolveToLatestSelection() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 8, revision: "mini-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        let claudeTask = try #require(model.selectAssistantSurface(.claudeCode))
+        let devinTask = try #require(model.selectAssistantSurface(.devin))
+
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(model.pendingSessionRuntimeCommandCount == 1)
+        #expect(await claudeTask.value)
+        #expect(await devinTask.value)
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+
+        let pendingSurfaceCommands = Self.pendingCommands(in: runtime, kind: .setAssistantSurface)
+        #expect(pendingSurfaceCommands.count == 1)
+        #expect(pendingSurfaceCommands.first?.assistantSurface == CompanionAssistantSurface.devin.rawValue)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
@@ -787,6 +844,50 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(StateMiniRecoveryResult.applied.didApplySnapshot)
     }
 
+    @Test
+    func testPartialGitRepositoryMetadataCacheDecodes() throws {
+        let sessionID = "thread-partial-git"
+        let payload: [String: Any] = [
+            "id": sessionID,
+            "sessionId": sessionID,
+            "assistantSurface": CompanionAssistantSurface.codex.rawValue,
+            "ref": "S22",
+            "title": "Partial Git",
+            "status": SessionStatus.active.rawValue,
+            "lastUpdatedAt": Constants.timestamp,
+            "lastActivityAt": Constants.timestamp,
+            "isArchived": false,
+            "canSendPrompt": true,
+            "metadata": [
+                "projectName": "looper",
+                "gitRepository": [
+                    "repositoryName": "looper",
+                    "branch": "main",
+                ],
+            ],
+        ]
+        let payloadData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 22,
+            records: [
+                SessionMiniFixture(
+                    sessionID: sessionID,
+                    assistantSurface: CompanionAssistantSurface.codex.rawValue,
+                    seq: 22,
+                    revision: "mini-revision-22",
+                    payloadJSON: String(decoding: payloadData, as: UTF8.self)
+                ),
+            ]
+        )
+
+        let snapshot = try #require(try runtime.cachedSnapshot())
+        let session = try #require(snapshot.session(withID: sessionID))
+
+        #expect(session.metadata.gitRepository?.repositoryName == "looper")
+        #expect(session.metadata.gitRepository?.repositoryPath == "")
+        #expect(session.metadata.gitRepository?.branch == "main")
+    }
+
     private static func temporarySessionRuntime() throws -> CompanionSessionRuntime {
         try CompanionSessionRuntime(fileURL: temporaryStoreFileURL())
     }
@@ -959,6 +1060,40 @@ private struct SessionMiniFixture: Equatable, Sendable {
     let seq: Int64
     let revision: String
     let payloadJSON: String
+}
+
+@MainActor
+private final class AssistantSurfaceDispatcherSpy: SessionSyncCommandDispatching {
+    private enum Constants {
+        static let mobileSettingsThreadID = "__mobile_settings__"
+    }
+
+    private(set) var dispatchedSurfaces: [CompanionAssistantSurface] = []
+    private var pendingAssistantSurface: CompanionAssistantSurface?
+
+    func dispatchAssistantSurface(_ surface: CompanionAssistantSurface) async throws {
+        dispatchedSurfaces.append(surface)
+        pendingAssistantSurface = surface
+        await Task.yield()
+    }
+
+    func pendingCommands() -> [CompanionSessionMiniPendingCommand] {
+        guard let pendingAssistantSurface else {
+            return []
+        }
+
+        return [
+            CompanionSessionMiniPendingCommand(
+                kind: .setAssistantSurface,
+                clientMutationID: "mutation-\(pendingAssistantSurface.rawValue)",
+                threadID: Constants.mobileSettingsThreadID,
+                assistantSurface: pendingAssistantSurface.rawValue,
+                notificationID: nil,
+                prompt: nil,
+                attemptCount: 0
+            ),
+        ]
+    }
 }
 
 private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecked Sendable {

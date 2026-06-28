@@ -318,26 +318,57 @@ async fn grpc_mobile_events_streams_authenticated_prompt_resumed_event() {
 }
 
 #[tokio::test]
-async fn grpc_session_stream_sends_initial_liveness_frame() {
+async fn grpc_session_stream_replays_before_liveness_cursor() {
     let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
     let control_plane = fixture.control_plane();
-    record_thread_active(&control_plane, "thread-main");
+    let previous = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input(
+            "thread-before",
+            "revision-before",
+            "before",
+        ))
+        .expect("record previous state delta");
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("projection-replaced".to_owned()),
+                server_time: mobile_event_now(),
+                revision: Some("revision-replayed".to_owned()),
+            },
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-main".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "id": "thread-main",
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "title": "Replay me",
+                }),
+            }],
+        )
+        .expect("record replacement projection");
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
-    prime_state_mini_cache(&control_plane);
     let expected_latest_seq = control_plane
         .store()
         .latest_mobile_state_event_seq()
         .expect("latest mobile state seq");
 
-    let (_session_sender, mut event_stream) =
-        open_live_session_stream(&mut client, &authorization, Vec::new()).await;
+    let mut event_stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(previous.seq)],
+    )
+    .await;
 
-    let heartbeat = next_session_heartbeat_frame(&mut event_stream, "initial liveness").await;
-    assert_eq!(heartbeat.latest_seq, expected_latest_seq);
-    assert!(!heartbeat.server_time.is_empty());
+    let delta = next_session_state_delta(&mut event_stream, "initial replay delta").await;
+    assert_eq!(delta.seq, expected_latest_seq);
 }
 
 #[tokio::test]
@@ -1455,17 +1486,6 @@ async fn next_session_ack_frame(
         }
     }
     panic!("timed out scanning session stream for ACK as {label}");
-}
-
-async fn next_session_heartbeat_frame(
-    stream: &mut tonic::codec::Streaming<ServerFrame>,
-    label: &str,
-) -> agent_control_plane::grpc::proto::Heartbeat {
-    let frame = next_session_frame(stream, label).await;
-    match frame.frame {
-        Some(server_frame::Frame::Heartbeat(heartbeat)) => heartbeat,
-        other => panic!("expected heartbeat as {label}, got {other:?}"),
-    }
 }
 
 async fn next_session_ack_matching(

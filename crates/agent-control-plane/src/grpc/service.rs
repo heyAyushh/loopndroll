@@ -108,7 +108,6 @@ impl LooperRealtime for LooperRealtimeService {
                 SESSION_HEARTBEAT_INTERVAL,
             );
             heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            yield Ok(heartbeat_frame(&control_plane));
 
             loop {
                 tokio::select! {
