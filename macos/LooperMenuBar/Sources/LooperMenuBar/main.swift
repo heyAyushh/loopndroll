@@ -388,9 +388,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         prompt: prompt,
         assistantSurface: nil
       )
+      let updatedSnapshot = restoreCachedSessionMiniSnapshot() ?? currentSessionMiniSnapshot()
       replaceMenu(
         snapshot: nil,
-        sessionMiniSnapshot: currentSessionMiniSnapshot(),
+        sessionMiniSnapshot: updatedSnapshot,
         error: nil
       )
     } catch {

@@ -69,17 +69,40 @@ pub(crate) async fn fetch_state_mini_snapshot(
     bearer_token: String,
     mobile_session_header: String,
 ) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
+    let candidates = snapshot_recovery_endpoints(&endpoints)?;
     let mut last_error = ClientCoreError::StateMiniSnapshotTransportFailed;
-    for endpoint in snapshot_recovery_endpoints(&endpoints)? {
-        match fetch_state_mini_snapshot_from_endpoint(
-            &endpoint,
-            bearer_token.as_str(),
-            mobile_session_header.as_str(),
-        )
-        .await
-        {
-            Ok(snapshot) => return Ok(snapshot),
-            Err(error) => last_error = error,
+    let (result_sender, mut result_receiver) = mpsc::channel(candidates.len());
+    let mut handles = Vec::with_capacity(candidates.len());
+    for (index, endpoint) in candidates.into_iter().enumerate() {
+        let result_sender = result_sender.clone();
+        let bearer_token = bearer_token.clone();
+        let mobile_session_header = mobile_session_header.clone();
+        handles.push(tokio::spawn(async move {
+            if index > 0 {
+                tokio::time::sleep(STATE_MINI_STREAM_FALLBACK_RACE_DELAY).await;
+            }
+            let result = fetch_state_mini_snapshot_from_endpoint(
+                &endpoint,
+                bearer_token.as_str(),
+                mobile_session_header.as_str(),
+            )
+            .await;
+            let _ = result_sender.send(result).await;
+        }));
+    }
+    drop(result_sender);
+
+    while let Some(result) = result_receiver.recv().await {
+        match result {
+            Ok(snapshot) => {
+                for handle in handles {
+                    handle.abort();
+                }
+                return Ok(snapshot);
+            }
+            Err(error) => {
+                last_error = error;
+            }
         }
     }
 
@@ -913,6 +936,12 @@ fn normalized_state_mini_payload_json(mut payload: Value, session_id: &str) -> S
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+        time::Instant,
+    };
 
     use super::*;
 
@@ -1014,6 +1043,39 @@ mod tests {
     }
 
     #[test]
+    fn state_mini_snapshot_recovery_uses_first_ready_endpoint() {
+        let (slow_url, slow_server) =
+            spawn_snapshot_server(Duration::from_millis(900), 7, "thread-slow");
+        let (fast_url, fast_server) =
+            spawn_snapshot_server(Duration::from_millis(0), 42, "thread-fast");
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        let start = Instant::now();
+        let snapshot = runtime
+            .block_on(fetch_state_mini_snapshot(
+                vec![
+                    ClientEndpoint {
+                        url: slow_url,
+                        last_good: true,
+                    },
+                    ClientEndpoint {
+                        url: fast_url,
+                        last_good: false,
+                    },
+                ],
+                String::new(),
+                String::new(),
+            ))
+            .expect("first ready snapshot");
+
+        assert_eq!(snapshot.latest_seq, 42);
+        assert_eq!(snapshot.sessions[0].session_id, "thread-fast");
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let _ = slow_server.join();
+        let _ = fast_server.join();
+    }
+
+    #[test]
     fn session_transport_endpoints_keep_fallbacks_after_last_good() {
         let endpoints = session_transport_endpoints(&[
             ClientEndpoint {
@@ -1047,6 +1109,45 @@ mod tests {
                 "http://127.0.0.1:8766",
             ]
         );
+    }
+
+    fn spawn_snapshot_server(
+        delay: Duration,
+        latest_seq: i64,
+        session_id: &'static str,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let url = format!("http://{}", listener.local_addr().expect("server addr"));
+        let handle = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(delay);
+            let body = json!({
+                "latestSeq": latest_seq,
+                "serverTime": "2026-06-28T00:00:00Z",
+                "sessions": [
+                    {
+                        "sessionId": session_id,
+                        "assistantSurface": "codex",
+                        "seq": latest_seq,
+                        "revision": format!("rev-{latest_seq}"),
+                        "title": session_id,
+                    }
+                ]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (url, handle)
     }
 
     #[test]
