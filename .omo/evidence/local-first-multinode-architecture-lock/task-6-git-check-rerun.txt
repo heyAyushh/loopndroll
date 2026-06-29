@@ -1,0 +1,2 @@
+command=git show --check --format= HEAD
+exit=0
