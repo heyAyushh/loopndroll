@@ -3,6 +3,11 @@ import Testing
 
 @Suite("Companion surface filtering")
 struct CompanionSurfaceFilteringTests {
+    private struct LocalMini {
+        let id: String
+        let assistantClient: String
+    }
+
     @Test("Codex surface hides Devin and Grok sessions")
     func codexSurfaceFiltersAssistantClients() {
         #expect(CompanionSurfaceFiltering.matches(assistantClient: "codex", surface: "codex"))
@@ -200,5 +205,44 @@ struct CompanionSurfaceFilteringTests {
                 surface: "codex"
             )
         )
+    }
+
+    @Test("Rapid surface switches keep local mini source stable")
+    func rapidSurfaceSwitchesKeepLocalMiniSourceStable() {
+        let minis = [
+            LocalMini(id: "codex-1", assistantClient: "codex"),
+            LocalMini(id: "cursor-1", assistantClient: "cursor"),
+            LocalMini(id: "claude-1", assistantClient: "claude-code"),
+            LocalMini(id: "zed-1", assistantClient: "zed"),
+            LocalMini(id: "devin-1", assistantClient: "devin"),
+            LocalMini(id: "grok-1", assistantClient: "grok-build"),
+        ]
+        let originalIDs = minis.map(\.id)
+        let surfaces = ["codex", "claude-code", "zed", "devin", "grok-build"]
+        let expectedIDsBySurface = [
+            "codex": ["codex-1", "cursor-1"],
+            "claude-code": ["claude-1"],
+            "zed": ["zed-1"],
+            "devin": ["devin-1"],
+            "grok-build": ["grok-1"],
+        ]
+        var visibleIDs: [String] = []
+
+        for index in 0..<100 {
+            let surface = surfaces[index % surfaces.count]
+            visibleIDs = minis
+                .filter { mini in
+                    CompanionSurfaceFiltering.matches(
+                        assistantClient: mini.assistantClient,
+                        surface: surface
+                    )
+                }
+                .map(\.id)
+
+            #expect(minis.map(\.id) == originalIDs)
+            #expect(visibleIDs == expectedIDsBySurface[surface])
+        }
+
+        #expect(visibleIDs == expectedIDsBySurface["grok-build"])
     }
 }

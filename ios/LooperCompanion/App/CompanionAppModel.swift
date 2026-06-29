@@ -243,7 +243,7 @@ final class CompanionAppModel {
             snapshotState.selectedAssistantSurface
         }
         set {
-            snapshotState.applyVisibleAssistantSurface(newValue)
+            _ = selectAssistantSurface(newValue)
         }
     }
 
