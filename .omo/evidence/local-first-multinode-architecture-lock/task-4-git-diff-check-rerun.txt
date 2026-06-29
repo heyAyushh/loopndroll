@@ -1,0 +1,17 @@
+# Task 4 Git Whitespace Rerun
+
+Pre-repair baseline:
+Command: git show --check --format= HEAD
+Exit code: 2
+Output:
+.omo/evidence/local-first-multinode-architecture-lock/task-4-last-seq-rerun.txt:8: new blank line at EOF.
+.omo/evidence/local-first-multinode-architecture-lock/task-4-state-mini-rerun.txt:40: new blank line at EOF.
+
+Repair scope:
+- Removed the trailing blank EOF lines from the two Task 4 evidence logs.
+- Supersedes the a44a967e evidence whitespace failure without changing product code.
+
+Evidence-clean check after patch:
+Command: git diff --check
+Exit code: 0
+Output: (no output)

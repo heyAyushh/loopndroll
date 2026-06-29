@@ -5,4 +5,3 @@ test client::tests::last_seq_by_node_tracks_independent_node_cursors ... ok
 test local_store::tests::local_store_persists_last_seq_by_node_and_preserves_newer_node_minis ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 157 filtered out; finished in 0.00s
-

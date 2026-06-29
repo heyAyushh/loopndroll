@@ -28,6 +28,15 @@
 - A mixed batch can advance node B while preserving node A's newer mini and cursor.
 - Heartbeat liveness remains separate from mini payload freshness.
 
+## Slop And Overfit Review
+
+- No plausible-but-false state: replacement finality is per covered node, so a stale section cannot erase a newer local mini just because another node in the batch is fresh.
+- No overfitted test-only logic: freshness flows through `last_seq_by_node` and the staged pending-replacement cursor snapshot, not a branch keyed to one test shape.
+- Monotonic per-node invariant: a node cursor advances only from a fresh section for that node; stale sections preserve both the existing mini and cursor.
+- `last_seq_by_node` remains the stale detector; the replacement delta seq and heartbeat liveness do not prove per-node payload freshness.
+- The stale snapshot guard stays aligned across recovery snapshots, local snapshots, and stream replacement finality.
+- No broad UI/generated/game touches: the Todo 4 product diff is confined to Rust client-core, and this repair touches only Task 4 evidence files.
+
 ## Review Result
 
 - The rejected all-or-nothing replacement behavior is repaired in client-core.
