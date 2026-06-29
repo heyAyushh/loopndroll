@@ -416,12 +416,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         prompt: prompt,
         assistantSurface: nil
       )
-      let updatedSnapshot = acceptedCommandSnapshot() ?? currentSessionMiniSnapshot()
-      replaceMenu(
-        snapshot: nil,
-        sessionMiniSnapshot: updatedSnapshot,
-        error: nil
-      )
     } catch {
       replaceMenu(
         snapshot: nil,
@@ -710,14 +704,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func restoreCachedSessionMiniSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
-    guard let snapshot = try? sessionRuntime?.cachedSnapshot() else {
-      return nil
-    }
-    cachedSessionMiniSnapshot = snapshot
-    return snapshot
-  }
-
-  private func acceptedCommandSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
     guard let snapshot = try? sessionRuntime?.cachedSnapshot() else {
       return nil
     }

@@ -453,6 +453,43 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testAcceptedSettingsCommandsProjectWithoutSourceSnapshot() async throws {
+        let runtime = try Self.temporarySessionRuntime()
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let targetSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+
+        let didMarkCurrent = await model.markCurrentSiriSession(targetSession)
+        let didSetDefault = await model.setSiriDefaultSession(targetSession)
+        let didSavePrompt = await model.saveDefaultPrompt("Continue safely")
+
+        #expect(didMarkCurrent)
+        #expect(didSetDefault)
+        #expect(didSavePrompt)
+        #expect(model.snapshot?.globalSettings.siriCurrentSessionId == Constants.cachedThreadID)
+        #expect(model.snapshot?.globalSettings.siriDefaultSessionId == Constants.cachedThreadID)
+        #expect(model.snapshot?.globalSettings.defaultPrompt == "Continue safely")
+        #expect(model.snapshot?.sessions.isEmpty == true)
+        #expect(
+            runtime.pendingCommands().map(\.kind) == [
+                .setSiriCurrentSession,
+                .setSiriDefaultSession,
+                .saveDefaultPrompt,
+            ]
+        )
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testSiriClientReadsAcceptedDefaultSessionFromPendingClientCoreCommand() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

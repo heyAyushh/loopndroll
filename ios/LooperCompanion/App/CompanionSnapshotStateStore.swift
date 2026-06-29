@@ -7,6 +7,12 @@ private enum CompanionSnapshotSettingsTime {
     static let millisecondsPerSecond: TimeInterval = 1_000
 }
 
+private enum CompanionSnapshotLocalProjectionDefaults {
+    static let hostID = "local"
+    static let hostName = "Looper"
+    static let scope = "global"
+}
+
 @MainActor
 @Observable
 final class CompanionSnapshotStateStore {
@@ -297,13 +303,38 @@ final class CompanionSnapshotStateStore {
         preferredSurface: CompanionAssistantSurface? = nil,
         _ mutate: (inout GlobalSettings) -> Void
     ) -> Bool {
-        guard var nextSnapshot = sourceSnapshotForProjection() else {
-            return false
-        }
+        var nextSnapshot = sourceSnapshotForProjection() ?? Self.emptyLocalSnapshot(
+            selectedSurface: selectedAssistantSurface
+        )
 
         mutate(&nextSnapshot.globalSettings)
         applySnapshot(nextSnapshot, preferredSurface: preferredSurface ?? selectedAssistantSurface)
         return true
+    }
+
+    private static func emptyLocalSnapshot(selectedSurface: CompanionAssistantSurface) -> MobileSnapshot {
+        MobileSnapshot(
+            host: HostSummary(
+                id: CompanionSnapshotLocalProjectionDefaults.hostID,
+                name: CompanionSnapshotLocalProjectionDefaults.hostName,
+                address: "",
+                isReachable: false,
+                lastSyncedAt: ""
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "",
+                globalMode: nil,
+                scope: CompanionSnapshotLocalProjectionDefaults.scope,
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: selectedSurface
+            ),
+            sessions: [],
+            surfaceSessions: [:],
+            notifications: [],
+            completionChecks: []
+        )
     }
 
     private static func millisecondsSinceEpoch(_ date: Date) -> Int64 {

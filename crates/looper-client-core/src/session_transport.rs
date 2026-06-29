@@ -514,8 +514,7 @@ async fn drive_state_mini_stream_session(
 }
 
 fn state_mini_data_cursor_after_ack(current_seq: i64, ack_seq: i64) -> i64 {
-    let _ = ack_seq;
-    current_seq
+    current_seq.max(ack_seq)
 }
 
 fn state_mini_data_cursor_after_delta(current_seq: i64, delta: &ClientStateMiniDelta) -> i64 {
@@ -1497,7 +1496,7 @@ mod tests {
 
         assert_eq!(
             state_mini_data_cursor_after_ack(current_seq, 20),
-            current_seq
+            20
         );
         assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 30), 30);
         assert_eq!(
