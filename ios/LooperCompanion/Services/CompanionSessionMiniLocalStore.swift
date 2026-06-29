@@ -140,6 +140,8 @@ private extension MobileSnapshot {
                 )
             case .saveDefaultPrompt:
                 applyPendingDefaultPrompt(command.prompt)
+            case .setDefaultNotificationTargets:
+                break
             case .setSessionArchived:
                 applyPendingArchive(command.archived, sessionID: command.threadId)
             case .deleteSession:

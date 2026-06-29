@@ -232,12 +232,16 @@ struct CompanionAppViewState {
     }
 
     var deviceHubAPIStatusLabel: String {
-        guard let serverHealth = model.serverHealth else {
+        guard model.realtimeStreamIsLive else {
             if isShowingUsableLocalState {
                 return connectivityStatusLabel
             }
 
             return model.connectionState == .connected ? "Unknown" : "Offline"
+        }
+
+        guard let serverHealth = model.serverHealth else {
+            return "Unknown"
         }
 
         return serverHealth.ok ? "Running" : "Unavailable"

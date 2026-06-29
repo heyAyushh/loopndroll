@@ -776,8 +776,9 @@ final class CompanionAppModel {
             return realtimeStreamIsLive
         case .sessionsPullRefresh,
              .searchPullRefresh,
-             .manualRefresh,
-             .sessionOpen,
+             .manualRefresh:
+            return realtimeStreamIsLive
+        case .sessionOpen,
              .unlockRecovery:
             return false
         case .fallbackTimer,
@@ -1857,6 +1858,9 @@ final class CompanionAppModel {
         let visibleSnapshot = snapshotState.applySnapshot(nextSnapshot)
         if realtimeStreamIsLive {
             connectionState = .connected
+        } else {
+            serverHealth = nil
+            reachedBaseURL = nil
         }
         lastUpdatedAt = Date()
         CompanionSnapshotCache.save(visibleSnapshot)

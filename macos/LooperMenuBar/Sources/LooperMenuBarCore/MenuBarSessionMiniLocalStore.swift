@@ -352,6 +352,20 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         )
     }
 
+    public func persistNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String
+    ) throws -> ClientNotificationReplyPersistResult {
+        try sessionManager.persistNotificationReply(
+            notificationID: notificationID,
+            threadID: threadID,
+            prompt: prompt,
+            assistantSurface: assistantSurface
+        )
+    }
+
     @discardableResult
     public func submitNotificationReply(
         notificationID: String,

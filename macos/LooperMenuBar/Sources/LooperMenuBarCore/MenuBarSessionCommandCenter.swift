@@ -49,6 +49,28 @@ public actor MenuBarSessionCommandCenter {
         )
     }
 
+    public func persistNotificationReply(
+        notificationID: String,
+        threadID: String,
+        prompt: String,
+        assistantSurface: String?
+    ) throws -> ClientNotificationReplyPersistResult {
+        let normalizedNotificationID = try normalizedRequired(
+            notificationID,
+            error: .emptyNotificationID
+        )
+        let normalizedThreadID = try normalizedRequired(threadID, error: .emptyThreadID)
+        let normalizedPrompt = try normalizedRequired(prompt, error: .emptyPrompt)
+        let sessionRuntime = try requiredSessionRuntime()
+        let normalizedAssistantSurface = assistantSurface?.nilIfBlank ?? ""
+        return try sessionRuntime.persistNotificationReply(
+            notificationID: normalizedNotificationID,
+            threadID: normalizedThreadID,
+            prompt: normalizedPrompt,
+            assistantSurface: normalizedAssistantSurface
+        )
+    }
+
     @discardableResult
     public func submitNotificationReply(
         notificationID: String,

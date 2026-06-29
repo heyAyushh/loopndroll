@@ -409,8 +409,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     prompt: String
   ) async {
     do {
-      _ = try await configureSessionClientCoreRuntimeIfNeeded()
-      _ = try await sessionCommandCenter.submitNotificationReply(
+      let persisted = try await sessionCommandCenter.persistNotificationReply(
         notificationID: notificationID,
         threadID: threadID,
         prompt: prompt,
@@ -421,6 +420,29 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
         error: nil
       )
+      Task {
+        do {
+          _ = try await configureSessionClientCoreRuntimeIfNeeded()
+          _ = try await sessionCommandCenter.submitNotificationReply(
+            notificationID: notificationID,
+            threadID: threadID,
+            prompt: prompt,
+            assistantSurface: nil,
+            clientMutationID: persisted.clientMutationId
+          )
+          replaceMenu(
+            snapshot: nil,
+            sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
+            error: nil
+          )
+        } catch {
+          replaceMenu(
+            snapshot: nil,
+            sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
+            error: error
+          )
+        }
+      }
     } catch {
       replaceMenu(
         snapshot: nil,
@@ -428,6 +450,30 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: error
       )
     }
+  }
+
+  private func sessionMiniMenuStatusTitle(for snapshot: MenuBarSessionMiniLocalSnapshot) -> String {
+    guard mobileRouteReadiness.hasLiveRouteProof else {
+      if let phase = try? sessionRuntime?.runtimeStateSnapshot().phase {
+        switch phase {
+        case .ready:
+          return "Session connected"
+        case .connecting:
+          return "Connecting"
+        case .reconnecting:
+          return "Reconnecting"
+        case .disconnected:
+          return "Local cache"
+        }
+      }
+      return "Local cache"
+    }
+
+    return LooperHumanStatus.from(
+      sessionMiniSnapshot: snapshot,
+      mobileReady: mobileRouteReadiness.supportsNativeHandoff,
+      detachOnQuit: detachServerOnQuit
+    ).title
   }
 
   private func openTarget(
@@ -576,7 +622,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   ) {
     let activeCount = snapshot.sessions.filter { !$0.isArchived }.count
     let archivedCount = snapshot.sessions.count - activeCount
-    addDisabledItem("Status: Realtime", to: menu)
+    addDisabledItem("Status: \(sessionMiniMenuStatusTitle(for: snapshot))", to: menu)
     addDisabledItem("State: SessionMini seq \(snapshot.latestSeq)", to: menu)
     addDisabledItem("iPhone: \(mobileStatusTitle())", to: menu)
     addMobileRouteDetails(to: menu)

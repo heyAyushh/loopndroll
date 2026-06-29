@@ -763,6 +763,74 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testPullRefreshSkipsRecoveryWhenSessionStreamIsLive() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 12,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.realtimeStreamIsLive = true
+        model.realtimeLatestSeq = 12
+        model.snapshot = Self.mobileSnapshot(
+            revision: "mini-revision-12",
+            sessions: [cachedSession]
+        )
+
+        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testDeviceHubAPIStatusDoesNotUseStaleHealthWithoutLiveStream() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 5,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 5, revision: "mini-revision-5"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.connectionState = .connecting
+        model.serverHealth = CompanionServerHealth(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: ["http://127.0.0.1:8765"],
+            serverTime: Constants.timestamp
+        )
+
+        #expect(model.viewState.deviceHubAPIStatusLabel == "Local")
+
+        model.realtimeStreamIsLive = true
+        model.connectionState = .connected
+        #expect(model.viewState.deviceHubAPIStatusLabel == "Running")
+    }
+
+    @MainActor
+    @Test
     func testOlderStateMiniCacheCannotReplayOverNewerRenderedState() async throws {
         let staleSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
