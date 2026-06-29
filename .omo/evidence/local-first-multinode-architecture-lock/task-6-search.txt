@@ -56,7 +56,7 @@ SwiftEmitModule normal arm64 Emitting\ module\ for\ LooperCompanionTests (in tar
 
 SwiftCompile normal arm64 (in target 'LooperCompanionTests' from project 'LooperCompanion')
     cd /Users/ay/Documents/looper/ios
-    
+
 
 SwiftCompile normal arm64 Compiling\ SessionSummaryTimingTests.swift /Users/ay/Documents/looper/ios/LooperCompanionTests/SessionSummaryTimingTests.swift (in target 'LooperCompanionTests' from project 'LooperCompanion')
 
@@ -104,16 +104,16 @@ CopySwiftLibs /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpaz
 
 CodeSign /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Products/Debug-iphonesimulator/Looper.app/PlugIns/LooperCompanionTests.xctest (in target 'LooperCompanionTests' from project 'LooperCompanion')
     cd /Users/ay/Documents/looper/ios
-    
+
     Signing Identity:     "Sign to Run Locally"
-    
+
     /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Products/Debug-iphonesimulator/Looper.app/PlugIns/LooperCompanionTests.xctest
 
 CodeSign /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Products/Debug-iphonesimulator/Looper.app (in target 'LooperCompanion' from project 'LooperCompanion')
     cd /Users/ay/Documents/looper/ios
-    
+
     Signing Identity:     "Sign to Run Locally"
-    
+
     /usr/bin/codesign --force --sign - --entitlements /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Intermediates.noindex/LooperCompanion.build/Debug-iphonesimulator/LooperCompanion.build/Looper.app.xcent --timestamp\=none --generate-entitlement-der /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Products/Debug-iphonesimulator/Looper.app
 /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Build/Products/Debug-iphonesimulator/Looper.app: replacing existing signature
 

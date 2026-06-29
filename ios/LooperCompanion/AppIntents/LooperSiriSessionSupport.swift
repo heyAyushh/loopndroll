@@ -346,16 +346,9 @@ struct LooperSiriSessionClient: Sendable {
 
     init(
         service _: any CompanionService,
-        sessionRuntime: CompanionSessionRuntime?
+        sessionRuntime: CompanionSessionRuntime
     ) {
         self.sessionRuntime = sessionRuntime
-    }
-
-    init(service: any CompanionService) {
-        self.init(
-            service: service,
-            sessionRuntime: nil
-        )
     }
 
     func entities(for identifiers: [String]) async throws -> [LooperSessionEntity] {

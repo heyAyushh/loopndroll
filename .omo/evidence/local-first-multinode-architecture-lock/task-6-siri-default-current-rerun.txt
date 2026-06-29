@@ -1,0 +1,49 @@
+Command line invocation:
+    /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild test-without-building -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination "platform=iOS Simulator,id=F12A26E9-9FBC-4EA1-B72B-8EF098D5B93C" "-only-testing:LooperCompanionTests/SessionSummaryTimingTests/siriDefaultAndCurrentSessionsUseRustProjection()" -parallel-testing-enabled NO
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  LooperCompanionCore: /Users/ay/Documents/looper/ios/LooperCompanionCore
+  OrbCodeKit: /Users/ay/Documents/looper/ios/OrbCodeKit
+  LooperClientCore: /Users/ay/Documents/looper/swift/LooperClientCore
+
+2026-06-29 20:50:41.172437+0530 Looper[94309:15987767] [framework] CoreUI: CUIThemeStore: No theme registered with id=0
+2026-06-29 20:50:41.172585+0530 Looper[94309:15987767] [framework] CoreUI: CUIThemeStore: No theme registered with id=0
+2026-06-29 20:50:42.416475+0530 Looper[94309:15987767] [Lifecycle] Model initialized baseURL=http://127.0.0.1:8765 cachedSnapshotRestoreScheduled=false
+objc[94309]: Class _TtC9JetEngine27DaemonSessionImplementation is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetAsset.framework/JetAsset (0x15e43e5d8) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine (0x7018baf3d0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class _TtC9JetEngine21NotificationsListener is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetAsset.framework/JetAsset (0x15e43e360) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine (0x7018bb1600). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class _TtCV9JetEngine21SandboxExtensionToken6Handle is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetAsset.framework/JetAsset (0x15e43c590) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine (0x7018bb3ff8). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class _TtC9JetEngine21JetPackReloadObserver is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetAsset.framework/JetAsset (0x15e43e440) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine (0x7018bb6078). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class _TtCC9JetEngine21JetPackReloadObserver13ListenerToken is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetAsset.framework/JetAsset (0x15e43e4f8) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/JetEngine.framework/JetEngine (0x7018bb6130). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class LACUIPasscodeServiceOptionsViewConfiguration is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/LocalAuthenticationCoreUI.framework/LocalAuthenticationCoreUI (0x1770e0508) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/LocalAuthenticationEmbeddedUI.framework/LocalAuthenticationEmbeddedUI (0x7008ab94f0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class AKDisplayNameFormatter is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit (0x12d1865b8) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKitUI.framework/AuthKitUI (0x700b6b8770). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class AKAlertImageURLProvider is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit (0x12d187f08) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKitUI.framework/AuthKitUI (0x700b6b87c0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[94309]: Class AKBiometricRatchetUtility is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit (0x12d188700) and /Library/Developer/CoreSimulator/Volumes/iOS_24A5370g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/AuthKitUI.framework/AuthKitUI (0x700b6b8838). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+2026-06-29 20:50:44.601157+0530 Looper[94309:15987767] [Lifecycle] Root refresh skipped because scenePhase=inactive
+2026-06-29 20:50:46.332056+0530 Looper[94309:15987767] [XPCErrors] non-launching port is incompatible with service identifier "com.apple.PointerUI.pointeruid.default-service"
+2026-06-29 20:50:46.468842+0530 Looper[94309:15987767] [Lifecycle] Root active-state prepare starting scenePhase=active onboarding=false
+2026-06-29 20:50:46.470706+0530 Looper[94309:15987767] [Lifecycle] Preparing active state baseURL=http://127.0.0.1:8765 hasSnapshot=true
+2026-06-29 20:50:46.603217+0530 Looper[94309:15987767] [Invalid Configuration] Update NavigationRequestObserver tried to update multiple times per frame.
+Test Suite 'Selected tests' started at 2026-06-29 20:50:47.085.
+Test Suite 'LooperCompanionTests.xctest' started at 2026-06-29 20:50:47.086.
+Test Suite 'LooperCompanionTests.xctest' passed at 2026-06-29 20:50:47.086.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-06-29 20:50:47.086.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+◇ Test run started.
+↳ Testing Library Version: 2067.1
+↳ Target Platform: arm64-apple-ios17.0-simulator
+◇ Suite "Session summary timing" started.
+◇ Test "Siri default and current sessions use Rust projection" started.
+✔ Test "Siri default and current sessions use Rust projection" passed after 0.012 seconds.
+✔ Suite "Session summary timing" passed after 0.015 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.015 seconds.
+
+Test session results, code coverage, and logs:
+	/Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-dpazaoivfmsklmbkyybuvbnseenq/Logs/Test/Test-LooperCompanion-2026.06.29_20-50-28-+0530.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

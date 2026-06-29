@@ -1,0 +1,16 @@
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "Looper Siri entity support" started.
+􀟈  Test "Search matches repository branch project path and plugin fields" started.
+􀟈  Test "Syncable IDs preserve local and stable entity identifiers" started.
+􀟈  Test "Qualified entity IDs preserve assistant surface and session ID" started.
+􀟈  Test "Legacy plain session IDs remain Codex identifiers" started.
+􀟈  Test "Spotlight identifiers recover raw session IDs" started.
+􁁛  Test "Legacy plain session IDs remain Codex identifiers" passed after 0.001 seconds.
+􁁛  Test "Spotlight identifiers recover raw session IDs" passed after 0.001 seconds.
+􁁛  Test "Syncable IDs preserve local and stable entity identifiers" passed after 0.001 seconds.
+􁁛  Test "Qualified entity IDs preserve assistant surface and session ID" passed after 0.001 seconds.
+􁁛  Test "Search matches repository branch project path and plugin fields" passed after 0.007 seconds.
+􁁛  Suite "Looper Siri entity support" passed after 0.007 seconds.
+􁁛  Test run with 5 tests in 1 suite passed after 0.007 seconds.

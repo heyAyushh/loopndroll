@@ -14,6 +14,7 @@ struct SessionSummaryTimingTests {
         static let largeSurfaceSessionCount = 1_500
         static let hostSyncTime = "2026-06-16T08:02:00Z"
         static let refreshedHostSyncTime = "2026-06-16T08:03:00Z"
+        static let siriRuntimeStoreDirectoryName = "looper-siri-session-summary-timing"
     }
 
     private let decoder = JSONDecoder()
@@ -143,36 +144,44 @@ struct SessionSummaryTimingTests {
             messageMilliseconds: Constants.messageMilliseconds,
             isArchived: true
         )
-        let snapshot = MobileSnapshot(
-            revision: "revision-1",
-            host: HostSummary(
-                id: "host",
-                name: "Looper",
-                address: "http://127.0.0.1:8765",
-                isReachable: true,
-                lastSyncedAt: "2026-06-16T08:02:00Z"
-            ),
-            globalSettings: GlobalSettings(
-                defaultPrompt: "Continue",
-                globalMode: nil,
-                scope: "global",
-                notificationLabel: nil,
-                completionCheckLabel: nil,
-                completionCheckWaitForReply: false,
-                assistantSurface: .codex
-            ),
-            sessions: [olderCodex],
-            surfaceSessions: [
-                CompanionAssistantSurface.codex.rawValue: [olderCodex],
-                CompanionAssistantSurface.devin.rawValue: [newerDevin],
-                CompanionAssistantSurface.grokBuild.rawValue: [middleGrok],
-                CompanionAssistantSurface.zed.rawValue: [archivedZed],
-            ],
-            notifications: [],
-            completionChecks: []
+        let codexSeq: Int64 = 8
+        let grokSeq: Int64 = 10
+        let zedSeq: Int64 = 12
+        let devinSeq: Int64 = 14
+        let localLatestSeq = devinSeq
+        let runtimeStore = try temporarySessionRuntime(
+            latestSeq: localLatestSeq,
+            records: [
+                try miniRecord(
+                    session: olderCodex,
+                    assistantSurface: .codex,
+                    seq: codexSeq,
+                    revision: "codex-revision-\(codexSeq)"
+                ),
+                try miniRecord(
+                    session: newerDevin,
+                    assistantSurface: .devin,
+                    seq: devinSeq,
+                    revision: "devin-revision-\(devinSeq)"
+                ),
+                try miniRecord(
+                    session: middleGrok,
+                    assistantSurface: .grokBuild,
+                    seq: grokSeq,
+                    revision: "grok-revision-\(grokSeq)"
+                ),
+                try miniRecord(
+                    session: archivedZed,
+                    assistantSurface: .zed,
+                    seq: zedSeq,
+                    revision: "zed-revision-\(zedSeq)"
+                ),
+            ]
         )
+        defer { runtimeStore.cleanup() }
         let client = LooperSiriSessionClient(
-            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+            service: SnapshotOnlyCompanionService(snapshot: unusedServiceSnapshot()),
+            sessionRuntime: runtimeStore.runtime
         )
         let entities = try await client.suggestedEntities()
 
@@ -195,25 +204,38 @@ struct SessionSummaryTimingTests {
             activityMilliseconds: Constants.activityMilliseconds,
             messageMilliseconds: Constants.messageMilliseconds
         )
-        let snapshot = siriRoutingSnapshot(
-            globalSettings: GlobalSettings(
-                defaultPrompt: "Continue",
-                globalMode: nil,
-                scope: "global",
-                notificationLabel: nil,
-                completionCheckLabel: nil,
-                completionCheckWaitForReply: false,
-                assistantSurface: .codex,
-                siriDefaultSessionId: "default-thread",
-                siriDefaultAssistantSurface: .codex,
-                siriCurrentSessionId: "current-thread",
-                siriCurrentAssistantSurface: nil
-            ),
-            codexSessions: [defaultCodex],
-            devinSessions: [currentDevin]
+        let defaultCodexSeq: Int64 = 8
+        let currentDevinSeq: Int64 = 12
+        let localLatestSeq = currentDevinSeq
+        let runtimeStore = try temporarySessionRuntime(
+            latestSeq: localLatestSeq,
+            records: [
+                try miniRecord(
+                    session: defaultCodex,
+                    assistantSurface: .codex,
+                    seq: defaultCodexSeq,
+                    revision: "codex-revision-\(defaultCodexSeq)"
+                ),
+                try miniRecord(
+                    session: currentDevin,
+                    assistantSurface: .devin,
+                    seq: currentDevinSeq,
+                    revision: "devin-revision-\(currentDevinSeq)"
+                ),
+            ]
+        )
+        defer { runtimeStore.cleanup() }
+        try await runtimeStore.runtime.setSiriDefaultSession(
+            threadID: "default-thread",
+            assistantSurface: .codex
+        )
+        try await runtimeStore.runtime.setSiriCurrentSession(
+            threadID: "current-thread",
+            assistantSurface: nil
         )
         let client = LooperSiriSessionClient(
-            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+            service: SnapshotOnlyCompanionService(snapshot: unusedServiceSnapshot()),
+            sessionRuntime: runtimeStore.runtime
         )
 
         let defaultEntity = try await client.defaultSiriSessionEntity()
@@ -233,25 +255,31 @@ struct SessionSummaryTimingTests {
             activityMilliseconds: Constants.olderActivityMilliseconds,
             messageMilliseconds: Constants.messageMilliseconds
         )
-        let snapshot = siriRoutingSnapshot(
-            globalSettings: GlobalSettings(
-                defaultPrompt: "Continue",
-                globalMode: nil,
-                scope: "global",
-                notificationLabel: nil,
-                completionCheckLabel: nil,
-                completionCheckWaitForReply: false,
-                assistantSurface: .codex,
-                siriDefaultSessionId: "default-thread",
-                siriDefaultAssistantSurface: .codex,
-                siriCurrentSessionId: "stale-thread",
-                siriCurrentAssistantSurface: .devin
-            ),
-            codexSessions: [defaultCodex],
-            devinSessions: []
+        let defaultCodexSeq: Int64 = 8
+        let localLatestSeq = defaultCodexSeq
+        let runtimeStore = try temporarySessionRuntime(
+            latestSeq: localLatestSeq,
+            records: [
+                try miniRecord(
+                    session: defaultCodex,
+                    assistantSurface: .codex,
+                    seq: defaultCodexSeq,
+                    revision: "codex-revision-\(defaultCodexSeq)"
+                ),
+            ]
+        )
+        defer { runtimeStore.cleanup() }
+        try await runtimeStore.runtime.setSiriDefaultSession(
+            threadID: "default-thread",
+            assistantSurface: .codex
+        )
+        try await runtimeStore.runtime.setSiriCurrentSession(
+            threadID: "stale-thread",
+            assistantSurface: .devin
         )
         let client = LooperSiriSessionClient(
-            service: SnapshotOnlyCompanionService(snapshot: snapshot)
+            service: SnapshotOnlyCompanionService(snapshot: unusedServiceSnapshot()),
+            sessionRuntime: runtimeStore.runtime
         )
 
         let currentEntity = try await client.currentSiriSessionEntity()
@@ -672,31 +700,6 @@ struct SessionSummaryTimingTests {
         return try decoder.decode(SessionSummary.self, from: data)
     }
 
-    private func siriRoutingSnapshot(
-        globalSettings: GlobalSettings,
-        codexSessions: [SessionSummary],
-        devinSessions: [SessionSummary]
-    ) -> MobileSnapshot {
-        MobileSnapshot(
-            revision: "siri-routing",
-            host: HostSummary(
-                id: "host",
-                name: "Looper",
-                address: "http://127.0.0.1:8765",
-                isReachable: true,
-                lastSyncedAt: "2026-06-16T08:02:00Z"
-            ),
-            globalSettings: globalSettings,
-            sessions: codexSessions,
-            surfaceSessions: [
-                CompanionAssistantSurface.codex.rawValue: codexSessions,
-                CompanionAssistantSurface.devin.rawValue: devinSessions,
-            ],
-            notifications: [],
-            completionChecks: []
-        )
-    }
-
     private func sessionPayload(
         id: String,
         ref: String,
@@ -736,6 +739,94 @@ struct SessionSummaryTimingTests {
         return payload
     }
 
+    private func temporarySessionRuntime(
+        latestSeq: Int64,
+        records: [SiriRuntimeMiniRecord]
+    ) throws -> TemporarySiriRuntime {
+        let store = try temporaryStoreFile()
+        try seedMiniCache(at: store.fileURL, latestSeq: latestSeq, records: records)
+        return TemporarySiriRuntime(
+            runtime: try CompanionSessionRuntime(fileURL: store.fileURL),
+            directoryURL: store.directoryURL
+        )
+    }
+
+    private func temporaryStoreFile() throws -> (directoryURL: URL, fileURL: URL) {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(Constants.siriRuntimeStoreDirectoryName, isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return (
+            directoryURL,
+            directoryURL.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
+        )
+    }
+
+    private func seedMiniCache(
+        at fileURL: URL,
+        latestSeq: Int64,
+        records: [SiriRuntimeMiniRecord]
+    ) throws {
+        let payload: [String: Any] = [
+            "latestSeq": latestSeq,
+            "sessions": records.map { record in
+                [
+                    "sessionId": record.sessionID,
+                    "assistantSurface": record.assistantSurface,
+                    "seq": record.seq,
+                    "revision": record.revision,
+                    "payloadJson": record.payloadJSON,
+                ]
+            },
+            "pendingCommands": [],
+            "serverTime": Constants.hostSyncTime,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    private func miniRecord(
+        session: SessionSummary,
+        assistantSurface: CompanionAssistantSurface,
+        seq: Int64,
+        revision: String
+    ) throws -> SiriRuntimeMiniRecord {
+        let data = try JSONEncoder().encode(session)
+        return SiriRuntimeMiniRecord(
+            sessionID: session.id,
+            assistantSurface: assistantSurface.rawValue,
+            seq: seq,
+            revision: revision,
+            payloadJSON: String(decoding: data, as: UTF8.self)
+        )
+    }
+
+    private func unusedServiceSnapshot() -> MobileSnapshot {
+        MobileSnapshot(
+            revision: "unused-service-snapshot",
+            host: HostSummary(
+                id: "unused-host",
+                name: "Unused",
+                address: "http://127.0.0.1:8765",
+                isReachable: false,
+                lastSyncedAt: Constants.hostSyncTime
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Unused",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [],
+            surfaceSessions: [:],
+            notifications: [],
+            completionChecks: []
+        )
+    }
+
     private func isDate(_ date: Date?, equalToMilliseconds milliseconds: Int64) -> Bool {
         guard let date else {
             return false
@@ -748,6 +839,23 @@ struct SessionSummaryTimingTests {
 
 private enum SnapshotOnlyCompanionServiceError: Error {
     case unimplemented
+}
+
+private struct TemporarySiriRuntime {
+    let runtime: CompanionSessionRuntime
+    let directoryURL: URL
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: directoryURL)
+    }
+}
+
+private struct SiriRuntimeMiniRecord: Equatable, Sendable {
+    let sessionID: String
+    let assistantSurface: String
+    let seq: Int64
+    let revision: String
+    let payloadJSON: String
 }
 
 private struct SnapshotOnlyCompanionService: CompanionService {
