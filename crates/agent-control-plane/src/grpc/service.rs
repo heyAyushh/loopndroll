@@ -33,7 +33,6 @@ use crate::mobile::session::UpsertMobileNotificationRoute;
 const HEALTH_SERVICE_NAME: &str = "looper-realtime";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
-const SESSION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const BYTES_PER_MIB: usize = 1024 * 1024;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES: usize = 4 * BYTES_PER_MIB;
@@ -99,11 +98,6 @@ impl LooperRealtime for LooperRealtimeService {
         let output = stream! {
             let mut last_seq = latest_mobile_state_seq(&control_plane);
             let mut event_receiver = control_plane.mobile_event_hub().subscribe();
-            let mut state_poll = tokio::time::interval_at(
-                tokio::time::Instant::now() + SESSION_STATE_POLL_INTERVAL,
-                SESSION_STATE_POLL_INTERVAL,
-            );
-            state_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             let mut heartbeat = tokio::time::interval_at(
                 tokio::time::Instant::now() + SESSION_HEARTBEAT_INTERVAL,
                 SESSION_HEARTBEAT_INTERVAL,
@@ -178,19 +172,6 @@ impl LooperRealtime for LooperRealtimeService {
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        }
-                    }
-                    _ = state_poll.tick() => {
-                        match drain_state_delta_frames(&control_plane, &mut last_seq) {
-                            Ok(frames) => {
-                                for frame in frames {
-                                    yield Ok(frame);
-                                }
-                            }
-                            Err(status) => {
-                                yield Err(status);
-                                break;
-                            }
                         }
                     }
                     _ = heartbeat.tick() => {
