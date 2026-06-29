@@ -612,6 +612,15 @@ final class CompanionAppModel {
                 return
             }
 
+            let didRestoreSessionMiniSnapshot: Bool
+            if snapshot == nil {
+                didRestoreSessionMiniSnapshot = restoreCachedSessionMiniSnapshotIfAvailable(
+                    reason: CachedSnapshotRestoreReason.loadFailure
+                )
+            } else {
+                didRestoreSessionMiniSnapshot = false
+            }
+
             let didRestoreCachedSnapshot: Bool
             if snapshot == nil {
                 didRestoreCachedSnapshot = await restoreCachedSnapshotIfAvailable(
@@ -645,10 +654,10 @@ final class CompanionAppModel {
                 error: error
             )
             CompanionDiagnostics.lifecycle.error(
-                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreCachedSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreSessionMiniSnapshot || didRestoreCachedSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             CompanionDiagnostics.record(
-                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreCachedSnapshot) error=\(error.localizedDescription)"
+                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreSessionMiniSnapshot || didRestoreCachedSnapshot) error=\(error.localizedDescription)"
             )
         }
     }
@@ -1917,6 +1926,9 @@ final class CompanionAppModel {
     private func shouldApplyStateMiniSnapshot(latestSeq: Int64, reason: String) -> Bool {
         if reason.hasPrefix(SessionMiniSnapshotReasonPrefix.acceptedClientCoreCommand) {
             return true
+        }
+        if realtimeLatestSeq > 0, latestSeq < realtimeLatestSeq {
+            return false
         }
         if snapshot == nil || !snapshotState.hasSnapshot {
             return true

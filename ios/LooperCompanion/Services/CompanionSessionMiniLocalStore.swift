@@ -105,7 +105,14 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             return nil
         }
 
-        return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+        let snapshot = try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+        guard !Self.containsCorruptFallbackSession(snapshot) else {
+            CompanionDiagnostics.record(
+                "session-mini:cache-corrupt-skip sessions=\(snapshot.sessions.count)"
+            )
+            return nil
+        }
+        return snapshot
     }
 
     fileprivate func mobileSnapshot(from snapshot: ClientLocalStateSnapshot) throws -> MobileSnapshot? {
@@ -115,6 +122,16 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             pendingCommands: snapshot.pendingCommands,
             serverTime: snapshot.serverTime
         )
+    }
+
+    private static func containsCorruptFallbackSession(_ snapshot: MobileSnapshot) -> Bool {
+        snapshot.sessions.contains { session in
+            session.ref == session.id &&
+                session.title == session.id &&
+                session.lastUpdatedAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                session.lastActivityAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !session.canSendPrompt
+        }
     }
 
 }

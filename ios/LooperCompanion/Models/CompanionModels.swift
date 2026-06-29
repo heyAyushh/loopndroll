@@ -1950,7 +1950,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         ref = try container.decode(String.self, forKey: .ref)
         title = try container.decode(String.self, forKey: .title)
         status = try container.decode(SessionStatus.self, forKey: .status)
-        effectiveMode = try container.decodeIfPresent(SessionMode.self, forKey: .effectiveMode)
+        effectiveMode = try Self.decodeEffectiveMode(from: container)
         lastUpdatedAt = try container.decode(String.self, forKey: .lastUpdatedAt)
         createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
         updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
@@ -1970,6 +1970,26 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
         goal = try container.decodeIfPresent(SessionGoalSummary.self, forKey: .goal)
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
+    }
+
+    private static func decodeEffectiveMode(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> SessionMode? {
+        guard let rawMode = try container.decodeIfPresent(String.self, forKey: .effectiveMode) else {
+            return nil
+        }
+        let modeValue = rawMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modeValue.isEmpty else {
+            return nil
+        }
+        guard let mode = SessionMode(rawValue: modeValue) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .effectiveMode,
+                in: container,
+                debugDescription: "Cannot initialize SessionMode from invalid String value \(modeValue)"
+            )
+        }
+        return mode
     }
 }
 

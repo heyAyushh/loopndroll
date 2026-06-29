@@ -998,6 +998,37 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testOlderStateMiniCacheCannotReplayAfterVisibleSnapshotReset() async throws {
+        let staleSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Stale Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: staleSession, seq: 8, revision: "stale-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.realtimeLatestSeq = 20
+        model.snapshot = nil
+
+        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+
+        #expect(model.realtimeLatestSeq == 20)
+        #expect(model.snapshot == nil)
+        #expect(model.viewState.activeSessions.isEmpty)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testReconnectingSessionMiniTruthWinsOverSuccessfulHttpSnapshot() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1023,6 +1054,40 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
+        #expect(service.loadSnapshotCallCount == 1)
+    }
+
+    @MainActor
+    @Test
+    func testHttpSnapshotFailureRestoresLocalMinisAfterVisibleSnapshotReset() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 14, revision: "mini-revision-14"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        service.loadSnapshotError = SessionMiniLocalFirstServiceSpy.ServiceError.promptFailed
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.snapshot = nil
+        model.connectionState = .connecting
+        model.realtimeLatestSeq = 0
+
+        await model.loadSnapshot()
+
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
+        #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
+        #expect(model.viewState.connectivityStatusLabel == "Local")
+        #expect(model.errorMessage == nil)
         #expect(service.loadSnapshotCallCount == 1)
     }
 
