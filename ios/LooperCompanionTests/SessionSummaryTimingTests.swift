@@ -447,8 +447,8 @@ struct SessionSummaryTimingTests {
     }
 
     @MainActor
-    @Test("Assistant surface switch keeps reducer freshness order immediately")
-    func assistantSurfaceSwitchKeepsReducerFreshnessOrderImmediately() throws {
+    @Test("Assistant surface switch keeps local freshness order immediately")
+    func assistantSurfaceSwitchKeepsLocalFreshnessOrderImmediately() throws {
         let codexSession = try sessionSummary(
             id: "codex-thread",
             ref: "C1",

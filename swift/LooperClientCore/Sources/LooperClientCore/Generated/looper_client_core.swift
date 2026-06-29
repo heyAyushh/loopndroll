@@ -583,8 +583,6 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
 
-    func setAssistantSurface(assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
-
     func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
 
     func setSessionArchived(threadId: String, archived: Bool) async throws  -> ClientSessionCommandIntentResult
@@ -872,23 +870,6 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientSessionPromptIntentResult_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func setAssistantSurface(assistantSurface: String)async throws  -> ClientSessionCommandIntentResult  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_assistant_surface(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(assistantSurface)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -3655,7 +3636,6 @@ public enum ClientCommandKind: Equatable, Hashable {
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
-    case setAssistantSurface
     case setSiriCurrentSession
     case setSiriDefaultSession
     case saveDefaultPrompt
@@ -3689,19 +3669,17 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case 3: return .submitNotificationReply
 
-        case 4: return .setAssistantSurface
+        case 4: return .setSiriCurrentSession
 
-        case 5: return .setSiriCurrentSession
+        case 5: return .setSiriDefaultSession
 
-        case 6: return .setSiriDefaultSession
+        case 6: return .saveDefaultPrompt
 
-        case 7: return .saveDefaultPrompt
+        case 7: return .setSessionArchived
 
-        case 8: return .setSessionArchived
+        case 8: return .deleteSession
 
-        case 9: return .deleteSession
-
-        case 10: return .muteSession
+        case 9: return .muteSession
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3723,32 +3701,28 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .setAssistantSurface:
+        case .setSiriCurrentSession:
             writeInt(&buf, Int32(4))
 
 
-        case .setSiriCurrentSession:
+        case .setSiriDefaultSession:
             writeInt(&buf, Int32(5))
 
 
-        case .setSiriDefaultSession:
+        case .saveDefaultPrompt:
             writeInt(&buf, Int32(6))
 
 
-        case .saveDefaultPrompt:
+        case .setSessionArchived:
             writeInt(&buf, Int32(7))
 
 
-        case .setSessionArchived:
+        case .deleteSession:
             writeInt(&buf, Int32(8))
 
 
-        case .deleteSession:
-            writeInt(&buf, Int32(9))
-
-
         case .muteSession:
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(9))
 
         }
     }
@@ -4831,9 +4805,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33854) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_assistant_surface() != 59908) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 14470) {

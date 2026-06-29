@@ -91,10 +91,9 @@ struct CompanionSessionRuntimeCommandCoreTests {
     }
 
     @Test
-    func siriAndSettingsCommandsRequireClientCoreAcceptance() async throws {
+    func siriAndPromptSettingsCommandsRequireClientCoreAcceptance() async throws {
         let runtime = try Self.temporarySessionRuntime()
 
-        let assistantResult = try await runtime.setAssistantSurface(.devin)
         let currentResult = try await runtime.setSiriCurrentSession(
             threadID: "thread-current",
             assistantSurface: .devin
@@ -105,19 +104,17 @@ struct CompanionSessionRuntimeCommandCoreTests {
         )
         let defaultPromptResult = try await runtime.saveDefaultPrompt("Continue safely")
 
-        #expect(assistantResult.accepted)
         #expect(currentResult.accepted)
         #expect(defaultResult.accepted)
         #expect(defaultPromptResult.accepted)
         #expect(
             runtime.pendingCommands().map(\.kind) == [
-                .setAssistantSurface,
                 .setSiriCurrentSession,
                 .setSiriDefaultSession,
                 .saveDefaultPrompt,
             ]
         )
-        #expect(try runtime.outboxDepth() == 4)
+        #expect(try runtime.outboxDepth() == 3)
     }
 
     @Test

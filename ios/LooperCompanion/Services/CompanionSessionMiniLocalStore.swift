@@ -127,7 +127,7 @@ private extension MobileSnapshot {
             case .setSessionMode:
                 applyPendingMode(command.preset, sessionID: command.threadId)
             case .setAssistantSurface:
-                applyPendingAssistantSurface(command.assistantSurface)
+                break
             case .setSiriCurrentSession:
                 applyPendingSiriCurrentSession(
                     sessionID: command.threadId,
@@ -162,13 +162,6 @@ private extension MobileSnapshot {
         updatePendingSession(sessionID: normalizedSessionID) { session in
             session.effectiveMode = mode
         }
-    }
-
-    mutating func applyPendingAssistantSurface(_ rawSurface: String) {
-        guard let surface = pendingAssistantSurface(rawSurface) else {
-            return
-        }
-        globalSettings.assistantSurface = surface
     }
 
     mutating func applyPendingSiriCurrentSession(
@@ -549,19 +542,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         CompanionDiagnostics.record(
             "prompt:grpc-accepted id=\(threadID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
         )
-        return result
-    }
-
-    @discardableResult
-    func setAssistantSurface(
-        _ assistantSurface: CompanionAssistantSurface
-    ) async throws -> ClientSessionCommandIntentResult {
-        let result = try await sessionManager.setAssistantSurface(assistantSurface.rawValue)
-        guard result.accepted else {
-            CompanionDiagnostics.record("assistant-surface:grpc-invalid surface=\(assistantSurface.rawValue)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record("assistant-surface:grpc-accepted surface=\(assistantSurface.rawValue)")
         return result
     }
 

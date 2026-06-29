@@ -245,27 +245,6 @@ impl LooperClientCoreLocalStore {
         })
     }
 
-    pub(crate) fn enqueue_set_assistant_surface_command(
-        &self,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        require_present(&assistant_surface, ClientCoreError::EmptySessionId)?;
-
-        self.enqueue(ClientPendingCommand {
-            kind: ClientPendingCommandKind::SetAssistantSurface,
-            client_mutation_id,
-            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
-            preset: String::new(),
-            assistant_surface,
-            prompt_intent: String::new(),
-            prompt: String::new(),
-            notification_id: String::new(),
-            archived: false,
-            attempt_count: 0,
-        })
-    }
-
     pub(crate) fn enqueue_set_siri_current_session_command(
         &self,
         thread_id: String,
@@ -441,6 +420,13 @@ impl LooperClientCoreLocalStore {
 }
 
 impl StoredState {
+    fn drop_legacy_assistant_surface_commands(&mut self) -> bool {
+        let original_len = self.pending_commands.len();
+        self.pending_commands
+            .retain(|command| command.kind != ClientPendingCommandKind::SetAssistantSurface);
+        self.pending_commands.len() != original_len
+    }
+
     fn repair_legacy_control_payload_cursor(&mut self) -> bool {
         if self.sessions.is_empty() || !has_legacy_control_payload(&self.sessions) {
             return false;
@@ -555,9 +541,13 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
 fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     match load(file_path) {
         Ok(mut state) => {
+            let dropped_legacy_surface_commands = state.drop_legacy_assistant_surface_commands();
             let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
             let coalesced_pending_commands = state.coalesce_latest_pending_commands();
-            if repaired_legacy_cursor || coalesced_pending_commands {
+            if dropped_legacy_surface_commands
+                || repaired_legacy_cursor
+                || coalesced_pending_commands
+            {
                 persist_state(file_path, &state)?;
             }
             Ok(state)
@@ -695,7 +685,6 @@ fn latest_pending_command_wins(kind: ClientPendingCommandKind) -> bool {
     matches!(
         kind,
         ClientPendingCommandKind::SetSessionMode
-            | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
             | ClientPendingCommandKind::SaveDefaultPrompt
@@ -714,8 +703,7 @@ fn same_pending_command_target(
 fn pending_command_latest_wins_globally(kind: ClientPendingCommandKind) -> bool {
     matches!(
         kind,
-        ClientPendingCommandKind::SetAssistantSurface
-            | ClientPendingCommandKind::SetSiriCurrentSession
+        ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
             | ClientPendingCommandKind::SaveDefaultPrompt
     )
@@ -877,45 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn local_store_coalesces_assistant_surface_switches_to_latest_command() {
-        let path = temp_store_path("assistant-surface-latest-wins");
-        let store =
-            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
-
-        store
-            .enqueue_set_assistant_surface_command(
-                "claude-code".to_owned(),
-                "mutation-claude".to_owned(),
-            )
-            .expect("enqueue first surface");
-        store
-            .mark_attempted("mutation-claude".to_owned())
-            .expect("attempt first surface");
-        let snapshot = store
-            .enqueue_set_assistant_surface_command("devin".to_owned(), "mutation-devin".to_owned())
-            .expect("enqueue latest surface");
-
-        assert_eq!(snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            snapshot.pending_commands[0].client_mutation_id,
-            "mutation-devin"
-        );
-        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
-        assert_eq!(snapshot.pending_commands[0].attempt_count, 0);
-
-        drop(store);
-        let reopened =
-            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
-        let reopened_snapshot = reopened.snapshot().expect("snapshot");
-        assert_eq!(reopened_snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            reopened_snapshot.pending_commands[0].client_mutation_id,
-            "mutation-devin"
-        );
-    }
-
-    #[test]
-    fn local_store_repairs_stale_assistant_surface_switches_on_load() {
+    fn local_store_drops_stale_assistant_surface_switches_on_load() {
         let path = temp_store_path("assistant-surface-load-repair");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
@@ -946,26 +896,16 @@ mod tests {
         let store =
             LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
         let snapshot = store.snapshot().expect("snapshot");
-        assert_eq!(snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            snapshot.pending_commands[0].client_mutation_id,
-            "mutation-devin"
-        );
-        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
+        assert!(snapshot.pending_commands.is_empty());
 
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
                 .expect("repaired json");
-        assert_eq!(
+        assert!(
             persisted["pendingCommands"]
                 .as_array()
                 .expect("pending commands")
-                .len(),
-            1
-        );
-        assert_eq!(
-            persisted["pendingCommands"][0]["clientMutationID"],
-            "mutation-devin"
+                .is_empty()
         );
     }
 
@@ -1251,96 +1191,6 @@ mod tests {
                 .expect("capped retry plan")
                 .delay_nanoseconds,
             NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS
-        );
-    }
-
-    #[test]
-    fn assistant_surface_pending_requires_ack_after_matching_recovery_snapshot() {
-        let path = temp_store_path("assistant-surface-pending-requires-ack");
-        let store =
-            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
-
-        store
-            .enqueue_set_assistant_surface_command(
-                "codex".to_owned(),
-                "mutation-surface".to_owned(),
-            )
-            .expect("enqueue surface");
-        store
-            .mark_attempted("mutation-surface".to_owned())
-            .expect("attempt surface");
-
-        let snapshot = store
-            .replace_state_minis(ClientStateMiniSnapshot {
-                latest_seq: 42,
-                sessions: vec![state_mini("thread-main", "codex", 42, "rev-42", "Cached")],
-                server_time: "2026-06-24T00:00:42Z".to_owned(),
-            })
-            .expect("recover state minis");
-
-        assert_eq!(snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            snapshot.pending_commands[0].client_mutation_id,
-            "mutation-surface"
-        );
-
-        store
-            .mark_delivered("mutation-surface".to_owned())
-            .expect("ack finality");
-        assert!(
-            store
-                .snapshot()
-                .expect("snapshot")
-                .pending_commands
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn assistant_surface_pending_requires_ack_after_matching_compact_revision() {
-        let path = temp_store_path("assistant-surface-pending-requires-ack-compact-revision");
-        let store =
-            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
-
-        store
-            .enqueue_set_assistant_surface_command(
-                "claude-code".to_owned(),
-                "mutation-surface".to_owned(),
-            )
-            .expect("enqueue surface");
-        store
-            .mark_attempted("mutation-surface".to_owned())
-            .expect("attempt surface");
-
-        let snapshot = store
-            .replace_state_minis(ClientStateMiniSnapshot {
-                latest_seq: 42,
-                sessions: vec![state_mini(
-                    "thread-main",
-                    "codex",
-                    42,
-                    "threads=thread-main:surface=claude-code:mobile-state=hash",
-                    "Cached",
-                )],
-                server_time: "2026-06-24T00:00:42Z".to_owned(),
-            })
-            .expect("recover compact state minis");
-
-        assert_eq!(snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            snapshot.pending_commands[0].client_mutation_id,
-            "mutation-surface"
-        );
-
-        store
-            .mark_delivered("mutation-surface".to_owned())
-            .expect("ack finality");
-        assert!(
-            store
-                .snapshot()
-                .expect("snapshot")
-                .pending_commands
-                .is_empty()
         );
     }
 

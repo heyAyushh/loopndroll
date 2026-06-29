@@ -26,7 +26,6 @@ const MOBILE_SYNC_REASON_RECONNECTING: &str = "reconnecting";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
 const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
-const ASSISTANT_SURFACE_MUTATION_PREFIX: &str = "assistant-surface";
 const SIRI_CURRENT_MUTATION_PREFIX: &str = "siri-current";
 const SIRI_DEFAULT_MUTATION_PREFIX: &str = "siri-default";
 const DEFAULT_PROMPT_MUTATION_PREFIX: &str = "default-prompt";
@@ -196,23 +195,6 @@ impl LooperClientCoreSessionRuntime {
             accepted: true,
             dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
             prompt_id: String::new(),
-        })
-    }
-
-    pub async fn set_assistant_surface(
-        &self,
-        assistant_surface: String,
-    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
-        let client_mutation_id = generated_client_mutation_id(ASSISTANT_SURFACE_MUTATION_PREFIX);
-        self.client_core.accept_set_assistant_surface_durable(
-            self.local_store.clone(),
-            assistant_surface,
-            client_mutation_id.clone(),
-        )?;
-        Ok(ClientSessionCommandIntentResult {
-            accepted: true,
-            client_mutation_id,
-            entity_id: String::new(),
         })
     }
 
@@ -699,14 +681,14 @@ mod tests {
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
         runtime
             .local_store
-            .enqueue_set_assistant_surface_command(
-                "devin".to_owned(),
-                "assistant-surface-restore".to_owned(),
+            .enqueue_save_default_prompt_command(
+                "Continue".to_owned(),
+                "default-prompt-restore".to_owned(),
             )
-            .expect("enqueue assistant surface command");
+            .expect("enqueue default prompt command");
         runtime
             .local_store
-            .mark_attempted("assistant-surface-restore".to_owned())
+            .mark_attempted("default-prompt-restore".to_owned())
             .expect("mark attempted");
         drop(runtime);
 
@@ -715,7 +697,7 @@ mod tests {
         assert_eq!(snapshot.pending_commands.len(), 1);
         assert_eq!(
             snapshot.pending_commands[0].kind,
-            ClientPendingCommandKind::SetAssistantSurface
+            ClientPendingCommandKind::SaveDefaultPrompt
         );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
         assert_eq!(reopened.outbox_depth().expect("outbox depth"), 1);

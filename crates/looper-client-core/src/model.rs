@@ -21,7 +21,6 @@ pub enum ClientCommandKind {
     SetSessionMode,
     SendSessionPrompt,
     SubmitNotificationReply,
-    SetAssistantSurface,
     SetSiriCurrentSession,
     SetSiriDefaultSession,
     SaveDefaultPrompt,

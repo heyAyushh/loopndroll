@@ -692,12 +692,6 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 },
             ))
         }
-        ClientCommandKind::SetAssistantSurface => Ok(proto::command::Command::SetAssistantSurface(
-            proto::SetAssistantSurfaceRequest {
-                assistant_surface: frame.assistant_surface,
-                client_mutation_id: frame.client_mutation_id,
-            },
-        )),
         ClientCommandKind::SetSiriCurrentSession => Ok(
             proto::command::Command::SetSiriCurrentSession(proto::SetSiriCurrentSessionRequest {
                 thread_id: frame.thread_id,
@@ -762,7 +756,6 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
             "accepted"
         }
         ClientCommandKind::SetSessionMode
-        | ClientCommandKind::SetAssistantSurface
         | ClientCommandKind::SetSiriCurrentSession
         | ClientCommandKind::SetSiriDefaultSession
         | ClientCommandKind::SaveDefaultPrompt

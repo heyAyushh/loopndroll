@@ -298,31 +298,6 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    fn set_assistant_surface(
-        &self,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        require_present(&assistant_surface, ClientCoreError::EmptySessionId)?;
-        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
-
-        let mut state = self.lock_state()?;
-        state.queue_command(OutboundSessionFrame {
-            frame_kind: OutboundSessionFrameKind::Command,
-            command_kind: ClientCommandKind::SetAssistantSurface,
-            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
-            preset: String::new(),
-            prompt: String::new(),
-            prompt_intent: String::new(),
-            assistant_surface,
-            notification_id: String::new(),
-            archived: false,
-            client_mutation_id,
-            after_seq: EMPTY_SEQUENCE,
-        });
-        Ok(state.snapshot())
-    }
-
     fn set_siri_current_session(
         &self,
         thread_id: String,
@@ -693,21 +668,6 @@ impl LooperClientCore {
             prompt_intent,
             client_mutation_id.clone(),
         )?;
-        self.emit_local_state_update(self.snapshot()?);
-        local_store.mark_attempted(client_mutation_id.clone())?;
-        self.spawn_command_ack_flush(local_store, client_mutation_id);
-        Ok(())
-    }
-
-    pub(crate) fn accept_set_assistant_surface_durable(
-        self: &Arc<Self>,
-        local_store: Arc<LooperClientCoreLocalStore>,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<(), ClientCoreError> {
-        self.set_assistant_surface(assistant_surface.clone(), client_mutation_id.clone())?;
-        local_store
-            .enqueue_set_assistant_surface_command(assistant_surface, client_mutation_id.clone())?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         self.spawn_command_ack_flush(local_store, client_mutation_id);
@@ -1933,7 +1893,7 @@ fn restored_outbound_frame(
         ClientCoreError::EmptyMutationId,
     )?;
     validate_restored_command(&command)?;
-    let command_kind = restored_command_kind(command.kind);
+    let command_kind = restored_command_kind(command.kind)?;
     let thread_id = restored_thread_id(&command)?;
     let prompt_intent = if command.kind == ClientPendingCommandKind::SendSessionPrompt {
         normalized_prompt_intent(command.prompt_intent)?
@@ -1969,7 +1929,7 @@ fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), Clien
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
         }
         ClientPendingCommandKind::SetAssistantSurface => {
-            require_present(&command.assistant_surface, ClientCoreError::EmptySessionId)?;
+            return Err(ClientCoreError::UnexpectedOutboxMutations);
         }
         ClientPendingCommandKind::SaveDefaultPrompt => {
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
@@ -1984,27 +1944,37 @@ fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), Clien
     Ok(())
 }
 
-fn restored_command_kind(kind: ClientPendingCommandKind) -> ClientCommandKind {
+fn restored_command_kind(
+    kind: ClientPendingCommandKind,
+) -> Result<ClientCommandKind, ClientCoreError> {
     match kind {
-        ClientPendingCommandKind::SetSessionMode => ClientCommandKind::SetSessionMode,
-        ClientPendingCommandKind::SendSessionPrompt => ClientCommandKind::SendSessionPrompt,
+        ClientPendingCommandKind::SetSessionMode => Ok(ClientCommandKind::SetSessionMode),
+        ClientPendingCommandKind::SendSessionPrompt => Ok(ClientCommandKind::SendSessionPrompt),
         ClientPendingCommandKind::SubmitNotificationReply => {
-            ClientCommandKind::SubmitNotificationReply
+            Ok(ClientCommandKind::SubmitNotificationReply)
         }
-        ClientPendingCommandKind::SetAssistantSurface => ClientCommandKind::SetAssistantSurface,
-        ClientPendingCommandKind::SetSiriCurrentSession => ClientCommandKind::SetSiriCurrentSession,
-        ClientPendingCommandKind::SetSiriDefaultSession => ClientCommandKind::SetSiriDefaultSession,
-        ClientPendingCommandKind::SaveDefaultPrompt => ClientCommandKind::SaveDefaultPrompt,
-        ClientPendingCommandKind::SetSessionArchived => ClientCommandKind::SetSessionArchived,
-        ClientPendingCommandKind::DeleteSession => ClientCommandKind::DeleteSession,
-        ClientPendingCommandKind::MuteSession => ClientCommandKind::MuteSession,
+        ClientPendingCommandKind::SetAssistantSurface => {
+            Err(ClientCoreError::UnexpectedOutboxMutations)
+        }
+        ClientPendingCommandKind::SetSiriCurrentSession => {
+            Ok(ClientCommandKind::SetSiriCurrentSession)
+        }
+        ClientPendingCommandKind::SetSiriDefaultSession => {
+            Ok(ClientCommandKind::SetSiriDefaultSession)
+        }
+        ClientPendingCommandKind::SaveDefaultPrompt => Ok(ClientCommandKind::SaveDefaultPrompt),
+        ClientPendingCommandKind::SetSessionArchived => Ok(ClientCommandKind::SetSessionArchived),
+        ClientPendingCommandKind::DeleteSession => Ok(ClientCommandKind::DeleteSession),
+        ClientPendingCommandKind::MuteSession => Ok(ClientCommandKind::MuteSession),
     }
 }
 
 fn restored_thread_id(command: &ClientPendingCommand) -> Result<String, ClientCoreError> {
     match command.kind {
-        ClientPendingCommandKind::SetAssistantSurface
-        | ClientPendingCommandKind::SaveDefaultPrompt => Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned()),
+        ClientPendingCommandKind::SetAssistantSurface => {
+            Err(ClientCoreError::UnexpectedOutboxMutations)
+        }
+        ClientPendingCommandKind::SaveDefaultPrompt => Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned()),
         ClientPendingCommandKind::SetSiriCurrentSession
         | ClientPendingCommandKind::SetSiriDefaultSession => Ok(command.thread_id.clone()),
         ClientPendingCommandKind::SetSessionMode
@@ -2137,7 +2107,6 @@ fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
     matches!(
         command_kind,
         ClientCommandKind::SetSessionMode
-            | ClientCommandKind::SetAssistantSurface
             | ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
             | ClientCommandKind::SaveDefaultPrompt
@@ -2147,8 +2116,7 @@ fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
 fn latest_wins_outbox_command_is_global(command_kind: ClientCommandKind) -> bool {
     matches!(
         command_kind,
-        ClientCommandKind::SetAssistantSurface
-            | ClientCommandKind::SetSiriCurrentSession
+        ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
             | ClientCommandKind::SaveDefaultPrompt
     )
@@ -2753,30 +2721,6 @@ mod tests {
     }
 
     #[test]
-    fn assistant_surface_outbox_is_latest_wins() {
-        let core = LooperClientCore::new();
-        core.set_assistant_surface("claude-code".to_owned(), "cmid-claude".to_owned())
-            .expect("queue claude");
-        core.set_assistant_surface("devin".to_owned(), "cmid-devin".to_owned())
-            .expect("queue devin");
-        core.set_assistant_surface("grok-build".to_owned(), "cmid-grok".to_owned())
-            .expect("queue grok");
-
-        let snapshot = core.snapshot().expect("snapshot");
-        assert_eq!(snapshot.outbox_depth, 1);
-        assert_eq!(snapshot.pending_mutations.len(), 1);
-        assert_eq!(
-            snapshot.pending_mutations[0].client_mutation_id,
-            "cmid-grok"
-        );
-
-        let outbox = core.take_outbox().expect("outbox");
-        assert_eq!(outbox.len(), 1);
-        assert_eq!(outbox[0].client_mutation_id, "cmid-grok");
-        assert_eq!(outbox[0].assistant_surface, "grok-build");
-    }
-
-    #[test]
     fn singleton_settings_and_mode_outbox_are_latest_wins() {
         let core = LooperClientCore::new();
         core.set_siri_current_session(
@@ -2835,55 +2779,6 @@ mod tests {
     }
 
     #[test]
-    fn superseded_assistant_surface_ack_preserves_newer_outbox() {
-        let core = LooperClientCore::new();
-        core.set_assistant_surface("claude-code".to_owned(), "cmid-claude".to_owned())
-            .expect("queue claude");
-
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
-
-        runtime.block_on(async {
-            let submit_core = core.clone();
-            let submit_task = tokio::spawn(async move {
-                submit_core
-                    .submit_expected_outbox(vec!["cmid-claude".to_owned()])
-                    .await
-            });
-            let frame = commands_receiver.recv().await.expect("command frame");
-            assert_eq!(frame.client_mutation_id, "cmid-claude");
-            assert_eq!(frame.command_kind, ClientCommandKind::SetAssistantSurface);
-
-            core.set_assistant_surface("grok-build".to_owned(), "cmid-grok".to_owned())
-                .expect("queue newer surface while old ack is pending");
-            acks_sender
-                .send(accepted_ack("cmid-claude", 42, "rev-42"))
-                .await
-                .expect("send old ack");
-
-            let response = submit_task
-                .await
-                .expect("submit task")
-                .expect("superseded latest-wins ack is still valid");
-            assert!(response.accepted);
-        });
-
-        let snapshot = core.snapshot().expect("snapshot");
-        assert_eq!(snapshot.outbox_depth, 1);
-        assert_eq!(snapshot.pending_mutations.len(), 1);
-        assert_eq!(
-            snapshot.pending_mutations[0].client_mutation_id,
-            "cmid-grok"
-        );
-
-        let outbox = core
-            .take_expected_outbox(vec!["cmid-grok".to_owned()])
-            .expect("newer surface remains pending");
-        assert_eq!(outbox.len(), 1);
-        assert_eq!(outbox[0].assistant_surface, "grok-build");
-    }
-
-    #[test]
     fn submit_expected_outbox_keeps_commands_queued_when_transport_fails() {
         let core = LooperClientCore::new();
         core.send_prompt(
@@ -2914,16 +2809,16 @@ mod tests {
         let store_path = temp_store_path("flush-retry-stream");
         let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
             .expect("store");
-        core.set_assistant_surface("grok-build".to_owned(), "cmid-surface".to_owned())
-            .expect("queue assistant surface");
+        core.save_default_prompt("Continue".to_owned(), "cmid-default-prompt".to_owned())
+            .expect("queue default prompt");
         store
-            .enqueue_set_assistant_surface_command(
-                "grok-build".to_owned(),
-                "cmid-surface".to_owned(),
+            .enqueue_save_default_prompt_command(
+                "Continue".to_owned(),
+                "cmid-default-prompt".to_owned(),
             )
-            .expect("persist assistant surface");
+            .expect("persist default prompt");
         store
-            .mark_attempted("cmid-surface".to_owned())
+            .mark_attempted("cmid-default-prompt".to_owned())
             .expect("mark initial attempt");
 
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
@@ -2934,18 +2829,18 @@ mod tests {
                 let (mut commands_receiver, acks_sender) =
                     install_test_session_stream(&install_core);
                 let frame = commands_receiver.recv().await.expect("retried command");
-                assert_eq!(frame.client_mutation_id, "cmid-surface");
-                assert_eq!(frame.command_kind, ClientCommandKind::SetAssistantSurface);
-                assert_eq!(frame.assistant_surface, "grok-build");
+                assert_eq!(frame.client_mutation_id, "cmid-default-prompt");
+                assert_eq!(frame.command_kind, ClientCommandKind::SaveDefaultPrompt);
+                assert_eq!(frame.prompt, "Continue");
                 acks_sender
-                    .send(accepted_ack("cmid-surface", 44, "rev-44"))
+                    .send(accepted_ack("cmid-default-prompt", 44, "rev-44"))
                     .await
                     .expect("send ack");
             });
 
             core.flush_pending_outbox_with_retries(
                 store.clone(),
-                vec!["cmid-surface".to_owned()],
+                vec!["cmid-default-prompt".to_owned()],
                 false,
             )
             .await
