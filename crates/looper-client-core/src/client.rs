@@ -77,6 +77,7 @@ struct PendingStateMiniReplacement {
     server_time: String,
     sessions: Vec<ClientStateMini>,
     node_ids: BTreeSet<String>,
+    base_last_seq_by_node: BTreeMap<String, i64>,
     route_endpoint: String,
 }
 
@@ -1878,6 +1879,7 @@ impl ClientCoreState {
             server_time: delta.server_time,
             sessions,
             node_ids,
+            base_last_seq_by_node: self.last_seq_by_node.clone(),
             route_endpoint: self.endpoint_url.clone(),
         });
     }
@@ -1917,36 +1919,55 @@ impl ClientCoreState {
             .pending_replacement
             .take()
             .expect("pending replacement existed");
-        let node_ids = if replacement.node_ids.is_empty() {
+        let covered_node_ids = if replacement.node_ids.is_empty() {
             BTreeSet::from([DEFAULT_NODE_ID.to_owned()])
         } else {
-            replacement.node_ids
+            replacement.node_ids.clone()
         };
+        let fresh_last_seq_by_node =
+            Self::fresh_replacement_last_seq_by_node(&replacement, &covered_node_ids);
+        let fresh_node_ids = fresh_last_seq_by_node
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let before_state_minis = self.state_minis.clone();
+        let before_latest_seq = self.latest_seq;
+        let before_revision = self.revision.clone();
+        let before_server_time = self.server_time.clone();
+
         self.state_minis
-            .retain(|session| !node_ids.contains(&state_mini_node_id(session)));
+            .retain(|session| !fresh_node_ids.contains(&state_mini_node_id(session)));
         for session in normalize_state_minis_for_source(
             replacement.sessions,
             Some(FRESHNESS_SOURCE_STREAM),
             Some(replacement.route_endpoint.as_str()),
         ) {
+            if !fresh_node_ids.contains(&state_mini_node_id(&session)) {
+                continue;
+            }
             self.upsert_state_mini(session);
         }
-        for node_id in node_ids {
-            self.advance_node_cursor(node_id, replacement.latest_seq.max(replacement.seq));
+        for (node_id, seq) in fresh_last_seq_by_node {
+            self.advance_node_cursor(node_id, seq);
         }
-        self.latest_seq = self
-            .latest_seq
-            .max(replacement.seq)
-            .max(replacement.latest_seq)
-            .max(heartbeat_latest_seq);
-        if !replacement.revision.is_empty() {
-            self.revision = replacement.revision;
-        } else if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
-            self.revision = revision;
+        if !fresh_node_ids.is_empty() {
+            self.latest_seq = self
+                .latest_seq
+                .max(replacement.seq)
+                .max(replacement.latest_seq)
+                .max(heartbeat_latest_seq);
+            if !replacement.revision.is_empty() {
+                self.revision = replacement.revision;
+            } else if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
+                self.revision = revision;
+            }
+            update_server_time_if_newer(&mut self.server_time, replacement.server_time);
         }
-        update_server_time_if_newer(&mut self.server_time, replacement.server_time);
         self.last_error.clear();
-        true
+        self.state_minis != before_state_minis
+            || self.latest_seq != before_latest_seq
+            || self.revision != before_revision
+            || self.server_time != before_server_time
     }
 
     fn replace_state_minis_from_source(
@@ -2014,6 +2035,33 @@ impl ClientCoreState {
                 .unwrap_or(EMPTY_SEQUENCE);
             delta.seq <= last_seq
         })
+    }
+
+    fn fresh_replacement_last_seq_by_node(
+        replacement: &PendingStateMiniReplacement,
+        node_ids: &BTreeSet<String>,
+    ) -> BTreeMap<String, i64> {
+        let incoming_last_seq_by_node = last_seq_by_node_from_minis(&replacement.sessions);
+        let fallback_seq = replacement.latest_seq.max(replacement.seq);
+        node_ids
+            .iter()
+            .filter_map(|node_id| {
+                let incoming_seq = incoming_last_seq_by_node
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(fallback_seq);
+                let current_seq = replacement
+                    .base_last_seq_by_node
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(EMPTY_SEQUENCE);
+                if incoming_seq > current_seq {
+                    Some((node_id.clone(), incoming_seq))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn refresh_last_seq_by_node_from_minis(&mut self) {
@@ -4000,6 +4048,65 @@ mod tests {
                 .payload_json
                 .contains("new a")
         );
+    }
+
+    #[test]
+    fn state_mini_replacement_delta_preserves_newer_node_in_mixed_batch() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 30,
+            sessions: vec![
+                node_state_mini("node-a", "thread-a", "codex", 30, "rev-a-30", "newer a"),
+                node_state_mini("node-b", "thread-b", "zed", 10, "rev-b-10", "old b"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed node minis");
+
+        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
+            seq: 31,
+            latest_seq: 31,
+            entity_id: "mobile".to_owned(),
+            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+            revision: "rev-mixed-31".to_owned(),
+            server_time: SERVER_TIME.to_owned(),
+            has_session: false,
+            session: state_mini("", "", 0, "", ""),
+            sessions: vec![
+                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stale a"),
+                node_state_mini("node-b", "thread-b-new", "zed", 31, "rev-b-31", "fresh b"),
+            ],
+        })
+        .expect("stage mixed replacement");
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 31,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("mixed replacement finality heartbeat");
+
+        assert!(finalized.did_change);
+        assert_eq!(finalized.snapshot.latest_seq, 31);
+        let thread_a = finalized
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-a")
+            .expect("preserved newer node-a mini");
+        let thread_b = finalized
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-b-new")
+            .expect("updated node-b mini");
+        assert_eq!(payload_value(thread_a)["title"], "newer a");
+        assert_eq!(payload_value(thread_b)["title"], "fresh b");
+
+        let state = core.lock_state().expect("state lock");
+        assert_eq!(state.last_seq_by_node.get("node-a"), Some(&30));
+        assert_eq!(state.last_seq_by_node.get("node-b"), Some(&31));
     }
 
     #[test]
