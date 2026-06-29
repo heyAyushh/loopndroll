@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -11,7 +12,11 @@ use crate::{
         ClientEndpoint, ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan,
         ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
-    state_mini::{normalize_state_minis, require_valid_sequence, validate_state_minis},
+    state_mini::{
+        DEFAULT_NODE_ID, last_seq_by_node_from_minis, normalize_state_minis,
+        require_valid_sequence, same_state_mini_key, sort_state_minis, state_mini_node_id,
+        validate_state_minis,
+    },
 };
 
 pub const DEFAULT_LOCAL_STORE_FILE_NAME: &str = "looper-realtime-state-minis.json";
@@ -35,6 +40,8 @@ struct StoredState {
     latest_seq: i64,
     #[serde(default)]
     sessions: Vec<ClientStateMini>,
+    #[serde(rename = "lastSeqByNode", alias = "last_seq_by_node", default)]
+    last_seq_by_node: BTreeMap<String, i64>,
     #[serde(rename = "pendingCommands", default)]
     pending_commands: Vec<StoredPendingCommand>,
     #[serde(rename = "serverTime", default)]
@@ -95,12 +102,18 @@ impl LooperClientCoreLocalStore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        if snapshot.latest_seq < state.latest_seq {
-            return Ok(state.snapshot());
+        let sessions = normalize_state_minis(snapshot.sessions);
+        state.merge_snapshot_minis_preserving_newer(sessions);
+        state.merge_last_seq_by_node_from_minis();
+        if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
+            state
+                .last_seq_by_node
+                .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
         }
-        state.latest_seq = snapshot.latest_seq;
-        state.sessions = normalize_state_minis(snapshot.sessions);
-        state.server_time = non_empty(snapshot.server_time);
+        state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
+        if let Some(server_time) = non_empty(snapshot.server_time) {
+            state.server_time = Some(server_time);
+        }
         self.persist_locked(&state)?;
         Ok(state.snapshot())
     }
@@ -495,6 +508,59 @@ impl StoredState {
         changed
     }
 
+    fn normalize_local_minis(&mut self) -> bool {
+        let normalized = normalize_state_minis(self.sessions.clone());
+        let changed = normalized != self.sessions;
+        self.sessions = normalized;
+        changed
+    }
+
+    fn repair_last_seq_by_node(&mut self) -> bool {
+        let original = self.last_seq_by_node.clone();
+        self.merge_last_seq_by_node_from_minis();
+        if self.last_seq_by_node.is_empty() && self.latest_seq > 0 {
+            self.last_seq_by_node
+                .insert(DEFAULT_NODE_ID.to_owned(), self.latest_seq);
+        }
+        self.last_seq_by_node != original
+    }
+
+    fn merge_snapshot_minis_preserving_newer(&mut self, sessions: Vec<ClientStateMini>) -> bool {
+        let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
+        let before = self.sessions.clone();
+        self.sessions.retain(|current| {
+            incoming_last_seq_by_node
+                .get(&state_mini_node_id(current))
+                .map(|incoming_seq| current.seq > *incoming_seq)
+                .unwrap_or(true)
+        });
+        let mut changed = false;
+        for incoming in sessions {
+            if let Some(index) = self
+                .sessions
+                .iter()
+                .position(|current| same_state_mini_key(current, &incoming))
+            {
+                if incoming.seq >= self.sessions[index].seq {
+                    changed = self.sessions[index] != incoming || changed;
+                    self.sessions[index] = incoming;
+                }
+            } else {
+                self.sessions.push(incoming);
+                changed = true;
+            }
+        }
+        sort_state_minis(&mut self.sessions);
+        changed || self.sessions != before
+    }
+
+    fn merge_last_seq_by_node_from_minis(&mut self) {
+        for (node_id, seq) in last_seq_by_node_from_minis(&self.sessions) {
+            let entry = self.last_seq_by_node.entry(node_id).or_default();
+            *entry = (*entry).max(seq);
+        }
+    }
+
     fn snapshot(&self) -> ClientLocalStateSnapshot {
         ClientLocalStateSnapshot {
             latest_seq: self.latest_seq,
@@ -582,9 +648,13 @@ fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
             let dropped_legacy_surface_commands = state.drop_legacy_assistant_surface_commands();
             let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
             let coalesced_pending_commands = state.coalesce_latest_pending_commands();
+            let normalized_local_minis = state.normalize_local_minis();
+            let repaired_last_seq_by_node = state.repair_last_seq_by_node();
             if dropped_legacy_surface_commands
                 || repaired_legacy_cursor
                 || coalesced_pending_commands
+                || normalized_local_minis
+                || repaired_last_seq_by_node
             {
                 persist_state(file_path, &state)?;
             }
@@ -817,10 +887,7 @@ mod tests {
 
         assert_eq!(snapshot.pending_commands.len(), 1);
         assert_eq!(snapshot.pending_commands[0].attempt_count, 2);
-        assert_eq!(
-            snapshot.sessions[0].payload_json,
-            session_json("thread-main", "Cached")
-        );
+        assert_eq!(payload_value(&snapshot.sessions[0])["title"], "Cached");
 
         drop(store);
         let reopened =
@@ -839,6 +906,52 @@ mod tests {
                 .pending_commands
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn local_store_persists_last_seq_by_node_and_preserves_newer_node_minis() {
+        let path = temp_store_path("last-seq-by-node");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 20,
+                sessions: vec![
+                    node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stream a"),
+                    node_state_mini("node-b", "thread-b", "zed", 12, "rev-b-12", "cached b"),
+                ],
+                server_time: "2026-06-24T00:00:00Z".to_owned(),
+            })
+            .expect("seed minis");
+        let snapshot = store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 21,
+                sessions: vec![
+                    node_state_mini("node-a", "thread-a", "codex", 15, "rev-a-15", "stale a"),
+                    node_state_mini("node-b", "thread-b", "zed", 21, "rev-b-21", "fresh b"),
+                ],
+                server_time: "2026-06-24T00:00:01Z".to_owned(),
+            })
+            .expect("merge recovery minis");
+
+        let thread_a = snapshot
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "thread-a")
+            .expect("preserved node-a");
+        let thread_b = snapshot
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "thread-b")
+            .expect("updated node-b");
+        assert_eq!(payload_value(thread_a)["title"], "stream a");
+        assert_eq!(payload_value(thread_b)["title"], "fresh b");
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+        assert_eq!(persisted["lastSeqByNode"]["node-a"], 20);
+        assert_eq!(persisted["lastSeqByNode"]["node-b"], 21);
     }
 
     #[test]
@@ -1295,6 +1408,30 @@ mod tests {
         }
     }
 
+    fn node_state_mini(
+        node_id: &str,
+        session_id: &str,
+        assistant_surface: &str,
+        seq: i64,
+        revision: &str,
+        title: &str,
+    ) -> ClientStateMini {
+        ClientStateMini {
+            session_id: session_id.to_owned(),
+            assistant_surface: assistant_surface.to_owned(),
+            seq,
+            revision: revision.to_owned(),
+            payload_json: json!({
+                "accountId": "local-account",
+                "nodeId": node_id,
+                "sessionId": session_id,
+                "assistantSurface": assistant_surface,
+                "title": title,
+            })
+            .to_string(),
+        }
+    }
+
     fn session_json(session_id: &str, title: &str) -> String {
         json!({
             "sessionId": session_id,
@@ -1302,6 +1439,10 @@ mod tests {
             "title": title,
         })
         .to_string()
+    }
+
+    fn payload_value(session: &ClientStateMini) -> serde_json::Value {
+        serde_json::from_str(&session.payload_json).expect("payload json")
     }
 
     fn temp_store_path(name: &str) -> PathBuf {

@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc},
+};
 
 use tokio::{
     sync::mpsc,
@@ -26,8 +29,10 @@ use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state
 #[cfg(test)]
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
-    latest_state_mini_revision, normalize_state_minis, require_valid_sequence, same_state_mini_key,
-    sort_state_minis, validate_state_minis,
+    DEFAULT_NODE_ID, FRESHNESS_SOURCE_LOCAL, FRESHNESS_SOURCE_RECOVERY, FRESHNESS_SOURCE_STREAM,
+    last_seq_by_node_from_minis, latest_state_mini_revision, normalize_state_mini_for_source,
+    normalize_state_minis_for_source, require_valid_sequence, same_state_mini_key,
+    sort_state_minis, state_mini_node_id, validate_state_minis,
 };
 #[cfg(test)]
 use crate::transport::validate_endpoint_url;
@@ -45,6 +50,7 @@ struct ClientCoreState {
     phase: ConnectionPhase,
     endpoint_url: String,
     latest_seq: i64,
+    last_seq_by_node: BTreeMap<String, i64>,
     revision: String,
     server_time: String,
     state_minis: Vec<ClientStateMini>,
@@ -70,6 +76,8 @@ struct PendingStateMiniReplacement {
     revision: String,
     server_time: String,
     sessions: Vec<ClientStateMini>,
+    node_ids: BTreeSet<String>,
+    route_endpoint: String,
 }
 
 #[derive(Debug)]
@@ -533,7 +541,7 @@ impl LooperClientCore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        state.replace_state_minis(snapshot);
+        state.replace_state_minis_from_source(snapshot, FRESHNESS_SOURCE_LOCAL, "");
         Ok(state.snapshot())
     }
 
@@ -954,7 +962,11 @@ impl LooperClientCore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        state.replace_state_minis(snapshot);
+        state.replace_state_minis_from_source(
+            snapshot,
+            FRESHNESS_SOURCE_RECOVERY,
+            endpoint_url.as_str(),
+        );
         if !endpoint_url.trim().is_empty() {
             state.endpoint_url = endpoint_url;
         }
@@ -1521,32 +1533,20 @@ impl LooperClientCore {
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
                 }
-                if snapshot.latest_seq < state.latest_seq {
-                    state.phase = ConnectionPhase::Ready;
-                    state.last_error.clear();
-                    (
-                        ClientStateMiniStreamUpdateReason::RecoveryRequired,
-                        false,
-                        state.latest_seq,
-                        error_description,
-                    )
-                } else {
-                    state.latest_seq = snapshot.latest_seq;
-                    state.server_time = snapshot.server_time;
-                    state.state_minis = normalize_state_minis(snapshot.sessions);
-                    state.pending_replacement = None;
-                    if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
-                        state.revision = revision;
-                    }
-                    state.phase = ConnectionPhase::Ready;
-                    state.last_error.clear();
-                    (
-                        ClientStateMiniStreamUpdateReason::RecoveryRequired,
-                        true,
-                        state.latest_seq,
-                        error_description,
-                    )
-                }
+                let endpoint_url = state.endpoint_url.clone();
+                let did_change = state.replace_state_minis_from_source(
+                    snapshot,
+                    FRESHNESS_SOURCE_RECOVERY,
+                    endpoint_url.as_str(),
+                );
+                state.phase = ConnectionPhase::Ready;
+                state.last_error.clear();
+                (
+                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                    did_change,
+                    state.latest_seq,
+                    error_description,
+                )
             }
             StateMiniStreamEvent::Reconnecting {
                 latest_seq,
@@ -1708,6 +1708,7 @@ impl ClientCoreState {
             self.revision = ack.revision.clone();
         }
         self.latest_seq = self.latest_seq.max(ack.ack_seq);
+        self.advance_node_cursor(ack.node_id.clone(), ack.ack_seq);
         let command_kind = self
             .pending_mutations
             .iter()
@@ -1729,17 +1730,27 @@ impl ClientCoreState {
         }
     }
 
-    fn upsert_state_mini(&mut self, session: ClientStateMini) {
+    fn upsert_state_mini(&mut self, session: ClientStateMini) -> bool {
+        let session = normalize_state_mini_for_source(
+            session,
+            Some(FRESHNESS_SOURCE_STREAM),
+            Some(self.endpoint_url.as_str()),
+        );
         if let Some(index) = self
             .state_minis
             .iter()
             .position(|current| same_state_mini_key(current, &session))
         {
+            if session.seq < self.state_minis[index].seq {
+                return false;
+            }
             self.state_minis[index] = merged_state_mini(&self.state_minis[index], session);
         } else {
             self.state_minis.push(session);
         }
+        self.refresh_last_seq_by_node_from_minis();
         sort_state_minis(&mut self.state_minis);
+        true
     }
 
     fn apply_optimistic_mode(&mut self, thread_id: &str, preset: &str, client_mutation_id: &str) {
@@ -1812,10 +1823,7 @@ impl ClientCoreState {
             return false;
         }
 
-        if delta.seq < self.latest_seq {
-            return false;
-        }
-        if delta.seq == self.latest_seq && !is_same_seq_continuation {
+        if self.delta_is_stale_for_all_nodes(&delta) && !is_same_seq_continuation {
             return false;
         }
 
@@ -1834,11 +1842,12 @@ impl ClientCoreState {
             self.pending_replacement = None;
         }
 
+        let mut did_change = false;
         if delta.has_session {
-            self.upsert_state_mini(delta.session);
+            did_change = self.upsert_state_mini(delta.session);
         } else {
             for session in delta.sessions {
-                self.upsert_state_mini(session);
+                did_change = self.upsert_state_mini(session) || did_change;
             }
         }
 
@@ -1852,16 +1861,24 @@ impl ClientCoreState {
             self.server_time = delta.server_time;
         }
         self.last_error.clear();
-        true
+        did_change
     }
 
     fn stage_state_mini_replacement(&mut self, delta: ClientStateMiniDelta) {
+        let sessions = normalize_state_minis_for_source(
+            delta.sessions,
+            Some(FRESHNESS_SOURCE_STREAM),
+            Some(self.endpoint_url.as_str()),
+        );
+        let node_ids = replacement_node_ids(&sessions);
         self.pending_replacement = Some(PendingStateMiniReplacement {
             seq: delta.seq,
             latest_seq: delta.latest_seq.max(delta.seq),
             revision: delta.revision,
             server_time: delta.server_time,
-            sessions: delta.sessions,
+            sessions,
+            node_ids,
+            route_endpoint: self.endpoint_url.clone(),
         });
     }
 
@@ -1878,7 +1895,13 @@ impl ClientCoreState {
             replacement.revision = delta.revision.clone();
         }
         update_server_time_if_newer(&mut replacement.server_time, delta.server_time.clone());
-        replacement.sessions.extend(delta.sessions.clone());
+        let sessions = normalize_state_minis_for_source(
+            delta.sessions.clone(),
+            Some(FRESHNESS_SOURCE_STREAM),
+            Some(self.endpoint_url.as_str()),
+        );
+        replacement.node_ids.extend(replacement_node_ids(&sessions));
+        replacement.sessions.extend(sessions);
         true
     }
 
@@ -1894,7 +1917,23 @@ impl ClientCoreState {
             .pending_replacement
             .take()
             .expect("pending replacement existed");
-        self.state_minis = normalize_state_minis(replacement.sessions);
+        let node_ids = if replacement.node_ids.is_empty() {
+            BTreeSet::from([DEFAULT_NODE_ID.to_owned()])
+        } else {
+            replacement.node_ids
+        };
+        self.state_minis
+            .retain(|session| !node_ids.contains(&state_mini_node_id(session)));
+        for session in normalize_state_minis_for_source(
+            replacement.sessions,
+            Some(FRESHNESS_SOURCE_STREAM),
+            Some(replacement.route_endpoint.as_str()),
+        ) {
+            self.upsert_state_mini(session);
+        }
+        for node_id in node_ids {
+            self.advance_node_cursor(node_id, replacement.latest_seq.max(replacement.seq));
+        }
         self.latest_seq = self
             .latest_seq
             .max(replacement.seq)
@@ -1910,19 +1949,109 @@ impl ClientCoreState {
         true
     }
 
-    fn replace_state_minis(&mut self, snapshot: ClientStateMiniSnapshot) -> bool {
-        if snapshot.latest_seq < self.latest_seq {
-            return false;
+    fn replace_state_minis_from_source(
+        &mut self,
+        snapshot: ClientStateMiniSnapshot,
+        freshness_source: &str,
+        route_endpoint: &str,
+    ) -> bool {
+        let sessions = normalize_state_minis_for_source(
+            snapshot.sessions,
+            Some(freshness_source),
+            Some(route_endpoint),
+        );
+        let did_change = self.merge_snapshot_minis_preserving_newer(sessions);
+        self.merge_last_seq_by_node_from_minis(&self.state_minis.clone());
+        if self.last_seq_by_node.is_empty() && snapshot.latest_seq > EMPTY_SEQUENCE {
+            self.advance_node_cursor(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
         }
-        self.latest_seq = snapshot.latest_seq;
-        self.server_time = snapshot.server_time;
-        self.state_minis = normalize_state_minis(snapshot.sessions);
+        self.latest_seq = self.latest_seq.max(snapshot.latest_seq);
+        update_server_time_if_newer(&mut self.server_time, snapshot.server_time);
         self.pending_replacement = None;
         if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
             self.revision = revision;
         }
         self.last_error.clear();
-        true
+        did_change
+    }
+
+    fn merge_snapshot_minis_preserving_newer(&mut self, sessions: Vec<ClientStateMini>) -> bool {
+        let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
+        let before = self.state_minis.clone();
+        self.state_minis.retain(|current| {
+            incoming_last_seq_by_node
+                .get(&state_mini_node_id(current))
+                .map(|incoming_seq| current.seq > *incoming_seq)
+                .unwrap_or(true)
+        });
+        let mut did_change = false;
+        for incoming in sessions {
+            if let Some(index) = self
+                .state_minis
+                .iter()
+                .position(|current| same_state_mini_key(current, &incoming))
+            {
+                if incoming.seq >= self.state_minis[index].seq {
+                    did_change = self.state_minis[index] != incoming || did_change;
+                    self.state_minis[index] = incoming;
+                }
+            } else {
+                self.state_minis.push(incoming);
+                did_change = true;
+            }
+        }
+        sort_state_minis(&mut self.state_minis);
+        did_change || self.state_minis != before
+    }
+
+    fn delta_is_stale_for_all_nodes(&self, delta: &ClientStateMiniDelta) -> bool {
+        let node_ids = delta_node_ids(delta);
+        node_ids.into_iter().all(|node_id| {
+            let last_seq = self
+                .last_seq_by_node
+                .get(&node_id)
+                .copied()
+                .unwrap_or(EMPTY_SEQUENCE);
+            delta.seq <= last_seq
+        })
+    }
+
+    fn refresh_last_seq_by_node_from_minis(&mut self) {
+        for (node_id, seq) in last_seq_by_node_from_minis(&self.state_minis) {
+            self.advance_node_cursor(node_id, seq);
+        }
+        let ack_cursors = self
+            .command_ack_backlog
+            .iter()
+            .filter(|ack| ack.ack_seq > EMPTY_SEQUENCE)
+            .map(|ack| {
+                (
+                    non_empty_or_current(ack.node_id.clone(), DEFAULT_NODE_ID),
+                    ack.ack_seq,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (node_id, ack_seq) in ack_cursors {
+            self.advance_node_cursor(node_id, ack_seq);
+        }
+    }
+
+    fn merge_last_seq_by_node_from_minis(&mut self, sessions: &[ClientStateMini]) {
+        for (node_id, seq) in last_seq_by_node_from_minis(sessions) {
+            self.advance_node_cursor(node_id, seq);
+        }
+    }
+
+    fn advance_node_cursor(&mut self, node_id: String, seq: i64) {
+        if seq <= EMPTY_SEQUENCE {
+            return;
+        }
+        let node_id = non_empty_or_current(node_id, DEFAULT_NODE_ID);
+        let entry = self
+            .last_seq_by_node
+            .entry(node_id)
+            .or_insert(EMPTY_SEQUENCE);
+        *entry = (*entry).max(seq);
     }
 }
 
@@ -1932,6 +2061,22 @@ fn is_state_mini_replacement_delta(delta: &ClientStateMiniDelta) -> bool {
 
 fn is_state_mini_bulk_delta(delta: &ClientStateMiniDelta) -> bool {
     !delta.has_session && !delta.sessions.is_empty()
+}
+
+fn delta_node_ids(delta: &ClientStateMiniDelta) -> BTreeSet<String> {
+    if delta.has_session {
+        return BTreeSet::from([state_mini_node_id(&delta.session)]);
+    }
+    let node_ids = replacement_node_ids(&delta.sessions);
+    if node_ids.is_empty() {
+        BTreeSet::from([DEFAULT_NODE_ID.to_owned()])
+    } else {
+        node_ids
+    }
+}
+
+fn replacement_node_ids(sessions: &[ClientStateMini]) -> BTreeSet<String> {
+    sessions.iter().map(state_mini_node_id).collect()
 }
 
 #[cfg(test)]
@@ -3406,8 +3551,8 @@ mod tests {
         assert!(!stale.did_change);
         assert_eq!(stale.snapshot.latest_seq, 5);
         assert_eq!(
-            stale.snapshot.state_minis[0].payload_json,
-            r#"{"title":"cached"}"#
+            payload_value(&stale.snapshot.state_minis[0])["title"],
+            "cached"
         );
 
         let fresh = core
@@ -3429,8 +3574,8 @@ mod tests {
         assert_eq!(fresh.snapshot.latest_seq, 6);
         assert_eq!(fresh.snapshot.revision, "rev-6");
         assert_eq!(
-            fresh.snapshot.state_minis[0].payload_json,
-            r#"{"title":"streamed"}"#
+            payload_value(&fresh.snapshot.state_minis[0])["title"],
+            "streamed"
         );
     }
 
@@ -3487,8 +3632,8 @@ mod tests {
         assert_eq!(update.snapshot.revision, "rev-9");
         assert!(update.snapshot.last_error.is_empty());
         assert_eq!(
-            update.snapshot.state_minis[0].payload_json,
-            r#"{"title":"recovered"}"#
+            payload_value(&update.snapshot.state_minis[0])["title"],
+            "recovered"
         );
     }
 
@@ -3525,6 +3670,205 @@ mod tests {
         assert_eq!(update.snapshot.state_minis.len(), 1);
         assert_eq!(update.snapshot.state_minis[0].session_id, "thread-zed");
         assert_eq!(update.snapshot.state_minis[0].assistant_surface, "zed");
+    }
+
+    #[test]
+    fn recovered_snapshot_preserves_newer_node_mini_when_global_seq_advances() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 20,
+            sessions: vec![
+                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stream a"),
+                node_state_mini("node-b", "thread-b", "zed", 12, "rev-b-12", "cached b"),
+            ],
+            server_time: "2026-06-25T00:00:20Z".to_owned(),
+        })
+        .expect("seed streamed node minis");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
+                snapshot: ClientStateMiniSnapshot {
+                    latest_seq: 21,
+                    sessions: vec![
+                        node_state_mini("node-a", "thread-a", "codex", 15, "rev-a-15", "stale a"),
+                        node_state_mini("node-b", "thread-b", "zed", 21, "rev-b-21", "fresh b"),
+                    ],
+                    server_time: SERVER_TIME.to_owned(),
+                },
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                error_description: "seq_gap".to_owned(),
+            })
+            .expect("recovered snapshot");
+
+        assert!(update.did_change);
+        assert_eq!(update.snapshot.latest_seq, 21);
+        let thread_a = update
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-a")
+            .expect("preserved newer node-a mini");
+        let thread_b = update
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-b")
+            .expect("updated node-b mini");
+        assert!(thread_a.payload_json.contains("stream a"));
+        assert!(thread_b.payload_json.contains("fresh b"));
+    }
+
+    #[test]
+    fn state_mini_payload_is_completed_for_home_card_truth() {
+        let core = LooperClientCore::new();
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+                seq: 7,
+                latest_seq: 7,
+                entity_id: "thread-card".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: String::new(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: ClientStateMini {
+                    session_id: "thread-card".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    seq: 7,
+                    revision: String::new(),
+                    payload_json: r#"{"sessionId":"thread-card","title":"Card"}"#.to_owned(),
+                },
+                sessions: Vec::new(),
+            }))
+            .expect("state mini delta");
+
+        let payload = payload_value(&update.snapshot.state_minis[0]);
+        assert_eq!(payload["accountId"], "local-account");
+        assert_eq!(payload["nodeId"], "local-node");
+        assert_eq!(payload["sessionId"], "thread-card");
+        assert_eq!(payload["assistantSurface"], "codex");
+        assert_eq!(payload["effectiveMode"], "");
+        assert_eq!(payload["replyable"], false);
+        assert_eq!(payload["queueCount"], 0);
+        assert_eq!(payload["lifecycle"], "");
+        assert_eq!(payload["notificationStatus"]["enabled"], false);
+        assert_eq!(payload["notificationStatus"]["known"], false);
+        assert_eq!(payload["freshnessSource"], "stream");
+        assert_eq!(payload["routeEndpoint"], "");
+        assert_eq!(payload["revision"], "mini:7");
+        assert_eq!(update.snapshot.state_minis[0].revision, "mini:7");
+    }
+
+    #[test]
+    fn heartbeat_liveness_does_not_rewrite_mini_freshness() {
+        let core = LooperClientCore::new();
+        core.connect(vec![ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: true,
+        }])
+        .expect("connect primary");
+
+        core.apply_state_mini_stream_event(StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+            seq: 7,
+            latest_seq: 7,
+            entity_id: "thread-live".to_owned(),
+            kind: "session_mini".to_owned(),
+            revision: "rev-7".to_owned(),
+            server_time: SERVER_TIME.to_owned(),
+            has_session: true,
+            session: state_mini("thread-live", "codex", 7, "rev-7", "live"),
+            sessions: Vec::new(),
+        }))
+        .expect("state mini delta");
+
+        let update = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 99,
+                server_time: "2026-06-25T00:00:99Z".to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("heartbeat");
+
+        let payload = payload_value(&update.snapshot.state_minis[0]);
+        assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Heartbeat);
+        assert!(!update.did_change);
+        assert_eq!(update.latest_seq, 99);
+        assert_eq!(update.snapshot.latest_seq, 7);
+        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+        assert_eq!(payload["freshnessSource"], "stream");
+        assert_eq!(payload["routeEndpoint"], ENDPOINT_PRIMARY);
+    }
+
+    #[test]
+    fn last_seq_by_node_tracks_independent_node_cursors() {
+        let core = LooperClientCore::new();
+
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 20,
+            sessions: vec![
+                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "a"),
+                node_state_mini("node-b", "thread-b", "zed", 12, "rev-b-12", "b"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed node cursors");
+
+        let state = core.lock_state().expect("state lock");
+        assert_eq!(state.last_seq_by_node.get("node-a"), Some(&20));
+        assert_eq!(state.last_seq_by_node.get("node-b"), Some(&12));
+        assert_eq!(state.latest_seq, 20);
+    }
+
+    #[test]
+    fn last_seq_by_node_never_rewinds_after_ack_then_other_node_delta() {
+        let core = LooperClientCore::new();
+        core.apply_command_ack(ClientCommandAck {
+            accepted: true,
+            account_id: "local-account".to_owned(),
+            node_id: "node-a".to_owned(),
+            client_mutation_id: "cmid-a".to_owned(),
+            ack_seq: 50,
+            entity_id: "thread-a".to_owned(),
+            revision: "rev-a-50".to_owned(),
+            server_time: SERVER_TIME.to_owned(),
+            idempotent_replay: false,
+            error_code: String::new(),
+            reject_reason: String::new(),
+            current_state: String::new(),
+        })
+        .expect("node-a ack");
+
+        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
+            seq: 20,
+            latest_seq: 20,
+            entity_id: "thread-b".to_owned(),
+            kind: "session_mini".to_owned(),
+            revision: "rev-b-20".to_owned(),
+            server_time: SERVER_TIME.to_owned(),
+            has_session: true,
+            session: node_state_mini("node-b", "thread-b", "zed", 20, "rev-b-20", "b"),
+            sessions: Vec::new(),
+        })
+        .expect("node-b delta");
+
+        let stale_node_a = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 49,
+                latest_seq: 49,
+                entity_id: "thread-a".to_owned(),
+                kind: "session_mini".to_owned(),
+                revision: "rev-a-49".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: true,
+                session: node_state_mini("node-a", "thread-a", "codex", 49, "rev-a-49", "stale a"),
+                sessions: Vec::new(),
+            })
+            .expect("stale node-a delta");
+
+        assert!(!stale_node_a.did_change);
+        let state = core.lock_state().expect("state lock");
+        assert_eq!(state.last_seq_by_node.get("node-a"), Some(&50));
+        assert_eq!(state.last_seq_by_node.get("node-b"), Some(&20));
     }
 
     #[test]
@@ -3592,6 +3936,69 @@ mod tests {
             finalized.snapshot.state_minis[0]
                 .payload_json
                 .contains("new codex")
+        );
+    }
+
+    #[test]
+    fn state_mini_replacement_delta_replaces_only_covered_node() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 20,
+            sessions: vec![
+                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "old a"),
+                node_state_mini("node-b", "thread-b", "zed", 18, "rev-b-18", "keep b"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+
+        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
+            seq: 21,
+            latest_seq: 21,
+            entity_id: "node-a".to_owned(),
+            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+            revision: "rev-a-21".to_owned(),
+            server_time: SERVER_TIME.to_owned(),
+            has_session: false,
+            session: state_mini("", "", 0, "", ""),
+            sessions: vec![node_state_mini(
+                "node-a",
+                "thread-a-new",
+                "codex",
+                21,
+                "rev-a-21",
+                "new a",
+            )],
+        })
+        .expect("stage replacement");
+
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 21,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("replacement finality heartbeat");
+
+        assert!(finalized.did_change);
+        assert_eq!(
+            finalized
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-b", "thread-a-new"]
+        );
+        assert!(
+            finalized.snapshot.state_minis[0]
+                .payload_json
+                .contains("keep b")
+        );
+        assert!(
+            finalized.snapshot.state_minis[1]
+                .payload_json
+                .contains("new a")
         );
     }
 
@@ -4019,10 +4426,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["thread-2", "thread-1"]
         );
-        assert_eq!(
-            snapshot.state_minis[1].payload_json,
-            r#"{"title":"current"}"#
-        );
+        assert_eq!(payload_value(&snapshot.state_minis[1])["title"], "current");
     }
 
     #[test]
@@ -4053,7 +4457,7 @@ mod tests {
         let snapshot = result.snapshot;
         assert_eq!(snapshot.latest_seq, 3);
         assert_eq!(snapshot.state_minis.len(), 1);
-        assert_eq!(snapshot.state_minis[0].payload_json, r#"{"title":"new"}"#);
+        assert_eq!(payload_value(&snapshot.state_minis[0])["title"], "new");
 
         let stale = core
             .apply_state_mini_delta_with_result(ClientStateMiniDelta {
@@ -4073,8 +4477,8 @@ mod tests {
         assert_eq!(stale.snapshot.latest_seq, 3);
         assert_eq!(stale.snapshot.revision, "rev-3");
         assert_eq!(
-            stale.snapshot.state_minis[0].payload_json,
-            r#"{"title":"new"}"#
+            payload_value(&stale.snapshot.state_minis[0])["title"],
+            "new"
         );
     }
 
@@ -4171,8 +4575,8 @@ mod tests {
             .iter()
             .find(|session| session.session_id == "thread-2")
             .expect("preserved thread");
-        assert_eq!(thread_1.payload_json, r#"{"title":"new"}"#);
-        assert_eq!(thread_2.payload_json, r#"{"title":"kept"}"#);
+        assert_eq!(payload_value(thread_1)["title"], "new");
+        assert_eq!(payload_value(thread_2)["title"], "kept");
     }
 
     #[test]
@@ -4220,6 +4624,30 @@ mod tests {
             revision: revision.to_owned(),
             payload_json: format!(r#"{{"title":"{}"}}"#, title),
         }
+    }
+
+    fn node_state_mini(
+        node_id: &str,
+        session_id: &str,
+        assistant_surface: &str,
+        seq: i64,
+        revision: &str,
+        title: &str,
+    ) -> ClientStateMini {
+        ClientStateMini {
+            session_id: session_id.to_owned(),
+            assistant_surface: assistant_surface.to_owned(),
+            seq,
+            revision: revision.to_owned(),
+            payload_json: format!(
+                r#"{{"accountId":"local-account","nodeId":"{}","sessionId":"{}","assistantSurface":"{}","title":"{}"}}"#,
+                node_id, session_id, assistant_surface, title
+            ),
+        }
+    }
+
+    fn payload_value(session: &ClientStateMini) -> Value {
+        serde_json::from_str(&session.payload_json).expect("payload json")
     }
 
     fn temp_store_path(name: &str) -> PathBuf {

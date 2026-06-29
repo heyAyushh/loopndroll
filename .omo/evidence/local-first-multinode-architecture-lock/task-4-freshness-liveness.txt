@@ -1,0 +1,7 @@
+
+running 3 tests
+test snapshot_reducer::tests::session_freshness_order_parses_fractional_seconds_and_refs ... ok
+test snapshot_reducer::tests::session_freshness_order_uses_milliseconds_before_strings ... ok
+test client::tests::heartbeat_liveness_does_not_rewrite_mini_freshness ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.00s

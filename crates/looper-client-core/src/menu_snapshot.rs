@@ -30,6 +30,7 @@ const LAST_ACTIVITY_MS_FIELD: &str = "lastActivityAtMs";
 const UPDATED_AT_MS_FIELD: &str = "updatedAtMs";
 const NOTIFICATION_TARGET_IDS_FIELD: &str = "targetIds";
 const NOTIFICATION_ENABLED_FIELD: &str = "enabled";
+const NOTIFICATION_KNOWN_FIELD: &str = "known";
 const NOTIFICATION_USES_DEFAULT_FIELD: &str = "usesDefault";
 const GOAL_ID_FIELD: &str = "id";
 const GOAL_REASON_FIELD: &str = "reason";
@@ -410,6 +411,9 @@ fn blocked_goal(payload: &Value) -> Option<ClientMenuBarSessionMiniBlockedGoal> 
 
 fn notification_status(payload: &Value) -> Option<ClientMenuBarSessionMiniNotificationStatus> {
     let status = payload.get(NOTIFICATION_STATUS_FIELD)?.as_object()?;
+    if object_bool(status, NOTIFICATION_KNOWN_FIELD) == Some(false) {
+        return None;
+    }
     let target_ids = status
         .get(NOTIFICATION_TARGET_IDS_FIELD)
         .and_then(Value::as_array)

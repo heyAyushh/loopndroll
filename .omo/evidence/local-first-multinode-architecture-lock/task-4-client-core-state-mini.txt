@@ -1,0 +1,38 @@
+
+running 34 tests
+test client::tests::invalid_state_mini_input_is_rejected ... ok
+test client::tests::start_state_mini_stream_keeps_running_stream_for_same_endpoint ... ok
+test client::tests::state_mini_replacement_batch_waits_for_heartbeat_finality ... ok
+test client::tests::rejected_mode_ack_restores_optimistic_state_mini ... ok
+test client::tests::state_mini_replacement_continuation_survives_interleaved_ack ... ok
+test client::tests::state_mini_delta_upserts_and_ignores_stale_sequences ... ok
+test client::tests::state_mini_payload_is_completed_for_home_card_truth ... ok
+test client::tests::state_mini_batch_delta_merges_without_clearing_existing_sessions ... ok
+test client::tests::state_mini_replacement_delta_can_clear_local_projection_after_heartbeat ... ok
+test client::tests::state_mini_replacement_continuation_chunks_publish_together_at_finality ... ok
+test client::tests::recover_state_mini_snapshot_rejects_missing_endpoint_without_state_change ... ok
+test client::tests::concurrent_state_mini_observers_are_serialized ... ok
+test client::tests::state_mini_stream_recovery_event_marks_reconnecting_when_snapshot_recovery_fails ... ok
+test client::tests::state_mini_stream_delta_event_updates_core_snapshot ... ok
+test client::tests::state_mini_stream_ignores_stale_delta_then_applies_fresh_delta ... ok
+test client::tests::state_mini_stream_merges_compact_delta_into_cached_mini ... ok
+test client::tests::state_mini_replacement_delta_replaces_only_covered_node ... ok
+test client::tests::state_mini_stream_recovery_snapshot_replaces_state_in_rust_core ... ok
+test client::tests::state_mini_snapshot_replaces_and_normalizes_records ... ok
+test menu_snapshot::tests::projects_menu_rows_from_state_mini_payloads ... ok
+test session_transport::tests::state_mini_replay_cursor_advances_on_server_finality_frames ... ok
+test session_transport::tests::clean_state_mini_stream_end_is_reconnectable ... ok
+test session_transport::tests::state_mini_delta_accepts_non_replacing_session_batch_payload ... ok
+test session_transport::tests::state_mini_delta_accepts_payload_id_alias_and_normalizes_session_id ... ok
+test session_transport::tests::state_mini_delta_without_mini_payload_advances_sequence_only ... ok
+test session_transport::tests::state_mini_delta_accepts_replace_sessions_payload ... ok
+test session_transport::tests::state_mini_snapshot_from_json_preserves_payloads_and_skips_invalid_sessions ... ok
+test session_transport::tests::state_mini_delta_accepts_empty_replace_sessions_payload ... ok
+test session_transport::tests::state_mini_snapshot_url_keeps_non_realtime_ports ... ok
+test session_transport::tests::state_mini_snapshot_url_uses_http_api_port_for_realtime_endpoint ... ok
+test client::tests::cancelled_state_mini_observer_restores_receivers ... ok
+test session_runtime::tests::runtime_seeds_state_minis_from_durable_store ... ok
+test client::tests::start_state_mini_stream_replaces_finished_stream_for_same_endpoint ... ok
+test session_transport::tests::state_mini_snapshot_recovery_uses_first_ready_endpoint ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 125 filtered out; finished in 0.92s
