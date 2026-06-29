@@ -284,9 +284,9 @@ final class CompanionSnapshotStateStore {
         let visibleSnapshot = sourceSnapshot.visibleSnapshot(for: surface)
         snapshot = visibleSnapshot
         selectedAssistantSurface = surface
-        sessionSections = SessionSections(sessions: visibleSnapshot.sessions)
+        sessionSections = SessionSections(localSessions: visibleSnapshot.sessions)
         if sessionIndex == .empty {
-            sessionIndex = SessionIndex(snapshot: sourceSnapshot)
+            sessionIndex = SessionIndex(localSnapshot: sourceSnapshot)
         }
         lastVisibleSnapshotFingerprint = nil
         return visibleSnapshot

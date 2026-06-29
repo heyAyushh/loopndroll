@@ -2441,6 +2441,13 @@ struct SessionIndex: Equatable, Sendable {
         )
     }
 
+    init(localSnapshot snapshot: MobileSnapshot) {
+        self.init(
+            indexedSessions: Self.fallbackSessions(from: snapshot),
+            identity: Self.fallbackIdentity(snapshot)
+        )
+    }
+
     init(projection: ClientSessionIndexProjection, snapshot: MobileSnapshot) {
         let indexedSessions = Self.sessions(from: projection, snapshot: snapshot)
             ?? Self.fallbackSessions(from: snapshot)
@@ -2588,6 +2595,10 @@ struct SessionSections: Sendable {
             return
         }
         self.init(projection: projection, sessions: sessions)
+    }
+
+    init(localSessions sessions: [SessionSummary]) {
+        self.init(fallbackSessions: sessions)
     }
 
     init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {

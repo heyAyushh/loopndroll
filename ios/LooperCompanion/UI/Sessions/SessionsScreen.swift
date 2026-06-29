@@ -198,7 +198,6 @@ struct SessionsScreen: View {
     ) -> some View {
         let visibleItems = visibleSessionItems(
             from: sessions,
-            assistantSurface: model.viewState.selectedAssistantSurface,
             isExpanded: allowsExpansion && isExpanded.wrappedValue
         )
         return Section {
@@ -246,11 +245,13 @@ struct SessionsScreen: View {
 
     private func visibleSessionItems(
         from sessions: [SessionSummary],
-        assistantSurface: CompanionAssistantSurface,
         isExpanded: Bool
     ) -> [SessionRowDisplayItem] {
         visibleSessions(from: sessions, isExpanded: isExpanded).map { session in
-            SessionRowDisplayItem(session: session, assistantSurface: assistantSurface)
+            SessionRowDisplayItem(
+                session: session,
+                assistantSurface: model.viewState.assistantSurface(for: session.id)
+            )
         }
     }
 

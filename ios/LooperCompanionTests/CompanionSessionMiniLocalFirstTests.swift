@@ -272,6 +272,60 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testAssistantSurfaceSwitchUsesCachedSurfaceMinisImmediately() async throws {
+        let codexSession = Self.sessionSummary(
+            id: "codex-thread",
+            title: "Codex Mini",
+            ref: "C1",
+            status: .active
+        )
+        let zedSession = Self.sessionSummary(
+            id: "zed-thread",
+            title: "Zed Mini",
+            ref: "Z1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 10,
+            records: [
+                Self.miniRecord(
+                    session: codexSession,
+                    assistantSurface: .codex,
+                    seq: 10,
+                    revision: "codex-revision"
+                ),
+                Self.miniRecord(
+                    session: zedSession,
+                    assistantSurface: .zed,
+                    seq: 9,
+                    revision: "zed-revision"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        #expect(model.viewState.selectedAssistantSurface == .codex)
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+
+        let selectionTask = try #require(model.selectAssistantSurface(.zed))
+
+        #expect(model.viewState.selectedAssistantSurface == .zed)
+        #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
+        #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
+        #expect(model.pendingSessionRuntimeCommandCount == 0)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+        #expect(service.loadSnapshotCallCount == 0)
+
+        #expect(await selectionTask.value)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).first?.assistantSurface == "zed")
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1075,13 +1129,14 @@ struct CompanionSessionMiniLocalFirstTests {
 
     private static func miniRecord(
         session: SessionSummary,
+        assistantSurface: CompanionAssistantSurface = .codex,
         seq: Int64,
         revision: String
     ) throws -> SessionMiniFixture {
         let data = try JSONEncoder().encode(session)
         return SessionMiniFixture(
             sessionID: session.id,
-            assistantSurface: CompanionAssistantSurface.codex.rawValue,
+            assistantSurface: assistantSurface.rawValue,
             seq: seq,
             revision: revision,
             payloadJSON: String(decoding: data, as: UTF8.self)
