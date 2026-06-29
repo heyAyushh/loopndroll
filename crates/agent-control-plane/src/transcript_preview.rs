@@ -53,14 +53,10 @@ pub fn latest_assistant_message_for_path(transcript_path: &Path) -> Option<Strin
 }
 
 pub fn transcript_preview_for_path(transcript_path: &Path) -> Option<TranscriptPreview> {
-    let mut preview = transcript_preview_from_tail(transcript_path).or_else(|| {
+    transcript_preview_from_tail(transcript_path).or_else(|| {
         let file = File::open(transcript_path).ok()?;
         transcript_preview_from_reader(BufReader::new(file))
-    })?;
-    if preview.first_user_prompt.is_none() {
-        preview.first_user_prompt = first_user_prompt_from_path(transcript_path);
-    }
-    Some(preview)
+    })
 }
 
 fn transcript_preview_from_tail(transcript_path: &Path) -> Option<TranscriptPreview> {
@@ -132,6 +128,9 @@ fn transcript_preview_from_reversed_lines<'a>(
             if let Some(created_at_ms) = record.created_at_ms {
                 preview.latest_message_at_ms = Some(created_at_ms);
             }
+            if let Some(text) = record.text.as_deref() {
+                preview.first_user_prompt = Some(truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS));
+            }
             captured_latest_user_message = true;
         }
         if preview.latest_assistant_message.is_none()
@@ -154,24 +153,6 @@ fn transcript_preview_from_reversed_lines<'a>(
         && captured_latest_user_message
         && preview.latest_assistant_message.is_some())
     .then_some(preview)
-}
-
-fn first_user_prompt_from_path(transcript_path: &Path) -> Option<String> {
-    let file = File::open(transcript_path).ok()?;
-    first_user_prompt_from_reader(BufReader::new(file))
-}
-
-fn first_user_prompt_from_reader(reader: impl BufRead) -> Option<String> {
-    reader.lines().map_while(Result::ok).find_map(|line| {
-        let record = message_record_from_transcript_line(&line)?;
-        if record.role != USER_ROLE {
-            return None;
-        }
-        record
-            .text
-            .as_deref()
-            .map(|text| truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS))
-    })
 }
 
 struct TranscriptMessageRecord {
@@ -449,6 +430,34 @@ mod tests {
         assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_860_000));
         assert_eq!(preview.latest_message_at_ms, Some(1_781_596_860_000));
         assert_eq!(preview.first_user_prompt.as_deref(), Some("new user"));
+    }
+
+    #[test]
+    fn transcript_preview_does_not_full_scan_large_file_for_first_prompt() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("large-tail-preview.jsonl");
+        let first_user_message = user_record_at("old first prompt", "2026-06-16T08:00:00Z");
+        let filler = "x".repeat((super::TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES + 1) as usize);
+        let assistant_message = assistant_record_at("fresh assistant", "2026-06-16T08:02:00Z");
+        let latest_user_message = user_record_at("latest user", "2026-06-16T08:03:00Z");
+        fs::write(
+            &transcript_path,
+            format!("{first_user_message}\n{filler}\n{assistant_message}\n{latest_user_message}"),
+        )
+        .expect("write transcript");
+
+        let preview = transcript_preview_for_path(&transcript_path).expect("preview");
+
+        assert_eq!(
+            preview
+                .latest_assistant_message
+                .as_ref()
+                .map(|message| message.text.as_str()),
+            Some("fresh assistant")
+        );
+        assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_980_000));
+        assert_eq!(preview.latest_message_at_ms, Some(1_781_596_980_000));
+        assert_eq!(preview.first_user_prompt.as_deref(), Some("latest user"));
     }
 
     #[test]
