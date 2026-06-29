@@ -280,6 +280,13 @@ struct SessionDetailScreen: View {
 
     private var assistantReplySection: some View {
         Section("Latest Assistant Reply") {
+            if let contentGapDescription = detail?.contentGapDescription {
+                Label(contentGapDescription, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("session-detail.content-gap")
+            }
+
             if let currentMessage, !currentMessage.isEmpty {
                 MarkdownMessageView(markdown: currentMessage)
                     .padding(.vertical, 4)

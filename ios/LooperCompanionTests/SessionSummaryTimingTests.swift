@@ -617,6 +617,39 @@ struct SessionSummaryTimingTests {
         #expect(codexItem.id != devinItem.id)
     }
 
+    @Test("Search ignores stale Spotlight IDs absent from local minis")
+    func searchIgnoresStaleSpotlightIDsAbsentFromLocalMinis() throws {
+        let freshSession = try sessionSummary(
+            id: "fresh-local-thread",
+            ref: "L1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let staleSpotlightIdentifier = LooperSessionEntityIdentifier(
+            assistantSurface: .codex,
+            sessionID: "stale-http-thread"
+        ).rawValue
+
+        let results = SessionSearchResults(
+            searchText: "thread",
+            selectedScope: .sessions,
+            allSessions: [freshSession],
+            needsAttentionSessions: [],
+            runningSessions: [freshSession],
+            stoppedSessions: [],
+            archivedSessions: [],
+            spotlightResultSessionIDs: [
+                staleSpotlightIdentifier,
+                "stale-http-thread",
+            ]
+        )
+
+        #expect(results.visibleRunningSessions.map(\.id) == ["fresh-local-thread"])
+        #expect(results.visibleStoppedSessions.isEmpty)
+        #expect(results.visibleArchivedSessions.isEmpty)
+        #expect(!results.visibleRunningSessions.map(\.id).contains("stale-http-thread"))
+    }
+
     private func sessionSummary(
         id: String,
         ref: String,

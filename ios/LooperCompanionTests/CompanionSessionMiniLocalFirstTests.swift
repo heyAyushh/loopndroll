@@ -571,6 +571,50 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testSiriDetailResolvesFromLocalMiniWhenHTTPUnavailableAndMarksContentGap() async throws {
+        var localSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Fresh Local Mini",
+            ref: "L1",
+            status: .active
+        )
+        localSession.assistantPreview = "Local mini preview"
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 20,
+            records: [
+                Self.miniRecord(
+                    session: localSession,
+                    assistantSurface: .codex,
+                    seq: 20,
+                    revision: "local-mini-revision-20"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        service.loadSnapshotError = URLError(.notConnectedToInternet)
+        let client = LooperSiriSessionClient(
+            service: service,
+            sessionRuntime: runtime
+        )
+        let identifier = LooperSessionEntityIdentifier(
+            assistantSurface: .codex,
+            sessionID: Constants.cachedThreadID
+        )
+
+        let entity = try #require(try await client.entities(for: [identifier.rawValue]).first)
+        let detail = try await client.loadSessionDetail(for: entity)
+
+        #expect(entity.title == "Fresh Local Mini")
+        #expect(detail.title == "Fresh Local Mini")
+        #expect(detail.assistantPreview == "Local mini preview")
+        #expect(detail.contentStatus == .localMiniOnly)
+        #expect(detail.isContentDegraded)
+        #expect(detail.contentGapDescription?.localizedCaseInsensitiveContains("content slice") == true)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testPendingSiriOpenUsesRequestedLocalSurface() async throws {
         let sharedThreadID = "shared-open-thread"
         let codexSession = Self.sessionSummary(

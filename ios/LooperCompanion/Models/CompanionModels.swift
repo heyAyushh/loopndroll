@@ -2099,6 +2099,27 @@ private enum SessionFreshnessOrderProjectionCodec {
     }
 }
 
+enum SessionDetailContentStatus: String, Codable, Sendable {
+    case full
+    case localMiniOnly
+    case unavailable
+
+    var isDegraded: Bool {
+        self != .full
+    }
+
+    var gapDescription: String? {
+        switch self {
+        case .full:
+            return nil
+        case .localMiniOnly:
+            return "Showing local mini state. Full transcript content needs a bounded content slice when the Mac is reachable."
+        case .unavailable:
+            return "Session content is unavailable. Local session state may still be usable."
+        }
+    }
+}
+
 struct SessionDetail: Codable, Identifiable, Sendable {
     var id: String
     var ref: String
@@ -2110,6 +2131,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
     var lastMessageAt: String?
     var assistantPreview: String?
     var latestAssistantMessage: String?
+    var contentStatus: SessionDetailContentStatus
     var firstUserPrompt: String?
     var isArchived: Bool
     var canSendPrompt: Bool
@@ -2134,6 +2156,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         case lastMessageAt
         case assistantPreview
         case latestAssistantMessage
+        case contentStatus
         case firstUserPrompt
         case isArchived
         case canSendPrompt
@@ -2159,6 +2182,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         lastMessageAt: String? = nil,
         assistantPreview: String?,
         latestAssistantMessage: String?,
+        contentStatus: SessionDetailContentStatus = .full,
         firstUserPrompt: String? = nil,
         isArchived: Bool,
         canSendPrompt: Bool = true,
@@ -2182,6 +2206,7 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         self.lastMessageAt = lastMessageAt
         self.assistantPreview = assistantPreview
         self.latestAssistantMessage = latestAssistantMessage
+        self.contentStatus = contentStatus
         self.firstUserPrompt = firstUserPrompt
         self.isArchived = isArchived
         self.canSendPrompt = canSendPrompt
@@ -2208,6 +2233,10 @@ struct SessionDetail: Codable, Identifiable, Sendable {
         lastMessageAt = try container.decodeIfPresent(String.self, forKey: .lastMessageAt)
         assistantPreview = try container.decodeIfPresent(String.self, forKey: .assistantPreview)
         latestAssistantMessage = try container.decodeIfPresent(String.self, forKey: .latestAssistantMessage)
+        contentStatus = try container.decodeIfPresent(
+            SessionDetailContentStatus.self,
+            forKey: .contentStatus
+        ) ?? .full
         firstUserPrompt = try container.decodeIfPresent(String.self, forKey: .firstUserPrompt)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
         canSendPrompt = try container.decodeIfPresent(Bool.self, forKey: .canSendPrompt) ?? true
@@ -2230,6 +2259,14 @@ struct SessionDetail: Codable, Identifiable, Sendable {
 }
 
 extension SessionDetail {
+    var isContentDegraded: Bool {
+        contentStatus.isDegraded
+    }
+
+    var contentGapDescription: String? {
+        contentStatus.gapDescription
+    }
+
     init(summary: SessionSummary, snapshot: MobileSnapshot) {
         self.init(
             id: summary.id,
@@ -2242,6 +2279,7 @@ extension SessionDetail {
             lastMessageAt: summary.lastMessageAt,
             assistantPreview: summary.assistantPreview,
             latestAssistantMessage: nil,
+            contentStatus: .localMiniOnly,
             firstUserPrompt: nil,
             isArchived: summary.isArchived,
             canSendPrompt: summary.canSendPrompt,
