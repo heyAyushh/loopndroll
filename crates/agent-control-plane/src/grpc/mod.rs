@@ -13,6 +13,7 @@ use crate::control_plane::ControlPlane;
 
 mod auth;
 mod client_commands;
+mod frame_limits;
 mod service;
 
 pub mod proto {

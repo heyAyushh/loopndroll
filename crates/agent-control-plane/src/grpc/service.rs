@@ -8,6 +8,11 @@ use crate::control_plane::ControlPlane;
 use crate::control_plane::session_fsm::SessionReject;
 use crate::events::{MobileSessionMiniRecord, MobileStateEventGap, MobileStateEventRecord};
 use crate::grpc::auth::authorize_mobile_api_request_from_peer;
+use crate::grpc::frame_limits::{
+    SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES, ensure_client_frame_size,
+    ensure_command_text_list_size, ensure_command_text_size, ensure_server_frame_size,
+    truncate_control_text,
+};
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::compact_mobile_session_mini_record;
@@ -35,16 +40,13 @@ const HEALTH_SERVICE_NAME: &str = "looper-realtime";
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const SESSION_REPLAY_BATCH_SIZE: usize = 128;
 const SESSION_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-const BYTES_PER_MIB: usize = 1024 * 1024;
-const SESSION_FRAME_PAYLOAD_MAX_BYTES: usize = 4 * BYTES_PER_MIB;
-const SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES: usize = 512 * 1024;
-const SESSION_COMMAND_TEXT_MAX_BYTES: usize = 64 * 1024;
-const SESSION_CONTROL_TEXT_MAX_CHARS: usize = 512;
 const REJECT_ERROR_CODE_EMPTY_FRAME: &str = "empty_client_frame";
 const REJECT_ERROR_CODE_EMPTY_COMMAND: &str = "empty_command";
 const COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY: &str = "SubmitNotificationReply";
 const STATE_DELTA_NO_PROJECTION_REASON: &str = "projection-missing";
 const STATE_DELTA_PROJECTION_READ_FAILED_REASON: &str = "projection-read-failed";
+const STATE_DELTA_FRAME_CAP_EXCEEDED_REASON: &str = "projection-frame-cap-exceeded";
+const STATE_DELTA_RECOVERY_INSTRUCTION: &str = "session-mini-snapshot";
 
 type SessionFrameStream =
     Pin<Box<dyn Stream<Item = Result<proto::ServerFrame, Status>> + Send + 'static>>;
@@ -106,17 +108,39 @@ impl LooperRealtime for LooperRealtimeService {
             );
             heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            loop {
+            'session: loop {
+                macro_rules! yield_frame {
+                    ($frame:expr) => {{
+                        match checked_server_frame($frame) {
+                            Ok(frame) => yield Ok(frame),
+                            Err(status) => {
+                                yield Err(status);
+                                break 'session;
+                            }
+                        }
+                    }};
+                }
+
+                macro_rules! yield_frames {
+                    ($frames:expr) => {{
+                        for frame in $frames {
+                            yield_frame!(frame);
+                        }
+                    }};
+                }
+
                 tokio::select! {
                     biased;
 
                     received = inbound.message() => {
                         match received {
                             Ok(Some(frame)) => {
-                                let batch = handle_session_client_frame(&control_plane, frame, &mut last_seq);
-                                for frame in batch.frames {
-                                    yield Ok(frame);
+                                if let Err(status) = ensure_client_frame_size(&frame) {
+                                    yield Err(status);
+                                    break;
                                 }
+                                let batch = handle_session_client_frame(&control_plane, frame, &mut last_seq);
+                                yield_frames!(batch.frames);
                                 if let Some(status) = batch.terminal_error {
                                     yield Err(status);
                                     break;
@@ -125,9 +149,7 @@ impl LooperRealtime for LooperRealtimeService {
                             Ok(None) => {
                                 match drain_state_delta_frames(&control_plane, &mut last_seq) {
                                     Ok(frames) => {
-                                        for frame in frames {
-                                            yield Ok(frame);
-                                        }
+                                        yield_frames!(frames);
                                     }
                                     Err(status) => {
                                         yield Err(status);
@@ -144,12 +166,10 @@ impl LooperRealtime for LooperRealtimeService {
                     event = event_receiver.recv() => {
                         match event {
                             Ok(MobileEventBroadcast::Persisted(record)) => {
-                                yield Ok(mobile_event_record_frame(&control_plane, &record));
+                                yield_frame!(mobile_event_record_frame(&control_plane, &record));
                                 match drain_state_delta_frames(&control_plane, &mut last_seq) {
                                     Ok(frames) => {
-                                        for frame in frames {
-                                            yield Ok(frame);
-                                        }
+                                        yield_frames!(frames);
                                     }
                                     Err(status) => {
                                         yield Err(status);
@@ -158,14 +178,12 @@ impl LooperRealtime for LooperRealtimeService {
                                 }
                             }
                             Ok(MobileEventBroadcast::Ephemeral(event)) => {
-                                yield Ok(mobile_event_frame(proto_mobile_event_from_event(&event)));
+                                yield_frame!(mobile_event_frame(proto_mobile_event_from_event(&event)));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 match drain_state_delta_frames(&control_plane, &mut last_seq) {
                                     Ok(frames) => {
-                                        for frame in frames {
-                                            yield Ok(frame);
-                                        }
+                                        yield_frames!(frames);
                                     }
                                     Err(status) => {
                                         yield Err(status);
@@ -177,7 +195,7 @@ impl LooperRealtime for LooperRealtimeService {
                         }
                     }
                     _ = heartbeat.tick() => {
-                        yield Ok(heartbeat_frame(&control_plane));
+                        yield_frame!(heartbeat_frame(&control_plane));
                     }
                 }
             }
@@ -717,6 +735,11 @@ fn command_ack_frame(ack: proto::CommandAck) -> proto::ServerFrame {
     }
 }
 
+fn checked_server_frame(frame: proto::ServerFrame) -> Result<proto::ServerFrame, Status> {
+    ensure_server_frame_size(&frame)?;
+    Ok(frame)
+}
+
 fn rejected_command_ack(
     client_mutation_id: String,
     entity_id: String,
@@ -785,8 +808,7 @@ fn state_delta_frame(
     record: &MobileStateEventRecord,
     payload_json: String,
 ) -> Result<proto::ServerFrame, Status> {
-    ensure_frame_payload_size("StateMiniDelta", &payload_json)?;
-    Ok(proto::ServerFrame {
+    let frame = proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::StateDelta(
             proto::StateMiniDelta {
                 seq: record.seq,
@@ -797,22 +819,32 @@ fn state_delta_frame(
                 payload_json,
             },
         )),
-    })
+    };
+    checked_server_frame(frame)
 }
 
 fn replacement_state_delta_frames(
     record: &MobileStateEventRecord,
     minis: &[MobileSessionMiniRecord],
 ) -> Result<Vec<proto::ServerFrame>, Status> {
+    let payloads = minis
+        .iter()
+        .filter_map(compact_mobile_session_mini_record)
+        .collect::<Vec<_>>();
+    if replacement_has_oversized_single_mini(record.seq, &payloads) {
+        return state_delta_frame(
+            record,
+            state_delta_recovery_payload_json(record, STATE_DELTA_FRAME_CAP_EXCEEDED_REASON),
+        )
+        .map(|frame| vec![frame]);
+    }
+
     let mut frames = Vec::new();
     let mut chunk = Vec::new();
     let mut chunk_bytes = replacement_state_delta_payload_overhead(record.seq, true);
     let mut chunk_replaces = true;
 
-    for mini in minis {
-        let Some(payload) = compact_mobile_session_mini_record(mini) else {
-            continue;
-        };
+    for payload in payloads {
         let candidate_bytes = chunk_bytes + payload.len() + usize::from(!chunk.is_empty());
         if candidate_bytes > SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES && !chunk.is_empty() {
             let payload_json =
@@ -832,6 +864,14 @@ fn replacement_state_delta_frames(
     }
 
     Ok(frames)
+}
+
+fn replacement_has_oversized_single_mini(latest_seq: i64, payloads: &[String]) -> bool {
+    let max_single_payload_bytes = SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES
+        .saturating_sub(replacement_state_delta_payload_overhead(latest_seq, true));
+    payloads
+        .iter()
+        .any(|payload| payload.len() > max_single_payload_bytes)
 }
 
 fn replacement_state_delta_payload_json(
@@ -862,14 +902,17 @@ fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &st
     .to_string()
 }
 
-fn ensure_frame_payload_size(frame_name: &str, payload: &str) -> Result<(), Status> {
-    let byte_count = payload.len();
-    if byte_count > SESSION_FRAME_PAYLOAD_MAX_BYTES {
-        return Err(Status::resource_exhausted(format!(
-            "{frame_name} payload exceeded {SESSION_FRAME_PAYLOAD_MAX_BYTES} byte control-frame cap"
-        )));
-    }
-    Ok(())
+fn state_delta_recovery_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {
+    serde_json::json!({
+        "controlOnly": true,
+        "reason": reason,
+        "entityId": record.entity_id,
+        "kind": proto_event_name(record.kind),
+        "latestSeq": record.seq,
+        "recoveryRequired": true,
+        "recovery": STATE_DELTA_RECOVERY_INSTRUCTION,
+    })
+    .to_string()
 }
 
 fn mobile_event_record_frame(
@@ -917,37 +960,6 @@ fn proto_mobile_event_from_event(event: &MobileEvent) -> proto::MobileEvent {
         server_time: event.server_time.clone(),
         revision: event.revision.clone().unwrap_or_default(),
     }
-}
-
-fn truncate_control_text(value: &str) -> String {
-    truncate_chars(value, SESSION_CONTROL_TEXT_MAX_CHARS)
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut chars = value.char_indices();
-    let Some((end, _)) = chars.nth(max_chars) else {
-        return value.to_owned();
-    };
-    let mut truncated = value[..end].to_owned();
-    truncated.push_str("...");
-    truncated
-}
-
-fn ensure_command_text_size(field_name: &str, value: &str) -> Result<(), Status> {
-    let byte_count = value.len();
-    if byte_count > SESSION_COMMAND_TEXT_MAX_BYTES {
-        return Err(Status::resource_exhausted(format!(
-            "{field_name} exceeded {SESSION_COMMAND_TEXT_MAX_BYTES} byte control-frame cap"
-        )));
-    }
-    Ok(())
-}
-
-fn ensure_command_text_list_size(field_name: &str, values: &[String]) -> Result<(), Status> {
-    for value in values {
-        ensure_command_text_size(field_name, value)?;
-    }
-    Ok(())
 }
 
 fn optional_proto_string(value: String) -> Option<String> {

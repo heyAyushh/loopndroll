@@ -4,6 +4,7 @@ use agent_control_plane::events::{
     MobileSessionMiniProjectionInput, MobileStateEventGap, MobileStateEventInput,
 };
 use agent_control_plane::mobile::events::{MobileEvent, MobileEventInput, mobile_event_now};
+use prost::Message;
 use tokio_stream::wrappers::ReceiverStream;
 
 const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
@@ -19,6 +20,7 @@ const REPLAY_BATCH_DRAIN_TIMEOUT_MILLIS: u64 = 150;
 const SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST: usize = 512 * 1024;
 const SESSION_COMMAND_TEXT_MAX_BYTES_FOR_TEST: usize = 64 * 1024;
 const OVERSIZED_LEGACY_SESSION_MINI_TEXT_CHARS: usize = 600 * 1024;
+const OVERSIZED_REPLACEMENT_MINI_ARRAY_ITEMS: usize = 220_000;
 const LARGE_SESSION_MINI_REPLACEMENT_COUNT: usize = 2_308;
 const PROMPT_DELIVERY_WAIT_ATTEMPTS: usize = 200;
 const PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS: u64 = 100;
@@ -1031,6 +1033,7 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
     while replayed_session_count < LARGE_SESSION_MINI_REPLACEMENT_COUNT {
         let delta = next_session_state_delta(&mut stream, "large replacement state delta").await;
         assert_eq!(delta.seq, replacement_seq);
+        assert_state_delta_frame_under_test_cap(&delta);
         assert!(
             delta.payload_json.len() < SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
             "payload should stay below control-frame cap, got {} bytes",
@@ -1052,6 +1055,68 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
         "large replacement should be split into bounded chunks"
     );
     assert_eq!(replayed_session_count, LARGE_SESSION_MINI_REPLACEMENT_COUNT);
+}
+
+#[tokio::test]
+async fn grpc_session_frame_payload_instructs_recovery_for_oversized_replacement_mini() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    let previous = control_plane
+        .store()
+        .record_mobile_state_event(state_delta_input(
+            "thread-before",
+            "revision-before",
+            "before",
+        ))
+        .expect("record previous state delta");
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("oversized-projection-replaced".to_owned()),
+                server_time: mobile_event_now(),
+                revision: Some("revision-oversized-replacement".to_owned()),
+            },
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-oversized".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: oversized_replacement_mini_body(),
+            }],
+        )
+        .expect("record oversized replacement projection");
+    let replacement_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile state seq");
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        vec![resume_session_frame(previous.seq)],
+    )
+    .await;
+
+    let delta = next_session_state_delta(&mut stream, "oversized replacement recovery").await;
+    assert_eq!(delta.seq, replacement_seq);
+    assert_state_delta_frame_under_test_cap(&delta);
+    assert!(
+        delta.payload_json.len() < SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+        "recovery payload should stay below control-frame cap, got {} bytes",
+        delta.payload_json.len()
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&delta.payload_json).expect("recovery payload json");
+    assert_eq!(payload["controlOnly"], true);
+    assert_eq!(payload["reason"], "projection-frame-cap-exceeded");
+    assert_eq!(payload["recoveryRequired"], true);
+    assert_eq!(payload["recovery"], "session-mini-snapshot");
+    assert!(payload.get("sessions").is_none());
 }
 
 #[tokio::test]
@@ -1110,6 +1175,7 @@ async fn grpc_session_stream_compacts_single_oversized_session_mini_delta() {
 
     let delta = next_session_state_delta(&mut stream, "oversized compact state delta").await;
     assert_eq!(delta.seq, oversized.seq);
+    assert_state_delta_frame_under_test_cap(&delta);
     assert!(
         delta.payload_json.len() < SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
         "payload should stay below control-frame cap, got {} bytes",
@@ -1475,7 +1541,7 @@ async fn grpc_session_stream_prompt_rejects_without_mode_with_fsm_code() {
 }
 
 #[tokio::test]
-async fn grpc_session_stream_rejects_oversized_prompt_as_control_frame() {
+async fn grpc_session_frame_payload_rejects_oversized_prompt_command() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
@@ -1498,6 +1564,7 @@ async fn grpc_session_stream_rejects_oversized_prompt_as_control_frame() {
     .await;
 
     let ack = next_session_ack_frame(&mut stream, "oversized prompt rejected ack").await;
+    assert_command_ack_frame_under_test_cap(&ack);
     assert!(!ack.accepted);
     assert_eq!(ack.client_mutation_id, "session-stream-oversized-prompt");
     assert_eq!(ack.entity_id, "thread-main");
@@ -1505,6 +1572,53 @@ async fn grpc_session_stream_rejects_oversized_prompt_as_control_frame() {
     assert_eq!(ack.error_code, "resource_exhausted");
     assert!(ack.reject_reason.contains("control-frame cap"));
     assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+}
+
+fn oversized_replacement_mini_body() -> serde_json::Value {
+    let oversized_title = std::iter::repeat_n(
+        serde_json::Value::String("x".to_owned()),
+        OVERSIZED_REPLACEMENT_MINI_ARRAY_ITEMS,
+    )
+    .collect::<Vec<_>>();
+    serde_json::json!({
+        "id": "thread-oversized",
+        "sessionId": "thread-oversized",
+        "assistantSurface": "codex",
+        "ref": "oversized",
+        "status": "stopped",
+        "canSendPrompt": false,
+        "isArchived": false,
+        "title": oversized_title,
+        "metadata": {
+            "source": "codex",
+            "assistantKind": "codex",
+            "transcriptAvailable": false,
+        },
+    })
+}
+
+fn assert_command_ack_frame_under_test_cap(ack: &agent_control_plane::grpc::proto::CommandAck) {
+    let frame = ServerFrame {
+        frame: Some(server_frame::Frame::Ack(ack.clone())),
+    };
+    assert!(
+        frame.encoded_len() <= SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+        "encoded ACK frame should stay below control-frame cap, got {} bytes",
+        frame.encoded_len()
+    );
+}
+
+fn assert_state_delta_frame_under_test_cap(
+    delta: &agent_control_plane::grpc::proto::StateMiniDelta,
+) {
+    let frame = ServerFrame {
+        frame: Some(server_frame::Frame::StateDelta(delta.clone())),
+    };
+    assert!(
+        frame.encoded_len() <= SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+        "encoded state delta frame should stay below control-frame cap, got {} bytes",
+        frame.encoded_len()
+    );
 }
 
 #[tokio::test]
