@@ -1,0 +1,5 @@
+
+running 1 test
+test mobile_events::grpc_session_stream_prompt_rejects_without_mode_with_fsm_code ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.17s

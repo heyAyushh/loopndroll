@@ -297,6 +297,8 @@ mod tests {
     fn ack(client_mutation_id: &str, accepted: bool, ack_seq: i64) -> ClientCommandAck {
         ClientCommandAck {
             accepted,
+            account_id: "local-account".to_owned(),
+            node_id: "local-node".to_owned(),
             client_mutation_id: client_mutation_id.to_owned(),
             ack_seq,
             entity_id: THREAD_ID.to_owned(),

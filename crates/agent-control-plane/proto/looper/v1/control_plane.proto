@@ -194,6 +194,9 @@ message CommandAck {
   bool idempotent_replay = 7;
   string error_code = 8;
   string reject_reason = 9;
+  string account_id = 10;
+  string node_id = 11;
+  string current_state = 12;
 }
 
 message StateMiniDelta {

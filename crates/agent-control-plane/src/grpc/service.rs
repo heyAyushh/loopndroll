@@ -15,13 +15,14 @@ use crate::mobile::events::{
     MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
     mobile_event_wire_name,
 };
-use crate::mobile::realtime_ack::CommandAckError;
+use crate::mobile::realtime_ack::{COMMAND_ACK_ACCOUNT_ID, COMMAND_ACK_NODE_ID, CommandAckError};
 use crate::mobile::realtime_commands::{
+    COMMAND_KIND_SEND_SESSION_PROMPT, COMMAND_KIND_SET_SESSION_MODE,
     COMMAND_KIND_SET_SIRI_CURRENT_SESSION, COMMAND_KIND_SET_SIRI_DEFAULT_SESSION,
     RealtimeCommandError, SessionCommandAckResponse, SiriSessionTarget,
     SubmitNotificationReplyInput, delete_completion_check_command,
     delete_notification_route_command, delete_session_command, mute_session_command,
-    save_default_prompt_command, send_session_prompt_command,
+    record_rejected_session_command_ack, save_default_prompt_command, send_session_prompt_command,
     set_default_notification_targets_command, set_global_completion_check_command,
     set_global_notification_command, set_global_preset_command, set_scope_command,
     set_session_archived_command, set_session_completion_check_command, set_session_mode_command,
@@ -41,6 +42,7 @@ const SESSION_COMMAND_TEXT_MAX_BYTES: usize = 64 * 1024;
 const SESSION_CONTROL_TEXT_MAX_CHARS: usize = 512;
 const REJECT_ERROR_CODE_EMPTY_FRAME: &str = "empty_client_frame";
 const REJECT_ERROR_CODE_EMPTY_COMMAND: &str = "empty_command";
+const COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY: &str = "SubmitNotificationReply";
 const STATE_DELTA_NO_PROJECTION_REASON: &str = "projection-missing";
 const STATE_DELTA_PROJECTION_READ_FAILED_REASON: &str = "projection-read-failed";
 
@@ -204,6 +206,7 @@ fn handle_session_client_frame(
             String::new(),
             REJECT_ERROR_CODE_EMPTY_FRAME,
             "client frame is empty",
+            "",
         ))]),
     }
 }
@@ -214,21 +217,35 @@ fn handle_session_command(
     last_seq: &mut i64,
 ) -> SessionFrameBatch {
     match command.command {
-        Some(proto::command::Command::SetSessionMode(request)) => session_command_frames(
-            control_plane,
-            last_seq,
-            request.client_mutation_id.clone(),
-            request.thread_id.clone(),
-            set_session_mode_command(
+        Some(proto::command::Command::SetSessionMode(request)) => {
+            let request_payload = serde_json::json!({
+                "threadId": request.thread_id.clone(),
+                "preset": optional_proto_string(request.preset.clone()),
+            });
+            session_command_frames_with_request(
                 control_plane,
-                request.thread_id,
-                request.preset,
-                &request.client_mutation_id,
+                last_seq,
+                COMMAND_KIND_SET_SESSION_MODE,
+                request.client_mutation_id.clone(),
+                request.thread_id.clone(),
+                request_payload,
+                set_session_mode_command(
+                    control_plane,
+                    request.thread_id,
+                    request.preset,
+                    &request.client_mutation_id,
+                )
+                .map(command_ack_from_command)
+                .map_err(realtime_command_status),
             )
-            .map(command_ack_from_command)
-            .map_err(realtime_command_status),
-        ),
+        }
         Some(proto::command::Command::SendSessionPrompt(request)) => {
+            let request_payload = serde_json::json!({
+                "threadId": request.thread_id.clone(),
+                "prompt": request.prompt.clone(),
+                "assistantSurface": optional_proto_string(request.assistant_surface.clone()),
+                "promptIntent": prompt_intent_request_value(&request.prompt_intent),
+            });
             let result = ensure_command_text_size("prompt", &request.prompt).and_then(|_| {
                 send_session_prompt_command(
                     control_plane,
@@ -241,28 +258,40 @@ fn handle_session_command(
                 .map(command_ack_from_command)
                 .map_err(realtime_command_status)
             });
-            session_command_frames(
+            session_command_frames_with_request(
                 control_plane,
                 last_seq,
+                COMMAND_KIND_SEND_SESSION_PROMPT,
                 request.client_mutation_id,
                 request.thread_id,
+                request_payload,
                 result,
             )
         }
-        Some(proto::command::Command::SubmitNotificationReply(request)) => session_command_frames(
-            control_plane,
-            last_seq,
-            request.client_mutation_id.clone(),
-            request.thread_id.clone(),
-            submit_notification_reply_session_command(
+        Some(proto::command::Command::SubmitNotificationReply(request)) => {
+            let request_payload = serde_json::json!({
+                "notificationId": request.notification_id.clone(),
+                "threadId": request.thread_id.clone(),
+                "prompt": request.prompt.clone(),
+                "assistantSurface": optional_proto_string(request.assistant_surface.clone()),
+            });
+            session_command_frames_with_request(
                 control_plane,
-                &request.notification_id,
-                &request.thread_id,
-                &request.prompt,
-                Some(&request.assistant_surface),
-                &request.client_mutation_id,
-            ),
-        ),
+                last_seq,
+                COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
+                request.client_mutation_id.clone(),
+                request.thread_id.clone(),
+                request_payload,
+                submit_notification_reply_session_command(
+                    control_plane,
+                    &request.notification_id,
+                    &request.thread_id,
+                    &request.prompt,
+                    Some(&request.assistant_surface),
+                    &request.client_mutation_id,
+                ),
+            )
+        }
         Some(proto::command::Command::SetSiriCurrentSession(request)) => session_command_frames(
             control_plane,
             last_seq,
@@ -522,6 +551,7 @@ fn handle_session_command(
             String::new(),
             REJECT_ERROR_CODE_EMPTY_COMMAND,
             "command frame is empty",
+            "",
         ))]),
     }
 }
@@ -561,6 +591,26 @@ fn session_command_frames(
     entity_id: String,
     result: Result<proto::CommandAck, Status>,
 ) -> SessionFrameBatch {
+    session_command_frames_with_request(
+        control_plane,
+        last_seq,
+        "",
+        client_mutation_id,
+        entity_id,
+        serde_json::json!({}),
+        result,
+    )
+}
+
+fn session_command_frames_with_request(
+    control_plane: &ControlPlane,
+    last_seq: &mut i64,
+    command_kind: &str,
+    client_mutation_id: String,
+    entity_id: String,
+    request_payload: serde_json::Value,
+    result: Result<proto::CommandAck, Status>,
+) -> SessionFrameBatch {
     match result {
         Ok(ack) => {
             let mut frames = vec![command_ack_frame(ack)];
@@ -572,12 +622,38 @@ fn session_command_frames(
                 Err(status) => SessionFrameBatch::frames_then_error(frames, status),
             }
         }
-        Err(status) => SessionFrameBatch::frames(vec![command_ack_frame(rejected_command_ack(
-            client_mutation_id,
-            entity_id,
-            command_reject_code(&status),
-            &command_reject_reason(&status),
-        ))]),
+        Err(status) => {
+            let error_code = command_reject_code(&status);
+            let reject_reason = command_reject_reason(&status);
+            let current_state = command_reject_current_state(&status);
+            let ack = if should_record_rejected_command_ack(command_kind, &status) {
+                record_rejected_session_command_ack(
+                    control_plane,
+                    command_kind,
+                    &client_mutation_id,
+                    &entity_id,
+                    request_payload,
+                    error_code,
+                    &reject_reason,
+                    &current_state,
+                )
+                .ok()
+                .flatten()
+                .map(command_ack_from_command)
+            } else {
+                None
+            }
+            .unwrap_or_else(|| {
+                rejected_command_ack(
+                    client_mutation_id,
+                    entity_id,
+                    error_code,
+                    &reject_reason,
+                    &current_state,
+                )
+            });
+            SessionFrameBatch::frames(vec![command_ack_frame(ack)])
+        }
     }
 }
 
@@ -646,6 +722,7 @@ fn rejected_command_ack(
     entity_id: String,
     error_code: &str,
     reject_reason: &str,
+    current_state: &str,
 ) -> proto::CommandAck {
     proto::CommandAck {
         accepted: false,
@@ -657,6 +734,9 @@ fn rejected_command_ack(
         idempotent_replay: false,
         error_code: error_code.to_owned(),
         reject_reason: truncate_control_text(reject_reason),
+        account_id: COMMAND_ACK_ACCOUNT_ID.to_owned(),
+        node_id: COMMAND_ACK_NODE_ID.to_owned(),
+        current_state: current_state.to_owned(),
     }
 }
 
@@ -875,6 +955,13 @@ fn optional_proto_string(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+fn prompt_intent_request_value(value: &str) -> &str {
+    match value.trim() {
+        "" => "queue",
+        value => value,
+    }
+}
+
 fn heartbeat_frame(control_plane: &ControlPlane) -> proto::ServerFrame {
     proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::Heartbeat(proto::Heartbeat {
@@ -938,6 +1025,16 @@ fn command_reject_reason(status: &Status) -> String {
         .unwrap_or_else(|| status.message().to_owned())
 }
 
+fn command_reject_current_state(status: &Status) -> String {
+    SessionReject::from_status_message(status.message())
+        .map(|reject| reject.current_state.label().to_owned())
+        .unwrap_or_default()
+}
+
+fn should_record_rejected_command_ack(command_kind: &str, status: &Status) -> bool {
+    !command_kind.is_empty() && SessionReject::from_status_message(status.message()).is_some()
+}
+
 fn command_ack_from_command(response: SessionCommandAckResponse) -> proto::CommandAck {
     proto::CommandAck {
         accepted: response.accepted,
@@ -947,8 +1044,11 @@ fn command_ack_from_command(response: SessionCommandAckResponse) -> proto::Comma
         revision: response.revision,
         server_time: response.server_time,
         idempotent_replay: response.idempotent_replay,
-        error_code: String::new(),
-        reject_reason: String::new(),
+        error_code: response.error_code,
+        reject_reason: truncate_control_text(&response.reject_reason),
+        account_id: response.account_id,
+        node_id: response.node_id,
+        current_state: response.current_state,
     }
 }
 
@@ -975,12 +1075,17 @@ fn submit_notification_reply_session_command(
     .map(|response| {
         command_ack_from_command(SessionCommandAckResponse {
             accepted: response.accepted,
+            account_id: response.account_id,
+            node_id: response.node_id,
             server_time: response.server_time,
             client_mutation_id: response.client_mutation_id,
             ack_seq: response.ack_seq,
             entity_id: response.entity_id,
             revision: response.revision,
             idempotent_replay: response.idempotent_replay,
+            error_code: response.error_code,
+            reject_reason: response.reject_reason,
+            current_state: response.current_state,
         })
     })
 }

@@ -2316,6 +2316,8 @@ mod tests {
     fn accepted_ack(client_mutation_id: &str, ack_seq: i64, revision: &str) -> ClientCommandAck {
         ClientCommandAck {
             accepted: true,
+            account_id: "local-account".to_owned(),
+            node_id: "local-node".to_owned(),
             client_mutation_id: client_mutation_id.to_owned(),
             ack_seq,
             entity_id: "thread-1".to_owned(),
@@ -3703,6 +3705,8 @@ mod tests {
         let acked = core
             .apply_command_ack(ClientCommandAck {
                 accepted: true,
+                account_id: "local-account".to_owned(),
+                node_id: "local-node".to_owned(),
                 client_mutation_id: "cmid-surface".to_owned(),
                 ack_seq: 12,
                 entity_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
@@ -3776,6 +3780,8 @@ mod tests {
         let snapshot = core
             .apply_command_ack(ClientCommandAck {
                 accepted: true,
+                account_id: "local-account".to_owned(),
+                node_id: "local-node".to_owned(),
                 client_mutation_id: "cmid-prompt".to_owned(),
                 ack_seq: 42,
                 entity_id: "thread-1".to_owned(),
@@ -3810,6 +3816,8 @@ mod tests {
         let snapshot = core
             .apply_command_ack(ClientCommandAck {
                 accepted: false,
+                account_id: "local-account".to_owned(),
+                node_id: "local-node".to_owned(),
                 client_mutation_id: "cmid-reply".to_owned(),
                 ack_seq: 43,
                 entity_id: "thread-1".to_owned(),
@@ -3863,6 +3871,8 @@ mod tests {
         let rejected = core
             .apply_command_ack(ClientCommandAck {
                 accepted: false,
+                account_id: "local-account".to_owned(),
+                node_id: "local-node".to_owned(),
                 client_mutation_id: "cmid-mode".to_owned(),
                 ack_seq: 8,
                 entity_id: "thread-1".to_owned(),
@@ -3910,6 +3920,8 @@ mod tests {
                         command_kind: ClientCommandKind::SetSessionMode,
                         ack: ClientCommandAck {
                             accepted: true,
+                            account_id: "local-account".to_owned(),
+                            node_id: "local-node".to_owned(),
                             client_mutation_id: "cmid-mode".to_owned(),
                             ack_seq: 41,
                             entity_id: "thread-1".to_owned(),
@@ -3929,6 +3941,8 @@ mod tests {
                         command_kind: ClientCommandKind::SendSessionPrompt,
                         ack: ClientCommandAck {
                             accepted: false,
+                            account_id: "local-account".to_owned(),
+                            node_id: "local-node".to_owned(),
                             client_mutation_id: "cmid-prompt".to_owned(),
                             ack_seq: 42,
                             entity_id: "thread-1".to_owned(),

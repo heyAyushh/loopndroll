@@ -6,6 +6,8 @@ use crate::events::{
 use crate::mobile::events::{MobileEventInput, MobileEventKind, mobile_event_now};
 
 const ACK_PAYLOAD_DETAIL: &str = "command-ack";
+pub(crate) const COMMAND_ACK_ACCOUNT_ID: &str = "local-account";
+pub(crate) const COMMAND_ACK_NODE_ID: &str = "local-node";
 
 pub(crate) enum CommandReservation {
     Reserved,

@@ -485,6 +485,7 @@ async fn grpc_set_session_mode_returns_ack_and_streams_mode_event() {
     assert!(mode_ack.accepted);
     assert_eq!(mode_ack.entity_id, "thread-main");
     assert!(!mode_ack.server_time.is_empty());
+    assert_accepted_finality_certificate(&mode_ack, "grpc-mode-stream-1");
 
     let lifecycle_event =
         next_session_mobile_event_matching(&mut event_stream, "mode lifecycle event", |event| {
@@ -533,6 +534,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
         first_mode.idempotent_replay,
         "g004-c002-mode",
     );
+    assert_accepted_finality_certificate(&first_mode, "g004-c002-mode");
     let mode_event_count = mobile_state_event_count(&control_plane);
     let replayed_mode =
         set_mode_grpc(&mut client, &authorization, "await-reply", "g004-c002-mode").await;
@@ -557,6 +559,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
         first_prompt.idempotent_replay,
         "g004-c002-prompt",
     );
+    assert_accepted_finality_certificate(&first_prompt, "g004-c002-prompt");
     wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
     let prompt_event_count = mobile_state_event_count(&control_plane);
     let replayed_prompt = send_prompt_grpc(&mut client, &authorization, "g004-c002-prompt").await;
@@ -640,6 +643,7 @@ async fn grpc_commands_return_idempotent_ack_seq() {
         first_reply.idempotent_replay,
         "g004-c002-reply",
     );
+    assert_accepted_finality_certificate(&first_reply, "g004-c002-reply");
     wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
     let reply_event_count = mobile_state_event_count(&control_plane);
     let replayed_reply =
@@ -1167,6 +1171,24 @@ async fn grpc_session_stream_accepts_settings_and_route_commands() {
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
     let commands = vec![
         (
+            "session-settings-default-prompt",
+            command_session_frame(command::Command::SaveDefaultPrompt(
+                SaveDefaultPromptRequest {
+                    prompt: "Keep working until the focused gate is green.".to_owned(),
+                    client_mutation_id: "session-settings-default-prompt".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-global-preset",
+            command_session_frame(command::Command::SetGlobalPreset(
+                agent_control_plane::grpc::proto::SetGlobalPresetRequest {
+                    preset: "await-reply".to_owned(),
+                    client_mutation_id: "session-settings-global-preset".to_owned(),
+                },
+            )),
+        ),
+        (
             "session-settings-upsert-notification",
             command_session_frame(command::Command::UpsertNotificationRoute(
                 UpsertNotificationRouteRequest {
@@ -1179,6 +1201,15 @@ async fn grpc_session_stream_accepts_settings_and_route_commands() {
                     chat_username: String::new(),
                     chat_display_name: String::new(),
                     client_mutation_id: "session-settings-upsert-notification".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-settings-global-notification",
+            command_session_frame(command::Command::SetGlobalNotification(
+                agent_control_plane::grpc::proto::SetGlobalNotificationRequest {
+                    notification_id: "route-session-settings".to_owned(),
+                    client_mutation_id: "session-settings-global-notification".to_owned(),
                 },
             )),
         ),
@@ -1262,13 +1293,23 @@ async fn grpc_session_stream_accepts_settings_and_route_commands() {
         assert!(ack.ack_seq > 0);
         assert!(!ack.revision.is_empty());
         assert!(!ack.server_time.is_empty());
+        assert_accepted_finality_certificate(&ack, mutation_id);
     }
 
     let state = control_plane
         .mobile_session_service()
         .state()
         .expect("mobile state");
+    assert_eq!(
+        state.default_prompt,
+        "Keep working until the focused gate is green."
+    );
     assert_eq!(state.scope, "per-task");
+    assert_eq!(state.global_preset.as_deref(), Some("await-reply"));
+    assert_eq!(
+        state.global_notification_id.as_deref(),
+        Some("route-session-settings")
+    );
     assert_eq!(
         state.default_notification_target_ids,
         vec!["macos".to_owned(), "route-session-settings".to_owned()]
@@ -1287,6 +1328,79 @@ async fn grpc_session_stream_accepts_settings_and_route_commands() {
         Some("check-session-settings")
     );
     assert!(!session.completion_check_wait_for_reply);
+}
+
+#[tokio::test]
+async fn grpc_session_stream_accepts_siri_archive_delete_mute_certificates() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, "mini-revision-siri-session-command", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let commands = vec![
+        (
+            "session-siri-current",
+            command_session_frame(command::Command::SetSiriCurrentSession(
+                agent_control_plane::grpc::proto::SetSiriCurrentSessionRequest {
+                    thread_id: "thread-main".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    client_mutation_id: "session-siri-current".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-siri-default",
+            command_session_frame(command::Command::SetSiriDefaultSession(
+                SetSiriDefaultSessionRequest {
+                    thread_id: "thread-main".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    client_mutation_id: "session-siri-default".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-mute",
+            command_session_frame(command::Command::MuteSession(MuteSessionRequest {
+                thread_id: "thread-main".to_owned(),
+                client_mutation_id: "session-mute".to_owned(),
+            })),
+        ),
+        (
+            "session-archive",
+            command_session_frame(command::Command::SetSessionArchived(
+                SetSessionArchivedRequest {
+                    thread_id: "thread-main".to_owned(),
+                    archived: true,
+                    client_mutation_id: "session-archive".to_owned(),
+                },
+            )),
+        ),
+        (
+            "session-delete",
+            command_session_frame(command::Command::DeleteSession(DeleteSessionRequest {
+                thread_id: "thread-main".to_owned(),
+                client_mutation_id: "session-delete".to_owned(),
+            })),
+        ),
+    ];
+    let expected_mutations = commands
+        .iter()
+        .map(|(mutation_id, _)| *mutation_id)
+        .collect::<Vec<_>>();
+    let mut stream = open_session_stream(
+        &mut client,
+        &authorization,
+        commands.into_iter().map(|(_, frame)| frame).collect(),
+    )
+    .await;
+
+    for mutation_id in expected_mutations {
+        let ack = next_session_ack_frame(&mut stream, mutation_id).await;
+        assert_accepted_finality_certificate(&ack, mutation_id);
+    }
 }
 
 #[tokio::test]
@@ -1346,10 +1460,18 @@ async fn grpc_session_stream_prompt_rejects_without_mode_with_fsm_code() {
     assert!(!ack.accepted);
     assert_eq!(ack.client_mutation_id, "session-stream-fsm-mode-required");
     assert_eq!(ack.entity_id, "thread-main");
-    assert_eq!(ack.ack_seq, 0);
     assert_eq!(ack.error_code, "mode_required");
     assert!(ack.reject_reason.contains("current_state=idle"));
-    assert_eq!(mobile_state_event_count(&control_plane), event_count_before);
+    assert_rejected_finality_certificate(
+        &ack,
+        "session-stream-fsm-mode-required",
+        "mode_required",
+        "idle",
+    );
+    assert_eq!(
+        mobile_state_event_count(&control_plane),
+        event_count_before + 1
+    );
 }
 
 #[tokio::test]
@@ -1725,6 +1847,46 @@ fn assert_command_ack(
     assert!(!revision.is_empty());
     assert!(!server_time.is_empty());
     assert!(!idempotent_replay);
+}
+
+fn assert_accepted_finality_certificate(
+    ack: &agent_control_plane::grpc::proto::CommandAck,
+    expected_client_mutation_id: &str,
+) {
+    assert!(
+        ack.accepted,
+        "{expected_client_mutation_id}: {}",
+        ack.reject_reason
+    );
+    assert_eq!(ack.client_mutation_id, expected_client_mutation_id);
+    assert!(!ack.account_id.is_empty());
+    assert!(!ack.node_id.is_empty());
+    assert!(ack.ack_seq > 0);
+    assert!(!ack.entity_id.is_empty());
+    assert!(!ack.revision.is_empty());
+    assert!(!ack.server_time.is_empty());
+    assert_eq!(ack.error_code, "");
+    assert_eq!(ack.reject_reason, "");
+    assert_eq!(ack.current_state, "");
+}
+
+fn assert_rejected_finality_certificate(
+    ack: &agent_control_plane::grpc::proto::CommandAck,
+    expected_client_mutation_id: &str,
+    expected_error_code: &str,
+    expected_current_state: &str,
+) {
+    assert!(!ack.accepted);
+    assert_eq!(ack.client_mutation_id, expected_client_mutation_id);
+    assert!(!ack.account_id.is_empty());
+    assert!(!ack.node_id.is_empty());
+    assert!(ack.ack_seq > 0);
+    assert!(!ack.entity_id.is_empty());
+    assert!(!ack.revision.is_empty());
+    assert!(!ack.server_time.is_empty());
+    assert_eq!(ack.error_code, expected_error_code);
+    assert!(!ack.reject_reason.is_empty());
+    assert_eq!(ack.current_state, expected_current_state);
 }
 
 fn mobile_state_event_count(control_plane: &ControlPlane) -> usize {

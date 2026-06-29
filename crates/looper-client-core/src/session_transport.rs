@@ -832,6 +832,8 @@ fn client_state_mini_from_json(value: &Value) -> Option<ClientStateMini> {
 fn client_command_ack(ack: proto::CommandAck) -> ClientCommandAck {
     ClientCommandAck {
         accepted: ack.accepted,
+        account_id: ack.account_id,
+        node_id: ack.node_id,
         client_mutation_id: ack.client_mutation_id,
         ack_seq: ack.ack_seq,
         entity_id: ack.entity_id,
@@ -840,7 +842,7 @@ fn client_command_ack(ack: proto::CommandAck) -> ClientCommandAck {
         idempotent_replay: ack.idempotent_replay,
         error_code: ack.error_code,
         reject_reason: ack.reject_reason,
-        current_state: String::new(),
+        current_state: ack.current_state,
     }
 }
 

@@ -1,0 +1,7 @@
+
+running 3 tests
+test command_batch::tests::expected_command_ack_returns_matching_envelope ... ok
+test command_batch::tests::expected_command_ack_rejects_missing_ack ... ok
+test client::tests::command_ack_receiver_buffers_unexpected_acks ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 149 filtered out; finished in 0.00s

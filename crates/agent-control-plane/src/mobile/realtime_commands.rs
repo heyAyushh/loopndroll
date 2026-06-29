@@ -19,10 +19,10 @@ use crate::mobile::prompt_delivery::{
     invalidate_delivery_action_cache, prompt_dispatch_fields, prompt_intent_from_str,
 };
 use crate::mobile::realtime_ack::{
-    CommandAckError, CommandReservation, ack_response_value, command_ack_server_time,
-    command_ack_state_event, command_request_hash, current_mobile_revision, existing_command_ack,
-    json_string, publish_command_ack_event, record_command_ack, release_command_reservation,
-    reserve_command_ack,
+    COMMAND_ACK_ACCOUNT_ID, COMMAND_ACK_NODE_ID, CommandAckError, CommandReservation,
+    ack_response_value, command_ack_server_time, command_ack_state_event, command_request_hash,
+    current_mobile_revision, existing_command_ack, json_string, publish_command_ack_event,
+    record_command_ack, release_command_reservation, reserve_command_ack,
 };
 use crate::mobile::session::{
     ASSISTANT_SURFACES, MobileSessionError, UpsertMobileNotificationRoute,
@@ -71,18 +71,25 @@ pub(crate) enum SiriSessionTarget {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionCommandAckResponse {
     pub(crate) accepted: bool,
+    pub(crate) account_id: String,
+    pub(crate) node_id: String,
     pub(crate) server_time: String,
     pub(crate) client_mutation_id: String,
     pub(crate) ack_seq: i64,
     pub(crate) entity_id: String,
     pub(crate) revision: String,
     pub(crate) idempotent_replay: bool,
+    pub(crate) error_code: String,
+    pub(crate) reject_reason: String,
+    pub(crate) current_state: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NotificationReplyCommandResponse {
     pub(crate) accepted: bool,
+    pub(crate) account_id: String,
+    pub(crate) node_id: String,
     pub(crate) dispatch_kind: String,
     pub(crate) prompt_id: String,
     pub(crate) server_time: String,
@@ -92,6 +99,9 @@ pub(crate) struct NotificationReplyCommandResponse {
     pub(crate) revision: String,
     pub(crate) idempotent_replay: bool,
     pub(crate) notification_id: String,
+    pub(crate) error_code: String,
+    pub(crate) reject_reason: String,
+    pub(crate) current_state: String,
 }
 
 #[derive(Debug)]
@@ -348,15 +358,20 @@ pub(crate) fn submit_notification_reply_command(
     let revision = current_mobile_revision(control_plane)?;
     let entity_id = thread_id.to_owned();
     let (dispatch_kind, prompt_id) = prompt_dispatch_fields(&dispatch);
-    let response_json = serde_json::json!({
-        "accepted": true,
-        "dispatchKind": dispatch_kind,
-        "promptId": prompt_id,
-        "serverTime": server_time,
-        "entityId": entity_id,
-        "revision": revision,
-        "notificationId": notification_id,
-    });
+    let response_json = finality_response_json(
+        serde_json::json!({
+            "dispatchKind": dispatch_kind,
+            "promptId": prompt_id,
+            "notificationId": notification_id,
+        }),
+        true,
+        &entity_id,
+        &revision,
+        &server_time,
+        "",
+        "",
+        "",
+    );
     let ack_result = match record_command_ack(
         control_plane,
         COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY,
@@ -1187,6 +1202,16 @@ fn command_ack_with_idempotency(
             return Err(error);
         }
     };
+    let response_json = finality_response_json(
+        response_json,
+        true,
+        entity_id,
+        &revision,
+        &server_time,
+        "",
+        "",
+        "",
+    );
     let ack_result = match record_command_ack(
         control_plane,
         command_kind,
@@ -1209,6 +1234,73 @@ fn command_ack_with_idempotency(
     Ok(command_ack_response_from_ack_result(&ack_result))
 }
 
+pub(crate) fn record_rejected_session_command_ack(
+    control_plane: &ControlPlane,
+    command_kind: &str,
+    client_mutation_id: &str,
+    entity_id: &str,
+    request_payload: serde_json::Value,
+    error_code: &str,
+    reject_reason: &str,
+    current_state: &str,
+) -> Result<Option<SessionCommandAckResponse>, RealtimeCommandError> {
+    let Ok(client_mutation_id) =
+        normalized_required_value(client_mutation_id, "client_mutation_id")
+    else {
+        return Ok(None);
+    };
+    let entity_id = entity_id.trim();
+    if entity_id.is_empty() {
+        return Ok(None);
+    }
+    let request_hash = command_request_hash(command_kind, request_payload)?;
+    if let Some(record) = existing_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+    )? {
+        return Ok(Some(command_ack_response_from_record(&record, true)));
+    }
+    let reservation = match reserve_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+    ) {
+        Ok(reservation) => reservation,
+        Err(CommandAckError::AlreadyExists(_) | CommandAckError::InFlight(_)) => return Ok(None),
+        Err(CommandAckError::Internal(message)) => {
+            return Err(RealtimeCommandError::Internal(message));
+        }
+    };
+    if let CommandReservation::Replay(record) = reservation {
+        return Ok(Some(command_ack_response_from_record(&record, true)));
+    }
+
+    let server_time = command_ack_server_time();
+    let revision = current_mobile_revision(control_plane)?;
+    let response_json = finality_response_json(
+        serde_json::json!({}),
+        false,
+        entity_id,
+        &revision,
+        &server_time,
+        error_code,
+        reject_reason,
+        current_state,
+    );
+    let ack_result = record_command_ack(
+        control_plane,
+        command_kind,
+        client_mutation_id,
+        &request_hash,
+        response_json,
+        command_ack_state_event(entity_id, &revision, &server_time),
+    )?;
+    Ok(Some(command_ack_response_from_ack_result(&ack_result)))
+}
+
 fn command_ack_response_from_ack_result(
     result: &MobileCommandAckResult,
 ) -> SessionCommandAckResponse {
@@ -1224,13 +1316,21 @@ fn command_ack_response_from_record(
 ) -> SessionCommandAckResponse {
     let value = ack_response_value(record);
     SessionCommandAckResponse {
-        accepted: true,
+        accepted: value
+            .get("accepted")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        account_id: json_string_or(&value, "accountId", COMMAND_ACK_ACCOUNT_ID),
+        node_id: json_string_or(&value, "nodeId", COMMAND_ACK_NODE_ID),
         server_time: json_string(&value, "serverTime"),
         client_mutation_id: record.client_mutation_id.clone(),
         ack_seq: record.ack_seq,
         entity_id: json_string(&value, "entityId"),
         revision: json_string(&value, "revision"),
         idempotent_replay,
+        error_code: json_string(&value, "errorCode"),
+        reject_reason: json_string(&value, "rejectReason"),
+        current_state: json_string(&value, "currentState"),
     }
 }
 
@@ -1252,7 +1352,12 @@ fn notification_reply_response_from_record(
 ) -> NotificationReplyCommandResponse {
     let value = ack_response_value(record);
     NotificationReplyCommandResponse {
-        accepted: true,
+        accepted: value
+            .get("accepted")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        account_id: json_string_or(&value, "accountId", COMMAND_ACK_ACCOUNT_ID),
+        node_id: json_string_or(&value, "nodeId", COMMAND_ACK_NODE_ID),
         dispatch_kind: json_string(&value, "dispatchKind"),
         prompt_id: json_string(&value, "promptId"),
         server_time: json_string(&value, "serverTime"),
@@ -1262,6 +1367,49 @@ fn notification_reply_response_from_record(
         revision: json_string(&value, "revision"),
         idempotent_replay,
         notification_id: notification_id.to_owned(),
+        error_code: json_string(&value, "errorCode"),
+        reject_reason: json_string(&value, "rejectReason"),
+        current_state: json_string(&value, "currentState"),
+    }
+}
+
+fn finality_response_json(
+    mut response_json: serde_json::Value,
+    accepted: bool,
+    entity_id: &str,
+    revision: &str,
+    server_time: &str,
+    error_code: &str,
+    reject_reason: &str,
+    current_state: &str,
+) -> serde_json::Value {
+    if !response_json.is_object() {
+        response_json = serde_json::json!({});
+    }
+    let object = response_json
+        .as_object_mut()
+        .expect("finality response json object");
+    object.insert("accepted".to_owned(), serde_json::json!(accepted));
+    object.insert(
+        "accountId".to_owned(),
+        serde_json::json!(COMMAND_ACK_ACCOUNT_ID),
+    );
+    object.insert("nodeId".to_owned(), serde_json::json!(COMMAND_ACK_NODE_ID));
+    object.insert("entityId".to_owned(), serde_json::json!(entity_id));
+    object.insert("revision".to_owned(), serde_json::json!(revision));
+    object.insert("serverTime".to_owned(), serde_json::json!(server_time));
+    object.insert("errorCode".to_owned(), serde_json::json!(error_code));
+    object.insert("rejectReason".to_owned(), serde_json::json!(reject_reason));
+    object.insert("currentState".to_owned(), serde_json::json!(current_state));
+    response_json
+}
+
+fn json_string_or(value: &serde_json::Value, key: &str, fallback: &str) -> String {
+    let value = json_string(value, key);
+    if value.is_empty() {
+        fallback.to_owned()
+    } else {
+        value
     }
 }
 

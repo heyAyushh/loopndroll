@@ -1,0 +1,28 @@
+
+running 24 tests
+test mobile_events::grpc_session_commands_use_session_mini_visibility_before_snapshot ... ok
+test mobile_events::grpc_prompt_requires_hot_state_mini_cache_without_snapshot_fallback ... ok
+test mobile_events::grpc_prompt_in_mode_queues_from_session_mini_without_desktop_snapshot ... ok
+test mobile_events::grpc_session_stream_acks_mode_command_before_state_deltas ... ok
+test mobile_events::grpc_session_stream_mode_requires_hot_state_mini_cache_without_snapshot ... ok
+test mobile_events::grpc_session_stream_compacts_single_oversized_session_mini_delta ... ok
+test mobile_events::grpc_session_stream_prompt_rejects_without_mode_with_fsm_code ... ok
+test mobile_events::grpc_session_stream_rejects_invalid_command_as_ack_frame ... ok
+test mobile_events::grpc_session_stream_replays_before_liveness_cursor ... ok
+test mobile_events::grpc_session_stream_rejects_oversized_prompt_as_control_frame ... ok
+test mobile_events::grpc_session_stream_replays_empty_projection_as_replacement ... ok
+test mobile_events::grpc_session_stream_replays_unprojected_state_as_control_markers ... ok
+test mobile_events::mobile_command_log_dedupes_client_mutation_id ... ok
+test mobile_events::mobile_command_log_reserves_before_ack_and_reports_inflight ... ok
+test mobile_events::mobile_state_event_log_replays_after_seq_and_detects_gap ... ok
+test mobile_events::grpc_mobile_events_streams_authenticated_prompt_resumed_event ... ok
+test mobile_events::grpc_session_stream_accepts_siri_archive_delete_mute_certificates ... ok
+test mobile_events::grpc_session_stream_replays_duplicate_command_ack ... ok
+test mobile_events::grpc_set_session_mode_returns_ack_and_streams_mode_event ... ok
+test mobile_events::grpc_session_stream_replays_large_projection_replacement_under_frame_cap ... ok
+test mobile_events::grpc_session_stream_accepts_settings_and_route_commands ... ok
+test mobile_events::grpc_commands_return_idempotent_ack_seq ... ok
+test mobile_events::grpc_session_resume_drains_more_than_one_replay_batch_immediately ... ok
+test mobile_events::grpc_prompt_ack_returns_before_codex_resume_delivery_completes ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 74 filtered out; finished in 5.46s

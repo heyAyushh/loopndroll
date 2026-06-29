@@ -135,6 +135,8 @@ pub struct OutboundSessionFrame {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientCommandAck {
     pub accepted: bool,
+    pub account_id: String,
+    pub node_id: String,
     pub client_mutation_id: String,
     pub ack_seq: i64,
     pub entity_id: String,

@@ -1,0 +1,9 @@
+Command:
+cargo test --manifest-path crates/agent-control-plane/Cargo.toml --test isolated_control_plane mobile_events::grpc_session_stream_prompt_rejects_without_mode_with_fsm_code -- --nocapture | tee .omo/evidence/local-first-multinode-architecture-lock/task-2-red-illegal-fsm.txt
+
+Exit status:
+non-zero before production edits
+
+Failure summary:
+The characterization test added assertions for finality fields that did not yet exist on CommandAck.
+The pre-edit compile failed with rustc E0609 for missing fields account_id, node_id, and current_state on CommandAck.
