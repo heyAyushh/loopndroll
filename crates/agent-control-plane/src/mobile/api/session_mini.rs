@@ -88,6 +88,22 @@ pub fn session_mini_projection_inputs(
         .collect()
 }
 
+pub fn session_mini_projection_inputs_from_records(
+    records: &[MobileSessionMiniRecord],
+) -> Vec<MobileSessionMiniProjectionInput> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let body_json = serde_json::from_str::<Value>(&record.body_json).ok()?;
+            Some(MobileSessionMiniProjectionInput {
+                session_id: record.session_id.clone(),
+                assistant_surface: record.assistant_surface.clone(),
+                body_json,
+            })
+        })
+        .collect()
+}
+
 pub fn mobile_session_minis(
     snapshot: &DesktopSnapshot,
     session_state: &MobileSessionState,

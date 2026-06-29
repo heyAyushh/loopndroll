@@ -165,19 +165,12 @@ pub(crate) fn json_string(value: &serde_json::Value, key: &str) -> String {
 pub(crate) fn current_mobile_revision(
     control_plane: &ControlPlane,
 ) -> Result<String, CommandAckError> {
-    let records = control_plane
+    if let Some(revision) = control_plane
         .store()
-        .mobile_session_minis()
-        .map_err(|error| CommandAckError::Internal(error.to_string()))?;
-    if let Some(revision) = crate::mobile::api::latest_session_mini_revision(&records) {
+        .latest_mobile_session_mini_revision()
+        .map_err(|error| CommandAckError::Internal(error.to_string()))?
+    {
         return Ok(revision);
-    }
-
-    if let Ok(revision) = control_plane.mobile_snapshot_revision() {
-        let revision = revision.trim();
-        if !revision.is_empty() {
-            return Ok(revision.to_owned());
-        }
     }
 
     let latest_seq = control_plane

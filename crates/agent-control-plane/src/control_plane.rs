@@ -58,7 +58,10 @@ use crate::grok_build::{
     inspect_grok_hooks, register_owned_grok_hooks, unregister_owned_grok_hooks,
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
-use crate::mobile::api::{latest_session_mini_revision, session_mini_projection_inputs};
+use crate::mobile::api::{
+    latest_session_mini_revision, session_mini_projection_inputs,
+    session_mini_projection_inputs_from_records,
+};
 use crate::mobile::auth::MobileAuthService;
 use crate::mobile::events::{
     MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
@@ -517,26 +520,23 @@ impl ControlPlane {
 
     pub fn emit_mobile_event(&self, input: MobileEventInput) {
         let mut event = build_mobile_event(input);
-        event.revision = self
-            .mobile_snapshot_revision()
-            .ok()
-            .filter(|revision| !revision.is_empty());
+        event.revision = self.latest_cached_mobile_revision();
         self.persist_and_publish_mobile_event(event, None);
     }
 
     pub fn emit_mobile_session_event(&self, input: MobileEventInput, thread_id: &str) {
         let mut event = build_mobile_event(input);
-        let revision = self
-            .mobile_snapshot_revision()
+        let minis = self.cached_session_mini_projection_inputs(thread_id);
+        event.revision = minis
+            .as_ref()
             .ok()
-            .filter(|revision| !revision.is_empty());
-        event.revision = revision.clone();
-        let mini = revision
-            .as_deref()
-            .and_then(|revision| self.session_mini_projection_input(thread_id, revision).ok())
-            .flatten()
-            .map(|mini| vec![mini]);
-        self.persist_and_publish_mobile_event(event, mini);
+            .and_then(|records| latest_session_mini_revision(records))
+            .or_else(|| self.latest_cached_mobile_revision());
+        let minis = minis
+            .ok()
+            .map(|records| session_mini_projection_inputs_from_records(&records))
+            .filter(|minis| !minis.is_empty());
+        self.persist_and_publish_mobile_event(event, minis);
     }
 
     pub fn emit_mobile_session_event_without_projection(&self, input: MobileEventInput) {
@@ -575,15 +575,9 @@ impl ControlPlane {
 
     pub fn emit_mobile_all_sessions_event(&self, input: MobileEventInput) {
         let mut event = build_mobile_event(input);
-        let revision = self
-            .mobile_snapshot_revision()
-            .ok()
-            .filter(|revision| !revision.is_empty());
-        event.revision = revision.clone();
-        let minis = revision
-            .as_deref()
-            .and_then(|revision| self.session_mini_projection_inputs(revision).ok());
-        self.persist_replace_and_publish_mobile_event(event, minis);
+        event.revision = self.latest_cached_mobile_revision();
+        self.persist_and_publish_mobile_event(event, None);
+        self.spawn_mobile_session_mini_projection_reconcile_if_due();
     }
 
     pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
@@ -645,35 +639,24 @@ impl ControlPlane {
         }
     }
 
-    fn persist_replace_and_publish_mobile_event(
-        &self,
-        event: MobileEvent,
-        minis: Option<Vec<MobileSessionMiniProjectionInput>>,
-    ) {
-        let result = match minis {
-            Some(minis) => self
-                .store
-                .record_mobile_event_replacing_session_minis(&event, minis),
-            None => self.store.record_mobile_event(&event),
-        };
-        match result {
-            Ok(record) => self.mobile_events.publish_persisted(record),
-            Err(error) => {
-                eprintln!("mobile event persistence failed: {error}");
-                self.mobile_events.publish_ephemeral(event);
-            }
-        }
-    }
-
-    fn session_mini_projection_input(
+    fn cached_session_mini_projection_inputs(
         &self,
         thread_id: &str,
-        revision: &str,
-    ) -> Result<Option<MobileSessionMiniProjectionInput>> {
-        Ok(self
-            .session_mini_projection_inputs(revision)?
-            .into_iter()
-            .find(|mini| mini.session_id == thread_id))
+    ) -> Result<Vec<crate::events::MobileSessionMiniRecord>> {
+        self.store.mobile_session_minis_for_session(thread_id)
+    }
+
+    fn latest_cached_mobile_revision(&self) -> Option<String> {
+        self.store
+            .latest_mobile_session_mini_revision()
+            .ok()
+            .flatten()
+            .or_else(|| {
+                self.store
+                    .latest_mobile_state_event_seq()
+                    .ok()
+                    .map(|seq| format!("mobile-state:seq-{seq}"))
+            })
     }
 
     fn session_mini_projection_inputs(

@@ -1105,8 +1105,17 @@ fn session_mini_visibility(
 ) -> Result<Option<bool>, RealtimeCommandError> {
     let records = control_plane
         .store()
-        .mobile_session_minis()
+        .mobile_session_minis_for_session(thread_id)
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    if records.is_empty() {
+        let has_projection = control_plane
+            .store()
+            .has_mobile_session_minis()
+            .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+        if has_projection {
+            return Ok(Some(false));
+        }
+    }
     Ok(session_mini_records_contain_session(
         &records,
         thread_id,
@@ -1122,11 +1131,11 @@ fn ensure_session_fsm_allows(
 ) -> Result<(), RealtimeCommandError> {
     let events = control_plane
         .store()
-        .mobile_state_events()
+        .mobile_state_events_for_entity(thread_id)
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
     let minis = control_plane
         .store()
-        .mobile_session_minis()
+        .mobile_session_minis_for_session(thread_id)
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
     let state = session_state_for_thread(&events, &minis, thread_id, assistant_surface);
     next_session_state(state, command)
@@ -1292,7 +1301,7 @@ fn emit_session_mode_changed(control_plane: &ControlPlane, thread_id: &str, pres
     };
     let minis = control_plane
         .store()
-        .mobile_session_minis()
+        .mobile_session_minis_for_session(thread_id)
         .ok()
         .map(|records| session_mini_projection_inputs_with_mode(&records, thread_id, preset))
         .unwrap_or_default();

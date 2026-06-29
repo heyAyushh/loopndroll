@@ -299,6 +299,8 @@ create table if not exists mobile_session_mini_replacements (
             r#"
 create index if not exists mobile_session_minis_seq
   on mobile_session_minis(seq asc, assistant_surface asc, session_id asc);
+create index if not exists mobile_state_event_log_entity_seq
+  on mobile_state_event_log(entity_id, seq asc);
 "#,
         )?;
         migrate_legacy_mobile_events(&connection)?;
@@ -441,6 +443,27 @@ create index if not exists mobile_session_minis_seq
         mobile_session_minis(&connection)
     }
 
+    pub fn mobile_session_minis_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<MobileSessionMiniRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        mobile_session_minis_for_session(&connection, session_id)
+    }
+
+    pub fn latest_mobile_session_mini_revision(&self) -> Result<Option<String>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        latest_mobile_session_mini_revision(&connection)
+    }
+
+    pub fn has_mobile_session_minis(&self) -> Result<bool> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        has_mobile_session_minis(&connection)
+    }
+
     pub fn mobile_session_minis_at_seq(&self, seq: i64) -> Result<Vec<MobileSessionMiniRecord>> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -453,13 +476,13 @@ create index if not exists mobile_session_minis_seq
         mobile_session_minis_replaced_at_seq(&connection, seq)
     }
 
-    pub fn latest_mobile_session_mini_replacement_seq_after(
+    pub fn latest_mobile_session_mini_replacement_event_seq_after(
         &self,
         after_seq: i64,
     ) -> Result<Option<i64>> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
-        latest_mobile_session_mini_replacement_seq_after(&connection, after_seq)
+        latest_mobile_session_mini_replacement_event_seq_after(&connection, after_seq)
     }
 
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
@@ -541,6 +564,25 @@ create index if not exists mobile_session_minis_seq
              order by seq asc",
         )?;
         let rows = statement.query_map([], mobile_state_event_row)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn mobile_state_events_for_entity(
+        &self,
+        entity_id: &str,
+    ) -> Result<Vec<MobileStateEventRecord>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        let mut statement = connection.prepare(
+            "select seq, entity_id, kind, revision, server_time, payload_json,
+                    client_mutation_id, command_kind, command_request_hash,
+                    command_response_json, created_at_ms
+             from mobile_state_event_log
+             where entity_id = ?1
+             order by seq asc",
+        )?;
+        let rows = statement.query_map(params![entity_id], mobile_state_event_row)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
@@ -1233,6 +1275,45 @@ fn mobile_session_minis(connection: &Connection) -> Result<Vec<MobileSessionMini
         .map_err(Into::into)
 }
 
+fn mobile_session_minis_for_session(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<Vec<MobileSessionMiniRecord>> {
+    let mut statement = connection.prepare(
+        "select session_id, assistant_surface, seq, revision, body_json, updated_at_ms
+         from mobile_session_minis
+         where session_id = ?1
+         order by assistant_surface asc",
+    )?;
+    let rows = statement.query_map(params![session_id], mobile_session_mini_row)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn latest_mobile_session_mini_revision(connection: &Connection) -> Result<Option<String>> {
+    connection
+        .query_row(
+            "select revision
+             from mobile_session_minis
+             where revision != ''
+             order by seq desc
+             limit 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn has_mobile_session_minis(connection: &Connection) -> Result<bool> {
+    let count: i64 = connection.query_row(
+        "select exists(select 1 from mobile_session_minis limit 1)",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 fn mobile_session_minis_at_seq(
     connection: &Connection,
     seq: i64,
@@ -1257,13 +1338,20 @@ fn mobile_session_minis_replaced_at_seq(connection: &Connection, seq: i64) -> Re
     Ok(count > 0)
 }
 
-fn latest_mobile_session_mini_replacement_seq_after(
+fn latest_mobile_session_mini_replacement_event_seq_after(
     connection: &Connection,
     after_seq: i64,
 ) -> Result<Option<i64>> {
     connection
         .query_row(
-            "select max(seq) from mobile_session_mini_replacements where seq > ?1",
+            "select max(replacements.seq)
+             from mobile_session_mini_replacements replacements
+             where replacements.seq > ?1
+               and exists (
+                 select 1
+                 from mobile_state_event_log events
+                 where events.seq = replacements.seq
+               )",
             params![after_seq],
             |row| row.get(0),
         )

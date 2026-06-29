@@ -588,7 +588,7 @@ fn replay_state_delta_frames(
 ) -> Result<Vec<proto::ServerFrame>, Status> {
     let mut replay_after_seq = control_plane
         .store()
-        .latest_mobile_session_mini_replacement_seq_after(after_seq)
+        .latest_mobile_session_mini_replacement_event_seq_after(after_seq)
         .map_err(state_replay_status)?
         .map(|replacement_seq| replacement_seq.saturating_sub(1))
         .unwrap_or(after_seq);
@@ -803,8 +803,22 @@ fn mobile_event_record_frame(
         prompt_id: record.prompt_id.clone().unwrap_or_default(),
         detail: truncate_control_text(&record.detail.clone().unwrap_or_default()),
         server_time: mobile_event_now(),
-        revision: control_plane.mobile_snapshot_revision().unwrap_or_default(),
+        revision: mobile_event_frame_revision(control_plane),
     })
+}
+
+fn mobile_event_frame_revision(control_plane: &ControlPlane) -> String {
+    control_plane
+        .store()
+        .latest_mobile_session_mini_revision()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| {
+            format!(
+                "mobile-state:seq-{}",
+                latest_mobile_state_seq(control_plane)
+            )
+        })
 }
 
 fn mobile_event_frame(event: proto::MobileEvent) -> proto::ServerFrame {

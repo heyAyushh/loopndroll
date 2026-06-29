@@ -325,7 +325,7 @@ fn prompt_is_replyable_from_minis(
 ) -> Result<bool, MobileSessionError> {
     let records = control_plane
         .store()
-        .mobile_session_minis()
+        .mobile_session_minis_for_session(thread_id)
         .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
     Ok(
         session_mini_records_allow_reply_mode_prompt(&records, thread_id, assistant_surface)
