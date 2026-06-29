@@ -1,0 +1,8 @@
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "Menu bar SessionMini local-first" started.
+􀟈  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" started.
+􁁛  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" passed after 0.006 seconds.
+􁁛  Suite "Menu bar SessionMini local-first" passed after 0.006 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.007 seconds.

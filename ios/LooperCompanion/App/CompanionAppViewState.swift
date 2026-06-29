@@ -337,13 +337,7 @@ struct CompanionAppViewState {
     }
 
     private var connectedStatusSummary: String {
-        var parts: [String] = []
-
-        if let connectionRoutePresentation {
-            parts.append("\(connectionRoutePresentation.title) route at \(connectionRoutePresentation.detail)")
-        }
-
-        return parts.isEmpty ? "Connected." : "\(parts.joined(separator: " · "))."
+        "Connected."
     }
 
     private var localStateHeadline: String {

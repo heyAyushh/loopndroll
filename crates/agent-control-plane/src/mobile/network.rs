@@ -28,6 +28,12 @@ const LINK_LOCAL_FIRST_OCTET: u8 = 169;
 const LINK_LOCAL_SECOND_OCTET: u8 = 254;
 const UNSPECIFIED_FIRST_OCTET: u8 = 0;
 const MULTICAST_FIRST_OCTET_LOWER_BOUND: u8 = 224;
+const PRIVATE_10_FIRST_OCTET: u8 = 10;
+const PRIVATE_172_FIRST_OCTET: u8 = 172;
+const PRIVATE_172_SECOND_OCTET_LOWER_BOUND: u8 = 16;
+const PRIVATE_172_SECOND_OCTET_UPPER_BOUND: u8 = 31;
+const PRIVATE_192_FIRST_OCTET: u8 = 192;
+const PRIVATE_192_SECOND_OCTET: u8 = 168;
 const TAILSCALE_CGNAT_FIRST_OCTET: u8 = 100;
 const TAILSCALE_CGNAT_SECOND_OCTET_LOWER_BOUND: u8 = 64;
 const TAILSCALE_CGNAT_SECOND_OCTET_UPPER_BOUND: u8 = 127;
@@ -35,6 +41,7 @@ const TAILSCALE_ULA_FIRST_SEGMENT: u16 = 0xfd7a;
 const TAILSCALE_ULA_SECOND_SEGMENT: u16 = 0x115c;
 const TAILSCALE_ULA_THIRD_SEGMENT: u16 = 0xa1e0;
 const TAILSCALE_DNS_SUFFIX: &str = ".ts.net";
+const LOCAL_DNS_SUFFIX: &str = ".local";
 const TAILSCALE_STATUS_TIMEOUT_MS: u64 = 900;
 const TAILSCALE_CLI_EXECUTABLE: &str = "tailscale";
 const TAILSCALE_SOCKET_ENV: &str = "LOOPER_TAILSCALE_SOCKET";
@@ -611,13 +618,17 @@ fn advertised_mobile_base_urls_from_sources(
         .into_iter();
     let local_urls = local_addresses
         .into_iter()
+        .filter(|address| is_first_class_mobile_host(address))
         .map(|address| format!("http://{address}:{port}"));
+    let explicit_first_class_urls = explicit_urls
+        .into_iter()
+        .filter(|base_url| is_first_class_mobile_base_url(base_url));
     let fallback_url = format!("http://127.0.0.1:{port}");
 
     unique_values(
         preferred_urls
             .chain(local_urls)
-            .chain(explicit_urls)
+            .chain(explicit_first_class_urls)
             .chain(std::iter::once(fallback_url))
             .collect(),
     )
@@ -662,7 +673,10 @@ fn advertised_mobile_grpc_base_urls_from_sources(
     let derived_urls = http_base_urls
         .iter()
         .filter_map(|base_url| grpc_base_url_for_http_base_url(base_url, grpc_port));
-    unique_values(derived_urls.chain(explicit_urls).collect())
+    let explicit_first_class_urls = explicit_urls
+        .into_iter()
+        .filter(|base_url| is_first_class_mobile_base_url(base_url));
+    unique_values(derived_urls.chain(explicit_first_class_urls).collect())
 }
 
 fn explicit_mobile_base_urls() -> Vec<String> {
@@ -760,7 +774,13 @@ fn parse_ifconfig_ipv4_addresses(output: &str) -> Vec<String> {
 
 fn is_mobile_reachable_base_url(value: &str) -> bool {
     normalize_base_url(value)
-        .and_then(|base_url| base_url_host(&base_url).map(|host| is_mobile_reachable_host(&host)))
+        .and_then(|base_url| base_url_host(&base_url).map(|host| is_first_class_mobile_host(&host)))
+        .unwrap_or(false)
+}
+
+fn is_first_class_mobile_base_url(value: &str) -> bool {
+    normalize_base_url(value)
+        .and_then(|base_url| base_url_host(&base_url).map(|host| is_first_class_mobile_host(&host)))
         .unwrap_or(false)
 }
 
@@ -792,15 +812,19 @@ fn derived_grpc_port(http_port: u16) -> Option<u16> {
     http_port.checked_add(DEFAULT_GRPC_PORT_OFFSET)
 }
 
-fn is_mobile_reachable_host(host: &str) -> bool {
+fn is_first_class_mobile_host(host: &str) -> bool {
     let normalized = host.trim().trim_matches('.').to_ascii_lowercase();
     if normalized.is_empty() || normalized == "localhost" {
         return false;
     }
 
+    if is_tailscale_host(&normalized) || normalized.ends_with(LOCAL_DNS_SUFFIX) {
+        return true;
+    }
+
     parse_ipv4_octets(&normalized)
-        .map(is_advertisable_ipv4_octets)
-        .unwrap_or(true)
+        .map(|octets| is_lan_ipv4_octets(octets) && is_advertisable_ipv4_octets(octets))
+        .unwrap_or(false)
 }
 
 fn is_advertisable_ipv4_address(value: &str) -> bool {
@@ -824,6 +848,15 @@ fn is_advertisable_ipv4_octets(octets: [u8; IPV4_OCTET_COUNT]) -> bool {
         && first != UNSPECIFIED_FIRST_OCTET
         && first < MULTICAST_FIRST_OCTET_LOWER_BOUND
         && !(first == LINK_LOCAL_FIRST_OCTET && second == LINK_LOCAL_SECOND_OCTET)
+}
+
+fn is_lan_ipv4_octets(octets: [u8; IPV4_OCTET_COUNT]) -> bool {
+    let [first, second, _, _] = octets;
+    first == PRIVATE_10_FIRST_OCTET
+        || (first == PRIVATE_172_FIRST_OCTET
+            && (PRIVATE_172_SECOND_OCTET_LOWER_BOUND..=PRIVATE_172_SECOND_OCTET_UPPER_BOUND)
+                .contains(&second))
+        || (first == PRIVATE_192_FIRST_OCTET && second == PRIVATE_192_SECOND_OCTET)
 }
 
 fn should_advertise_listener(listener_address: SocketAddr) -> bool {
@@ -855,6 +888,7 @@ mod tests {
     const TEST_LAN_BASE_URL: &str = "http://192.168.1.4:8765";
     const TEST_LOOPBACK_BASE_URL: &str = "http://127.0.0.1:8765";
     const TEST_TAILSCALE_BASE_URL: &str = "http://100.119.200.69:8765";
+    const TEST_REMOTE_BASE_URL: &str = "https://looper.example.test";
 
     #[test]
     fn advertised_urls_prefer_reachable_request_and_current_interfaces() {
@@ -874,6 +908,48 @@ mod tests {
                 "http://127.0.0.1:8765",
             ]
         );
+    }
+
+    #[test]
+    fn advertised_urls_keep_lan_and_tailscale_routes_before_loopback() {
+        let urls = advertised_mobile_base_urls_from_sources(
+            Some(TEST_LAN_BASE_URL),
+            vec![
+                "203.0.113.8".to_owned(),
+                "100.119.200.69".to_owned(),
+                "10.10.0.42".to_owned(),
+            ],
+            vec![
+                TEST_REMOTE_BASE_URL.to_owned(),
+                "https://macbook-pro.local:8765".to_owned(),
+                "https://100.119.200.70:8765".to_owned(),
+            ],
+            TEST_PORT,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                TEST_LAN_BASE_URL.to_owned(),
+                "http://100.119.200.69:8765".to_owned(),
+                "http://10.10.0.42:8765".to_owned(),
+                "https://macbook-pro.local:8765".to_owned(),
+                "https://100.119.200.70:8765".to_owned(),
+                TEST_LOOPBACK_BASE_URL.to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn advertised_urls_do_not_promote_remote_routes() {
+        let urls = advertised_mobile_base_urls_from_sources(
+            Some(TEST_REMOTE_BASE_URL),
+            vec!["203.0.113.8".to_owned()],
+            vec![TEST_REMOTE_BASE_URL.to_owned()],
+            TEST_PORT,
+        );
+
+        assert_eq!(urls, vec![TEST_LOOPBACK_BASE_URL.to_owned()]);
     }
 
     #[test]
@@ -951,6 +1027,26 @@ mod tests {
             vec![
                 "http://192.168.1.4:8766".to_owned(),
                 "http://127.0.0.1:8766".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn grpc_advertised_urls_filter_explicit_remote_routes() {
+        let http_urls = vec![TEST_LAN_BASE_URL.to_owned()];
+
+        assert_eq!(
+            advertised_mobile_grpc_base_urls_from_sources(
+                &http_urls,
+                TEST_GRPC_PORT,
+                vec![
+                    "https://looper.example.test:8766".to_owned(),
+                    "https://100.119.200.69:8766".to_owned(),
+                ],
+            ),
+            vec![
+                "http://192.168.1.4:8766".to_owned(),
+                "https://100.119.200.69:8766".to_owned(),
             ]
         );
     }

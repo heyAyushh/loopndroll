@@ -210,6 +210,10 @@ enum CompanionConfiguration {
             return .defaultPreference
         }
 
+        guard CompanionConnectionRoutePreference.allCases.contains(preference) else {
+            return .defaultPreference
+        }
+
         return preference
     }
 

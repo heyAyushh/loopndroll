@@ -1,0 +1,49 @@
+
+running 15 tests
+test mobile::network::tests::loopback_listener_does_not_accept_remote_connections ... ok
+test mobile::network::tests::advertised_urls_keep_lan_and_tailscale_routes_before_loopback ... ok
+test mobile::network::tests::advertised_urls_ignore_loopback_request_host_for_mobile_ordering ... ok
+test mobile::network::tests::grpc_listen_address_uses_control_plane_port_offset ... ok
+test mobile::network::tests::pairing_urls_add_tailscale_route_for_loopback_only_desktop_requests ... ok
+test mobile::network::tests::advertised_urls_prefer_reachable_request_and_current_interfaces ... ok
+test mobile::network::tests::advertised_urls_do_not_promote_remote_routes ... ok
+test mobile::network::tests::ifconfig_parser_keeps_lan_and_tailscale_addresses ... ok
+test mobile::network::tests::grpc_advertised_urls_reuse_mobile_hosts_with_grpc_port ... ok
+test mobile::network::tests::grpc_advertised_urls_filter_explicit_remote_routes ... ok
+test mobile::network::tests::pairing_urls_keep_reachable_primary_route_before_tailscale ... ok
+test mobile::network::tests::tailscale_host_detection_handles_cgnat_ipv6_and_magic_dns ... ok
+test mobile::network::tests::tailscale_status_builds_route_from_discovered_ip_without_advertised_route ... ok
+test mobile::network::tests::tailscale_status_does_not_advertise_stopped_routes ... ok
+test mobile::network::tests::tailscale_status_prefers_advertised_route_and_keeps_discovery_metadata ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 214 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 102 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s

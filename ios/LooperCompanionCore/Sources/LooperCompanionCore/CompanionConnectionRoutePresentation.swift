@@ -88,9 +88,9 @@ public enum CompanionConnectionRoutePresentationSelection {
 private extension CompanionBaseURLRoute {
     var isDisplayableConnectionRoute: Bool {
         switch self {
-        case .remote, .tailscale, .lan:
+        case .tailscale, .lan:
             return true
-        case .loopback, .unsupported:
+        case .remote, .loopback, .unsupported:
             return false
         }
     }
@@ -98,7 +98,7 @@ private extension CompanionBaseURLRoute {
     var presentationTitle: String {
         switch self {
         case .remote:
-            return "Remote"
+            return "Unavailable"
         case .tailscale:
             return "Tailscale"
         case .lan:
@@ -111,7 +111,7 @@ private extension CompanionBaseURLRoute {
     var presentationSystemImageName: String {
         switch self {
         case .remote:
-            return "globe"
+            return "network.slash"
         case .tailscale:
             return "circle.grid.3x3.fill"
         case .lan:

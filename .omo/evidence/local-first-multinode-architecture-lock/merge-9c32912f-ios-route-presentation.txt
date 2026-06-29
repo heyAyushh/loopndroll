@@ -1,0 +1,28 @@
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "Companion connection route presentation" started.
+􀟈  Test "Unsupported routes do not render a home badge" started.
+􀟈  Test "Route preference choices are LAN and Tailscale only" started.
+􀟈  Test "Tailscale routes use the Tailscale presentation" started.
+􀟈  Test "Active Tailscale health is not hidden by a loopback health primary" started.
+􀟈  Test "Configured Tailscale URL wins over reached LAN route" started.
+􀟈  Test "Configured remote route is ignored for route badge selection" started.
+􀟈  Test "Configured Tailscale URL wins over health when nothing was reached" started.
+􀟈  Test "Only LAN and Tailscale routes render badges" started.
+􀟈  Test "Remote configured URL does not hide a proven LAN route" started.
+􀟈  Test "Configured Tailscale URL stays visible even when health has not caught up" started.
+􀟈  Test "MagicDNS routes are presented as Tailscale" started.
+􁁛  Test "Route preference choices are LAN and Tailscale only" passed after 0.001 seconds.
+􁁛  Test "Only LAN and Tailscale routes render badges" passed after 0.001 seconds.
+􁁛  Test "Tailscale routes use the Tailscale presentation" passed after 0.001 seconds.
+􁁛  Test "Configured Tailscale URL wins over reached LAN route" passed after 0.001 seconds.
+􁁛  Test "Active Tailscale health is not hidden by a loopback health primary" passed after 0.001 seconds.
+􁁛  Test "Configured Tailscale URL wins over health when nothing was reached" passed after 0.001 seconds.
+􁁛  Test "Unsupported routes do not render a home badge" passed after 0.001 seconds.
+􁁛  Test "MagicDNS routes are presented as Tailscale" passed after 0.001 seconds.
+􁁛  Test "Configured Tailscale URL stays visible even when health has not caught up" passed after 0.001 seconds.
+􁁛  Test "Remote configured URL does not hide a proven LAN route" passed after 0.001 seconds.
+􁁛  Test "Configured remote route is ignored for route badge selection" passed after 0.001 seconds.
+􁁛  Suite "Companion connection route presentation" passed after 0.001 seconds.
+􁁛  Test run with 11 tests in 1 suite passed after 0.001 seconds.

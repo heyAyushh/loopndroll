@@ -1,0 +1,52 @@
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "Companion base URL selection" started.
+􀟈  Suite "Companion base URL filtering" started.
+􀟈  Test "Route classifier detects MagicDNS as Tailscale" started.
+􀟈  Test "Candidate merge keeps configured order before discovery" started.
+􀟈  Test "Reached and advertised URLs replace stale configured primary" started.
+􀟈  Test "Route preference can prefer LAN URLs" started.
+􀟈  Test "Default realtime port is repaired to HTTP API port" started.
+􀟈  Test "Health discovery preserves configured server ports" started.
+􀟈  Test "Candidate merge deduplicates normalized discovery duplicates" started.
+􀟈  Test "Remote HTTPS URLs on HTTP port are not rewritten to realtime" started.
+􀟈  Test "Selection deduplicates normalized equivalent base URLs" started.
+􀟈  Test "Custom pinned ports are not rewritten" started.
+􀟈  Test "Remote route preference falls back to Tailscale ordering" started.
+􀟈  Test "Default merge can intentionally adopt new server ports" started.
+􀟈  Test "Physical device permits Tailscale HTTPS URLs" started.
+􀟈  Test "Public HTTPS URLs are not route candidates" started.
+􀟈  Test "Default HTTP API port is repaired to realtime gRPC port" started.
+􀟈  Test "Physical device rejects public HTTP and loopback URLs" started.
+􀟈  Test "Filtering deduplicates normalized equivalent base URLs" started.
+􀟈  Test "Physical device permits Tailscale CGNAT HTTP URLs" started.
+􀟈  Test "Physical device keeps existing local HTTP ranges" started.
+􀟈  Test "Physical policy permits Tailscale CGNAT HTTP URLs" started.
+􀟈  Test "Remote HTTPS URLs on realtime port are not rewritten" started.
+􀟈  Test "Route preference can prefer Tailscale URLs" started.
+􁁛  Test "Default realtime port is repaired to HTTP API port" passed after 0.001 seconds.
+􁁛  Test "Remote HTTPS URLs on HTTP port are not rewritten to realtime" passed after 0.001 seconds.
+􁁛  Test "Route classifier detects MagicDNS as Tailscale" passed after 0.001 seconds.
+􁁛  Test "Custom pinned ports are not rewritten" passed after 0.001 seconds.
+􁁛  Test "Candidate merge keeps configured order before discovery" passed after 0.001 seconds.
+􁁛  Test "Selection deduplicates normalized equivalent base URLs" passed after 0.001 seconds.
+􁁛  Test "Physical device permits Tailscale HTTPS URLs" passed after 0.001 seconds.
+􁁛  Test "Public HTTPS URLs are not route candidates" passed after 0.001 seconds.
+􁁛  Test "Default merge can intentionally adopt new server ports" passed after 0.001 seconds.
+􁁛  Test "Remote route preference falls back to Tailscale ordering" passed after 0.001 seconds.
+􁁛  Test "Route preference can prefer LAN URLs" passed after 0.001 seconds.
+􁁛  Test "Physical device rejects public HTTP and loopback URLs" passed after 0.001 seconds.
+􁁛  Test "Remote HTTPS URLs on realtime port are not rewritten" passed after 0.001 seconds.
+􁁛  Test "Physical device permits Tailscale CGNAT HTTP URLs" passed after 0.001 seconds.
+􁁛  Test "Physical policy permits Tailscale CGNAT HTTP URLs" passed after 0.001 seconds.
+􁁛  Test "Reached and advertised URLs replace stale configured primary" passed after 0.001 seconds.
+􁁛  Test "Candidate merge deduplicates normalized discovery duplicates" passed after 0.001 seconds.
+􁁛  Test "Route preference can prefer Tailscale URLs" passed after 0.001 seconds.
+􁁛  Test "Filtering deduplicates normalized equivalent base URLs" passed after 0.001 seconds.
+􁁛  Test "Default HTTP API port is repaired to realtime gRPC port" passed after 0.001 seconds.
+􁁛  Test "Health discovery preserves configured server ports" passed after 0.001 seconds.
+􁁛  Test "Physical device keeps existing local HTTP ranges" passed after 0.001 seconds.
+􁁛  Suite "Companion base URL selection" passed after 0.001 seconds.
+􁁛  Suite "Companion base URL filtering" passed after 0.001 seconds.
+􁁛  Test run with 22 tests in 2 suites passed after 0.001 seconds.

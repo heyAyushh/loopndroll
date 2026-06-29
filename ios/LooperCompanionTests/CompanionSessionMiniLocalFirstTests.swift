@@ -1,5 +1,6 @@
 import Foundation
 import LooperClientCore
+import LooperCompanionCore
 import Testing
 @testable import Looper
 
@@ -1022,6 +1023,26 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.viewState.connectivityStatusLabel == "Connecting")
         #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @Test
+    func testStoredRemoteRoutePreferenceFallsBackToTailscale() {
+        let previousRoutePreference = UserDefaults.standard.object(
+            forKey: CompanionConfiguration.connectionRoutePreferenceKey
+        )
+        defer {
+            Self.restoreUserDefaultsValue(
+                previousRoutePreference,
+                key: CompanionConfiguration.connectionRoutePreferenceKey
+            )
+        }
+
+        UserDefaults.standard.set(
+            CompanionConnectionRoutePreference.remote.rawValue,
+            forKey: CompanionConfiguration.connectionRoutePreferenceKey
+        )
+
+        #expect(CompanionConfiguration.connectionRoutePreference() == .tailscale)
     }
 
     @MainActor

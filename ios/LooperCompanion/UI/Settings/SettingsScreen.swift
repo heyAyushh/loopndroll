@@ -50,8 +50,16 @@ struct SettingsScreen: View {
     private var connectionRoutePreference: Binding<CompanionConnectionRoutePreference> {
         Binding(
             get: {
-                CompanionConnectionRoutePreference(rawValue: connectionRoutePreferenceRawValue) ??
-                    .defaultPreference
+                guard
+                    let preference = CompanionConnectionRoutePreference(
+                        rawValue: connectionRoutePreferenceRawValue
+                    ),
+                    CompanionConnectionRoutePreference.allCases.contains(preference)
+                else {
+                    return .defaultPreference
+                }
+
+                return preference
             },
             set: { nextPreference in
                 connectionRoutePreferenceRawValue = nextPreference.rawValue
@@ -608,7 +616,7 @@ private extension CompanionConnectionRoutePreference {
     var settingsLabel: String {
         switch self {
         case .remote:
-            return "Remote"
+            return "Tailscale"
         case .tailscale:
             return "Tailscale"
         case .lan:
@@ -619,7 +627,7 @@ private extension CompanionConnectionRoutePreference {
     var settingsSystemImageName: String {
         switch self {
         case .remote:
-            return "globe"
+            return "circle.grid.3x3.fill"
         case .tailscale:
             return "circle.grid.3x3.fill"
         case .lan:
@@ -630,11 +638,11 @@ private extension CompanionConnectionRoutePreference {
     var settingsDetail: String {
         switch self {
         case .remote:
-            return "Remote is tried first, then Tailscale and LAN if the remote route is not reachable."
+            return "Tailscale is tried first, then LAN when the tailnet route is unavailable."
         case .tailscale:
-            return "Tailscale is tried first, then LAN and remote if the tailnet route is not reachable."
+            return "Tailscale is tried first, then LAN when the tailnet route is unavailable."
         case .lan:
-            return "LAN is tried first, then Tailscale and remote if local network access is unavailable."
+            return "LAN is tried first, then Tailscale when local network access is unavailable."
         }
     }
 }

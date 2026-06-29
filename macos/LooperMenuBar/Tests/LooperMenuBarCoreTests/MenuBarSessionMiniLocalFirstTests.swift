@@ -101,18 +101,21 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(status.detail.contains("iPhone=ready"))
     }
 
-    @Test("malformed cache falls back and offline prompt stays in outbox")
-    func testMalformedMiniCacheFallsBackAndOutboxKeepsOfflinePrompt() async throws {
-        let malformedFileURL = temporaryStoreFileURL()
-        try seedMalformedMiniCache(at: malformedFileURL)
-        let malformedRuntime = try MenuBarSessionRuntime(fileURL: malformedFileURL)
-        let fallbackMiniSnapshot = try? malformedRuntime.cachedSnapshot()
-        let fallbackSections = LooperMenuContent.buildThreadSections(from: [
-            desktopThread(id: "thread-main", title: "Fallback snapshot")
-        ])
+    @Test("mismatched cache preserves local fallback and offline prompt stays in outbox")
+    func testMismatchedMiniCachePreservesFallbackAndOutboxKeepsOfflinePrompt() async throws {
+        let mismatchedFileURL = temporaryStoreFileURL()
+        try seedMismatchedMiniCache(at: mismatchedFileURL)
+        let mismatchedRuntime = try MenuBarSessionRuntime(fileURL: mismatchedFileURL)
+        let fallbackMiniSnapshot = try #require(try mismatchedRuntime.cachedSnapshot())
+        let fallbackSections = LooperMenuContent.buildThreadSections(
+            from: fallbackMiniSnapshot.sessions
+        )
 
-        #expect(fallbackMiniSnapshot == nil)
-        #expect(fallbackSections.first?.rows.first?.threadId == "thread-main")
+        #expect(fallbackMiniSnapshot.latestSeq == 3)
+        #expect(fallbackMiniSnapshot.sessions.map(\.sessionID) == ["other-thread"])
+        #expect(fallbackMiniSnapshot.sessions.first?.title == "bad")
+        #expect(fallbackSections.first?.rows.first?.threadId == "other-thread")
+        #expect(fallbackSections.first?.rows.first?.title == "bad")
 
         let outboxRuntime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())
         let commandCenter = MenuBarSessionCommandCenter(
@@ -441,7 +444,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         }
     }
 
-    private func seedMalformedMiniCache(at fileURL: URL) throws {
+    private func seedMismatchedMiniCache(at fileURL: URL) throws {
         let payload: [String: Any] = [
             "latestSeq": 3,
             "sessions": [

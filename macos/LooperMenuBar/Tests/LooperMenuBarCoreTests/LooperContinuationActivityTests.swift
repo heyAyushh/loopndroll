@@ -187,6 +187,10 @@ struct LooperContinuationActivityTests {
                 "http://192.168.1.4:8765"
         )
         #expect(health.routeSummaryTitle(preference: .lan) == "LAN: 192.168.1.4")
+        #expect(
+            health.preferredReachableHandoffBaseURL(preference: .remote)?.absoluteString ==
+                "http://100.119.200.69:8765"
+        )
     }
 
     @Test

@@ -1,0 +1,84 @@
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite LooperContinuationActivityTests started.
+􀟈  Suite "Menu bar SessionMini local-first" started.
+􀟈  Test fallsBackToGenericActivityWhenNoThreadsExist() started.
+􀟈  Test handoffActivationLeaseStaysActiveUntilHoldExpires() started.
+􀟈  Test extractsSessionIDFromContinuationActivity() started.
+􀟈  Test "menu actions enqueue durable Rust-core commands before transport" started.
+􀟈  Test "notification replies enter durable Rust-core outbox before transport" started.
+􀟈  Test "restores cached SessionMini rows before network" started.
+􀟈  Test "menu actions can use Rust-core generated mutation IDs" started.
+􀟈  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" started.
+􀟈  Test storesHandoffHoldPreference() started.
+􀟈  Test handoffActivationLeaseKeepsLongerExpiration() started.
+􀟈  Test handoffActivationLeaseCanReplaceLongerExpiration() started.
+􀟈  Test defaultsHandoffHoldToTenMinutes() started.
+􀟈  Test "SessionMini status reports realtime when unblocked" started.
+􀟈  Test fallsBackToArchivedThreadWhenItIsOnlyVisibleTarget() started.
+􀟈  Test supportsShorterRightNowFocusOptions() started.
+􀟈  Test mobileHealthPrefersTailscaleForNativeHandoff() started.
+􀟈  Test defaultsHandoffHotkeyToCommandL() started.
+􀟈  Test "SessionMini status drives menu bar human status" started.
+􀟈  Test extractsSessionIDFromTargetContentIdentifier() started.
+􀟈  Test encodesSlashSeparatedSessionIDsInHandoffURL() started.
+􀟈  Test usesNewestSessionMiniAsContinuationTarget() started.
+􀟈  Test "notification reply redraw shows pending state before stream echo" started.
+􀟈  Test prefersNewestActiveThreadAcrossAssistants() started.
+􀟈  Test usesNewestActiveThreadAsContinuationTarget() started.
+􀟈  Test "realtime endpoint resolver seeds Session without mobile health" started.
+􀟈  Test blankContinuationTitleFallsBackToThreadID() started.
+􀟈  Test defaultsFocusAssistToFiveIdleMinutes() started.
+􀟈  Test migratesLegacyRightNowHotkeyPreference() started.
+􀟈  Test mobileHealthSupportsNativeHandoffOnlyWithReachableURL() started.
+􀟈  Test "realtime endpoint resolver ranks health routes and local fallback" started.
+􀟈  Test savingHandoffHotkeyRemovesLegacyPreference() started.
+􀟈  Test carriesHandoffWebpageURL() started.
+􀟈  Test storesFocusAssistPreference() started.
+􀟈  Test keepsStableActivityIdentitySeparateFromExactSessionTarget() started.
+􀟈  Test mobileRoutePreferencePersists() started.
+􀟈  Test "offline notification reply stays durable and dedupes retry" started.
+􀟈  Test mobileHealthRoutePreferenceCanPreferLAN() started.
+􀟈  Test handoffHoldOffUsesBriefAutoHideLease() started.
+􁁛  Test handoffActivationLeaseKeepsLongerExpiration() passed after 0.009 seconds.
+􁁛  Test fallsBackToGenericActivityWhenNoThreadsExist() passed after 0.009 seconds.
+􁁛  Test handoffActivationLeaseCanReplaceLongerExpiration() passed after 0.009 seconds.
+􁁛  Test fallsBackToArchivedThreadWhenItIsOnlyVisibleTarget() passed after 0.009 seconds.
+􁁛  Test extractsSessionIDFromContinuationActivity() passed after 0.009 seconds.
+􁁛  Test mobileHealthPrefersTailscaleForNativeHandoff() passed after 0.009 seconds.
+􁁛  Test supportsShorterRightNowFocusOptions() passed after 0.009 seconds.
+􁁛  Test "notification replies enter durable Rust-core outbox before transport" passed after 0.009 seconds.
+􁁛  Test extractsSessionIDFromTargetContentIdentifier() passed after 0.009 seconds.
+􁁛  Test "menu actions can use Rust-core generated mutation IDs" passed after 0.009 seconds.
+􁁛  Test "menu actions enqueue durable Rust-core commands before transport" passed after 0.009 seconds.
+􁁛  Test encodesSlashSeparatedSessionIDsInHandoffURL() passed after 0.009 seconds.
+􁁛  Test prefersNewestActiveThreadAcrossAssistants() passed after 0.009 seconds.
+􁁛  Test usesNewestActiveThreadAsContinuationTarget() passed after 0.009 seconds.
+􁁛  Test "realtime endpoint resolver seeds Session without mobile health" passed after 0.009 seconds.
+􁁛  Test blankContinuationTitleFallsBackToThreadID() passed after 0.009 seconds.
+􁁛  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" passed after 0.009 seconds.
+􁁛  Test defaultsHandoffHotkeyToCommandL() passed after 0.009 seconds.
+􁁛  Test defaultsHandoffHoldToTenMinutes() passed after 0.009 seconds.
+􁁛  Test "realtime endpoint resolver ranks health routes and local fallback" passed after 0.009 seconds.
+􁁛  Test mobileHealthSupportsNativeHandoffOnlyWithReachableURL() passed after 0.009 seconds.
+􁁛  Test carriesHandoffWebpageURL() passed after 0.009 seconds.
+􁁛  Test storesHandoffHoldPreference() passed after 0.010 seconds.
+􁁛  Test handoffActivationLeaseStaysActiveUntilHoldExpires() passed after 0.009 seconds.
+􁁛  Test "SessionMini status drives menu bar human status" passed after 0.009 seconds.
+􁁛  Test keepsStableActivityIdentitySeparateFromExactSessionTarget() passed after 0.009 seconds.
+􁁛  Test defaultsFocusAssistToFiveIdleMinutes() passed after 0.009 seconds.
+􁁛  Test "notification reply redraw shows pending state before stream echo" passed after 0.009 seconds.
+􁁛  Test handoffHoldOffUsesBriefAutoHideLease() passed after 0.009 seconds.
+􁁛  Test mobileHealthRoutePreferenceCanPreferLAN() passed after 0.009 seconds.
+􁁛  Test "SessionMini status reports realtime when unblocked" passed after 0.010 seconds.
+􁁛  Test "restores cached SessionMini rows before network" passed after 0.011 seconds.
+􁁛  Test usesNewestSessionMiniAsContinuationTarget() passed after 0.011 seconds.
+􁁛  Test storesFocusAssistPreference() passed after 0.011 seconds.
+􁁛  Test "offline notification reply stays durable and dedupes retry" passed after 0.011 seconds.
+􁁛  Suite "Menu bar SessionMini local-first" passed after 0.012 seconds.
+􁁛  Test migratesLegacyRightNowHotkeyPreference() passed after 0.011 seconds.
+􁁛  Test mobileRoutePreferencePersists() passed after 0.011 seconds.
+􁁛  Test savingHandoffHotkeyRemovesLegacyPreference() passed after 0.011 seconds.
+􁁛  Suite LooperContinuationActivityTests passed after 0.012 seconds.
+􁁛  Test run with 38 tests in 2 suites passed after 0.012 seconds.

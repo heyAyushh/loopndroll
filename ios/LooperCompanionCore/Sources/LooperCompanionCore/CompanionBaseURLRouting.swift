@@ -6,7 +6,7 @@ public enum CompanionConnectionRoutePreference: String, CaseIterable, Codable, I
     case lan
 
     public static let defaultPreference = Self.tailscale
-    public static let allCases: [Self] = [.remote, .tailscale, .lan]
+    public static let allCases: [Self] = [.tailscale, .lan]
 
     public var id: String {
         rawValue
@@ -73,10 +73,8 @@ public enum CompanionBaseURLRouting {
 
     public static func isAttemptableOnPhysicalDevice(_ baseURL: URL) -> Bool {
         switch route(for: baseURL) {
-        case .loopback, .unsupported:
+        case .remote, .loopback, .unsupported:
             return false
-        case .remote:
-            return baseURL.usesCompanionHTTPS
         case .tailscale:
             return baseURL.usesSupportedCompanionHTTPScheme
         case .lan:
@@ -149,26 +147,11 @@ public enum CompanionBaseURLRouting {
     ) -> Int {
         switch preference {
         case .remote:
-            return remotePriority(for: route)
+            return tailscalePriority(for: route)
         case .tailscale:
             return tailscalePriority(for: route)
         case .lan:
             return lanPriority(for: route)
-        }
-    }
-
-    private static func remotePriority(for route: CompanionBaseURLRoute) -> Int {
-        switch route {
-        case .remote:
-            return 0
-        case .tailscale:
-            return 1
-        case .lan:
-            return 2
-        case .loopback:
-            return 3
-        case .unsupported:
-            return 4
         }
     }
 

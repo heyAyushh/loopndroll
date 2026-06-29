@@ -76,8 +76,8 @@ struct CompanionBaseURLSelectionTests {
         #expect(urls.first?.absoluteString == normalizedAdvertisedURL)
     }
 
-    @Test("Route preference can prefer remote URLs")
-    func routePreferenceCanPreferRemoteURLs() throws {
+    @Test("Remote route preference falls back to Tailscale ordering")
+    func remoteRoutePreferenceFallsBackToTailscaleOrdering() throws {
         let urls = CompanionBaseURLSelection.mergedPreferredBaseURLs(
             reached: try url(reachedBonjourURL),
             advertised: try urls(advertisedTailscaleURL, advertisedRemoteURL),
@@ -86,9 +86,9 @@ struct CompanionBaseURLSelectionTests {
         )
 
         #expect(urls.map(\.absoluteString) == [
-            advertisedRemoteURL,
             advertisedTailscaleURL,
             reachedBonjourURL,
+            advertisedRemoteURL,
         ])
     }
 

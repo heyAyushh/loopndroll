@@ -17,7 +17,8 @@ public enum CompanionBaseURLFiltering {
 
     private static func shouldAttempt(_ baseURL: URL) -> Bool {
         #if targetEnvironment(simulator)
-            return true
+            return isLoopback(baseURL) ||
+                CompanionBaseURLRouting.isAttemptableOnPhysicalDevice(baseURL)
         #else
             return CompanionBaseURLRouting.isAttemptableOnPhysicalDevice(baseURL)
         #endif

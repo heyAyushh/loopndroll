@@ -36,15 +36,14 @@ struct CompanionConnectionRoutePresentationTests {
         #expect(presentation.usesTailscaleLogo)
     }
 
-    @Test("LAN and remote routes keep their own labels")
-    func lanAndRemoteRoutesKeepTheirOwnLabels() throws {
+    @Test("Only LAN and Tailscale routes render badges")
+    func onlyLANAndTailscaleRoutesRenderBadges() throws {
         let lanPresentation = try #require(CompanionConnectionRoutePresentation(baseURL: url(lanURL)))
-        let remotePresentation = try #require(CompanionConnectionRoutePresentation(baseURL: url(remoteURL)))
+        let remoteBaseURL = try url(remoteURL)
 
         #expect(lanPresentation.title == "LAN")
         #expect(!lanPresentation.usesTailscaleLogo)
-        #expect(remotePresentation.title == "Remote")
-        #expect(!remotePresentation.usesTailscaleLogo)
+        #expect(CompanionConnectionRoutePresentation(baseURL: remoteBaseURL) == nil)
     }
 
     @Test("Unsupported routes do not render a home badge")
@@ -54,8 +53,8 @@ struct CompanionConnectionRoutePresentationTests {
         #expect(CompanionConnectionRoutePresentation(baseURL: unsupportedBaseURL) == nil)
     }
 
-    @Test("Configured URL wins over stale reached URL for the displayed route")
-    func configuredURLWinsOverStaleReachedURLForDisplayedRoute() throws {
+    @Test("Remote configured URL does not hide a proven LAN route")
+    func remoteConfiguredURLDoesNotHideProvenLANRoute() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
                 reachedBaseURL: url(lanURL),
@@ -67,9 +66,9 @@ struct CompanionConnectionRoutePresentationTests {
         )
         let presentation = try #require(CompanionConnectionRoutePresentation(baseURL: selectedBaseURL))
 
-        #expect(selectedBaseURL.absoluteString == remoteURL)
-        #expect(presentation.route == .remote)
-        #expect(presentation.title == "Remote")
+        #expect(selectedBaseURL.absoluteString == lanURL)
+        #expect(presentation.route == .lan)
+        #expect(presentation.title == "LAN")
     }
 
     @Test("Configured Tailscale URL stays visible even when health has not caught up")
@@ -141,21 +140,26 @@ struct CompanionConnectionRoutePresentationTests {
         #expect(presentation.route == .tailscale)
     }
 
-    @Test("Configured remote route is used when no URL has been reached")
-    func configuredRemoteRouteIsUsedWhenNoURLHasBeenReached() throws {
+    @Test("Configured remote route is ignored for route badge selection")
+    func configuredRemoteRouteIsIgnoredForRouteBadgeSelection() throws {
         let selectedBaseURL = try #require(
             CompanionConnectionRoutePresentationSelection.activeDisplayBaseURL(
                 reachedBaseURL: nil,
                 configuredBaseURL: url(remoteURL),
-                healthBaseURL: url(lanURL),
+                healthBaseURL: url(remoteURL),
                 tailscaleHealthBaseURL: url(tailscaleURL),
                 isTailscaleRunning: true
             )
         )
         let presentation = try #require(CompanionConnectionRoutePresentation(baseURL: selectedBaseURL))
 
-        #expect(selectedBaseURL.absoluteString == remoteURL)
-        #expect(presentation.route == .remote)
+        #expect(selectedBaseURL.absoluteString == tailscaleURL)
+        #expect(presentation.route == .tailscale)
+    }
+
+    @Test("Route preference choices are LAN and Tailscale only")
+    func routePreferenceChoicesAreLANAndTailscaleOnly() {
+        #expect(CompanionConnectionRoutePreference.allCases == [.tailscale, .lan])
     }
 
     private func url(_ value: String) throws -> URL {

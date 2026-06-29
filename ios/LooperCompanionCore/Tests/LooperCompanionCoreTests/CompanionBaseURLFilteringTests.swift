@@ -94,11 +94,11 @@ struct CompanionBaseURLFilteringTests {
         #endif
     }
 
-    @Test("Public HTTPS URLs remain attemptable")
-    func publicHTTPSURLsRemainAttemptable() throws {
+    @Test("Public HTTPS URLs are not route candidates")
+    func publicHTTPSURLsAreNotRouteCandidates() throws {
         let urls = try attemptableURLs(publicHTTPSURL)
 
-        #expect(urls.map(\.absoluteString) == [publicHTTPSURL])
+        #expect(urls.isEmpty)
     }
 
     @Test("Filtering deduplicates normalized equivalent base URLs")
