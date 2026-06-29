@@ -14,7 +14,7 @@ use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
     ClientFrame, Command, DeleteSessionRequest, HealthRequest, MuteSessionRequest, Resume,
-    SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame, SetAssistantSurfaceRequest,
+    SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame,
     SetDefaultNotificationTargetsRequest, SetGlobalCompletionCheckRequest, SetScopeRequest,
     SetSessionArchivedRequest, SetSessionCompletionCheckRequest, SetSessionModeRequest,
     SetSessionNotificationsRequest, SetSiriDefaultSessionRequest, SubmitNotificationReplyRequest,
@@ -2303,38 +2303,8 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
         &after_delete,
         "thread-main"
     ));
-    let delete_seq = after_delete["latestSeq"]
-        .as_i64()
-        .expect("delete latest seq");
-    assert!(delete_seq > initial_seq);
-
-    let surface_ack = submit_grpc_session_command(
-        control_plane.clone(),
-        &authorization,
-        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
-            assistant_surface: "devin".to_owned(),
-            client_mutation_id: "session-mini-surface-devin".to_owned(),
-        }),
-    )
-    .await;
-    assert!(surface_ack.accepted);
-
-    let after_surface = request_json_with_options(
-        &router,
-        Method::GET,
-        &format!("/api/mobile/session-minis?after_seq={delete_seq}&limit=10"),
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert_eq!(after_surface["replace"], true);
-
-    assert!(!session_mini_snapshot_has_session(
-        &after_surface,
-        "thread-main"
-    ));
     assert!(session_mini_snapshot_has_session(
-        &after_surface,
+        &after_delete,
         "devin:devin-cli:brindle-cadet"
     ));
 }
@@ -2797,60 +2767,10 @@ async fn mobile_session_controls_are_owned_by_rust() {
     )
     .await;
     assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
-
-    let assistant_surface_ack = submit_grpc_session_command(
-        control_plane.clone(),
-        &authorization,
-        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
-            assistant_surface: "devin".to_owned(),
-            client_mutation_id: "mobile-controls-surface-devin".to_owned(),
-        }),
-    )
-    .await;
-    assert!(
-        assistant_surface_ack.accepted,
-        "assistant surface ACK rejected: {assistant_surface_ack:?}"
-    );
-    let assistant_surface_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert_eq!(
-        assistant_surface_snapshot["globalSettings"]["assistantSurface"],
-        "devin"
-    );
-    assert!(assistant_surface_snapshot["sessions"].as_array().is_some());
-
-    let grok_surface_ack = submit_grpc_session_command(
-        control_plane.clone(),
-        &authorization,
-        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
-            assistant_surface: "grok-build".to_owned(),
-            client_mutation_id: "mobile-controls-surface-grok".to_owned(),
-        }),
-    )
-    .await;
-    assert!(grok_surface_ack.accepted);
-    let grok_surface_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert_eq!(
-        grok_surface_snapshot["globalSettings"]["assistantSurface"],
-        "grok-build"
-    );
 }
 
 #[tokio::test]
-async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
+async fn mobile_snapshot_carries_non_default_surface_sessions_without_server_switch() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let grok_transcript = std::path::PathBuf::from("/Users/test/.grok/sessions/grok-thread.jsonl");
@@ -2876,33 +2796,28 @@ async fn mobile_snapshot_filters_sessions_by_assistant_surface() {
             .all(|session| session["id"] != "thread-main")
     );
 
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "grok-build",
-        "mobile-filter-grok-surface",
-    )
-    .await;
-    let grok_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    let grok_session = mobile_snapshot_session(&grok_snapshot, "thread-main");
+    let grok_session = mobile_surface_session(&codex_snapshot, "grok-build", "thread-main");
     assert_eq!(grok_session["assistantClient"], "grok-build");
 
     let hidden_detail = request_with_options(
         &router,
         Method::GET,
-        "/api/mobile/sessions/thread-child",
+        "/api/mobile/sessions/thread-main",
         &auth_headers,
         None,
     )
     .await;
     assert_eq!(hidden_detail.status(), StatusCode::NOT_FOUND);
+
+    let visible_detail = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-main?assistantSurface=grok-build",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(visible_detail["assistantClient"], "grok-build");
 }
 
 #[tokio::test]
@@ -3041,30 +2956,6 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
             .any(|tag| tag.as_str() == Some("vscode"))
     );
 
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "devin",
-        "mobile-originator-devin-surface",
-    )
-    .await;
-
-    let hidden_devin_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert!(
-        hidden_devin_snapshot["sessions"]
-            .as_array()
-            .expect("sessions")
-            .iter()
-            .all(|session| session["id"] != "thread-main")
-    );
-
     let devin_transcript = fixture.write_transcript(
         "thread-main-devin-originator.jsonl",
         &[serde_json::json!({
@@ -3086,7 +2977,7 @@ async fn mobile_snapshot_uses_originator_for_vscode_source_sessions() {
         None,
     )
     .await;
-    let devin_session = mobile_snapshot_session(&devin_snapshot, "thread-main");
+    let devin_session = mobile_surface_session(&devin_snapshot, "devin", "thread-main");
     assert_eq!(devin_session["assistantClient"], "devin");
     assert_eq!(devin_session["metadata"]["source"], "vscode");
     assert_eq!(devin_session["metadata"]["sourceDisplayName"], "Devin");
@@ -3135,47 +3026,6 @@ async fn mobile_snapshot_identifies_claude_originator_on_claude_surface() {
     assert_eq!(
         claude_session["metadata"]["sourceDisplayName"],
         "Claude Code"
-    );
-
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "claude-code",
-        "mobile-originator-claude-surface",
-    )
-    .await;
-    let claude_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    let visible_claude_session = mobile_snapshot_session(&claude_snapshot, "thread-main");
-    assert_eq!(visible_claude_session["assistantClient"], "claude-code");
-
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "devin",
-        "mobile-originator-devin-after-claude",
-    )
-    .await;
-    let devin_snapshot = request_json_with_options(
-        &router,
-        Method::GET,
-        "/api/mobile/snapshot",
-        &auth_headers,
-        None,
-    )
-    .await;
-    assert!(
-        devin_snapshot["sessions"]
-            .as_array()
-            .expect("sessions")
-            .iter()
-            .all(|session| session["id"] != "thread-main")
     );
 }
 
@@ -3303,13 +3153,6 @@ async fn desktop_snapshot_includes_devin_sessions() {
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "devin",
-        "mobile-devin-surface-visible",
-    )
-    .await;
     let mobile_snapshot = request_json_with_options(
         &router,
         Method::GET,
@@ -3318,13 +3161,14 @@ async fn desktop_snapshot_includes_devin_sessions() {
         None,
     )
     .await;
-    let devin_session = mobile_snapshot_session(&mobile_snapshot, "devin:devin-cli:brindle-cadet");
+    let devin_session =
+        mobile_surface_session(&mobile_snapshot, "devin", "devin:devin-cli:brindle-cadet");
     assert_eq!(devin_session["assistantClient"], "devin");
     assert_eq!(devin_session["assistantPreview"], "Hello from Devin");
 }
 
 #[tokio::test]
-async fn mobile_devin_surface_survives_menu_snapshot_limit() {
+async fn mobile_snapshot_devin_surface_survives_menu_snapshot_limit() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.write_devin_next_session();
@@ -3334,13 +3178,6 @@ async fn mobile_devin_surface_survives_menu_snapshot_limit() {
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "devin",
-        "mobile-devin-limit-surface",
-    )
-    .await;
     let devin_snapshot = request_json_with_options(
         &router,
         Method::GET,
@@ -3349,7 +3186,9 @@ async fn mobile_devin_surface_survives_menu_snapshot_limit() {
         None,
     )
     .await;
-    let devin_sessions = devin_snapshot["sessions"].as_array().expect("sessions");
+    let devin_sessions = devin_snapshot["surfaceSessions"]["devin"]
+        .as_array()
+        .expect("devin surface sessions");
 
     assert_eq!(devin_sessions.len(), 1);
     assert_eq!(devin_sessions[0]["id"], "devin:devin-cli:brindle-cadet");
@@ -3366,14 +3205,6 @@ async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
 
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "grok-build",
-        "mobile-grok-surface",
-    )
-    .await;
-
     let grok_snapshot = request_json_with_options(
         &router,
         Method::GET,
@@ -3382,7 +3213,7 @@ async fn mobile_snapshot_lists_native_grok_sessions_on_grok_surface() {
         None,
     )
     .await;
-    let grok_session = mobile_snapshot_session(&grok_snapshot, "grok-session-1");
+    let grok_session = mobile_surface_session(&grok_snapshot, "grok-build", "grok-session-1");
     assert_eq!(grok_session["assistantClient"], "grok-build");
     assert_eq!(grok_session["title"], "Ship Grok hooks");
     assert_eq!(grok_snapshot["grokBuild"]["sessionCount"], 1);
@@ -3523,10 +3354,6 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
     let control_plane = fixture.control_plane();
     control_plane
         .mobile_session_service()
-        .set_assistant_surface("devin")
-        .expect("set Devin surface");
-    control_plane
-        .mobile_session_service()
         .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
         .expect("set Devin session mode");
     record_thread_active(&control_plane, "devin:devin-cli:brindle-cadet");
@@ -3546,7 +3373,7 @@ async fn devin_mobile_prompt_queues_prompt_for_local_devin_hook_delivery() {
         command::Command::SendSessionPrompt(SendSessionPromptRequest {
             thread_id: "devin:devin-cli:brindle-cadet".to_owned(),
             prompt: "Keep going from phone.".to_owned(),
-            assistant_surface: String::new(),
+            assistant_surface: "devin".to_owned(),
             client_mutation_id: "devin-mobile-prompt-queue".to_owned(),
             prompt_intent: "queue".to_owned(),
         }),
@@ -3585,10 +3412,6 @@ async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
     let control_plane = fixture.control_plane();
     control_plane
         .mobile_session_service()
-        .set_assistant_surface("devin")
-        .expect("set Devin surface");
-    control_plane
-        .mobile_session_service()
         .set_session_preset("devin:devin-cli:brindle-cadet", Some("await-reply"))
         .expect("set Devin session mode");
     let router = build_router(control_plane.clone());
@@ -3601,7 +3424,7 @@ async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
         command::Command::SendSessionPrompt(SendSessionPromptRequest {
             thread_id: "devin:devin-cli:brindle-cadet".to_owned(),
             prompt: "Keep going from phone.".to_owned(),
-            assistant_surface: String::new(),
+            assistant_surface: "devin".to_owned(),
             client_mutation_id: "devin-mobile-prompt-stopped".to_owned(),
             prompt_intent: "queue".to_owned(),
         }),
@@ -4337,24 +4160,6 @@ async fn submit_grpc_session_command(
     }
 
     panic!("expected Session ACK frame before stream ended")
-}
-
-async fn set_mobile_assistant_surface(
-    control_plane: ControlPlane,
-    authorization: &str,
-    assistant_surface: &str,
-    client_mutation_id: &str,
-) {
-    let ack = submit_grpc_session_command(
-        control_plane,
-        authorization,
-        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
-            assistant_surface: assistant_surface.to_owned(),
-            client_mutation_id: client_mutation_id.to_owned(),
-        }),
-    )
-    .await;
-    assert!(ack.accepted);
 }
 
 async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &str, detail: &str) {

@@ -1,3 +1,4 @@
+use super::normalization::DEFAULT_ASSISTANT_SURFACE;
 use super::*;
 use tempfile::TempDir;
 
@@ -13,9 +14,6 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
         .set_session_preset("thread-1", Some("max-turns-1"))
         .expect("set preset");
     service
-        .set_assistant_surface("devin")
-        .expect("set assistant surface");
-    service
         .set_siri_default_session(Some("thread-1"), Some("codex"))
         .expect("set siri default session");
     service
@@ -28,7 +26,7 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
 
     let mut state = service.state().expect("state");
     assert_eq!(state.default_prompt, "Continue this exact task.");
-    assert_eq!(state.assistant_surface, "devin");
+    assert_eq!(state.assistant_surface, DEFAULT_ASSISTANT_SURFACE);
     assert_eq!(state.siri_default_thread_id.as_deref(), Some("thread-1"));
     assert_eq!(
         state.siri_default_assistant_surface.as_deref(),
@@ -44,16 +42,13 @@ fn mobile_session_state_persists_default_prompt_and_overrides() {
         Some("codex")
     );
     service
-        .set_assistant_surface("grok-build")
-        .expect("set grok assistant surface");
-    service
         .set_siri_default_session(None, None)
         .expect("clear siri default session");
     service
         .set_siri_current_session(None, None)
         .expect("clear siri current session");
     state = service.state().expect("state");
-    assert_eq!(state.assistant_surface, "grok-build");
+    assert_eq!(state.assistant_surface, DEFAULT_ASSISTANT_SURFACE);
     assert_eq!(state.siri_default_thread_id, None);
     assert_eq!(state.siri_default_assistant_surface, None);
     assert_eq!(state.siri_current_thread_id, None);

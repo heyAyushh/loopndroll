@@ -62,16 +62,6 @@ impl MobileSessionService {
         Ok(())
     }
 
-    pub fn set_assistant_surface(&self, surface: &str) -> MobileSessionResult<()> {
-        let surface = normalized_assistant_surface(surface)?;
-        self.initialize()?;
-        Connection::open(&self.store_path)?.execute(
-            "update mobile_settings set assistant_surface = ?1, updated_at = ?2 where id = 1",
-            params![surface, now_iso_string()?],
-        )?;
-        Ok(())
-    }
-
     pub fn set_siri_default_session(
         &self,
         thread_id: Option<&str>,

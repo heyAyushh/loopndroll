@@ -21,7 +21,7 @@ use crate::mobile::realtime_commands::{
     RealtimeCommandError, SessionCommandAckResponse, SiriSessionTarget,
     SubmitNotificationReplyInput, delete_completion_check_command,
     delete_notification_route_command, delete_session_command, mute_session_command,
-    save_default_prompt_command, send_session_prompt_command, set_assistant_surface_command,
+    save_default_prompt_command, send_session_prompt_command,
     set_default_notification_targets_command, set_global_completion_check_command,
     set_global_notification_command, set_global_preset_command, set_scope_command,
     set_session_archived_command, set_session_completion_check_command, set_session_mode_command,
@@ -262,19 +262,6 @@ fn handle_session_command(
                 Some(&request.assistant_surface),
                 &request.client_mutation_id,
             ),
-        ),
-        Some(proto::command::Command::SetAssistantSurface(request)) => session_command_frames(
-            control_plane,
-            last_seq,
-            request.client_mutation_id.clone(),
-            MOBILE_SETTINGS_ENTITY_ID.to_owned(),
-            set_assistant_surface_command(
-                control_plane,
-                request.assistant_surface,
-                &request.client_mutation_id,
-            )
-            .map(command_ack_from_command)
-            .map_err(realtime_command_status),
         ),
         Some(proto::command::Command::SetSiriCurrentSession(request)) => session_command_frames(
             control_plane,

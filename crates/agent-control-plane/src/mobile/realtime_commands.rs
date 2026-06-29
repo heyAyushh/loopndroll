@@ -28,7 +28,6 @@ use crate::mobile::session::{
 pub(crate) const COMMAND_KIND_SET_SESSION_MODE: &str = "SetSessionMode";
 pub(crate) const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
 const COMMAND_KIND_SUBMIT_NOTIFICATION_REPLY: &str = "SubmitNotificationReply";
-pub(crate) const COMMAND_KIND_SET_ASSISTANT_SURFACE: &str = "SetAssistantSurface";
 pub(crate) const COMMAND_KIND_SET_SIRI_CURRENT_SESSION: &str = "SetSiriCurrentSession";
 pub(crate) const COMMAND_KIND_SET_SIRI_DEFAULT_SESSION: &str = "SetSiriDefaultSession";
 pub(crate) const COMMAND_KIND_SAVE_DEFAULT_PROMPT: &str = "SaveDefaultPrompt";
@@ -383,41 +382,6 @@ pub(crate) fn submit_notification_reply_command(
         notification_id,
         &ack_result,
     ))
-}
-
-pub(crate) fn set_assistant_surface_command(
-    control_plane: &ControlPlane,
-    assistant_surface: String,
-    client_mutation_id: &str,
-) -> Result<SessionCommandAckResponse, RealtimeCommandError> {
-    let assistant_surface = normalized_required_assistant_surface(&assistant_surface)?;
-    command_ack_with_idempotency(
-        control_plane,
-        COMMAND_KIND_SET_ASSISTANT_SURFACE,
-        client_mutation_id,
-        MOBILE_SETTINGS_ENTITY_ID,
-        serde_json::json!({
-            "assistantSurface": assistant_surface,
-        }),
-        |server_time| {
-            control_plane
-                .mobile_session_service()
-                .set_assistant_surface(assistant_surface)
-                .map_err(RealtimeCommandError::MobileSession)?;
-            emit_all_mobile_sessions_changed(control_plane, "assistant-surface-updated");
-            let revision = current_mobile_revision(control_plane)?;
-            Ok((
-                revision.clone(),
-                serde_json::json!({
-                    "accepted": true,
-                    "entityId": MOBILE_SETTINGS_ENTITY_ID,
-                    "assistantSurface": assistant_surface,
-                    "serverTime": server_time,
-                    "revision": revision,
-                }),
-            ))
-        },
-    )
 }
 
 pub(crate) fn set_siri_session_command(
@@ -1116,12 +1080,6 @@ fn normalized_assistant_surface(value: &str) -> Result<Option<&str>, RealtimeCom
     Err(RealtimeCommandError::InvalidArgument(
         "invalid assistant surface".to_owned(),
     ))
-}
-
-fn normalized_required_assistant_surface(value: &str) -> Result<&str, RealtimeCommandError> {
-    normalized_assistant_surface(value)?.ok_or_else(|| {
-        RealtimeCommandError::InvalidArgument("assistant surface is required".into())
-    })
 }
 
 fn ensure_mobile_session_visible_from_minis(

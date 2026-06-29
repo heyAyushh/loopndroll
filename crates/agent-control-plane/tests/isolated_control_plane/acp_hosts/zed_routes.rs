@@ -108,13 +108,6 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
 
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
-    set_mobile_assistant_surface(
-        control_plane.clone(),
-        &authorization,
-        "zed",
-        "zed-mobile-surface",
-    )
-    .await;
     let mobile_zed_snapshot = request_json_with_options(
         &router,
         Method::GET,
@@ -123,7 +116,8 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
         None,
     )
     .await;
-    let zed_session = mobile_snapshot_session(&mobile_zed_snapshot, "zed:codex:codex-session-1");
+    let zed_session =
+        mobile_surface_session(&mobile_zed_snapshot, "zed", "zed:codex:codex-session-1");
     assert_eq!(zed_session["title"], "Main task");
     assert_eq!(zed_session["metadata"]["projectPath"], "/tmp/project");
     assert_eq!(zed_session["assistantPreview"], "Not much. Ready.");

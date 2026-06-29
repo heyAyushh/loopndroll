@@ -37,7 +37,6 @@ message Command {
     SetSessionModeRequest set_session_mode = 1;
     SendSessionPromptRequest send_session_prompt = 2;
     SubmitNotificationReplyRequest submit_notification_reply = 3;
-    SetAssistantSurfaceRequest set_assistant_surface = 4;
     SetSiriCurrentSessionRequest set_siri_current_session = 5;
     SetSiriDefaultSessionRequest set_siri_default_session = 6;
     SaveDefaultPromptRequest save_default_prompt = 7;
@@ -82,11 +81,6 @@ message SubmitNotificationReplyRequest {
   string prompt = 3;
   string assistant_surface = 4;
   string client_mutation_id = 5;
-}
-
-message SetAssistantSurfaceRequest {
-  string assistant_surface = 1;
-  string client_mutation_id = 2;
 }
 
 message SetSiriCurrentSessionRequest {
