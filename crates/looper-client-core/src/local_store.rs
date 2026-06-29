@@ -65,6 +65,8 @@ struct StoredPendingCommand {
     prompt: Option<String>,
     #[serde(rename = "notificationID", default)]
     notification_id: Option<String>,
+    #[serde(rename = "notificationTargetIds", default)]
+    notification_target_ids: Vec<String>,
     #[serde(default)]
     archived: bool,
     #[serde(rename = "attemptCount", default)]
@@ -167,6 +169,11 @@ impl LooperClientCoreLocalStore {
             existing.notification_id = command
                 .notification_id
                 .or_else(|| existing.notification_id.clone());
+            existing.notification_target_ids = if command.notification_target_ids.is_empty() {
+                existing.notification_target_ids.clone()
+            } else {
+                command.notification_target_ids
+            };
             existing.archived = command.archived;
         } else {
             state.pending_commands.push(command);
@@ -190,6 +197,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -215,6 +223,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent,
             prompt,
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -240,6 +249,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt,
             notification_id,
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -260,6 +270,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -280,6 +291,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -301,6 +313,27 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt,
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
+    pub(crate) fn enqueue_set_default_notification_targets_command(
+        &self,
+        notification_target_ids: Vec<String>,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetDefaultNotificationTargets,
+            client_mutation_id,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            assistant_surface: String::new(),
+            prompt_intent: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            notification_target_ids,
             archived: false,
             attempt_count: 0,
         })
@@ -321,6 +354,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived,
             attempt_count: 0,
         })
@@ -340,6 +374,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -359,6 +394,7 @@ impl LooperClientCoreLocalStore {
             prompt_intent: String::new(),
             prompt: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 0,
         })
@@ -515,6 +551,7 @@ impl From<ClientPendingCommand> for StoredPendingCommand {
             prompt_intent: non_empty(command.prompt_intent),
             prompt: non_empty(command.prompt),
             notification_id: non_empty(command.notification_id),
+            notification_target_ids: command.notification_target_ids,
             archived: command.archived,
             attempt_count: command.attempt_count,
         }
@@ -532,6 +569,7 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
             prompt_intent: command.prompt_intent.unwrap_or_else(default_prompt_intent),
             prompt: command.prompt.unwrap_or_default(),
             notification_id: command.notification_id.unwrap_or_default(),
+            notification_target_ids: command.notification_target_ids,
             archived: command.archived,
             attempt_count: command.attempt_count,
         }
@@ -619,6 +657,7 @@ fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> boo
         kind,
         ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
 }
 
@@ -685,6 +724,7 @@ fn latest_pending_command_wins(kind: ClientPendingCommandKind) -> bool {
             | ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
             | ClientPendingCommandKind::SaveDefaultPrompt
+            | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
 }
 
@@ -703,6 +743,7 @@ fn pending_command_latest_wins_globally(kind: ClientPendingCommandKind) -> bool 
         ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
             | ClientPendingCommandKind::SaveDefaultPrompt
+            | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
 }
 
@@ -747,6 +788,7 @@ mod tests {
                 prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                notification_target_ids: Vec::new(),
                 archived: false,
                 attempt_count: 0,
             })
@@ -761,6 +803,7 @@ mod tests {
                 prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                notification_target_ids: Vec::new(),
                 archived: false,
                 attempt_count: 0,
             })
@@ -821,6 +864,7 @@ mod tests {
                 prompt_intent: "queue".to_owned(),
                 prompt: "continue".to_owned(),
                 notification_id: String::new(),
+                notification_target_ids: Vec::new(),
                 archived: false,
                 attempt_count: 0,
             })

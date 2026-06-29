@@ -957,10 +957,6 @@ private final class RecordingControlPlaneClient: ControlPlaneClient, @unchecked 
         DesktopPushDevicesResponse()
     }
 
-    func setDefaultNotificationTargets(_ targetIDs: [String]) async throws -> DesktopMobileStateResponse {
-        DesktopMobileStateResponse(defaultNotificationTargetIDs: targetIDs)
-    }
-
     func fetchMobileHealth() async throws -> MobileHealthResponse {
         MobileHealthResponse(
             ok: true,

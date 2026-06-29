@@ -230,6 +230,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id: client_mutation_id.clone(),
             after_seq: EMPTY_SEQUENCE,
@@ -261,6 +262,7 @@ impl LooperClientCore {
             prompt_intent,
             assistant_surface,
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -291,6 +293,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface,
             notification_id,
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -344,6 +347,32 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
+    fn set_default_notification_targets(
+        &self,
+        notification_target_ids: Vec<String>,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetDefaultNotificationTargets,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            prompt: String::new(),
+            prompt_intent: String::new(),
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            notification_target_ids,
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -370,6 +399,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface,
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -396,6 +426,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -421,6 +452,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -446,6 +478,7 @@ impl LooperClientCore {
             prompt_intent: String::new(),
             assistant_surface: String::new(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             client_mutation_id,
             after_seq: EMPTY_SEQUENCE,
@@ -718,6 +751,26 @@ impl LooperClientCore {
     ) -> Result<(), ClientCoreError> {
         self.save_default_prompt(prompt.clone(), client_mutation_id.clone())?;
         local_store.enqueue_save_default_prompt_command(prompt, client_mutation_id.clone())?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_default_notification_targets_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        notification_target_ids: Vec<String>,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_default_notification_targets(
+            notification_target_ids.clone(),
+            client_mutation_id.clone(),
+        )?;
+        local_store.enqueue_set_default_notification_targets_command(
+            notification_target_ids,
+            client_mutation_id.clone(),
+        )?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         self.spawn_command_ack_flush(local_store, client_mutation_id);
@@ -1934,6 +1987,7 @@ fn restored_outbound_frame(
         prompt_intent,
         assistant_surface: command.assistant_surface,
         notification_id: command.notification_id,
+        notification_target_ids: command.notification_target_ids,
         archived: command.archived,
         client_mutation_id: command.client_mutation_id,
         after_seq: EMPTY_SEQUENCE,
@@ -1958,6 +2012,7 @@ fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), Clien
         ClientPendingCommandKind::SaveDefaultPrompt => {
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
         }
+        ClientPendingCommandKind::SetDefaultNotificationTargets => {}
         ClientPendingCommandKind::SetSessionMode
         | ClientPendingCommandKind::SetSiriCurrentSession
         | ClientPendingCommandKind::SetSiriDefaultSession
@@ -1987,6 +2042,9 @@ fn restored_command_kind(
             Ok(ClientCommandKind::SetSiriDefaultSession)
         }
         ClientPendingCommandKind::SaveDefaultPrompt => Ok(ClientCommandKind::SaveDefaultPrompt),
+        ClientPendingCommandKind::SetDefaultNotificationTargets => {
+            Ok(ClientCommandKind::SetDefaultNotificationTargets)
+        }
         ClientPendingCommandKind::SetSessionArchived => Ok(ClientCommandKind::SetSessionArchived),
         ClientPendingCommandKind::DeleteSession => Ok(ClientCommandKind::DeleteSession),
         ClientPendingCommandKind::MuteSession => Ok(ClientCommandKind::MuteSession),
@@ -1998,7 +2056,10 @@ fn restored_thread_id(command: &ClientPendingCommand) -> Result<String, ClientCo
         ClientPendingCommandKind::SetAssistantSurface => {
             Err(ClientCoreError::UnexpectedOutboxMutations)
         }
-        ClientPendingCommandKind::SaveDefaultPrompt => Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned()),
+        ClientPendingCommandKind::SaveDefaultPrompt
+        | ClientPendingCommandKind::SetDefaultNotificationTargets => {
+            Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned())
+        }
         ClientPendingCommandKind::SetSiriCurrentSession
         | ClientPendingCommandKind::SetSiriDefaultSession => Ok(command.thread_id.clone()),
         ClientPendingCommandKind::SetSessionMode
@@ -2134,6 +2195,7 @@ fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
             | ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
             | ClientCommandKind::SaveDefaultPrompt
+            | ClientCommandKind::SetDefaultNotificationTargets
     )
 }
 
@@ -2143,6 +2205,7 @@ fn latest_wins_outbox_command_is_global(command_kind: ClientCommandKind) -> bool
         ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
             | ClientCommandKind::SaveDefaultPrompt
+            | ClientCommandKind::SetDefaultNotificationTargets
     )
 }
 

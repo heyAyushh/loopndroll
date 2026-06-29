@@ -789,6 +789,7 @@ mod tests {
             prompt_intent: "queue".to_owned(),
             prompt: "Continue".to_owned(),
             notification_id: String::new(),
+            notification_target_ids: Vec::new(),
             archived: false,
             attempt_count: 1,
         }

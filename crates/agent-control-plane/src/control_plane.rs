@@ -586,6 +586,20 @@ impl ControlPlane {
         self.spawn_mobile_session_mini_projection_reconcile_if_due();
     }
 
+    pub fn emit_mobile_all_sessions_replacement_event_with_cached_minis(
+        &self,
+        input: MobileEventInput,
+        minis: Vec<MobileSessionMiniProjectionInput>,
+    ) -> Result<()> {
+        let mut event = build_mobile_event(input);
+        event.revision = self.latest_cached_mobile_revision();
+        let record = self
+            .store
+            .record_mobile_event_replacing_session_minis(&event, minis)?;
+        self.mobile_events.publish_persisted(record);
+        Ok(())
+    }
+
     pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
         let snapshot = mobile_desktop_snapshot(self)?;
         let revision = snapshot.revision.trim().to_owned();

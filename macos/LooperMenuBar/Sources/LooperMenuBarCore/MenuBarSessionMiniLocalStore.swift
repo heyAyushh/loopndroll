@@ -248,6 +248,13 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
+    public func setDefaultNotificationTargets(
+        _ targetIDs: [String]
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await sessionManager.setDefaultNotificationTargets(targetIDs)
+    }
+
+    @discardableResult
     public func startIfNeeded(
         bearerToken: String = "",
         mobileSessionHeader: String = "",

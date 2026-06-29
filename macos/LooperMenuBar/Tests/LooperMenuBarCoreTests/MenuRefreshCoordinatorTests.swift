@@ -639,10 +639,6 @@ private final class MenuRefreshRecordingClient: ControlPlaneClient, @unchecked S
         return DesktopPushDevicesResponse()
     }
 
-    func setDefaultNotificationTargets(_ targetIDs: [String]) async throws -> DesktopMobileStateResponse {
-        DesktopMobileStateResponse(defaultNotificationTargetIDs: targetIDs)
-    }
-
     func fetchMobileHealth() async throws -> MobileHealthResponse {
         lock.withLock {
             recordedHealthCalls += 1

@@ -2222,17 +2222,16 @@ async fn session_mini_projection_replays_default_notification_target_mutation() 
     .await;
     let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/default-notification-targets",
-        serde_json::json!({
-            "notificationTargetIds": ["iphone", "route-telegram"]
+    let ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetDefaultNotificationTargets(SetDefaultNotificationTargetsRequest {
+            notification_target_ids: vec!["iphone".to_owned(), "route-telegram".to_owned()],
+            client_mutation_id: "default-notification-targets-session-test".to_owned(),
         }),
-        &[],
-        Some("127.0.0.1:49152".parse().expect("loopback socket")),
     )
     .await;
+    assert!(ack.accepted, "Session default target command accepted");
 
     let replayed = request_json_with_options(
         &router,
@@ -2246,8 +2245,8 @@ async fn session_mini_projection_replays_default_notification_target_mutation() 
 
     assert_eq!(replayed["replace"], true);
     assert!(
-        session["seq"].as_i64().expect("session seq") > initial_seq,
-        "default notification target mutation must advance mini seq"
+        replayed["latestSeq"].as_i64().expect("replayed latest seq") > initial_seq,
+        "default notification target mutation must advance replacement seq"
     );
     assert_eq!(session["notificationStatus"]["enabled"], true);
     assert_eq!(
@@ -3445,24 +3444,16 @@ async fn http_session_state_mutation_routes_are_disabled() {
     fixture.write_state_db();
     let router = build_router(fixture.control_plane());
     let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
-    let notification_targets = request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/default-notification-targets",
-        serde_json::json!({
-            "notificationTargetIds": ["macos"]
-        }),
-        &[],
-        loopback,
-    )
-    .await;
-    assert_eq!(
-        notification_targets["defaultNotificationTargetIds"],
-        serde_json::json!(["macos"])
-    );
     let snapshot_before_disabled_routes = request_json(&router, "/desktop/snapshot").await;
 
     let disabled_routes = vec![
+        (
+            Method::POST,
+            "/desktop/settings/default-notification-targets",
+            Some(serde_json::json!({
+                "notificationTargetIds": ["macos"]
+            })),
+        ),
         (
             Method::POST,
             "/desktop/settings/default-prompt",

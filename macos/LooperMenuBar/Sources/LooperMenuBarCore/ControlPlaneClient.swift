@@ -55,7 +55,6 @@ public enum ControlPlaneEndpoint: Equatable {
   case shutdown
   case desktopMobileState
   case desktopPushDevices
-  case defaultNotificationTargets
   case mobileHealth
   case controlPlaneStatus
   case desktopSnapshot
@@ -92,8 +91,6 @@ public enum ControlPlaneEndpoint: Equatable {
       "/desktop/mobile-state"
     case .desktopPushDevices:
       "/desktop/push/devices"
-    case .defaultNotificationTargets:
-      "/desktop/settings/default-notification-targets"
     case .mobileHealth:
       "/api/mobile/health"
     case .controlPlaneStatus:
@@ -112,7 +109,7 @@ public enum ControlPlaneEndpoint: Equatable {
     case .acpClientHostProbe, .acpClientHostInstall, .registerHooks, .registerTargetHooks,
       .unregisterHooks, .unregisterTargetHooks, .unregisterLiveHooks, .unregisterLiveTargetHooks,
       .shutdown, .devinAcpBridgeProbe,
-      .devinAcpBridgeInstall, .defaultNotificationTargets:
+      .devinAcpBridgeInstall:
       "POST"
     case .acpClientHosts, .acpClientHost, .desktopConnections, .desktopMobileState,
       .desktopPushDevices, .controlPlaneStatus, .desktopSnapshot, .mobileHealth:
@@ -128,7 +125,7 @@ public enum ControlPlaneEndpoint: Equatable {
       .desktopConnections,
       .registerHooks, .registerTargetHooks, .unregisterHooks, .unregisterTargetHooks,
       .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
-      .desktopMobileState, .desktopPushDevices, .defaultNotificationTargets, .mobileHealth,
+      .desktopMobileState, .desktopPushDevices, .mobileHealth,
       .controlPlaneStatus,
       .devinAcpBridgeProbe,
       .devinAcpBridgeInstall:
@@ -144,7 +141,7 @@ public enum ControlPlaneEndpoint: Equatable {
       .desktopConnections,
       .registerHooks, .registerTargetHooks, .unregisterHooks, .unregisterTargetHooks,
       .unregisterLiveHooks, .unregisterLiveTargetHooks, .shutdown,
-      .desktopMobileState, .desktopPushDevices, .defaultNotificationTargets, .mobileHealth,
+      .desktopMobileState, .desktopPushDevices, .mobileHealth,
       .controlPlaneStatus, .devinAcpBridgeProbe,
       .devinAcpBridgeInstall:
       LooperLifecycleDefaults.requestTimeoutSeconds
@@ -168,8 +165,6 @@ public protocol ControlPlaneClient: Sendable {
   func fetchAcpClientHosts() async throws -> AcpClientHostsResponse
   func fetchDesktopMobileState() async throws -> DesktopMobileStateResponse
   func fetchDesktopPushDevices() async throws -> DesktopPushDevicesResponse
-  func setDefaultNotificationTargets(_ targetIDs: [String]) async throws
-    -> DesktopMobileStateResponse
   func fetchMobileHealth() async throws -> MobileHealthResponse
   func probeDevinAcpBridge(agentId: String?) async throws -> DevinAcpBridgeProbeResponse
 }
@@ -246,16 +241,6 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
 
   public func fetchDesktopPushDevices() async throws -> DesktopPushDevicesResponse {
     try await fetchJSON(DesktopPushDevicesResponse.self, from: .desktopPushDevices)
-  }
-
-  public func setDefaultNotificationTargets(_ targetIDs: [String]) async throws
-    -> DesktopMobileStateResponse
-  {
-    try await postJSON(
-      DesktopMobileStateResponse.self,
-      to: .defaultNotificationTargets,
-      body: DefaultNotificationTargetsRequest(notificationTargetIds: targetIDs)
-    )
   }
 
   public func fetchMobileHealth() async throws -> MobileHealthResponse {
@@ -424,10 +409,6 @@ public final class HTTPControlPlaneClient: ControlPlaneClient, @unchecked Sendab
 }
 
 private struct EmptyRequest: Encodable {}
-
-private struct DefaultNotificationTargetsRequest: Encodable {
-  let notificationTargetIds: [String]
-}
 
 private final class BlockingRequestResultBox: @unchecked Sendable {
   private let lock = NSLock()

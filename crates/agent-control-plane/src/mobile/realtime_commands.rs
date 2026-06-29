@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::Value;
 use tonic::Status;
 
 use crate::control_plane::ControlPlane;
@@ -6,7 +7,9 @@ use crate::control_plane::reducer::session_state_for_thread;
 use crate::control_plane::session_fsm::{
     SessionCommand, SessionMode, SessionReject, SessionRejectCode, next as next_session_state,
 };
-use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
+use crate::events::{
+    MobileCommandAckRecord, MobileCommandAckResult, MobileSessionMiniProjectionInput,
+};
 use crate::mobile::api::{
     session_mini_projection_inputs_with_mode, session_mini_records_contain_session,
 };
@@ -597,7 +600,7 @@ pub(crate) fn set_default_notification_targets_command(
                 .mobile_session_service()
                 .set_default_notification_targets(&notification_target_ids)
                 .map_err(RealtimeCommandError::MobileSession)?;
-            emit_all_mobile_sessions_changed(control_plane, "default-notification-targets-updated");
+            emit_default_notification_targets_changed(control_plane)?;
             let revision = current_mobile_revision(control_plane)?;
             Ok((
                 revision.clone(),
@@ -1269,6 +1272,73 @@ fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, detail: &str) 
         prompt_id: None,
         detail: Some(detail.to_owned()),
     });
+}
+
+fn emit_default_notification_targets_changed(
+    control_plane: &ControlPlane,
+) -> Result<(), RealtimeCommandError> {
+    let default_target_ids = control_plane
+        .mobile_session_service()
+        .state()
+        .map_err(RealtimeCommandError::MobileSession)?
+        .default_notification_target_ids;
+    let minis = control_plane
+        .store()
+        .mobile_session_minis()
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    if minis.is_empty() {
+        emit_all_mobile_sessions_changed(control_plane, "default-notification-targets-updated");
+        return Ok(());
+    }
+    let projection_inputs = minis
+        .into_iter()
+        .map(|mini| updated_default_notification_targets_mini(mini, &default_target_ids))
+        .collect::<Result<Vec<_>, _>>()?;
+    control_plane
+        .emit_mobile_all_sessions_replacement_event_with_cached_minis(
+            MobileEventInput {
+                kind: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("default-notification-targets-updated".to_owned()),
+            },
+            projection_inputs,
+        )
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))
+}
+
+fn updated_default_notification_targets_mini(
+    mini: crate::events::MobileSessionMiniRecord,
+    default_target_ids: &[String],
+) -> Result<MobileSessionMiniProjectionInput, RealtimeCommandError> {
+    let mut body_json = serde_json::from_str::<Value>(&mini.body_json)
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    if mini_uses_default_notification_targets(&body_json) {
+        if let Some(object) = body_json.as_object_mut() {
+            object.insert(
+                "notificationStatus".to_owned(),
+                serde_json::json!({
+                    "enabled": !default_target_ids.is_empty(),
+                    "targetIds": default_target_ids,
+                    "usesDefault": true,
+                }),
+            );
+        }
+    }
+    Ok(MobileSessionMiniProjectionInput {
+        session_id: mini.session_id,
+        assistant_surface: mini.assistant_surface,
+        body_json,
+    })
+}
+
+fn mini_uses_default_notification_targets(body_json: &Value) -> bool {
+    body_json
+        .get("notificationStatus")
+        .and_then(Value::as_object)
+        .and_then(|status| status.get("usesDefault"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 fn emit_mobile_session_changed(

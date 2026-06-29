@@ -416,6 +416,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         prompt: prompt,
         assistantSurface: nil
       )
+      replaceMenu(
+        snapshot: nil,
+        sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
+        error: nil
+      )
     } catch {
       replaceMenu(
         snapshot: nil,
@@ -481,20 +486,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     error: Error?
   ) {
     let effectiveSessionMiniSnapshot = sessionMiniSnapshot ?? currentSessionMiniSnapshot()
-    let enrichment = effectiveSessionMiniSnapshot == nil ? nil : cachedMenuEnrichment
-    let effectiveSnapshot = snapshot ?? enrichment?.snapshot
-    let effectiveConnections = connections ?? enrichment?.connections
-    let effectiveAcpClientHosts = acpClientHosts ?? enrichment?.acpClientHosts
     updateStatusItem(
-      snapshot: effectiveSnapshot,
+      snapshot: snapshot,
       sessionMiniSnapshot: effectiveSessionMiniSnapshot,
       error: error
     )
     let menu = makeMenu(
-      snapshot: effectiveSnapshot,
+      snapshot: snapshot,
       sessionMiniSnapshot: effectiveSessionMiniSnapshot,
-      connections: effectiveConnections,
-      acpClientHosts: effectiveAcpClientHosts,
+      connections: connections,
+      acpClientHosts: acpClientHosts,
       error: error
     )
     statusItem?.menu = menu
@@ -733,6 +734,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     fallback: MenuBarSessionMiniLocalSnapshot?
   ) -> MenuBarSessionMiniLocalSnapshot? {
     cachedSessionMiniSnapshot ?? fallback ?? restoreCachedSessionMiniSnapshot()
+  }
+
+  private func reloadSessionMiniSnapshotFromStore() -> MenuBarSessionMiniLocalSnapshot? {
+    guard let snapshot = restoreCachedSessionMiniSnapshot() else {
+      return nil
+    }
+    cachedSessionMiniSnapshot = snapshot
+    return snapshot
   }
 
   @discardableResult
@@ -1777,14 +1786,24 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     Task {
       do {
-        mobileState = try await client.setDefaultNotificationTargets(selectedTargetIDs)
+        _ = try await configureSessionClientCoreRuntimeIfNeeded()
+        _ = try await sessionCommandCenter.setDefaultNotificationTargets(selectedTargetIDs)
+        mobileState = DesktopMobileStateResponse(
+          globalNotificationID: mobileState?.globalNotificationID,
+          defaultNotificationTargetIDs: selectedTargetIDs,
+          notifications: mobileState?.notifications ?? []
+        )
         await menuRefreshCoordinator.clearCache()
       } catch {
         await menuRefreshCoordinator.clearCache()
         replaceMenu(snapshot: nil, error: error)
         return
       }
-      await refreshMenu(force: true)
+      replaceMenu(
+        snapshot: nil,
+        sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
+        error: nil
+      )
     }
   }
 

@@ -24,6 +24,7 @@ pub enum ClientCommandKind {
     SetSiriCurrentSession,
     SetSiriDefaultSession,
     SaveDefaultPrompt,
+    SetDefaultNotificationTargets,
     SetSessionArchived,
     DeleteSession,
     MuteSession,
@@ -69,6 +70,8 @@ pub enum ClientPendingCommandKind {
     SetSiriDefaultSession,
     #[serde(rename = "SaveDefaultPrompt")]
     SaveDefaultPrompt,
+    #[serde(rename = "SetDefaultNotificationTargets")]
+    SetDefaultNotificationTargets,
     #[serde(rename = "SetSessionArchived")]
     SetSessionArchived,
     #[serde(rename = "DeleteSession")]
@@ -95,6 +98,8 @@ pub struct ClientPendingCommand {
     pub prompt: String,
     #[serde(rename = "notificationID", default)]
     pub notification_id: String,
+    #[serde(rename = "notificationTargetIds", default)]
+    pub notification_target_ids: Vec<String>,
     #[serde(default)]
     pub archived: bool,
     #[serde(rename = "attemptCount", default)]
@@ -121,6 +126,7 @@ pub struct OutboundSessionFrame {
     pub prompt_intent: String,
     pub assistant_surface: String,
     pub notification_id: String,
+    pub notification_target_ids: Vec<String>,
     pub archived: bool,
     pub client_mutation_id: String,
     pub after_seq: i64,

@@ -583,6 +583,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
 
+    func setDefaultNotificationTargets(notificationTargetIds: [String]) async throws  -> ClientSessionCommandIntentResult
+
     func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
 
     func setSessionArchived(threadId: String, archived: Bool) async throws  -> ClientSessionCommandIntentResult
@@ -870,6 +872,23 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientSessionPromptIntentResult_lift,
+            errorHandler: FfiConverterTypeClientCoreError_lift
+        )
+}
+
+open func setDefaultNotificationTargets(notificationTargetIds: [String])async throws  -> ClientSessionCommandIntentResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_default_notification_targets(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(notificationTargetIds)
+                )
+            },
+            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -2420,12 +2439,13 @@ public struct ClientPendingCommand: Equatable, Hashable {
     public var promptIntent: String
     public var prompt: String
     public var notificationId: String
+    public var notificationTargetIds: [String]
     public var archived: Bool
     public var attemptCount: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, promptIntent: String, prompt: String, notificationId: String, archived: Bool, attemptCount: UInt32) {
+    public init(kind: ClientPendingCommandKind, clientMutationId: String, threadId: String, preset: String, assistantSurface: String, promptIntent: String, prompt: String, notificationId: String, notificationTargetIds: [String], archived: Bool, attemptCount: UInt32) {
         self.kind = kind
         self.clientMutationId = clientMutationId
         self.threadId = threadId
@@ -2434,6 +2454,7 @@ public struct ClientPendingCommand: Equatable, Hashable {
         self.promptIntent = promptIntent
         self.prompt = prompt
         self.notificationId = notificationId
+        self.notificationTargetIds = notificationTargetIds
         self.archived = archived
         self.attemptCount = attemptCount
     }
@@ -2462,6 +2483,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
                 promptIntent: FfiConverterString.read(from: &buf),
                 prompt: FfiConverterString.read(from: &buf),
                 notificationId: FfiConverterString.read(from: &buf),
+                notificationTargetIds: FfiConverterSequenceString.read(from: &buf),
                 archived: FfiConverterBool.read(from: &buf),
                 attemptCount: FfiConverterUInt32.read(from: &buf)
         )
@@ -2476,6 +2498,7 @@ public struct FfiConverterTypeClientPendingCommand: FfiConverterRustBuffer {
         FfiConverterString.write(value.promptIntent, into: &buf)
         FfiConverterString.write(value.prompt, into: &buf)
         FfiConverterString.write(value.notificationId, into: &buf)
+        FfiConverterSequenceString.write(value.notificationTargetIds, into: &buf)
         FfiConverterBool.write(value.archived, into: &buf)
         FfiConverterUInt32.write(value.attemptCount, into: &buf)
     }
@@ -3639,6 +3662,7 @@ public enum ClientCommandKind: Equatable, Hashable {
     case setSiriCurrentSession
     case setSiriDefaultSession
     case saveDefaultPrompt
+    case setDefaultNotificationTargets
     case setSessionArchived
     case deleteSession
     case muteSession
@@ -3675,11 +3699,13 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case 6: return .saveDefaultPrompt
 
-        case 7: return .setSessionArchived
+        case 7: return .setDefaultNotificationTargets
 
-        case 8: return .deleteSession
+        case 8: return .setSessionArchived
 
-        case 9: return .muteSession
+        case 9: return .deleteSession
+
+        case 10: return .muteSession
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3713,16 +3739,20 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
 
 
-        case .setSessionArchived:
+        case .setDefaultNotificationTargets:
             writeInt(&buf, Int32(7))
 
 
-        case .deleteSession:
+        case .setSessionArchived:
             writeInt(&buf, Int32(8))
 
 
-        case .muteSession:
+        case .deleteSession:
             writeInt(&buf, Int32(9))
+
+
+        case .muteSession:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -3988,6 +4018,7 @@ public enum ClientPendingCommandKind: Equatable, Hashable {
     case setSiriCurrentSession
     case setSiriDefaultSession
     case saveDefaultPrompt
+    case setDefaultNotificationTargets
     case setSessionArchived
     case deleteSession
     case muteSession
@@ -4026,11 +4057,13 @@ public struct FfiConverterTypeClientPendingCommandKind: FfiConverterRustBuffer {
 
         case 7: return .saveDefaultPrompt
 
-        case 8: return .setSessionArchived
+        case 8: return .setDefaultNotificationTargets
 
-        case 9: return .deleteSession
+        case 9: return .setSessionArchived
 
-        case 10: return .muteSession
+        case 10: return .deleteSession
+
+        case 11: return .muteSession
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4068,16 +4101,20 @@ public struct FfiConverterTypeClientPendingCommandKind: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
 
 
-        case .setSessionArchived:
+        case .setDefaultNotificationTargets:
             writeInt(&buf, Int32(8))
 
 
-        case .deleteSession:
+        case .setSessionArchived:
             writeInt(&buf, Int32(9))
 
 
-        case .muteSession:
+        case .deleteSession:
             writeInt(&buf, Int32(10))
+
+
+        case .muteSession:
+            writeInt(&buf, Int32(11))
 
         }
     }
@@ -4805,6 +4842,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_default_notification_targets() != 7475) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_mode() != 14470) {

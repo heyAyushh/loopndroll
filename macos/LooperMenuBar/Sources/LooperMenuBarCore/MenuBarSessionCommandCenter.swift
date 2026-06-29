@@ -5,6 +5,7 @@ public enum MenuBarSessionCommandError: Error, Equatable, Sendable {
     case emptyThreadID
     case emptyNotificationID
     case emptyPrompt
+    case emptyTargetIDs
     case sessionRuntimeUnavailable
 }
 
@@ -71,6 +72,20 @@ public actor MenuBarSessionCommandCenter {
             assistantSurface: normalizedAssistantSurface,
             clientMutationID: clientMutationID
         )
+    }
+
+    @discardableResult
+    public func setDefaultNotificationTargets(
+        _ targetIDs: [String]
+    ) async throws -> ClientSessionCommandIntentResult {
+        let normalizedTargetIDs = targetIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !normalizedTargetIDs.isEmpty else {
+            throw MenuBarSessionCommandError.emptyTargetIDs
+        }
+        let sessionRuntime = try requiredSessionRuntime()
+        return try await sessionRuntime.setDefaultNotificationTargets(normalizedTargetIDs)
     }
 
     private func requiredSessionRuntime() throws -> MenuBarSessionRuntime {

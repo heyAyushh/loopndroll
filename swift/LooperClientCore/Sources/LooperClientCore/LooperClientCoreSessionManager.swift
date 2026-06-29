@@ -127,6 +127,13 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func setDefaultNotificationTargets(
+        _ targetIDs: [String]
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setDefaultNotificationTargets(notificationTargetIds: targetIDs)
+    }
+
+    @discardableResult
     public func setSessionArchived(
         threadID: String,
         archived: Bool

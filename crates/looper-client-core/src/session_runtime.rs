@@ -29,6 +29,7 @@ const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
 const SIRI_CURRENT_MUTATION_PREFIX: &str = "siri-current";
 const SIRI_DEFAULT_MUTATION_PREFIX: &str = "siri-default";
 const DEFAULT_PROMPT_MUTATION_PREFIX: &str = "default-prompt";
+const DEFAULT_NOTIFICATION_TARGETS_MUTATION_PREFIX: &str = "default-notification-targets";
 const ARCHIVE_MUTATION_PREFIX: &str = "archive";
 const DELETE_MUTATION_PREFIX: &str = "delete";
 const MUTE_MUTATION_PREFIX: &str = "mute";
@@ -247,6 +248,25 @@ impl LooperClientCoreSessionRuntime {
             prompt,
             client_mutation_id.clone(),
         )?;
+        Ok(ClientSessionCommandIntentResult {
+            accepted: true,
+            client_mutation_id,
+            entity_id: String::new(),
+        })
+    }
+
+    pub async fn set_default_notification_targets(
+        &self,
+        notification_target_ids: Vec<String>,
+    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
+        let client_mutation_id =
+            generated_client_mutation_id(DEFAULT_NOTIFICATION_TARGETS_MUTATION_PREFIX);
+        self.client_core
+            .accept_set_default_notification_targets_durable(
+                self.local_store.clone(),
+                notification_target_ids,
+                client_mutation_id.clone(),
+            )?;
         Ok(ClientSessionCommandIntentResult {
             accepted: true,
             client_mutation_id,
@@ -769,6 +789,40 @@ mod tests {
             snapshot.pending_commands[0]
                 .client_mutation_id
                 .starts_with("prompt-")
+        );
+        assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
+    }
+
+    #[test]
+    fn runtime_generates_default_notification_targets_mutation_id_before_transport() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("generated-notification-targets"))
+                .expect("runtime");
+
+        let result =
+            test_runtime
+                .block_on(runtime.set_default_notification_targets(vec![
+                    "macos".to_owned(),
+                    "iphone".to_owned(),
+                ]))
+                .expect("local target change accepted before transport");
+        assert!(result.accepted);
+
+        let snapshot = runtime.local_snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetDefaultNotificationTargets
+        );
+        assert_eq!(
+            snapshot.pending_commands[0].notification_target_ids,
+            vec!["macos".to_owned(), "iphone".to_owned()]
+        );
+        assert!(
+            snapshot.pending_commands[0]
+                .client_mutation_id
+                .starts_with("default-notification-targets-")
         );
         assert_eq!(snapshot.pending_commands[0].attempt_count, 1);
     }

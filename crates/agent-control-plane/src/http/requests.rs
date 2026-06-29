@@ -108,12 +108,6 @@ pub(super) struct DesktopGlobalNotificationRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopDefaultNotificationTargetsRequest {
-    pub(super) notification_target_ids: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct DesktopCompletionCheckConfigRequest {
     pub(super) completion_check_id: Option<String>,
     pub(super) wait_for_reply_after_completion: bool,

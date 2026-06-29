@@ -711,6 +711,14 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 client_mutation_id: frame.client_mutation_id,
             },
         )),
+        ClientCommandKind::SetDefaultNotificationTargets => {
+            Ok(proto::command::Command::SetDefaultNotificationTargets(
+                proto::SetDefaultNotificationTargetsRequest {
+                    notification_target_ids: frame.notification_target_ids,
+                    client_mutation_id: frame.client_mutation_id,
+                },
+            ))
+        }
         ClientCommandKind::SetSessionArchived => Ok(proto::command::Command::SetSessionArchived(
             proto::SetSessionArchivedRequest {
                 thread_id: frame.thread_id,
@@ -758,6 +766,7 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
         | ClientCommandKind::SetSiriCurrentSession
         | ClientCommandKind::SetSiriDefaultSession
         | ClientCommandKind::SaveDefaultPrompt
+        | ClientCommandKind::SetDefaultNotificationTargets
         | ClientCommandKind::SetSessionArchived
         | ClientCommandKind::DeleteSession
         | ClientCommandKind::MuteSession => "",
@@ -1494,10 +1503,7 @@ mod tests {
             sessions: Vec::new(),
         };
 
-        assert_eq!(
-            state_mini_data_cursor_after_ack(current_seq, 20),
-            20
-        );
+        assert_eq!(state_mini_data_cursor_after_ack(current_seq, 20), 20);
         assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 30), 30);
         assert_eq!(
             state_mini_data_cursor_after_delta(current_seq, &single_delta),

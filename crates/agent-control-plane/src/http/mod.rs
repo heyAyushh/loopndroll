@@ -30,8 +30,6 @@ use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_
 use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 use crate::mobile::push::MobilePushRegistrationRequest;
 use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
-use tonic::{Code as GrpcCode, Status as GrpcStatus};
-
 mod handoff;
 mod mobile_access;
 mod mobile_state;
@@ -52,11 +50,10 @@ use self::mobile_state::{
 use self::requests::{
     AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest, DesktopAssistantSurfaceRequest,
     DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
-    DesktopConnectionRenameRequest, DesktopDefaultNotificationTargetsRequest,
-    DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest, DesktopNotificationRequest,
-    DesktopScopeRequest, DesktopSessionArchiveRequest, DesktopSessionModeRequest,
-    DesktopSessionNotificationsRequest, DesktopSnapshotQuery, DesktopTelegramChatsRequest,
-    DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
+    DesktopConnectionRenameRequest, DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest,
+    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionArchiveRequest,
+    DesktopSessionModeRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
+    DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
     MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest, MobileSessionDetailQuery,
 };
 use self::responses::{
@@ -64,10 +61,7 @@ use self::responses::{
     mobile_authorization_error_response, mobile_push_error_response, mobile_session_error_response,
     mobile_session_not_found_response, telegram_error_response,
 };
-use self::session_actions::{
-    disabled_http_session_state_mutation_response,
-    set_default_notification_targets as set_default_notification_targets_action,
-};
+use self::session_actions::disabled_http_session_state_mutation_response;
 
 const SHUTDOWN_EXIT_DELAY: Duration = Duration::from_millis(50);
 
@@ -216,7 +210,7 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
         )
         .route(
             "/desktop/settings/default-notification-targets",
-            post(desktop_default_notification_targets),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/settings/global-completion-check",
@@ -937,20 +931,6 @@ async fn desktop_telegram_chats(
     }
 }
 
-async fn desktop_default_notification_targets(
-    State(control_plane): State<ControlPlane>,
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopDefaultNotificationTargetsRequest>,
-) -> impl IntoResponse {
-    if let Some(response) = desktop_loopback_rejection(socket_addr) {
-        return response;
-    }
-    match set_default_notification_targets_action(&control_plane, input.notification_target_ids) {
-        Ok(()) => desktop_mobile_state_response(&control_plane),
-        Err(error) => session_command_status_response(error),
-    }
-}
-
 async fn disabled_desktop_default_prompt(
     ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
     Json(input): Json<DesktopDefaultPromptRequest>,
@@ -1104,35 +1084,6 @@ async fn desktop_shutdown(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>) -> 
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }
 
-fn session_command_status_response(status: GrpcStatus) -> Response {
-    let http_status = match status.code() {
-        GrpcCode::InvalidArgument => StatusCode::BAD_REQUEST,
-        GrpcCode::NotFound => StatusCode::NOT_FOUND,
-        GrpcCode::AlreadyExists | GrpcCode::FailedPrecondition | GrpcCode::OutOfRange => {
-            StatusCode::CONFLICT
-        }
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    (
-        http_status,
-        Json(serde_json::json!({
-            "error": grpc_status_error_code(status.code()),
-            "message": status.message(),
-        })),
-    )
-        .into_response()
-}
-
-fn grpc_status_error_code(code: GrpcCode) -> &'static str {
-    match code {
-        GrpcCode::InvalidArgument => "invalid_argument",
-        GrpcCode::NotFound => "not_found",
-        GrpcCode::AlreadyExists => "already_exists",
-        GrpcCode::FailedPrecondition => "failed_precondition",
-        GrpcCode::OutOfRange => "out_of_range",
-        _ => "internal",
-    }
-}
 async fn sync_manifest(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
     match control_plane.sync_manifest_response() {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
