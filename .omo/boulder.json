@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "active_work_id": "local-first-multinode-architecture-lock",
+  "works": {
+    "local-first-multinode-architecture-lock": {
+      "work_id": "local-first-multinode-architecture-lock",
+      "active_plan": ".omo/plans/local-first-multinode-architecture-lock.md",
+      "goal_file": "GOAL-local-first-multinode-architecture-lock.md",
+      "plan_name": "local-first-multinode-architecture-lock",
+      "session_ids": [
+        "codex:019ef45f-d013-72a1-814e-614b65ed5e99"
+      ],
+      "status": "active",
+      "worktree_path": null,
+      "started_at": "2026-06-29T12:45:00Z",
+      "last_commit": "a1926fb27d5d14bb31fc4c78a9164d601700788a",
+      "last_side_merge": {
+        "thread": "019f1429-c9c4-78e2-b3e2-7f6669802425",
+        "source_commit": "9c32912ffb293aa7a7838a63d1172d8d5776afcd",
+        "commit": "6bc44085706d1bf7d8d1692aee653d5629e2f28b",
+        "artifact": ".omo/evidence/local-first-multinode-architecture-lock/merge-9c32912f-connectivity.md"
+      },
+      "ios_simulator": {
+        "name": "Looper Siri iOS27b2",
+        "udid": "F12A26E9-9FBC-4EA1-B72B-8EF098D5B93C",
+        "os": "27.0"
+      },
+      "evidence_root": ".omo/evidence/local-first-multinode-architecture-lock",
+      "todos_completed": 9,
+      "todos_total": 12,
+      "final_wave_completed": 0,
+      "final_wave_total": 4
+    }
+  }
+}
