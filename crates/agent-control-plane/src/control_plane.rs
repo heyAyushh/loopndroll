@@ -68,7 +68,7 @@ use crate::mobile::push::MobilePushService;
 use crate::mobile::session::{MobileSessionService, MobileSessionState};
 use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
-use crate::transcript_preview::transcript_preview_for_path;
+use crate::transcript_preview::transcript_preview_for_path_fast;
 use crate::zed::{
     ZED_CLIENT_ID, ZED_CLIENT_NAME, ZedStatus, inspect_zed_for_home,
     inspect_zed_for_home_with_processes, install_looper_zed_acp_agent_for_home, zed_acp_targets,
@@ -1482,7 +1482,7 @@ impl ControlPlane {
                 let transcript_preview = thread
                     .transcript_path
                     .as_deref()
-                    .and_then(|path| transcript_preview_for_path(Path::new(path)));
+                    .and_then(|path| transcript_preview_for_path_fast(Path::new(path)));
                 let latest_message_at_ms = transcript_preview
                     .as_ref()
                     .and_then(|preview| preview.latest_message_at_ms);

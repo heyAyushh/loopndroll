@@ -52,8 +52,12 @@ pub fn latest_assistant_message_for_path(transcript_path: &Path) -> Option<Strin
         .map(|message| message.text)
 }
 
+pub fn transcript_preview_for_path_fast(transcript_path: &Path) -> Option<TranscriptPreview> {
+    transcript_preview_from_tail(transcript_path)
+}
+
 pub fn transcript_preview_for_path(transcript_path: &Path) -> Option<TranscriptPreview> {
-    transcript_preview_from_tail(transcript_path).or_else(|| {
+    transcript_preview_for_path_fast(transcript_path).or_else(|| {
         let file = File::open(transcript_path).ok()?;
         transcript_preview_from_reader(BufReader::new(file))
     })
@@ -313,7 +317,10 @@ fn normalize_unix_timestamp_float(timestamp: f64) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{latest_assistant_message_for_path, transcript_preview_for_path};
+    use super::{
+        latest_assistant_message_for_path, transcript_preview_for_path,
+        transcript_preview_for_path_fast,
+    };
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
@@ -354,6 +361,24 @@ mod tests {
 
         assert_eq!(
             latest_assistant_message_for_path(&transcript_path).as_deref(),
+            Some("old full scan message")
+        );
+    }
+
+    #[test]
+    fn fast_transcript_preview_does_not_full_scan_when_tail_has_no_match() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("fast-no-fallback.jsonl");
+        let old_message = assistant_record("old full scan message");
+        let filler = "x".repeat((super::TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES + 1) as usize);
+        fs::write(&transcript_path, format!("{old_message}\n{filler}")).expect("write transcript");
+
+        assert_eq!(transcript_preview_for_path_fast(&transcript_path), None);
+        assert_eq!(
+            transcript_preview_for_path(&transcript_path)
+                .and_then(|preview| preview.latest_assistant_message)
+                .map(|message| message.text)
+                .as_deref(),
             Some("old full scan message")
         );
     }
