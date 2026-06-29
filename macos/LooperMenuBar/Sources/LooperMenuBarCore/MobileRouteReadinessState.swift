@@ -12,23 +12,39 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         static let minimumElapsedSeconds = 0
     }
 
+    private enum Titles {
+        static let unknown = "Unknown"
+        static let waitingForSessionProof = "Waiting for Session proof"
+        static let staleWaitingForSessionProof = "Stale: waiting for Session proof"
+        static let staleSessionProofSuffix = "waiting for Session proof"
+        static let handoffRouteProven = "Handoff route proven"
+        static let sessionConnected = "Session connected"
+        static let notProven = "Not proven"
+        static let notActive = "Not active"
+    }
+
     public private(set) var health: MobileHealthResponse?
     public private(set) var healthRecordedAt: Date?
     public private(set) var generation: UInt64
     public private(set) var provenRealtimeEndpoint: URL?
+    public private(set) var staleRealtimeEndpoint: URL?
     private var pendingLiveProofGeneration: UInt64?
+    private var observedSessionTransitionGeneration: UInt64?
 
     public init(
         health: MobileHealthResponse? = nil,
         healthRecordedAt: Date? = nil,
         generation: UInt64 = 0,
-        provenRealtimeEndpoint: URL? = nil
+        provenRealtimeEndpoint: URL? = nil,
+        staleRealtimeEndpoint: URL? = nil
     ) {
         self.health = health
         self.healthRecordedAt = healthRecordedAt
         self.generation = generation
         self.provenRealtimeEndpoint = provenRealtimeEndpoint
+        self.staleRealtimeEndpoint = staleRealtimeEndpoint
         self.pendingLiveProofGeneration = nil
+        self.observedSessionTransitionGeneration = nil
     }
 
     public var requiresLiveProof: Bool {
@@ -41,13 +57,14 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     public var supportsNativeHandoff: Bool {
         provenReachableHandoffBaseURL != nil
-            && (health?.requiresAuthentication ?? true)
     }
 
     public var provenReachableHandoffBaseURL: URL? {
         guard hasLiveRouteProof,
               let provenRealtimeEndpoint,
-              !MobileRouteURLPolicy.isLoopbackURL(provenRealtimeEndpoint)
+              !MobileRouteURLPolicy.isLoopbackURL(provenRealtimeEndpoint),
+              health?.ok == true,
+              health?.requiresAuthentication == true
         else {
             return nil
         }
@@ -57,15 +74,18 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     public var mobileStatusTitle: String {
         guard hasLiveRouteProof else {
-            return requiresLiveProof ? "Waiting for Session proof" : "Unknown"
+            return pendingProofStatusTitle
         }
 
-        return supportsNativeHandoff ? "Handoff route proven" : "Session connected"
+        return supportsNativeHandoff ? Titles.handoffRouteProven : Titles.sessionConnected
     }
 
     public var routeStatusTitle: String {
         guard let provenRealtimeEndpoint, hasLiveRouteProof else {
-            return requiresLiveProof ? "Waiting for Session proof" : "Unknown"
+            guard let staleRealtimeEndpoint, requiresLiveProof else {
+                return pendingProofStatusTitle
+            }
+            return "Stale: \(routeSummaryTitle(for: staleRealtimeEndpoint)), \(Titles.staleSessionProofSuffix)"
         }
 
         return "Connected: \(routeSummaryTitle(for: provenRealtimeEndpoint))"
@@ -73,15 +93,21 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     public var tailscaleStatusTitle: String {
         guard let provenRealtimeEndpoint, hasLiveRouteProof else {
-            return requiresLiveProof ? "Waiting for Session proof" : "Not proven"
+            guard let staleRealtimeEndpoint, requiresLiveProof else {
+                return requiresLiveProof ? Titles.waitingForSessionProof : Titles.notProven
+            }
+            guard MobileRouteURLPolicy.routeTitle(for: staleRealtimeEndpoint) == "Tailscale" else {
+                return Titles.waitingForSessionProof
+            }
+            return "Stale: \(hostTitle(for: staleRealtimeEndpoint)), \(Titles.staleSessionProofSuffix)"
         }
 
         let routeTitle = MobileRouteURLPolicy.routeTitle(for: provenRealtimeEndpoint)
         guard routeTitle == "Tailscale" else {
-            return "Not active"
+            return Titles.notActive
         }
 
-        return "Connected: \(provenRealtimeEndpoint.host ?? provenRealtimeEndpoint.absoluteString)"
+        return "Connected: \(hostTitle(for: provenRealtimeEndpoint))"
     }
 
     public func httpEnrichmentStatusTitle(now: Date = Date()) -> String? {
@@ -104,8 +130,10 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         generation += 1
         health = nil
         healthRecordedAt = nil
+        staleRealtimeEndpoint = provenRealtimeEndpoint ?? staleRealtimeEndpoint
         provenRealtimeEndpoint = nil
         pendingLiveProofGeneration = generation
+        observedSessionTransitionGeneration = nil
         return generation
     }
 
@@ -136,14 +164,48 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
               !endpointURL.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             provenRealtimeEndpoint = nil
+            if requiresLiveProof {
+                observedSessionTransitionGeneration = generation
+            }
+            return
+        }
+
+        guard acceptsReadyEndpoint(endpointURL) else {
+            provenRealtimeEndpoint = nil
             return
         }
 
         provenRealtimeEndpoint = endpointURL
+        staleRealtimeEndpoint = nil
         pendingLiveProofGeneration = nil
+        observedSessionTransitionGeneration = nil
+    }
+
+    private var pendingProofStatusTitle: String {
+        guard requiresLiveProof else {
+            return Titles.unknown
+        }
+        return staleRealtimeEndpoint == nil
+            ? Titles.waitingForSessionProof
+            : Titles.staleWaitingForSessionProof
+    }
+
+    private func acceptsReadyEndpoint(_ endpointURL: URL) -> Bool {
+        guard requiresLiveProof,
+              let staleRealtimeEndpoint,
+              staleRealtimeEndpoint.absoluteString == endpointURL.absoluteString
+        else {
+            return true
+        }
+
+        return observedSessionTransitionGeneration == generation
     }
 
     private func routeSummaryTitle(for url: URL) -> String {
-        "\(MobileRouteURLPolicy.routeTitle(for: url)): \(url.host ?? url.absoluteString)"
+        "\(MobileRouteURLPolicy.routeTitle(for: url)): \(hostTitle(for: url))"
+    }
+
+    private func hostTitle(for url: URL) -> String {
+        url.host ?? url.absoluteString
     }
 }

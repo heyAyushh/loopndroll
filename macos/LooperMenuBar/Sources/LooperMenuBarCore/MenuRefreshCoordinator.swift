@@ -47,6 +47,22 @@ public struct MenuRefreshResult: Equatable, Sendable {
             error: error
         )
     }
+
+    public func replacingSessionMiniSnapshot(
+        _ nextSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+    ) -> MenuRefreshResult {
+        MenuRefreshResult(
+            didFetchHTTP: didFetchHTTP,
+            sessionMiniSnapshot: nextSessionMiniSnapshot,
+            snapshot: snapshot,
+            connections: connections,
+            acpClientHosts: acpClientHosts,
+            mobileState: mobileState,
+            pushDevices: pushDevices,
+            mobileHealth: mobileHealth,
+            error: error
+        )
+    }
 }
 
 public actor MenuRefreshCoordinator {
@@ -93,7 +109,7 @@ public actor MenuRefreshCoordinator {
            let cachedRefresh,
            cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration
         {
-            return cachedRefresh.result
+            return refreshLocalSessionMiniSnapshot(in: cachedRefresh.result)
         }
 
         return await performRefresh(bypassingCache: false)
@@ -106,7 +122,7 @@ public actor MenuRefreshCoordinator {
     private func performRefresh(bypassingCache: Bool) async -> MenuRefreshResult {
         while let inFlight {
             if !bypassingCache || inFlight.bypassesCache {
-                return await inFlight.task.value
+                return refreshLocalSessionMiniSnapshot(in: await inFlight.task.value)
             }
             let staleRefreshID = inFlight.id
             _ = await inFlight.task.value
@@ -134,6 +150,10 @@ public actor MenuRefreshCoordinator {
             cachedRefresh = CachedRefresh(result: result, recordedAt: clock.now)
         }
         return result
+    }
+
+    private func refreshLocalSessionMiniSnapshot(in result: MenuRefreshResult) -> MenuRefreshResult {
+        result.replacingSessionMiniSnapshot(Self.fetchSessionMiniSnapshot(sessionRuntime))
     }
 
     private static func fetch(

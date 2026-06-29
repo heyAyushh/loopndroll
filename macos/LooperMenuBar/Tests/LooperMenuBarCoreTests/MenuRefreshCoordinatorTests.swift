@@ -194,7 +194,78 @@ struct MenuRefreshCoordinatorTests {
         _ = readiness.invalidateForRouteSwitch()
         #expect(readiness.health == nil)
         #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
+    }
+
+    @Test("ready Session route without HTTP health is not handoff proof")
+    func readySessionRouteWithoutHTTPHealthIsNotHandoffProof() throws {
+        var readiness = MobileRouteReadinessState()
+        let endpoint = try #require(URL(string: "http://100.119.200.69:8766"))
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: endpoint,
+            refreshGeneration: readiness.generation
+        )
+
+        #expect(readiness.hasLiveRouteProof)
+        #expect(!readiness.supportsNativeHandoff)
+        #expect(readiness.provenReachableHandoffBaseURL == nil)
+        #expect(readiness.mobileStatusTitle == "Session connected")
+        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
+    }
+
+    @Test("route switch marks previous endpoint stale until Session reconnects")
+    func routeSwitchMarksPreviousEndpointStaleUntilSessionReconnects() throws {
+        var readiness = MobileRouteReadinessState(
+            health: MenuRefreshRecordingClient.mobileHealth()
+        )
+        let oldEndpoint = try #require(URL(string: "http://100.119.200.69:8766"))
+        let nextEndpoint = try #require(URL(string: "http://192.168.1.33:8766"))
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: oldEndpoint,
+            refreshGeneration: readiness.generation
+        )
+        #expect(readiness.hasLiveRouteProof)
+
+        let switchGeneration = readiness.invalidateForRouteSwitch()
+
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.mobileStatusTitle == "Stale: waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
+        #expect(readiness.tailscaleStatusTitle == "Stale: 100.119.200.69, waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: oldEndpoint,
+            refreshGeneration: switchGeneration
+        )
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .reconnecting,
+            endpointURL: oldEndpoint,
+            refreshGeneration: switchGeneration
+        )
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: oldEndpoint,
+            refreshGeneration: switchGeneration
+        )
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
+
+        let nextSwitchGeneration = readiness.invalidateForRouteSwitch()
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: nextEndpoint,
+            refreshGeneration: nextSwitchGeneration
+        )
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Connected: LAN: 192.168.1.33")
     }
 
     @Test("ACP host failure keeps successful snapshot")
@@ -356,6 +427,46 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 0)
         #expect(client.connectionCalls == 0)
         #expect(client.acpHostCalls == 0)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
+        #expect(client.healthCalls == 1)
+    }
+
+    @Test("cached refresh rereads local pending notification reply")
+    func cachedRefreshRereadsLocalPendingNotificationReply() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 305,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient()
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .seconds(5)
+        )
+        let commandCenter = MenuBarSessionCommandCenter(sessionRuntime: runtime)
+
+        let initial = await coordinator.refresh()
+        #expect(initial.sessionMiniSnapshot?.sessions.first?.replyable == true)
+
+        let result = try await commandCenter.submitNotificationReply(
+            notificationID: "notif-main",
+            threadID: "thread-local",
+            prompt: "continue locally",
+            assistantSurface: nil,
+            clientMutationID: "notification-reply:notif-main"
+        )
+        #expect(result.accepted)
+
+        let cached = await coordinator.refresh()
+        let row = try #require(cached.sessionMiniSnapshot?.sessions.first)
+
+        #expect(row.replyable == false)
+        #expect(row.subtitle.contains("Reply pending"))
+        #expect(row.notificationTitle == "Reply pending")
+        #expect(cached.sessionMiniSnapshot?.pendingCommands.count == 1)
+        #expect(client.snapshotCalls == 0)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
