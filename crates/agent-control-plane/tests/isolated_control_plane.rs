@@ -2533,6 +2533,123 @@ async fn mobile_session_content_tail_returns_bounded_chunk_metadata() {
 }
 
 #[tokio::test]
+async fn mobile_session_content_after_returns_chunk_from_valid_cursor() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-content-after.jsonl",
+        &[
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "already synced"
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "after cursor payload"
+                        }
+                    ]
+                }
+            }),
+        ],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let tail_path = format!(
+        "/api/mobile/sessions/thread-main/content?range=tail&limit={TEST_CONTENT_CHUNK_LIMIT_BYTES}"
+    );
+
+    let tail_response = request_with_options(
+        &router,
+        Method::GET,
+        &tail_path,
+        &[(axum::http::header::AUTHORIZATION, &authorization)],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+    assert_eq!(tail_response.status(), StatusCode::OK);
+    let tail_body = tail_response
+        .into_body()
+        .collect()
+        .await
+        .expect("tail body")
+        .to_bytes();
+    let tail_json: serde_json::Value = serde_json::from_slice(&tail_body).expect("tail json");
+    let revision = tail_json["chunk"]["revision"]
+        .as_str()
+        .expect("tail revision");
+
+    let transcript = fs::read(&transcript_path).expect("transcript bytes");
+    let expected_offset = transcript
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|separator_index| separator_index + 1)
+        .expect("record separator");
+    let expected_chunk = &transcript[expected_offset..];
+    let cursor = format!("after:{revision}:{expected_offset}");
+    let path = format!(
+        "/api/mobile/sessions/thread-main/content?range=after&limit={TEST_CONTENT_CHUNK_LIMIT_BYTES}&cursor={cursor}"
+    );
+
+    let after_response = request_with_options(
+        &router,
+        Method::GET,
+        &path,
+        &[(axum::http::header::AUTHORIZATION, &authorization)],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+
+    assert_eq!(after_response.status(), StatusCode::OK);
+    let after_body = after_response
+        .into_body()
+        .collect()
+        .await
+        .expect("after body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&after_body).expect("after json");
+    let chunk = &json["chunk"];
+
+    assert_eq!(json["content_type"], "transcript");
+    assert_eq!(
+        json["supported_ranges"],
+        serde_json::json!(["tail", "after"])
+    );
+    assert_eq!(chunk["account_id"], "local-account");
+    assert_eq!(chunk["node_id"], "local-node");
+    assert_eq!(chunk["session_id"], "thread-main");
+    assert_eq!(chunk["revision"], revision);
+    assert_eq!(chunk["offset"], expected_offset);
+    assert_eq!(chunk["length"], expected_chunk.len());
+    assert_eq!(chunk["sha256"], sha256_hex(expected_chunk));
+    assert_eq!(
+        chunk["content"].as_str().expect("content").as_bytes(),
+        expected_chunk
+    );
+    assert_eq!(
+        chunk["next_cursor"],
+        format!("after:{revision}:{}", transcript.len())
+    );
+    assert!(chunk["merkle_root"].is_null());
+    assert!(chunk["merkle_proof"].is_null());
+}
+
+#[tokio::test]
 async fn mobile_session_content_rejects_stale_revision() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

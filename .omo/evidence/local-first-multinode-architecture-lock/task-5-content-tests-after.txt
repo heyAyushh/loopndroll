@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/isolated_control_plane.rs (crates/agent-control-plane/target/debug/deps/isolated_control_plane-9b897f1176705183)
+
+running 4 tests
+test mobile_session_content_rejects_malformed_input ... ok
+test mobile_session_content_tail_returns_bounded_chunk_metadata ... ok
+test mobile_session_content_after_returns_chunk_from_valid_cursor ... ok
+test mobile_session_content_rejects_stale_revision ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 96 filtered out; finished in 0.39s
