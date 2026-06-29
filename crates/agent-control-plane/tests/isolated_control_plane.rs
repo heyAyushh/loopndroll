@@ -1937,6 +1937,146 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
 }
 
 #[tokio::test]
+async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-realtime.jsonl",
+        &[serde_json::json!({
+            "timestamp": "2026-06-16T08:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Initial assistant reply."
+                    }
+                ]
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let control_plane = fixture.control_plane();
+
+    let initial_snapshot = control_plane
+        .desktop_mobile_snapshot()
+        .expect("initial desktop mobile snapshot");
+    let initial_revision = initial_snapshot.revision.clone();
+    let initial_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("initial mobile seq");
+    let initial_minis = session_mini_projection_inputs(
+        &initial_snapshot,
+        &control_plane
+            .mobile_session_service()
+            .state()
+            .expect("mobile session state"),
+        &control_plane
+            .mobile_session_service()
+            .queued_prompt_counts()
+            .expect("queued prompt counts"),
+        initial_seq,
+        &initial_revision,
+    );
+    control_plane
+        .store()
+        .replace_mobile_session_minis(initial_minis, initial_seq, &initial_revision)
+        .expect("seed initial mini projection");
+    let initial_records = control_plane
+        .store()
+        .mobile_session_minis_at_seq(initial_seq)
+        .expect("initial projection records");
+    let initial_main = initial_records
+        .iter()
+        .find(|record| record.session_id == "thread-main")
+        .expect("initial thread-main mini");
+    let initial_payload: serde_json::Value =
+        serde_json::from_str(&initial_main.body_json).expect("initial mini payload json");
+    let initial_last_activity_at_ms = initial_payload["lastActivityAtMs"]
+        .as_i64()
+        .expect("initial last activity at ms");
+
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let transcript_path = fixture.write_transcript(
+        "thread-main-realtime.jsonl",
+        &[
+            serde_json::json!({
+                "timestamp": "2026-06-16T08:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Initial assistant reply."
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T08:06:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Fresh assistant reply for Session stream."
+                        }
+                    ]
+                }
+            }),
+        ],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+
+    assert!(
+        control_plane
+            .reconcile_mobile_session_mini_projection()
+            .expect("reconcile projection"),
+        "fresh transcript activity should publish a replacement mini event"
+    );
+
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile seq");
+    assert!(latest_seq > initial_seq);
+    assert!(
+        control_plane
+            .store()
+            .mobile_session_minis_replaced_at_seq(latest_seq)
+            .expect("replacement marker"),
+        "reconcile must leave a replacement marker for the Session stream"
+    );
+    let records = control_plane
+        .store()
+        .mobile_session_minis_at_seq(latest_seq)
+        .expect("latest projection records");
+    let main = records
+        .iter()
+        .find(|record| record.session_id == "thread-main")
+        .expect("thread-main mini");
+    let payload: serde_json::Value =
+        serde_json::from_str(&main.body_json).expect("mini payload json");
+    assert_eq!(
+        payload["assistantPreview"],
+        "Fresh assistant reply for Session stream."
+    );
+    assert!(
+        payload["lastActivityAtMs"]
+            .as_i64()
+            .expect("latest last activity at ms")
+            > initial_last_activity_at_ms
+    );
+}
+
+#[tokio::test]
 async fn session_mini_snapshot_includes_old_stopped_unarchived_sessions() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

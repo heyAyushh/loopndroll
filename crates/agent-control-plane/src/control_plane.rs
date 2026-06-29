@@ -61,6 +61,7 @@ use crate::mobile::api::{latest_session_mini_revision, session_mini_projection_i
 use crate::mobile::auth::MobileAuthService;
 use crate::mobile::events::{
     MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
+    snapshot_revision_changed_event,
 };
 use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, mobile_desktop_snapshot};
 use crate::mobile::push::MobilePushService;
@@ -523,6 +524,29 @@ impl ControlPlane {
             .as_deref()
             .and_then(|revision| self.session_mini_projection_inputs(revision).ok());
         self.persist_replace_and_publish_mobile_event(event, minis);
+    }
+
+    pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
+        let revision = self.mobile_snapshot_revision()?;
+        if revision.trim().is_empty() {
+            return Ok(false);
+        }
+        let stored_revision = self
+            .store
+            .mobile_session_minis()
+            .ok()
+            .and_then(|records| latest_session_mini_revision(&records));
+        if stored_revision.as_deref() == Some(revision.as_str()) {
+            return Ok(false);
+        }
+
+        let minis = self.session_mini_projection_inputs(&revision)?;
+        let event = snapshot_revision_changed_event(revision);
+        let record = self
+            .store
+            .record_mobile_event_replacing_session_minis(&event, minis)?;
+        self.mobile_events.publish_persisted(record);
+        Ok(true)
     }
 
     fn persist_and_publish_mobile_event(
