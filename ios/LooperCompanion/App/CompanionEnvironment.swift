@@ -29,7 +29,10 @@ struct CompanionEnvironment {
             )
             guard let runtime = sessionRuntime ?? CompanionSessionRuntime.liveDefault() else {
                 return CompanionEnvironment(
-                    service: service,
+                    service: SessionRuntimeUnavailableCompanionService(
+                        fallbackService: service,
+                        snapshotError: HTTPCompanionServiceError.localStoreUnavailable
+                    ),
                     sessionRuntime: nil,
                     reloadsServiceFromStoredConnection: true
                 )
@@ -59,5 +62,32 @@ struct CompanionEnvironment {
             sessionRuntime: sessionRuntime,
             reloadsServiceFromStoredConnection: true
         )
+    }
+}
+
+private struct SessionRuntimeUnavailableCompanionService: CompanionService {
+    let fallbackService: any CompanionService
+    let snapshotError: Error
+
+    func loadServerHealth() async throws -> CompanionServerHealth {
+        try await fallbackService.loadServerHealth()
+    }
+
+    func resolveServerHealth() async throws -> ResolvedCompanionServerHealth {
+        try await fallbackService.resolveServerHealth()
+    }
+
+    func loadSnapshot() async throws -> MobileSnapshot {
+        throw snapshotError
+    }
+
+    func registerPushDevice(
+        _ request: RemotePushRegistrationRequest
+    ) async throws -> RemotePushRegistrationResponse {
+        try await fallbackService.registerPushDevice(request)
+    }
+
+    func sendTestPush(installationID: String) async throws -> RemotePushTestResponse {
+        try await fallbackService.sendTestPush(installationID: installationID)
     }
 }

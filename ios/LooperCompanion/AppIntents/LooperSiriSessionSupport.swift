@@ -557,10 +557,25 @@ struct LooperSiriSessionClient: Sendable {
 
     private func localSessionDetail(for entity: LooperSessionEntity) async throws -> SessionDetail? {
         let snapshot = try await loadSnapshotLocalFirst()
-        guard let session = snapshot.session(withID: entity.sessionID) else {
+        guard let session = localSession(for: entity, in: snapshot) else {
             return nil
         }
         return SessionDetail(summary: session, snapshot: snapshot)
+    }
+
+    private func localSession(
+        for entity: LooperSessionEntity,
+        in snapshot: MobileSnapshot
+    ) -> SessionSummary? {
+        if let surface = entity.assistantSurface,
+           let surfacedSession = snapshot.sessions(for: surface).first(where: { session in
+               session.id == entity.sessionID
+           })
+        {
+            return surfacedSession
+        }
+
+        return snapshot.session(withID: entity.sessionID)
     }
 
     private func projectedEntity(

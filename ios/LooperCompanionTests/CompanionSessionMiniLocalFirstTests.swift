@@ -484,6 +484,112 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testSiriDetailUsesEntitySurfaceFromLocalCoreSnapshot() async throws {
+        let sharedThreadID = "shared-thread"
+        var codexSession = Self.sessionSummary(
+            id: sharedThreadID,
+            title: "Codex Older Mini",
+            ref: "C1",
+            status: .active
+        )
+        codexSession.effectiveMode = .maxTurns1
+        var devinSession = Self.sessionSummary(
+            id: sharedThreadID,
+            title: "Devin Latest Mini",
+            ref: "D1",
+            status: .active
+        )
+        devinSession.effectiveMode = .awaitReply
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 12,
+            records: [
+                Self.miniRecord(
+                    session: codexSession,
+                    assistantSurface: .codex,
+                    seq: 8,
+                    revision: "codex-revision-8"
+                ),
+                Self.miniRecord(
+                    session: devinSession,
+                    assistantSurface: .devin,
+                    seq: 12,
+                    revision: "devin-revision-12"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let client = LooperSiriSessionClient(
+            service: service,
+            sessionRuntime: runtime
+        )
+
+        let detail = try await client.loadSessionDetail(
+            for: LooperSessionEntity(session: devinSession, assistantSurface: .devin)
+        )
+
+        #expect(detail.title == "Devin Latest Mini")
+        #expect(detail.effectiveMode == .awaitReply)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testPendingSiriOpenUsesRequestedLocalSurface() async throws {
+        let sharedThreadID = "shared-open-thread"
+        let codexSession = Self.sessionSummary(
+            id: sharedThreadID,
+            title: "Codex Open Mini",
+            ref: "C1",
+            status: .active
+        )
+        let devinSession = Self.sessionSummary(
+            id: sharedThreadID,
+            title: "Devin Open Mini",
+            ref: "D1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 12,
+            records: [
+                Self.miniRecord(
+                    session: codexSession,
+                    assistantSurface: .codex,
+                    seq: 8,
+                    revision: "codex-open-revision-8"
+                ),
+                Self.miniRecord(
+                    session: devinSession,
+                    assistantSurface: .devin,
+                    seq: 12,
+                    revision: "devin-open-revision-12"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        try LooperSiriOpenSessionRequestStore.save(
+            LooperSiriOpenSessionRequest(
+                sessionID: sharedThreadID,
+                assistantSurfaceRawValue: CompanionAssistantSurface.devin.rawValue
+            )
+        )
+        defer {
+            _ = LooperSiriOpenSessionRequestStore.drain()
+        }
+
+        await model.continueFromPendingSiriOpenSessionRequest()
+
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(model.pendingOpenSessionID == sharedThreadID)
+        #expect(model.viewState.detail(for: sharedThreadID)?.title == "Devin Open Mini")
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testCachedSnapshotAppliesPendingDetailAndListCommands() async throws {
         let archivedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

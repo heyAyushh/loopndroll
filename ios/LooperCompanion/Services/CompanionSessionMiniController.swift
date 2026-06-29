@@ -102,6 +102,7 @@ final class CompanionSessionMiniController {
         applySnapshot: SnapshotApplyHandler
     ) -> Bool {
         guard let sessionRuntime else {
+            CompanionDiagnostics.record("session-mini:cache-restore-unavailable reason=\(reason)")
             return false
         }
 
@@ -135,7 +136,10 @@ final class CompanionSessionMiniController {
     }
 
     func cachedSnapshot() throws -> MobileSnapshot? {
-        try sessionRuntime?.cachedSnapshot()
+        guard let sessionRuntime else {
+            throw HTTPCompanionServiceError.localStoreUnavailable
+        }
+        return try sessionRuntime.cachedSnapshot()
     }
 
     @discardableResult
