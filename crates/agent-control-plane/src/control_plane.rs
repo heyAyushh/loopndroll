@@ -1657,7 +1657,15 @@ impl ControlPlane {
         acp_targets.extend(zed_acp_targets(&zed));
         acp_targets.sort_by(|left, right| left.id.cmp(&right.id));
 
-        let revision = self.mobile_snapshot_revision().unwrap_or_default();
+        let session_state = self.mobile_session_service().state()?;
+        let revision = loaded_desktop_snapshot_revision(
+            &desktop_threads,
+            &goals,
+            &automations,
+            &session_state,
+            active_thread_count,
+            archived_thread_count,
+        );
 
         Ok(DesktopSnapshot {
             revision,
@@ -2355,6 +2363,87 @@ fn mobile_session_state_revision(state: &MobileSessionState) -> String {
         "completionChecks": completion_checks,
         "sessions": session_overrides,
         "lifecycle": lifecycle,
+    });
+    revision_hash(&fingerprint.to_string())
+}
+
+fn loaded_desktop_snapshot_revision(
+    threads: &[DesktopThread],
+    goals: &[GoalSummary],
+    automations: &[AutomationSummary],
+    session_state: &MobileSessionState,
+    active_thread_count: usize,
+    archived_thread_count: usize,
+) -> String {
+    let mut thread_signature = threads
+        .iter()
+        .map(|thread| {
+            json!({
+                "id": thread.thread_id,
+                "source": thread.source,
+                "updatedAt": thread.updated_at_ms,
+                "latestMessageAt": thread.latest_message_at_ms,
+                "archived": thread.archived,
+                "runtimeStatus": thread.runtime_status,
+                "assistantPreviewHash": thread
+                    .assistant_preview
+                    .as_deref()
+                    .map(revision_hash),
+                "firstUserPromptHash": thread
+                    .first_user_prompt
+                    .as_deref()
+                    .map(revision_hash),
+                "goal": thread.goal,
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    thread_signature.sort();
+
+    let mut goal_signature = goals
+        .iter()
+        .map(|goal| {
+            json!({
+                "id": goal.id,
+                "targetThreadId": goal.target_thread_id,
+                "running": goal.running,
+                "updatedAt": goal.updated_at_ms,
+                "contentHash": goal.content_hash,
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    goal_signature.sort();
+
+    let mut automation_signature = automations
+        .iter()
+        .map(|automation| {
+            json!({
+                "id": automation.id,
+                "targetThreadId": automation.target_thread_id,
+                "status": automation.status,
+                "rrule": automation.rrule,
+                "covered": automation.control_plane_covered,
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    automation_signature.sort();
+
+    let queued_prompt_count = session_state
+        .sessions
+        .values()
+        .filter(|session| !session.deleted)
+        .count();
+    let fingerprint = json!({
+        "threads": thread_signature,
+        "goals": goal_signature,
+        "automations": automation_signature,
+        "activeThreadCount": active_thread_count,
+        "archivedThreadCount": archived_thread_count,
+        "queuedPromptCount": queued_prompt_count,
+        "assistantSurface": session_state.assistant_surface,
+        "mobileState": mobile_session_state_revision(session_state),
     });
     revision_hash(&fingerprint.to_string())
 }
