@@ -11,6 +11,9 @@ packages:
   OrbCodeKit:
     path: OrbCodeKit
     group: Packages
+  Reaper:
+    url: https://github.com/getsentry/Reaper-iOS.git
+    exactVersion: 2.0.1
 settings:
   base:
     SWIFT_VERSION: 6.0
@@ -54,6 +57,7 @@ targets:
       - package: LooperCompanionCore
       - package: LooperClientCore
       - package: OrbCodeKit
+      - package: Reaper
       - sdk: AppIntents.framework
   LooperCompanionTests:
     type: bundle.unit-test

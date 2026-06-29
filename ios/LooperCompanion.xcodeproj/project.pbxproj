@@ -51,6 +51,7 @@
 		762A51A5389EBC15CD308698 /* SessionSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26E5665E69C8705992001B8 /* SessionSearchModel.swift */; };
 		7CDF49AAA7F79DA10FFF49A7 /* SessionEntityAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 362DE6A2482D17C7B3B97192 /* SessionEntityAnnotation.swift */; };
 		7CF55F2E1584299679B29C56 /* CompanionSessionRuntimeCommandCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B355BAA6B42FB373A6E055 /* CompanionSessionRuntimeCommandCoreTests.swift */; };
+		7FAF4B3AB03D36D13F699C73 /* Reaper in Frameworks */ = {isa = PBXBuildFile; productRef = C57DFA5F38DFB9A8FFC39324 /* Reaper */; };
 		815F93B4B67E08B8B6EC1403 /* CompanionPasskeyAuthenticationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159FD17AAA6C5CCCD0000D92 /* CompanionPasskeyAuthenticationClient.swift */; };
 		8207D620B5E98F8453ADCF5E /* CompanionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */; };
 		83AD3F34EE457B18B40893F4 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64992FB2DA134F019F69163E /* RootTabView.swift */; };
@@ -62,6 +63,7 @@
 		8B6CB0A811613F054EFD021B /* OnboardingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7038F1ECA616F6FCCCBB27BF /* OnboardingScreen.swift */; };
 		903103D600804B62253BDCB3 /* MarkdownMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75873BB45591016088027654 /* MarkdownMessageView.swift */; };
 		913D972992CF173197037276 /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE006F2F407024A15E4727F /* SessionRow.swift */; };
+		91D08D807F64D0EFB92414ED /* DebugTypeUsageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA0E1228D512335012B5484 /* DebugTypeUsageDiagnostics.swift */; };
 		93130249F7C31EC788DCD5E9 /* UIBodySynchronizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1425D9C9F419BAA476E8430F /* UIBodySynchronizer.swift */; };
 		9376C5398F5E486913A5E4C5 /* CompanionSessionDetailCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A093CC9826DB811892E8DB /* CompanionSessionDetailCoordinator.swift */; };
 		945B8B939A36C71B76A6D228 /* CompanionSessionMiniLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C80CC290869079749E6F36D5 /* CompanionSessionMiniLocalStore.swift */; };
@@ -196,6 +198,7 @@
 		EA934ED81A5417EE98638467 /* CompanionEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionEnvironment.swift; sourceTree = "<group>"; };
 		EBB279558D716DB7C96FB9F4 /* PreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewFixtures.swift; sourceTree = "<group>"; };
 		ED022B2FD2D1AA63AC259F31 /* CompanionSpotlightCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSpotlightCoordinator.swift; sourceTree = "<group>"; };
+		EFA0E1228D512335012B5484 /* DebugTypeUsageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTypeUsageDiagnostics.swift; sourceTree = "<group>"; };
 		F02652A178B2079D63BC929D /* SessionSearchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchScreen.swift; sourceTree = "<group>"; };
 		F3682C988B970F016B4236F9 /* SessionSummaryTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummaryTimingTests.swift; sourceTree = "<group>"; };
 		FC260B4728D2B8FA011C6F93 /* codex-logo-dark-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "codex-logo-dark-poster.png"; sourceTree = "<group>"; };
@@ -211,6 +214,7 @@
 				DEADABB2FAB9574917ACDCB3 /* LooperCompanionCore in Frameworks */,
 				2F0E0A2FC5EA825688BECDD4 /* LooperClientCore in Frameworks */,
 				3D4F937914550297AEEC1BC3 /* OrbCodeKit in Frameworks */,
+				7FAF4B3AB03D36D13F699C73 /* Reaper in Frameworks */,
 				8690578148653BB37BE2A2E2 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -477,6 +481,7 @@
 				49A08A0BF1DC8EB3B7B333CF /* AppIconManager.swift */,
 				FF290C41DFAC259BDB19AA7D /* CompanionImageCache.swift */,
 				6EC1A0190D9046B11D3FCC6B /* CompanionTheme.swift */,
+				EFA0E1228D512335012B5484 /* DebugTypeUsageDiagnostics.swift */,
 				0E8C880C3A1B330FEE7D46C5 /* G006LocalFirstSelfTest.swift */,
 				2E6662FF1A21320CE35B28AF /* Haptics.swift */,
 				FEEAB251407D816C043AE607 /* LocalNetworkAccessMonitor.swift */,
@@ -546,6 +551,7 @@
 				4A1CE795142C8C486736E592 /* LooperCompanionCore */,
 				F580FEAB34C64461E8EBC953 /* LooperClientCore */,
 				350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */,
+				C57DFA5F38DFB9A8FFC39324 /* Reaper */,
 			);
 			productName = LooperCompanion;
 			productReference = 155542B6D3718553CC20717F /* LooperCompanion.app */;
@@ -586,6 +592,7 @@
 			mainGroup = AF0B8F711A735F4564DA799E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				8009083DD2DBB0F5141FE3CB /* XCRemoteSwiftPackageReference "Reaper-iOS" */,
 				0EC860B1916B3DCDE31793A5 /* XCLocalSwiftPackageReference "../swift/LooperClientCore" */,
 				B9671D4CAD974AF88DD98B73 /* XCLocalSwiftPackageReference "LooperCompanionCore" */,
 				3554AC755BD33C16845B5833 /* XCLocalSwiftPackageReference "OrbCodeKit" */,
@@ -658,6 +665,7 @@
 				47A730C70973FF7EBF36AA03 /* CompanionSnapshotStateStore.swift in Sources */,
 				D0771369D251B9896C930431 /* CompanionSpotlightCoordinator.swift in Sources */,
 				31D8991779D663FED6D9E1BC /* CompanionTheme.swift in Sources */,
+				91D08D807F64D0EFB92414ED /* DebugTypeUsageDiagnostics.swift in Sources */,
 				AEFD49C255BE922C3919FEE4 /* DiffBlockView.swift in Sources */,
 				9976ADE2586A2EB32821F7F3 /* G006LocalFirstSelfTest.swift in Sources */,
 				3A526A3DBB71006AAAC58C17 /* GameScene.swift in Sources */,
@@ -1049,6 +1057,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		8009083DD2DBB0F5141FE3CB /* XCRemoteSwiftPackageReference "Reaper-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/Reaper-iOS.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.0.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		350D9F7D4859AEE6C3EC0E64 /* OrbCodeKit */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1057,6 +1076,11 @@
 		4A1CE795142C8C486736E592 /* LooperCompanionCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LooperCompanionCore;
+		};
+		C57DFA5F38DFB9A8FFC39324 /* Reaper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8009083DD2DBB0F5141FE3CB /* XCRemoteSwiftPackageReference "Reaper-iOS" */;
+			productName = Reaper;
 		};
 		F580FEAB34C64461E8EBC953 /* LooperClientCore */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -56,6 +56,10 @@ struct LooperApp: App {
         if let g006SelfTestCase {
             G006LocalFirstSelfTest.runSoon(g006SelfTestCase)
         }
+        DebugTypeUsageDiagnostics.startIfNeeded(
+            isRunningUnitTests: isRunningUnitTests,
+            isRunningSelfTest: isRunningG006SelfTest
+        )
         #endif
     }
 
