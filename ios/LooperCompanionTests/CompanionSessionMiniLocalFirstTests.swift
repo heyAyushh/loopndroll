@@ -304,6 +304,86 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testAssistantSurfaceSwitchPreservesLocalMiniSourceWithoutCommandsOrReload() async throws {
+        let latestSeq: Int64 = 30
+        let codexSession = Self.sessionSummary(
+            id: "codex-thread",
+            title: "Codex Mini",
+            ref: "C1",
+            status: .active,
+            effectiveMode: .awaitReply
+        )
+        let devinSession = Self.sessionSummary(
+            id: "devin-thread",
+            title: "Devin Mini",
+            ref: "D1",
+            status: .active,
+            effectiveMode: .awaitReply
+        )
+        let zedSession = Self.sessionSummary(
+            id: "zed-thread",
+            title: "Zed Mini",
+            ref: "Z1",
+            status: .active,
+            effectiveMode: .awaitReply
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: latestSeq,
+            records: [
+                Self.miniRecord(
+                    session: codexSession,
+                    assistantSurface: .codex,
+                    seq: latestSeq,
+                    revision: "codex-revision"
+                ),
+                Self.miniRecord(
+                    session: devinSession,
+                    assistantSurface: .devin,
+                    seq: latestSeq - 1,
+                    revision: "devin-revision"
+                ),
+                Self.miniRecord(
+                    session: zedSession,
+                    assistantSurface: .zed,
+                    seq: latestSeq - 2,
+                    revision: "zed-revision"
+                ),
+            ]
+        )
+        let localMiniSourceIDs = try Self.localMiniSourceIDs(in: runtime)
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        #expect(localMiniSourceIDs == ["codex-thread", "devin-thread", "zed-thread"])
+        #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
+        #expect(try #require(model.snapshot).sessionsAcrossSurfaces.map(\.id).sorted() == localMiniSourceIDs)
+        #expect(model.viewState.selectedAssistantSurface == .codex)
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+
+        let selectionTask = try #require(model.selectAssistantSurface(.devin))
+
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(model.viewState.activeSessions.map(\.id) == ["devin-thread"])
+        #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
+        #expect(try #require(model.snapshot).sessionsAcrossSurfaces.map(\.id).sorted() == localMiniSourceIDs)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+        #expect(runtime.pendingCommands().isEmpty)
+        #expect(service.loadSnapshotCallCount == 0)
+        #expect(service.loadServerHealthCallCount == 0)
+
+        #expect(await selectionTask.value)
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
+        #expect(runtime.pendingCommands().isEmpty)
+        #expect(service.loadSnapshotCallCount == 0)
+        #expect(service.loadServerHealthCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1415,6 +1495,10 @@ struct CompanionSessionMiniLocalFirstTests {
         runtime.pendingCommands().filter { $0.kind == kind }
     }
 
+    private static func localMiniSourceIDs(in runtime: CompanionSessionRuntime) throws -> [String] {
+        try runtime.currentStateMiniSnapshot().sessions.map(\.sessionId).sorted()
+    }
+
     private static func temporarySessionRuntime(
         latestSeq: Int64,
         records: [SessionMiniFixture]
@@ -1557,14 +1641,15 @@ struct CompanionSessionMiniLocalFirstTests {
         id: String,
         title: String,
         ref: String,
-        status: SessionStatus
+        status: SessionStatus,
+        effectiveMode: SessionMode? = nil
     ) -> SessionSummary {
         SessionSummary(
             id: id,
             ref: ref,
             title: title,
             status: status,
-            effectiveMode: nil,
+            effectiveMode: effectiveMode,
             lastUpdatedAt: Constants.timestamp,
             lastActivityAt: Constants.timestamp,
             assistantPreview: "Ready",
@@ -1595,13 +1680,15 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
     private let snapshot: MobileSnapshot
     var loadSnapshotError: Error?
     private(set) var loadSnapshotCallCount = 0
+    private(set) var loadServerHealthCallCount = 0
 
     init(snapshot: MobileSnapshot) {
         self.snapshot = snapshot
     }
 
     func loadServerHealth() async throws -> CompanionServerHealth {
-        CompanionServerHealth(
+        incrementLoadServerHealthCallCount()
+        return CompanionServerHealth(
             ok: true,
             baseURL: "",
             baseURLs: [],
@@ -1634,6 +1721,12 @@ private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecke
         lock.lock()
         defer { lock.unlock() }
         loadSnapshotCallCount += 1
+    }
+
+    private func incrementLoadServerHealthCallCount() {
+        lock.lock()
+        defer { lock.unlock() }
+        loadServerHealthCallCount += 1
     }
 
     func muteSession(id _: String) async throws -> MobileSnapshot {
