@@ -1,6 +1,7 @@
 // allow: SIZE_OK — runtime lifecycle boundary centralizes signal, hook, and server shutdown ownership to avoid split-brain process control.
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio::net::TcpListener;
@@ -26,6 +27,7 @@ const LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_LISTEN";
 const STORE_ENV: &str = "AGENT_CONTROL_PLANE_STORE";
 const AUTOMATION_TICK_SECONDS: u64 = 30;
 const TELEGRAM_BRIDGE_TICK_SECONDS: u64 = 5;
+const SESSION_MINI_RECONCILE_TICK_SECONDS: u64 = 1;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SERVER_EXECUTABLE_NAME: &str = "looper-server";
 const DEFAULT_SERVER_SCHEME: &str = "http";
@@ -35,6 +37,7 @@ pub async fn run_server() -> Result<()> {
     let control_plane = default_control_plane()?;
     spawn_automation_runner(control_plane.clone());
     spawn_telegram_bridge(control_plane.clone());
+    spawn_session_mini_projection_reconciler(control_plane.clone());
 
     let listener = TcpListener::bind(default_listen_address()?).await?;
     let local_address = listener.local_addr()?;
@@ -68,6 +71,18 @@ fn spawn_grpc_server(
             crate::grpc::serve_with_listener(control_plane, listener, shutdown_signal()).await
         {
             eprintln!("looper gRPC server failed: {error}");
+        }
+    });
+}
+
+fn spawn_session_mini_projection_reconciler(control_plane: ControlPlane) {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(SESSION_MINI_RECONCILE_TICK_SECONDS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            control_plane.spawn_mobile_session_mini_projection_reconcile_if_due();
         }
     });
 }

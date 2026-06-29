@@ -181,7 +181,6 @@ impl LooperRealtime for LooperRealtimeService {
                         }
                     }
                     _ = state_poll.tick() => {
-                        control_plane.spawn_mobile_session_mini_projection_reconcile_if_due();
                         match drain_state_delta_frames(&control_plane, &mut last_seq) {
                             Ok(frames) => {
                                 for frame in frames {
