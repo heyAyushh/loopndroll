@@ -928,6 +928,30 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
             "before",
         ))
         .expect("record previous state delta");
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some("stale-projection-replaced".to_owned()),
+                server_time: mobile_event_now(),
+                revision: Some("revision-stale-projection".to_owned()),
+            },
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-stale".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "id": "thread-stale",
+                    "sessionId": "thread-stale",
+                    "assistantSurface": "codex",
+                    "status": "stopped",
+                    "title": "Stale replacement",
+                }),
+            }],
+        )
+        .expect("record superseded replacement projection");
     let minis = (0..LARGE_SESSION_MINI_REPLACEMENT_COUNT)
         .map(|index| {
             let session_id = format!("thread-{index:04}");

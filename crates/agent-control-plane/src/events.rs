@@ -453,6 +453,15 @@ create index if not exists mobile_session_minis_seq
         mobile_session_minis_replaced_at_seq(&connection, seq)
     }
 
+    pub fn latest_mobile_session_mini_replacement_seq_after(
+        &self,
+        after_seq: i64,
+    ) -> Result<Option<i64>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        latest_mobile_session_mini_replacement_seq_after(&connection, after_seq)
+    }
+
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -1246,6 +1255,19 @@ fn mobile_session_minis_replaced_at_seq(connection: &Connection, seq: i64) -> Re
         |row| row.get(0),
     )?;
     Ok(count > 0)
+}
+
+fn latest_mobile_session_mini_replacement_seq_after(
+    connection: &Connection,
+    after_seq: i64,
+) -> Result<Option<i64>> {
+    connection
+        .query_row(
+            "select max(seq) from mobile_session_mini_replacements where seq > ?1",
+            params![after_seq],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
 }
 
 fn mobile_session_mini_body_json(

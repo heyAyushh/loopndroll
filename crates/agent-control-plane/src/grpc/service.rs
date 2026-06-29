@@ -618,7 +618,12 @@ fn replay_state_delta_frames(
     after_seq: i64,
     last_seq: &mut i64,
 ) -> Result<Vec<proto::ServerFrame>, Status> {
-    let mut replay_after_seq = after_seq;
+    let mut replay_after_seq = control_plane
+        .store()
+        .latest_mobile_session_mini_replacement_seq_after(after_seq)
+        .map_err(state_replay_status)?
+        .map(|replacement_seq| replacement_seq.saturating_sub(1))
+        .unwrap_or(after_seq);
     let mut frames = Vec::new();
 
     loop {
