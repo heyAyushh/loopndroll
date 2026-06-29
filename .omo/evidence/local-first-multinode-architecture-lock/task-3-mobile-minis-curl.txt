@@ -1,0 +1,2 @@
+{"code":"pairing_token_required","message":"Pair this iPhone with the Mac before using the mobile API."}
+HTTP 401 time=0.012657 size=104

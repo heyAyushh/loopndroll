@@ -1,0 +1,21 @@
+   Compiling agent-control-plane v1.1.5 (/Users/ay/Documents/looper/crates/agent-control-plane)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.48s
+     Running tests/isolated_control_plane.rs (crates/agent-control-plane/target/debug/deps/isolated_control_plane-9b897f1176705183)
+
+running 1 test
+
+thread 'desktop_limited_snapshot_skips_request_time_transcript_preview' (15797410) panicked at tests/isolated_control_plane.rs:301:5:
+assertion `left == right` failed
+  left: String("Request-time preview leak.")
+ right: Null
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test desktop_limited_snapshot_skips_request_time_transcript_preview ... FAILED
+
+failures:
+
+failures:
+    desktop_limited_snapshot_skips_request_time_transcript_preview
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 1.07s
+
+error: test failed, to rerun pass `--test isolated_control_plane`

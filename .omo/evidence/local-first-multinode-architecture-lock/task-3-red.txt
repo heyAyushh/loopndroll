@@ -1,0 +1,21 @@
+   Compiling agent-control-plane v1.1.5 (/Users/ay/Documents/looper/crates/agent-control-plane)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.84s
+     Running tests/isolated_control_plane.rs (crates/agent-control-plane/target/debug/deps/isolated_control_plane-9b897f1176705183)
+
+running 1 test
+
+thread 'session_mini_snapshot_requires_produced_projection' (15788092) panicked at tests/isolated_control_plane.rs:2129:5:
+assertion `left == right` failed
+  left: 200
+ right: 409
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test session_mini_snapshot_requires_produced_projection ... FAILED
+
+failures:
+
+failures:
+    session_mini_snapshot_requires_produced_projection
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 100 filtered out; finished in 0.40s
+
+error: test failed, to rerun pass `--test isolated_control_plane`

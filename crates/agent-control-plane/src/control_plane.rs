@@ -71,7 +71,7 @@ use crate::mobile::events::{
     MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
     snapshot_revision_changed_event,
 };
-use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, mobile_desktop_snapshot};
+use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, prime_delivery_action_cache};
 use crate::mobile::push::MobilePushService;
 use crate::mobile::session::{MobileSessionService, MobileSessionState};
 use crate::sync_manifest::SyncManifest;
@@ -605,7 +605,12 @@ impl ControlPlane {
     }
 
     pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
-        let snapshot = mobile_desktop_snapshot(self)?;
+        let snapshot = self.desktop_snapshot_with_limits(
+            None,
+            DESKTOP_MENU_COMPACTION_LIMIT,
+            DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
+            SnapshotInspectionMode::Live,
+        )?;
         let revision = snapshot.revision.trim().to_owned();
         if revision.trim().is_empty() {
             return Ok(false);
@@ -619,7 +624,17 @@ impl ControlPlane {
             return Ok(false);
         }
 
-        let minis = self.session_mini_projection_inputs_for_snapshot(&snapshot, &revision)?;
+        let session_state = self.mobile_session_service().state()?;
+        prime_delivery_action_cache(self, &snapshot, &session_state);
+        let queued_prompt_counts = self.mobile_session_service().queued_prompt_counts()?;
+        let latest_seq = self.store.latest_mobile_state_event_seq()?;
+        let minis = session_mini_projection_inputs(
+            &snapshot,
+            &session_state,
+            &queued_prompt_counts,
+            latest_seq,
+            &revision,
+        );
         let event = snapshot_revision_changed_event(revision);
         let record = self
             .store
@@ -682,23 +697,6 @@ impl ControlPlane {
                     .ok()
                     .map(|seq| format!("mobile-state:seq-{seq}"))
             })
-    }
-
-    fn session_mini_projection_inputs_for_snapshot(
-        &self,
-        snapshot: &DesktopSnapshot,
-        revision: &str,
-    ) -> Result<Vec<MobileSessionMiniProjectionInput>> {
-        let session_state = self.mobile_session_service().state()?;
-        let queued_prompt_counts = self.mobile_session_service().queued_prompt_counts()?;
-        let latest_seq = self.store.latest_mobile_state_event_seq()?;
-        Ok(session_mini_projection_inputs(
-            snapshot,
-            &session_state,
-            &queued_prompt_counts,
-            latest_seq,
-            revision,
-        ))
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {
@@ -1453,7 +1451,7 @@ impl ControlPlane {
             Some(thread_limit.min(DESKTOP_SNAPSHOT_THREAD_LIMIT)),
             DESKTOP_COMPACTION_LIMIT,
             DESKTOP_COMPACTION_FILE_SCAN_LIMIT,
-            SnapshotInspectionMode::Live,
+            SnapshotInspectionMode::CachedMenu,
         )
     }
 

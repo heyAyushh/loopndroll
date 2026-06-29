@@ -26,7 +26,6 @@ use agent_control_plane::mobile::api::{
     latest_session_mini_revision, session_mini_projection_inputs,
 };
 use agent_control_plane::mobile::events::MobileEventKind;
-use agent_control_plane::mobile::prompt_delivery::prime_delivery_action_cache;
 use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
@@ -250,6 +249,56 @@ async fn desktop_snapshot_reads_latest_assistant_preview() {
         main_thread["first_user_prompt"],
         "First user prompt for Handoff."
     );
+}
+
+#[tokio::test]
+async fn desktop_limited_snapshot_skips_request_time_transcript_preview() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-limited-preview.jsonl",
+        &[
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Limited snapshot must not scan me."
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Request-time preview leak."
+                        }
+                    ]
+                }
+            }),
+        ],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+
+    let snapshot = request_json(&router, "/desktop/snapshot?limit=30").await;
+    let main_thread = snapshot["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["thread_id"] == "thread-main")
+        .expect("main thread");
+
+    assert_eq!(main_thread["assistant_preview"], serde_json::Value::Null);
+    assert_eq!(main_thread["first_user_prompt"], serde_json::Value::Null);
 }
 
 #[tokio::test]
@@ -1803,6 +1852,7 @@ async fn session_mini_projection_includes_card_blocked_goal_and_notification_sta
     service
         .queue_prompt("thread-main", "Reply from phone.")
         .expect("queue prompt");
+    prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane);
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -1844,10 +1894,11 @@ async fn session_mini_projection_includes_card_blocked_goal_and_notification_sta
 }
 
 #[tokio::test]
-async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
+async fn session_mini_projection_advances_seq_on_mode_mutation() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
@@ -1871,15 +1922,17 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
     )
     .expect("initial revision");
 
-    request_json_body_with_options(
-        &router,
-        Method::POST,
-        "/desktop/settings/global-preset",
-        serde_json::json!({ "preset": "await-reply" }),
-        &[],
-        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    let mode_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSessionMode(SetSessionModeRequest {
+            thread_id: "thread-main".to_owned(),
+            preset: "await-reply".to_owned(),
+            client_mutation_id: "session-mini-mode-await-reply".to_owned(),
+        }),
     )
     .await;
+    assert!(mode_ack.accepted);
 
     let replayed_minis = control_plane
         .store()
@@ -1933,9 +1986,9 @@ async fn session_mini_projection_advances_seq_and_revision_on_mode_mutation() {
             .expect("updated mini records"),
     )
     .expect("updated revision");
-    assert_ne!(updated_revision, initial_revision);
+    assert_eq!(updated_revision, initial_revision);
     assert_eq!(updated_session["effectiveMode"], "await-reply");
-    assert_eq!(updated_session["status"], "waiting");
+    assert_eq!(updated_session["status"], "stopped");
 }
 
 #[tokio::test]
@@ -2091,6 +2144,7 @@ async fn session_mini_snapshot_includes_old_stopped_unarchived_sessions() {
     fixture.append_newer_than_devin_state_threads(1);
     let control_plane = fixture.control_plane();
     record_thread_stopped(&control_plane, "thread-main");
+    prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane);
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -2111,7 +2165,36 @@ async fn session_mini_snapshot_includes_old_stopped_unarchived_sessions() {
 }
 
 #[tokio::test]
-async fn session_mini_snapshot_rebuilds_partial_cache_without_replacement_marker() {
+async fn session_mini_snapshot_requires_produced_projection() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let response = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("recovery body")
+        .to_bytes();
+    let recovery: serde_json::Value = serde_json::from_slice(&body).expect("recovery json");
+    assert_eq!(recovery["error"], "recovery_required");
+    assert_eq!(recovery["recovery"], "/api/mobile/session-minis/snapshot");
+    assert_eq!(recovery["latestSeq"], recovery["latest_seq"]);
+}
+
+#[tokio::test]
+async fn session_mini_snapshot_requires_recovery_for_partial_cache_without_replacement_marker() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     fixture.append_newer_than_devin_state_threads(1);
@@ -2160,7 +2243,7 @@ async fn session_mini_snapshot_rebuilds_partial_cache_without_replacement_marker
 
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
-    let recovered = request_json_with_options(
+    let response = request_with_options(
         &router,
         Method::GET,
         "/api/mobile/session-minis/snapshot",
@@ -2169,26 +2252,32 @@ async fn session_mini_snapshot_rebuilds_partial_cache_without_replacement_marker
     )
     .await;
 
-    assert!(session_mini_snapshot_has_session(&recovered, "thread-main"));
-    assert!(session_mini_snapshot_has_session(
-        &recovered,
-        "thread-extra-00"
-    ));
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("recovery body")
+        .to_bytes();
+    let recovery: serde_json::Value = serde_json::from_slice(&body).expect("recovery json");
+    assert_eq!(recovery["error"], "recovery_required");
+    assert_eq!(recovery["recovery"], "/api/mobile/session-minis/snapshot");
+    assert_eq!(recovery["latestSeq"], recovery["latest_seq"]);
     assert!(
-        control_plane
+        !control_plane
             .store()
             .mobile_session_minis_replaced_at_seq(latest_seq)
-            .expect("replacement marker after recovery"),
-        "recovery snapshot must leave a complete replacement marker behind"
+            .expect("replacement marker after recovery request"),
+        "recovery request must not write a complete replacement marker"
     );
-    assert!(
+    assert_eq!(
         control_plane
             .store()
             .mobile_session_minis()
-            .expect("recovered mini records")
-            .len()
-            > 1,
-        "recovery must replace the one-row stale cache with the full mini set"
+            .expect("mini records after recovery request")
+            .len(),
+        1,
+        "recovery request must not rebuild the partial cache"
     );
 }
 
@@ -2210,6 +2299,7 @@ async fn session_mini_projection_replays_default_notification_target_mutation() 
             },
         )
         .expect("upsert notification");
+    prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
@@ -2264,6 +2354,7 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
     fixture.write_state_db();
     fixture.write_devin_next_session();
     let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
@@ -2290,6 +2381,7 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
     )
     .await;
     assert!(delete_ack.accepted);
+    wait_for_session_mini_absent(&control_plane, "thread-main").await;
 
     let after_delete = request_json_with_options(
         &router,
@@ -2314,7 +2406,9 @@ async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay
 async fn session_mini_snapshot_is_recovery_only() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
-    let router = build_router(fixture.control_plane());
+    let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
+    let router = build_router(control_plane);
     let authorization = issue_mobile_authorization_header(&router).await;
 
     let snapshot = request_json_with_options(
@@ -4290,33 +4384,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn prime_state_mini_cache(control_plane: &ControlPlane) {
-    let snapshot = control_plane
-        .desktop_mobile_snapshot()
-        .expect("desktop snapshot");
-    let session_state = control_plane
-        .mobile_session_service()
-        .state()
-        .expect("mobile session state");
-    prime_delivery_action_cache(control_plane, &snapshot, &session_state);
-    let queued_prompt_counts = control_plane
-        .mobile_session_service()
-        .queued_prompt_counts()
-        .expect("queued prompt counts");
-    let latest_seq = control_plane
-        .store()
-        .latest_mobile_state_event_seq()
-        .expect("latest mobile seq");
-    let minis = session_mini_projection_inputs(
-        &snapshot,
-        &session_state,
-        &queued_prompt_counts,
-        latest_seq,
-        &snapshot.revision,
-    );
     control_plane
-        .store()
-        .replace_mobile_session_minis(minis, latest_seq, &snapshot.revision)
-        .expect("replace state minis");
+        .reconcile_mobile_session_mini_projection()
+        .expect("reconcile state minis");
 }
 
 async fn request_json_with_options(
@@ -4486,6 +4556,22 @@ async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
     panic!("timed out waiting for {detail} mobile event for {thread_id}");
+}
+
+async fn wait_for_session_mini_absent(control_plane: &ControlPlane, session_id: &str) {
+    for _ in 0..80 {
+        let is_absent = control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("mobile session minis")
+            .iter()
+            .all(|record| record.session_id != session_id);
+        if is_absent {
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for {session_id} session mini to be absent");
 }
 
 async fn wait_for_prompt_queued(control_plane: &ControlPlane, thread_id: &str) -> String {

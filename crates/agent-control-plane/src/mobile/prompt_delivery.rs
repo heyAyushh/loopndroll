@@ -5,7 +5,6 @@ use std::thread;
 use serde::Serialize;
 
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
-use crate::control_plane::session_fsm::{ACTIVE_STATUS, projected_status};
 use crate::control_plane::{ControlPlane, DesktopSnapshot};
 use crate::mobile::api::{
     PromptDeliveryAction, prompt_delivery_action_for_target,
@@ -146,32 +145,6 @@ fn resolve_delivery_action(
     ))
 }
 
-fn resolve_delivery_action_with_snapshot_fallback(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> Result<PromptDeliveryAction, MobileSessionError> {
-    match resolve_delivery_action(control_plane, thread_id, assistant_surface) {
-        Ok(action) => Ok(action),
-        Err(MobileSessionError::PromptSnapshotUnavailable(_)) => {
-            let cache_key = delivery_action_cache_key(thread_id, assistant_surface);
-            let snapshot = mobile_desktop_snapshot(control_plane).map_err(|error| {
-                MobileSessionError::PromptSnapshotUnavailable(error.to_string())
-            })?;
-            let session_state = control_plane.mobile_session_service().state()?;
-            let action = prompt_delivery_action_for_visible_target(
-                &snapshot,
-                &session_state,
-                thread_id,
-                assistant_surface,
-            )?;
-            locked_delivery_action_cache(control_plane).insert(cache_key, action.clone());
-            Ok(action)
-        }
-        Err(error) => Err(error),
-    }
-}
-
 pub fn accept_session_prompt(
     control_plane: &ControlPlane,
     thread_id: &str,
@@ -236,9 +209,7 @@ fn accept_legacy_session_prompt(
     prompt: &str,
 ) -> Result<AcceptedPromptDelivery, MobileSessionError> {
     let prompt = required_prompt(prompt)?;
-    if prompt_is_replyable_from_minis(control_plane, thread_id, assistant_surface)?
-        || prompt_is_replyable_from_current_state(control_plane, thread_id, assistant_surface)?
-    {
+    if prompt_is_replyable_from_minis(control_plane, thread_id, assistant_surface)? {
         return Ok(AcceptedPromptDelivery {
             dispatch: PromptDispatch::Accepted,
             after_ack: Some(PromptDeliveryAfterAck {
@@ -249,11 +220,7 @@ fn accept_legacy_session_prompt(
         });
     }
 
-    let action = resolve_delivery_action_with_snapshot_fallback(
-        control_plane,
-        thread_id,
-        assistant_surface,
-    )?;
+    let action = resolve_delivery_action(control_plane, thread_id, assistant_surface)?;
     Ok(AcceptedPromptDelivery {
         dispatch: PromptDispatch::Accepted,
         after_ack: Some(PromptDeliveryAfterAck {
@@ -331,56 +298,6 @@ fn prompt_is_replyable_from_minis(
         session_mini_records_allow_reply_mode_prompt(&records, thread_id, assistant_surface)
             == Some(true),
     )
-}
-
-fn prompt_is_replyable_from_current_state(
-    control_plane: &ControlPlane,
-    thread_id: &str,
-    assistant_surface: Option<&str>,
-) -> Result<bool, MobileSessionError> {
-    let session_state = control_plane.mobile_session_service().state()?;
-    let Some(effective_mode) = effective_mode_from_state(&session_state, thread_id) else {
-        return Ok(false);
-    };
-    let snapshot = mobile_desktop_snapshot(control_plane)
-        .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
-    let action = prompt_delivery_action_for_visible_target(
-        &snapshot,
-        &session_state,
-        thread_id,
-        assistant_surface,
-    )?;
-    if matches!(action, PromptDeliveryAction::QueueForHook) {
-        return Ok(true);
-    }
-    let thread = snapshot
-        .threads
-        .iter()
-        .find(|thread| thread.thread_id == thread_id)
-        .ok_or(MobileSessionError::SessionNotFound)?;
-    let lifecycle_status = session_state
-        .lifecycle
-        .get(thread_id)
-        .map(|lifecycle| lifecycle.status.as_str());
-    let status = projected_status(
-        thread.archived,
-        Some(effective_mode),
-        lifecycle_status,
-        thread.runtime_status.as_deref(),
-    );
-    Ok(matches!(action, PromptDeliveryAction::ResumeCodex(_)) && status != ACTIVE_STATUS)
-}
-
-fn effective_mode_from_state<'a>(
-    session_state: &'a MobileSessionState,
-    thread_id: &str,
-) -> Option<&'a str> {
-    session_state
-        .sessions
-        .get(thread_id)
-        .and_then(|override_state| override_state.preset.as_deref())
-        .or(session_state.global_preset.as_deref())
-        .filter(|preset| !preset.trim().is_empty())
 }
 
 pub fn send_non_acp_session_prompt(

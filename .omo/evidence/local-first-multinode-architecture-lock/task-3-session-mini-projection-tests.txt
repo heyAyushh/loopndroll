@@ -1,0 +1,14 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running tests/isolated_control_plane.rs (crates/agent-control-plane/target/debug/deps/isolated_control_plane-9b897f1176705183)
+
+running 4 tests
+test session_mini_projection_includes_card_blocked_goal_and_notification_state ... ok
+test session_mini_projection_replays_default_notification_target_mutation ... ok
+test session_mini_projection_advances_seq_on_mode_mutation ... ok
+test session_mini_projection_removes_deleted_and_hidden_sessions_from_replay ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 2.27s
