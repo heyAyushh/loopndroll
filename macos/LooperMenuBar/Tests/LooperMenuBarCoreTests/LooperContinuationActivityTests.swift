@@ -293,7 +293,7 @@ struct LooperContinuationActivityTests {
                 updatedAtMs: 4
             ),
         ])
-        let snapshot = try #require(try runtime.cachedSnapshot())
+        let snapshot = try runtime.cachedSnapshot()
 
         let descriptor = LooperContinuationActivityBuilder.descriptor(
             from: snapshot,

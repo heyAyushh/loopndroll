@@ -30,7 +30,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         ])
         let noNetworkClient = NoNetworkControlPlaneClient()
 
-        let snapshot = try #require(try runtime.cachedSnapshot())
+        let snapshot = try runtime.cachedSnapshot()
         let sections = LooperMenuContent.buildThreadSections(from: snapshot.sessions)
 
         #expect(noNetworkClient.snapshotCalls == 0)
@@ -62,7 +62,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             ),
         ])
 
-        let snapshot = try #require(try runtime.cachedSnapshot())
+        let snapshot = try runtime.cachedSnapshot()
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
             mobileReady: false,
@@ -88,7 +88,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             ),
         ])
 
-        let snapshot = try #require(try runtime.cachedSnapshot())
+        let snapshot = try runtime.cachedSnapshot()
         let status = LooperHumanStatus.from(
             sessionMiniSnapshot: snapshot,
             mobileReady: true,
@@ -106,7 +106,7 @@ struct MenuBarSessionMiniLocalFirstTests {
         let mismatchedFileURL = temporaryStoreFileURL()
         try seedMismatchedMiniCache(at: mismatchedFileURL)
         let mismatchedRuntime = try MenuBarSessionRuntime(fileURL: mismatchedFileURL)
-        let fallbackMiniSnapshot = try #require(try mismatchedRuntime.cachedSnapshot())
+        let fallbackMiniSnapshot = try mismatchedRuntime.cachedSnapshot()
         let fallbackSections = LooperMenuContent.buildThreadSections(
             from: fallbackMiniSnapshot.sessions
         )
@@ -232,7 +232,7 @@ struct MenuBarSessionMiniLocalFirstTests {
             assistantSurface: nil,
             clientMutationID: "notification-reply:notif-main"
         )
-        let snapshot = try #require(try runtime.cachedSnapshot())
+        let snapshot = try runtime.cachedSnapshot()
 
         #expect(result.accepted)
         #expect(snapshot.sessions.map(\.sessionID) == ["thread-main"])

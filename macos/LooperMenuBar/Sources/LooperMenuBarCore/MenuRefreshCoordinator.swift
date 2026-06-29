@@ -65,6 +65,12 @@ public struct MenuRefreshResult: Equatable, Sendable {
     }
 }
 
+protocol MenuBarSessionMiniSnapshotProviding: Sendable {
+    func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot
+}
+
+extension MenuBarSessionRuntime: MenuBarSessionMiniSnapshotProviding {}
+
 public actor MenuRefreshCoordinator {
     private struct CachedRefresh: Sendable {
         let result: MenuRefreshResult
@@ -78,7 +84,7 @@ public actor MenuRefreshCoordinator {
     }
 
     private let client: any ControlPlaneClient
-    private let sessionRuntime: MenuBarSessionRuntime?
+    private let sessionRuntime: (any MenuBarSessionMiniSnapshotProviding)?
     private let clock = ContinuousClock()
     private let freshReuseDuration: Duration
     private var inFlight: InFlightRefresh?
@@ -92,6 +98,16 @@ public actor MenuRefreshCoordinator {
     ) {
         self.client = client
         self.sessionRuntime = sessionRuntime
+        self.freshReuseDuration = freshReuseDuration
+    }
+
+    init(
+        client: any ControlPlaneClient,
+        sessionMiniSnapshotProvider: (any MenuBarSessionMiniSnapshotProviding)?,
+        freshReuseDuration: Duration = .milliseconds(750)
+    ) {
+        self.client = client
+        self.sessionRuntime = sessionMiniSnapshotProvider
         self.freshReuseDuration = freshReuseDuration
     }
 
@@ -158,7 +174,7 @@ public actor MenuRefreshCoordinator {
 
     private static func fetch(
         client: any ControlPlaneClient,
-        sessionRuntime: MenuBarSessionRuntime?,
+        sessionRuntime: (any MenuBarSessionMiniSnapshotProviding)?,
         shouldFetchDesktopSnapshot: Bool
     ) async -> MenuRefreshResult {
         let sessionMiniSnapshot = fetchSessionMiniSnapshot(sessionRuntime)
@@ -215,7 +231,7 @@ public actor MenuRefreshCoordinator {
     }
 
     private static func fetchSessionMiniSnapshot(
-        _ sessionRuntime: MenuBarSessionRuntime?
+        _ sessionRuntime: (any MenuBarSessionMiniSnapshotProviding)?
     ) -> MenuBarSessionMiniLocalSnapshot? {
         try? sessionRuntime?.cachedSnapshot()
     }

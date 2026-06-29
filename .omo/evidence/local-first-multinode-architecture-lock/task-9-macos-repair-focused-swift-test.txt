@@ -1,0 +1,99 @@
+Building for debugging...
+[Using on-disk description]
+[2 / 17] LooperMenuBarCore
+[4 / 19] LooperMenuBarCore
+[13 / 29] LooperMenuBarCore
+[13 / 29] LooperMenuBar-product
+[23 / 39] LooperMenuBar-product
+[27 / 37] LooperMenuBarCoreTests-product
+[27 / 37] LooperMenuBar
+[34 / 48] LooperMenuBarCoreTests-product
+[36 / 48] LooperMenuBarCoreTests-product
+[37 / 48] LooperMenuBarCoreTests-product
+[38 / 48] LooperMenuBarCoreTests-product
+[45 / 53] LooperMenuBar-product
+[49 / 53] LooperMenuBar
+[49 / 53] LooperMenuBarCoreTests-product
+[51 / 53] LooperMenuBarCoreTests-product
+[54 / 54] LooperMenuBar-product
+Build complete! (7.03 sec)
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "Menu refresh coordinator" started.
+􀟈  Suite LooperDiagnosticsContentTests started.
+􀟈  Suite "Menu bar SessionMini local-first" started.
+􀟈  Test "ACP host failure keeps successful snapshot" started.
+􀟈  Test "snapshot failure keeps enrichment fetches independent" started.
+􀟈  Test "cached refresh rereads local pending notification reply" started.
+􀟈  Test "connection failure keeps successful snapshot" started.
+􀟈  Test "fresh successful refresh is reused until force refresh" started.
+􀟈  Test "route switch marks previous endpoint stale until Session reconnects" started.
+􀟈  Test "force refresh waits for stale normal in-flight request then fetches fresh" started.
+􀟈  Test "cached refresh preserves SessionMini when local reread is unavailable" started.
+􀟈  Test "concurrent force refreshes share one forced request" started.
+􀟈  Test "ready Session route without HTTP health is not handoff proof" started.
+􀟈  Test "mobile health failure keeps successful snapshot" started.
+􀟈  Test "failed refresh replaces prior success cache during reuse window" started.
+􀟈  Test "force refresh keeps SessionMini as menu truth when HTTP succeeds" started.
+􀟈  Test "reusable enrichment does not carry stale mobile health" started.
+􀟈  Test "cached SessionMini normal refresh fetches cheap mobile enrichment only" started.
+􀟈  Test "optional refresh details fetch concurrently after snapshot succeeds" started.
+􀟈  Test "cached refresh clears SessionMini when local projection is empty" started.
+􀟈  Test "route switch keeps HTTP health as enrichment until Session proof" started.
+􀟈  Test "SessionMini diagnostics do not label local cache connected" started.
+􀟈  Test "mobile health alone is not reusable menu enrichment" started.
+􀟈  Test "concurrent refreshes share the in-flight request" started.
+􀟈  Test rendersAcpTimingRoutesAndClassification() started.
+􀟈  Test rendersUnavailableRefreshError() started.
+􀟈  Test "realtime endpoint resolver seeds Session without mobile health" started.
+􀟈  Test "offline notification reply stays durable and dedupes retry" started.
+􀟈  Test "SessionMini status reports realtime when unblocked" started.
+􀟈  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" started.
+􀟈  Test "menu actions enqueue durable Rust-core commands before transport" started.
+􀟈  Test "notification replies enter durable Rust-core outbox before transport" started.
+􀟈  Test "realtime endpoint resolver ranks health routes and local fallback" started.
+􀟈  Test "cached SessionMini makes refresh successful when HTTP snapshot fails" started.
+􀟈  Test "notification reply redraw shows pending state before stream echo" started.
+􀟈  Test "restores cached SessionMini rows before network" started.
+􀟈  Test "menu actions can use Rust-core generated mutation IDs" started.
+􀟈  Test "SessionMini status drives menu bar human status" started.
+􁁛  Test "route switch marks previous endpoint stale until Session reconnects" passed after 0.036 seconds.
+􁁛  Test "reusable enrichment does not carry stale mobile health" passed after 0.035 seconds.
+􁁛  Test "ready Session route without HTTP health is not handoff proof" passed after 0.036 seconds.
+􁁛  Test "route switch keeps HTTP health as enrichment until Session proof" passed after 0.035 seconds.
+􁁛  Test "mobile health alone is not reusable menu enrichment" passed after 0.035 seconds.
+􁁛  Test "realtime endpoint resolver seeds Session without mobile health" passed after 0.035 seconds.
+􁁛  Test rendersUnavailableRefreshError() passed after 0.035 seconds.
+􁁛  Test "offline notification reply stays durable and dedupes retry" passed after 0.035 seconds.
+􁁛  Test "menu actions enqueue durable Rust-core commands before transport" passed after 0.035 seconds.
+􁁛  Test "mismatched cache preserves local fallback and offline prompt stays in outbox" passed after 0.035 seconds.
+􁁛  Test "notification replies enter durable Rust-core outbox before transport" passed after 0.035 seconds.
+􁁛  Test "realtime endpoint resolver ranks health routes and local fallback" passed after 0.035 seconds.
+􁁛  Test rendersAcpTimingRoutesAndClassification() passed after 0.035 seconds.
+􁁛  Suite LooperDiagnosticsContentTests passed after 0.037 seconds.
+􁁛  Test "ACP host failure keeps successful snapshot" passed after 0.037 seconds.
+􁁛  Test "connection failure keeps successful snapshot" passed after 0.037 seconds.
+􁁛  Test "mobile health failure keeps successful snapshot" passed after 0.037 seconds.
+􁁛  Test "snapshot failure keeps enrichment fetches independent" passed after 0.037 seconds.
+􁁛  Test "menu actions can use Rust-core generated mutation IDs" passed after 0.036 seconds.
+􁁛  Test "cached refresh preserves SessionMini when local reread is unavailable" passed after 0.037 seconds.
+􁁛  Test "force refresh keeps SessionMini as menu truth when HTTP succeeds" passed after 0.042 seconds.
+􁁛  Test "fresh successful refresh is reused until force refresh" passed after 0.042 seconds.
+􁁛  Test "failed refresh replaces prior success cache during reuse window" passed after 0.042 seconds.
+􁁛  Test "cached refresh rereads local pending notification reply" passed after 0.043 seconds.
+􁁛  Test "SessionMini status drives menu bar human status" passed after 0.042 seconds.
+􁁛  Test "cached SessionMini makes refresh successful when HTTP snapshot fails" passed after 0.044 seconds.
+􁁛  Test "cached SessionMini normal refresh fetches cheap mobile enrichment only" passed after 0.047 seconds.
+􁁛  Test "cached refresh clears SessionMini when local projection is empty" passed after 0.047 seconds.
+􁁛  Test "SessionMini diagnostics do not label local cache connected" passed after 0.052 seconds.
+􁁛  Test "restores cached SessionMini rows before network" passed after 0.051 seconds.
+􁁛  Test "SessionMini status reports realtime when unblocked" passed after 0.052 seconds.
+􁁛  Test "notification reply redraw shows pending state before stream echo" passed after 0.052 seconds.
+􁁛  Suite "Menu bar SessionMini local-first" passed after 0.054 seconds.
+􁁛  Test "concurrent force refreshes share one forced request" passed after 0.143 seconds.
+􁁛  Test "concurrent refreshes share the in-flight request" passed after 0.143 seconds.
+􁁛  Test "force refresh waits for stale normal in-flight request then fetches fresh" passed after 0.249 seconds.
+􁁛  Test "optional refresh details fetch concurrently after snapshot succeeds" passed after 0.249 seconds.
+􁁛  Suite "Menu refresh coordinator" passed after 0.250 seconds.
+􁁛  Test run with 35 tests in 3 suites passed after 0.250 seconds.

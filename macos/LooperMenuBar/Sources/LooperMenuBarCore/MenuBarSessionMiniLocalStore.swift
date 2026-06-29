@@ -173,12 +173,8 @@ private final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
         self.sessionManager = sessionManager
     }
 
-    func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
-        let snapshot = try currentStateMiniSnapshot()
-        guard !snapshot.sessions.isEmpty else {
-            return nil
-        }
-        return try menuSnapshot(from: snapshot)
+    func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot {
+        try menuSnapshot(from: currentStateMiniSnapshot())
     }
 
     func pendingCommands() -> [MenuBarSessionMiniPendingCommand] {
@@ -197,12 +193,9 @@ private final class MenuBarSessionMiniLocalStore: @unchecked Sendable {
     }
 
     private func menuSnapshot(from snapshot: ClientLocalStateSnapshot) throws
-        -> MenuBarSessionMiniLocalSnapshot?
+        -> MenuBarSessionMiniLocalSnapshot
     {
         let projection = try reduceStateMinisMenuSnapshot(snapshot: snapshot)
-        guard !projection.sessions.isEmpty else {
-            return nil
-        }
         return MenuBarSessionMiniLocalSnapshot(projection)
     }
 }
@@ -231,7 +224,7 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         try? MenuBarSessionRuntime(fileURL: fileURL)
     }
 
-    public func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot? {
+    public func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot {
         try localStore.cachedSnapshot()
     }
 

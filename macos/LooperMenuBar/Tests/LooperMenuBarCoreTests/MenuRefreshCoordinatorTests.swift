@@ -437,22 +437,24 @@ struct MenuRefreshCoordinatorTests {
 
     @Test("cached refresh preserves SessionMini when local reread is unavailable")
     func cachedRefreshPreservesSessionMiniWhenLocalRereadUnavailable() async throws {
-        let seeded = try seededRuntimeWithFileURL(
+        let snapshot = try seededRuntime(
             latestSeq: 306,
             sessionID: "thread-local",
             title: "Stable local menu truth"
-        )
+        ).cachedSnapshot()
+        let snapshotProvider = SequenceSessionMiniSnapshotProvider([
+            .success(snapshot),
+            .failure(MenuRefreshTestLocalReadError()),
+        ])
         let client = MenuRefreshRecordingClient()
         let coordinator = MenuRefreshCoordinator(
             client: client,
-            sessionRuntime: seeded.runtime,
+            sessionMiniSnapshotProvider: snapshotProvider,
             freshReuseDuration: .seconds(5)
         )
 
         let initial = await coordinator.refresh()
         #expect(initial.sessionMiniSnapshot?.latestSeq == 306)
-
-        try Data("{not-json".utf8).write(to: seeded.fileURL, options: .atomic)
 
         let cached = await coordinator.refresh()
 
@@ -460,6 +462,39 @@ struct MenuRefreshCoordinatorTests {
         #expect(cached.sessionMiniSnapshot?.latestSeq == 306)
         #expect(cached.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
         #expect(cached.sessionMiniSnapshot?.sessions.first?.title == "Stable local menu truth")
+        #expect(client.snapshotCalls == 0)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
+        #expect(client.healthCalls == 1)
+    }
+
+    @Test("cached refresh clears SessionMini when local projection is empty")
+    func cachedRefreshClearsSessionMiniWhenLocalProjectionIsEmpty() async throws {
+        let snapshot = try seededRuntime(
+            latestSeq: 307,
+            sessionID: "thread-local",
+            title: "Stale local menu truth"
+        ).cachedSnapshot()
+        let emptySnapshot = try emptyMiniSnapshot(latestSeq: 308)
+        let snapshotProvider = SequenceSessionMiniSnapshotProvider([
+            .success(snapshot),
+            .success(emptySnapshot),
+        ])
+        let client = MenuRefreshRecordingClient()
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionMiniSnapshotProvider: snapshotProvider,
+            freshReuseDuration: .seconds(5)
+        )
+
+        let initial = await coordinator.refresh()
+        #expect(initial.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+
+        let cached = await coordinator.refresh()
+
+        #expect(cached.succeeded)
+        #expect(cached.sessionMiniSnapshot?.latestSeq == 308)
+        #expect(cached.sessionMiniSnapshot?.sessions.isEmpty == true)
         #expect(client.snapshotCalls == 0)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
@@ -548,6 +583,26 @@ struct MenuRefreshCoordinatorTests {
 
         #expect(results.map { $0.snapshot?.threadCount } == [1, 1])
         #expect(client.snapshotCalls == 1)
+    }
+}
+
+private struct MenuRefreshTestLocalReadError: Error {}
+
+private final class SequenceSessionMiniSnapshotProvider: MenuBarSessionMiniSnapshotProviding,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var reads: [Result<MenuBarSessionMiniLocalSnapshot, Error>]
+
+    init(_ reads: [Result<MenuBarSessionMiniLocalSnapshot, Error>]) {
+        self.reads = reads
+    }
+
+    func cachedSnapshot() throws -> MenuBarSessionMiniLocalSnapshot {
+        try lock.withLock {
+            let read = reads.count > 1 ? reads.removeFirst() : reads[0]
+            return try read.get()
+        }
     }
 }
 
@@ -844,6 +899,29 @@ private func seededRuntimeWithFileURL(
     )
     try data.write(to: fileURL, options: .atomic)
     return (try MenuBarSessionRuntime(fileURL: fileURL), fileURL)
+}
+
+private func emptyMiniSnapshot(latestSeq: Int64) throws -> MenuBarSessionMiniLocalSnapshot {
+    let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LooperMenuRefreshTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
+    try seedEmptyMiniCache(at: fileURL, latestSeq: latestSeq)
+    return try MenuBarSessionRuntime(fileURL: fileURL).cachedSnapshot()
+}
+
+private func seedEmptyMiniCache(at fileURL: URL, latestSeq: Int64) throws {
+    let cache: [String: Any] = [
+        "latestSeq": latestSeq,
+        "sessions": [],
+        "pendingCommands": [],
+        "serverTime": "",
+    ]
+    let data = try JSONSerialization.data(withJSONObject: cache, options: [.sortedKeys])
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try data.write(to: fileURL, options: .atomic)
 }
 
 private struct TestMenuRefreshMiniPayload: Encodable {
