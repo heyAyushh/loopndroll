@@ -25,7 +25,7 @@ use agent_control_plane::http::build_router;
 use agent_control_plane::mobile::api::{
     latest_session_mini_revision, session_mini_projection_inputs,
 };
-use agent_control_plane::mobile::events::MobileEventKind;
+use agent_control_plane::mobile::events::{MobileEventKind, snapshot_revision_changed_event};
 use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
@@ -1668,6 +1668,19 @@ async fn mobile_snapshot_uses_rust_auth_and_codex_threads() {
             .as_str()
             .is_some_and(|revision| !revision.is_empty())
     );
+    assert_eq!(snapshot["latestSeq"], snapshot["latest_seq"]);
+    assert!(
+        snapshot["latestSeq"]
+            .as_i64()
+            .is_some_and(|latest_seq| latest_seq >= 0)
+    );
+    assert_eq!(snapshot["snapshotKind"], "bootstrapRecovery");
+    assert_eq!(snapshot["snapshot_kind"], "bootstrapRecovery");
+    assert_eq!(snapshot["serverTime"], snapshot["host"]["lastSyncedAt"]);
+    assert_eq!(snapshot["freshness"]["source"], "desktop-mobile-snapshot");
+    assert_eq!(snapshot["freshness"]["latestSeq"], snapshot["latestSeq"]);
+    assert_eq!(snapshot["freshness"]["revision"], snapshot["revision"]);
+    assert_eq!(snapshot["freshness"]["serverTime"], snapshot["serverTime"]);
     assert_eq!(snapshot["sessions"][0]["id"], "thread-child");
     assert_eq!(snapshot["sessions"][1]["id"], "thread-main");
 }
@@ -2219,6 +2232,19 @@ async fn session_mini_snapshot_requires_produced_projection() {
     assert_eq!(recovery["error"], "recovery_required");
     assert_eq!(recovery["recovery"], "/api/mobile/session-minis/snapshot");
     assert_eq!(recovery["latestSeq"], recovery["latest_seq"]);
+    assert!(
+        recovery["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty())
+    );
+    assert_eq!(recovery["serverTime"], recovery["server_time"]);
+    assert_eq!(
+        recovery["freshness"]["source"],
+        "mobile-session-mini-projection"
+    );
+    assert_eq!(recovery["freshness"]["latestSeq"], recovery["latestSeq"]);
+    assert_eq!(recovery["freshness"]["revision"], recovery["revision"]);
+    assert_eq!(recovery["freshness"]["serverTime"], recovery["serverTime"]);
 }
 
 #[tokio::test]
@@ -2291,6 +2317,15 @@ async fn session_mini_snapshot_requires_recovery_for_partial_cache_without_repla
     assert_eq!(recovery["error"], "recovery_required");
     assert_eq!(recovery["recovery"], "/api/mobile/session-minis/snapshot");
     assert_eq!(recovery["latestSeq"], recovery["latest_seq"]);
+    assert_eq!(recovery["revision"], "stale-partial-cache");
+    assert_eq!(recovery["serverTime"], recovery["server_time"]);
+    assert_eq!(
+        recovery["freshness"]["source"],
+        "mobile-session-mini-projection"
+    );
+    assert_eq!(recovery["freshness"]["latestSeq"], recovery["latestSeq"]);
+    assert_eq!(recovery["freshness"]["revision"], recovery["revision"]);
+    assert_eq!(recovery["freshness"]["serverTime"], recovery["serverTime"]);
     assert!(
         !control_plane
             .store()
@@ -2436,6 +2471,13 @@ async fn session_mini_snapshot_is_recovery_only() {
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
+    let expected_revision = latest_session_mini_revision(
+        &control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("mini records"),
+    )
+    .expect("mini revision");
     let router = build_router(control_plane);
     let authorization = issue_mobile_authorization_header(&router).await;
 
@@ -2451,6 +2493,22 @@ async fn session_mini_snapshot_is_recovery_only() {
     assert!(snapshot.get("sessions").is_some());
     assert!(snapshot.get("latestSeq").is_some());
     assert!(snapshot.get("latest_seq").is_some());
+    assert_eq!(snapshot["revision"], expected_revision);
+    assert!(
+        snapshot["serverTime"]
+            .as_str()
+            .is_some_and(|server_time| !server_time.is_empty())
+    );
+    assert_eq!(snapshot["serverTime"], snapshot["server_time"]);
+    assert_eq!(
+        snapshot["freshness"]["source"],
+        "mobile-session-mini-projection"
+    );
+    assert_eq!(snapshot["freshness"]["latestSeq"], snapshot["latestSeq"]);
+    assert_eq!(snapshot["freshness"]["revision"], snapshot["revision"]);
+    assert_eq!(snapshot["freshness"]["serverTime"], snapshot["serverTime"]);
+    assert_eq!(snapshot["snapshotKind"], "recovery");
+    assert_eq!(snapshot["snapshot_kind"], "recovery");
     assert_eq!(snapshot["replace"], true);
     assert!(snapshot.get("surfaceSessions").is_none());
     assert!(snapshot.get("globalSettings").is_none());
@@ -2478,7 +2536,77 @@ async fn session_mini_snapshot_is_recovery_only() {
         .to_bytes();
     let gap: serde_json::Value = serde_json::from_slice(&body).expect("gap json");
     assert_eq!(gap["error"], "seq_gap");
+    assert_eq!(gap["latestSeq"], gap["latest_seq"]);
+    assert_eq!(gap["requestedAfterSeq"], gap["requested_after_seq"]);
+    assert!(
+        gap["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty())
+    );
+    assert_eq!(gap["serverTime"], gap["server_time"]);
+    assert_eq!(gap["freshness"]["source"], "mobile-session-mini-projection");
+    assert_eq!(gap["freshness"]["latestSeq"], gap["latestSeq"]);
+    assert_eq!(gap["freshness"]["revision"], gap["revision"]);
+    assert_eq!(gap["freshness"]["serverTime"], gap["serverTime"]);
     assert_eq!(gap["recovery"], "/api/mobile/session-minis/snapshot");
+}
+
+#[tokio::test]
+async fn session_mini_snapshot_exposes_projection_seq_when_event_log_is_newer() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
+    let projection_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("projection seq");
+    let projection_revision = latest_session_mini_revision(
+        &control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("mini records"),
+    )
+    .expect("mini revision");
+    control_plane
+        .store()
+        .record_mobile_event(&snapshot_revision_changed_event(
+            "newer-event-without-mini-projection".to_owned(),
+        ))
+        .expect("newer mobile event");
+    let latest_event_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest event seq");
+    assert!(
+        latest_event_seq > projection_seq,
+        "fixture must leave the event log ahead of the mini projection"
+    );
+
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(snapshot["latestSeq"], projection_seq);
+    assert!(
+        snapshot["latestSeq"].as_i64().expect("snapshot seq") < latest_event_seq,
+        "HTTP recovery must expose projection freshness so stream-newer clients reject it"
+    );
+    assert_eq!(snapshot["freshness"]["latestSeq"], snapshot["latestSeq"]);
+    assert_eq!(snapshot["revision"], projection_revision);
+    assert_ne!(
+        snapshot["revision"], "newer-event-without-mini-projection",
+        "HTTP recovery must not advertise a non-projected event revision as snapshot freshness"
+    );
+    assert_eq!(snapshot["freshness"]["revision"], snapshot["revision"]);
+    assert_eq!(snapshot["snapshotKind"], "recovery");
 }
 
 #[tokio::test]

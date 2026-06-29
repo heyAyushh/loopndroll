@@ -1,0 +1,10 @@
+swift/LooperClientCore/Sources/LooperClientCore/Generated/looper_client_core.swift:4017:    case setAssistantSurface
+swift/LooperClientCore/Sources/LooperClientCore/Generated/looper_client_core.swift:4052:        case 4: return .setAssistantSurface
+swift/LooperClientCore/Sources/LooperClientCore/Generated/looper_client_core.swift:4088:        case .setAssistantSurface:
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:244:        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:248:        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:298:        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:302:        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:372:        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:445:        let pendingSurfaceCommands = Self.pendingCommands(in: runtime, kind: .setAssistantSurface)
+ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift:486:        let pendingSurfaceCommands = Self.pendingCommands(in: runtime, kind: .setAssistantSurface)

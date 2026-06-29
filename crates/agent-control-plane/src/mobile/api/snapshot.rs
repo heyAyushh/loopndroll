@@ -20,6 +20,7 @@ pub fn mobile_snapshot(
     session_state: &MobileSessionState,
     base_url: &str,
     grpc_base_urls: &[String],
+    latest_seq: i64,
     synced_at: &str,
 ) -> Value {
     let surface_sessions = mobile_surface_sessions(snapshot, session_state);
@@ -27,9 +28,24 @@ pub fn mobile_snapshot(
         .get(&session_state.assistant_surface)
         .cloned()
         .unwrap_or_default();
+    let revision = snapshot.revision.as_str();
 
     json!({
-        "revision": snapshot.revision,
+        "revision": revision,
+        "latest_seq": latest_seq,
+        "latestSeq": latest_seq,
+        "server_time": synced_at,
+        "serverTime": synced_at,
+        "snapshot_kind": "bootstrapRecovery",
+        "snapshotKind": "bootstrapRecovery",
+        "freshness": {
+            "source": "desktop-mobile-snapshot",
+            "latest_seq": latest_seq,
+            "latestSeq": latest_seq,
+            "revision": revision,
+            "server_time": synced_at,
+            "serverTime": synced_at,
+        },
         "host": host_summary(base_url, grpc_base_urls, synced_at),
         "globalSettings": mobile_global_settings(session_state),
         "sessions": sessions,

@@ -1,11 +1,13 @@
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde_json::{Value, json};
 
 use crate::control_plane::ControlPlane;
-use crate::events::MobileStateEventGap;
+use crate::events::{MobileSessionMiniRecord, MobileStateEventGap};
 use crate::mobile::api::{
-    mobile_session_mini_delta, mobile_session_mini_snapshot, mobile_snapshot,
+    latest_session_mini_revision, mobile_session_mini_delta, mobile_session_mini_snapshot,
+    mobile_snapshot,
 };
 use crate::mobile::network::advertised_mobile_grpc_base_urls;
 use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
@@ -15,6 +17,9 @@ use super::responses::{internal_mobile_error_response, mobile_session_error_resp
 
 pub(super) const DEFAULT_SESSION_MINI_REPLAY_LIMIT: usize = 100;
 pub(super) const MAX_SESSION_MINI_REPLAY_LIMIT: usize = 500;
+const SESSION_MINI_RECOVERY_PATH: &str = "/api/mobile/session-minis/snapshot";
+const SESSION_MINI_FRESHNESS_SOURCE: &str = "mobile-session-mini-projection";
+const MOBILE_STATE_REVISION_PREFIX: &str = "mobile-state:seq-";
 
 pub(super) fn desktop_mobile_state_response(control_plane: &ControlPlane) -> Response {
     match control_plane.mobile_session_service().state() {
@@ -37,6 +42,11 @@ pub(super) fn mobile_snapshot_response(
     };
     let base_urls = request_advertised_mobile_base_urls(headers);
     let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
+    let latest_seq = match control_plane.store().latest_mobile_state_event_seq() {
+        Ok(latest_seq) => latest_seq,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    let server_time = current_mobile_time();
 
     (
         StatusCode::OK,
@@ -45,7 +55,8 @@ pub(super) fn mobile_snapshot_response(
             &session_state,
             base_urls.first().map(String::as_str).unwrap_or_default(),
             &grpc_base_urls,
-            &current_mobile_time(),
+            latest_seq,
+            &server_time,
         )),
     )
         .into_response()
@@ -54,9 +65,16 @@ pub(super) fn mobile_snapshot_response(
 pub(super) fn mobile_session_minis_snapshot_response(control_plane: &ControlPlane) -> Response {
     match cached_mobile_session_mini_projection(control_plane) {
         Ok(Some((latest_seq, records))) => {
+            let revision = session_mini_recovery_revision(control_plane, latest_seq, &records);
+            let server_time = current_mobile_time();
             return (
                 StatusCode::OK,
-                Json(mobile_session_mini_snapshot(latest_seq, &records)),
+                Json(mobile_session_mini_snapshot(
+                    latest_seq,
+                    &revision,
+                    &server_time,
+                    &records,
+                )),
             )
                 .into_response();
         }
@@ -82,14 +100,25 @@ pub(super) fn mobile_session_minis_delta_response(
         Ok(records) => records,
         Err(error) => {
             if let Some(gap) = error.downcast_ref::<MobileStateEventGap>() {
+                let revision = latest_mobile_state_revision(control_plane, gap.latest_seq);
+                let server_time = current_mobile_time();
                 return (
                     StatusCode::CONFLICT,
-                    Json(serde_json::json!({
+                    Json(json!({
                         "error": "seq_gap",
                         "latest_seq": gap.latest_seq,
                         "latestSeq": gap.latest_seq,
                         "requested_after_seq": gap.requested_after_seq,
-                        "recovery": "/api/mobile/session-minis/snapshot",
+                        "requestedAfterSeq": gap.requested_after_seq,
+                        "revision": revision,
+                        "server_time": server_time,
+                        "serverTime": server_time,
+                        "freshness": session_mini_freshness(
+                            gap.latest_seq,
+                            &revision,
+                            &server_time,
+                        ),
+                        "recovery": SESSION_MINI_RECOVERY_PATH,
                     })),
                 )
                     .into_response();
@@ -103,6 +132,8 @@ pub(super) fn mobile_session_minis_delta_response(
     };
     match control_plane.store().latest_mobile_state_event_seq() {
         Ok(latest_seq) => {
+            let revision = session_mini_recovery_revision(control_plane, latest_seq, &all_records);
+            let server_time = current_mobile_time();
             let has_changes = latest_seq > after_seq;
             let delta_contains_complete_projection = has_changes
                 && records.len() == all_records.len()
@@ -116,6 +147,8 @@ pub(super) fn mobile_session_minis_delta_response(
                 StatusCode::OK,
                 Json(mobile_session_mini_delta(
                     latest_seq,
+                    &revision,
+                    &server_time,
                     payload_records,
                     replace,
                 )),
@@ -162,15 +195,60 @@ fn mobile_session_minis_recovery_required_response(control_plane: &ControlPlane)
         .store()
         .latest_mobile_state_event_seq()
         .unwrap_or_default();
+    let revision = latest_mobile_state_revision(control_plane, latest_seq);
+    let server_time = current_mobile_time();
     (
         StatusCode::CONFLICT,
-        Json(serde_json::json!({
+        Json(json!({
             "error": "recovery_required",
             "message": "Session mini projection is not ready; wait for the producer projection event and retry.",
             "latest_seq": latest_seq,
             "latestSeq": latest_seq,
-            "recovery": "/api/mobile/session-minis/snapshot",
+            "revision": revision,
+            "server_time": server_time,
+            "serverTime": server_time,
+            "freshness": session_mini_freshness(latest_seq, &revision, &server_time),
+            "recovery": SESSION_MINI_RECOVERY_PATH,
         })),
     )
         .into_response()
+}
+
+fn session_mini_recovery_revision(
+    control_plane: &ControlPlane,
+    latest_seq: i64,
+    records: &[MobileSessionMiniRecord],
+) -> String {
+    latest_session_mini_revision(records).unwrap_or_else(|| {
+        control_plane
+            .store()
+            .latest_mobile_session_mini_revision()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| fallback_mobile_state_revision(latest_seq))
+    })
+}
+
+fn latest_mobile_state_revision(control_plane: &ControlPlane, latest_seq: i64) -> String {
+    control_plane
+        .store()
+        .latest_mobile_session_mini_revision()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| fallback_mobile_state_revision(latest_seq))
+}
+
+fn fallback_mobile_state_revision(latest_seq: i64) -> String {
+    format!("{MOBILE_STATE_REVISION_PREFIX}{latest_seq}")
+}
+
+fn session_mini_freshness(latest_seq: i64, revision: &str, server_time: &str) -> Value {
+    json!({
+        "source": SESSION_MINI_FRESHNESS_SOURCE,
+        "latest_seq": latest_seq,
+        "latestSeq": latest_seq,
+        "revision": revision,
+        "server_time": server_time,
+        "serverTime": server_time,
+    })
 }

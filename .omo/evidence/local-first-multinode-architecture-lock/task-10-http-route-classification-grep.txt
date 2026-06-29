@@ -1,0 +1,181 @@
+crates/agent-control-plane/src/http/mobile_state.rs:13:use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
+crates/agent-control-plane/src/http/mobile_state.rs:24:pub(super) fn desktop_mobile_state_response(control_plane: &ControlPlane) -> Response {
+crates/agent-control-plane/src/http/mobile_state.rs:35:    let snapshot = match mobile_desktop_snapshot(control_plane) {
+crates/agent-control-plane/src/http/mobile_state.rs:65:pub(super) fn mobile_session_minis_snapshot_response(control_plane: &ControlPlane) -> Response {
+crates/agent-control-plane/src/http/mobile_state.rs:85:    mobile_session_minis_recovery_required_response(control_plane)
+crates/agent-control-plane/src/http/mobile_state.rs:88:pub(super) fn mobile_session_minis_delta_response(
+crates/agent-control-plane/src/http/mobile_state.rs:98:        .mobile_session_minis_after_seq(after_seq, limit)
+crates/agent-control-plane/src/http/mobile_state.rs:129:    let all_records = match control_plane.store().mobile_session_minis() {
+crates/agent-control-plane/src/http/mobile_state.rs:167:        .mobile_session_minis()
+crates/agent-control-plane/src/http/mobile_state.rs:193:fn mobile_session_minis_recovery_required_response(control_plane: &ControlPlane) -> Response {
+crates/agent-control-plane/src/http/mod.rs:31:use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
+crates/agent-control-plane/src/http/mod.rs:48:    desktop_mobile_state_response, mobile_session_minis_delta_response,
+crates/agent-control-plane/src/http/mod.rs:49:    mobile_session_minis_snapshot_response, mobile_snapshot_response,
+crates/agent-control-plane/src/http/mod.rs:66:use self::session_actions::disabled_http_session_state_mutation_response;
+crates/agent-control-plane/src/http/mod.rs:84:        .route("/health", get(health))
+crates/agent-control-plane/src/http/mod.rs:85:        .route("/status/control-plane", get(control_plane_status))
+crates/agent-control-plane/src/http/mod.rs:86:        .route("/automations", get(automations))
+crates/agent-control-plane/src/http/mod.rs:87:        .route("/goal", get(goals))
+crates/agent-control-plane/src/http/mod.rs:88:        .route("/goals", get(goals))
+crates/agent-control-plane/src/http/mod.rs:89:        .route("/assistant-adapters", get(assistant_adapters))
+crates/agent-control-plane/src/http/mod.rs:90:        .route("/desktop/acp-targets", get(desktop_acp_targets))
+crates/agent-control-plane/src/http/mod.rs:91:        .route("/codex/servers", get(codex_servers))
+crates/agent-control-plane/src/http/mod.rs:92:        .route("/codex/compactions", get(compactions))
+crates/agent-control-plane/src/http/mod.rs:93:        .route("/desktop/snapshot", get(desktop_snapshot))
+crates/agent-control-plane/src/http/mod.rs:94:        .route("/handoff/sessions/:thread_id", get(handoff_session_page))
+crates/agent-control-plane/src/http/mod.rs:95:        .route("/sync/manifest", get(sync_manifest))
+crates/agent-control-plane/src/http/mod.rs:100:        .route(
+crates/agent-control-plane/src/http/mod.rs:104:        .route(
+crates/agent-control-plane/src/http/mod.rs:109:        .route("/desktop/devin", get(desktop_devin))
+crates/agent-control-plane/src/http/mod.rs:110:        .route("/desktop/zed", get(desktop_zed))
+crates/agent-control-plane/src/http/mod.rs:111:        .route("/desktop/devin/acp-bridge", get(desktop_devin_acp_bridge))
+crates/agent-control-plane/src/http/mod.rs:112:        .route(
+crates/agent-control-plane/src/http/mod.rs:116:        .route(
+crates/agent-control-plane/src/http/mod.rs:120:        .route(
+crates/agent-control-plane/src/http/mod.rs:124:        .route(
+crates/agent-control-plane/src/http/mod.rs:128:        .route(
+crates/agent-control-plane/src/http/mod.rs:132:        .route("/desktop/acp-client-hosts", get(desktop_acp_client_hosts))
+crates/agent-control-plane/src/http/mod.rs:133:        .route(
+crates/agent-control-plane/src/http/mod.rs:137:        .route(
+crates/agent-control-plane/src/http/mod.rs:141:        .route(
+crates/agent-control-plane/src/http/mod.rs:145:        .route(
+crates/agent-control-plane/src/http/mod.rs:149:        .route(
+crates/agent-control-plane/src/http/mod.rs:153:        .route(
+crates/agent-control-plane/src/http/mod.rs:157:        .route(
+crates/agent-control-plane/src/http/mod.rs:176:        .route("/desktop/connections", get(desktop_connections))
+crates/agent-control-plane/src/http/mod.rs:177:        .route("/desktop/pairing", get(desktop_pairing))
+crates/agent-control-plane/src/http/mod.rs:178:        .route(
+crates/agent-control-plane/src/http/mod.rs:182:        .route(
+crates/agent-control-plane/src/http/mod.rs:184:            delete(desktop_mobile_connection_revoke).patch(desktop_mobile_connection_rename),
+crates/agent-control-plane/src/http/mod.rs:186:        .route("/desktop/mobile-state", get(desktop_mobile_state))
+crates/agent-control-plane/src/http/mod.rs:187:        .route("/desktop/push/devices", get(desktop_push_devices))
+crates/agent-control-plane/src/http/mod.rs:188:        .route(
+crates/agent-control-plane/src/http/mod.rs:196:        .route(
+crates/agent-control-plane/src/http/mod.rs:198:            post(disabled_desktop_default_prompt),
+crates/agent-control-plane/src/http/mod.rs:200:        .route("/desktop/settings/scope", post(disabled_desktop_scope))
+crates/agent-control-plane/src/http/mod.rs:201:        .route(
+crates/agent-control-plane/src/http/mod.rs:203:            post(disabled_desktop_assistant_surface),
+crates/agent-control-plane/src/http/mod.rs:205:        .route(
+crates/agent-control-plane/src/http/mod.rs:207:            post(disabled_desktop_global_preset),
+crates/agent-control-plane/src/http/mod.rs:209:        .route(
+crates/agent-control-plane/src/http/mod.rs:211:            post(disabled_desktop_global_notification),
+crates/agent-control-plane/src/http/mod.rs:213:        .route(
+crates/agent-control-plane/src/http/mod.rs:215:            post(disabled_http_session_state_mutation),
+crates/agent-control-plane/src/http/mod.rs:217:        .route(
+crates/agent-control-plane/src/http/mod.rs:219:            post(disabled_desktop_global_completion_check),
+crates/agent-control-plane/src/http/mod.rs:221:        .route(
+crates/agent-control-plane/src/http/mod.rs:223:            post(disabled_desktop_notification_upsert),
+crates/agent-control-plane/src/http/mod.rs:225:        .route(
+crates/agent-control-plane/src/http/mod.rs:227:            delete(disabled_http_session_state_mutation),
+crates/agent-control-plane/src/http/mod.rs:229:        .route("/desktop/telegram/chats", post(desktop_telegram_chats))
+crates/agent-control-plane/src/http/mod.rs:230:        .route(
+crates/agent-control-plane/src/http/mod.rs:232:            post(disabled_desktop_completion_check_upsert),
+crates/agent-control-plane/src/http/mod.rs:234:        .route(
+crates/agent-control-plane/src/http/mod.rs:236:            delete(disabled_http_session_state_mutation),
+crates/agent-control-plane/src/http/mod.rs:242:        .route(
+crates/agent-control-plane/src/http/mod.rs:244:            post(disabled_desktop_session_notifications),
+crates/agent-control-plane/src/http/mod.rs:246:        .route(
+crates/agent-control-plane/src/http/mod.rs:248:            post(disabled_desktop_session_completion_check),
+crates/agent-control-plane/src/http/mod.rs:250:        .route(
+crates/agent-control-plane/src/http/mod.rs:252:            post(disabled_desktop_session_archive),
+crates/agent-control-plane/src/http/mod.rs:254:        .route(
+crates/agent-control-plane/src/http/mod.rs:256:            post(disabled_http_session_state_mutation),
+crates/agent-control-plane/src/http/mod.rs:258:        .route(
+crates/agent-control-plane/src/http/mod.rs:260:            get(desktop_session_detail).delete(disabled_http_session_state_mutation),
+crates/agent-control-plane/src/http/mod.rs:262:        .route("/desktop/shutdown", post(desktop_shutdown))
+crates/agent-control-plane/src/http/mod.rs:267:        .route("/hooks/clear", post(unregister_hooks))
+crates/agent-control-plane/src/http/mod.rs:268:        .route("/hooks/register", post(register_hooks))
+crates/agent-control-plane/src/http/mod.rs:269:        .route("/hooks/:target/register", post(register_target_hooks))
+crates/agent-control-plane/src/http/mod.rs:270:        .route("/hooks/unregister", post(unregister_hooks))
+crates/agent-control-plane/src/http/mod.rs:271:        .route("/hooks/:target/unregister", post(unregister_target_hooks))
+crates/agent-control-plane/src/http/mod.rs:272:        .route("/hooks/unregister-live", post(unregister_live_hooks))
+crates/agent-control-plane/src/http/mod.rs:273:        .route(
+crates/agent-control-plane/src/http/mod.rs:277:        .route("/integrations/hook/contract", get(hook_contract))
+crates/agent-control-plane/src/http/mod.rs:278:        .route("/integrations/hook/contract.toml", get(hook_contract_toml))
+crates/agent-control-plane/src/http/mod.rs:283:        .route("/api/mobile/health", get(mobile_health))
+crates/agent-control-plane/src/http/mod.rs:284:        .route("/api/mobile/connection-code", get(mobile_connection_code))
+crates/agent-control-plane/src/http/mod.rs:285:        .route(
+crates/agent-control-plane/src/http/mod.rs:287:            get(mobile_connection_orb_png),
+crates/agent-control-plane/src/http/mod.rs:289:        .route(
+crates/agent-control-plane/src/http/mod.rs:291:            get(mobile_connection_orb),
+crates/agent-control-plane/src/http/mod.rs:293:        .route("/api/mobile/snapshot", get(mobile_snapshot_handler))
+crates/agent-control-plane/src/http/mod.rs:294:        .route(
+crates/agent-control-plane/src/http/mod.rs:296:            get(mobile_session_minis_handler),
+crates/agent-control-plane/src/http/mod.rs:298:        .route(
+crates/agent-control-plane/src/http/mod.rs:300:            get(mobile_session_minis_snapshot_handler),
+crates/agent-control-plane/src/http/mod.rs:302:        .route(
+crates/agent-control-plane/src/http/mod.rs:306:        .route(
+crates/agent-control-plane/src/http/mod.rs:308:            get(mobile_session_content_handler),
+crates/agent-control-plane/src/http/mod.rs:310:        .route(
+crates/agent-control-plane/src/http/mod.rs:312:            post(mobile_passkey_registration_challenge),
+crates/agent-control-plane/src/http/mod.rs:314:        .route(
+crates/agent-control-plane/src/http/mod.rs:316:            post(mobile_passkey_registration),
+crates/agent-control-plane/src/http/mod.rs:318:        .route(
+crates/agent-control-plane/src/http/mod.rs:320:            post(mobile_passkey_authentication_challenge),
+crates/agent-control-plane/src/http/mod.rs:322:        .route(
+crates/agent-control-plane/src/http/mod.rs:324:            post(mobile_passkey_authentication),
+crates/agent-control-plane/src/http/mod.rs:326:        .route(
+crates/agent-control-plane/src/http/mod.rs:328:            delete(mobile_passkey_revocation),
+crates/agent-control-plane/src/http/mod.rs:330:        .route("/api/mobile/push/register", post(mobile_push_registration))
+crates/agent-control-plane/src/http/mod.rs:331:        .route("/api/mobile/push/test", post(mobile_push_test))
+crates/agent-control-plane/src/http/mod.rs:336:        .route("/threads", get(threads))
+crates/agent-control-plane/src/http/mod.rs:337:        .route("/threads/:thread_id", get(thread_detail))
+crates/agent-control-plane/src/http/mod.rs:338:        .route("/threads/:thread_id/capabilities", get(thread_capabilities))
+crates/agent-control-plane/src/http/mod.rs:341:async fn health(State(control_plane): State<ControlPlane>) -> impl IntoResponse {
+crates/agent-control-plane/src/http/mod.rs:347:        "ok": status.source.health == "healthy",
+crates/agent-control-plane/src/http/mod.rs:728:async fn desktop_snapshot(
+crates/agent-control-plane/src/http/mod.rs:735:        control_plane.desktop_snapshot_with_thread_limit(thread_count)
+crates/agent-control-plane/src/http/mod.rs:737:        control_plane.desktop_snapshot()
+crates/agent-control-plane/src/http/mod.rs:742:            Json(apply_desktop_snapshot_range(snapshot, &query)),
+crates/agent-control-plane/src/http/mod.rs:753:fn apply_desktop_snapshot_range(
+crates/agent-control-plane/src/http/mod.rs:830:async fn desktop_mobile_connection_rename(
+crates/agent-control-plane/src/http/mod.rs:840:    match control_plane.rename_mobile_connection(&connection_id, &input.label) {
+crates/agent-control-plane/src/http/mod.rs:853:async fn desktop_mobile_connection_revoke(
+crates/agent-control-plane/src/http/mod.rs:862:    match control_plane.revoke_mobile_connection(&connection_id) {
+crates/agent-control-plane/src/http/mod.rs:875:async fn desktop_mobile_state(
+crates/agent-control-plane/src/http/mod.rs:882:    desktop_mobile_state_response(&control_plane)
+crates/agent-control-plane/src/http/mod.rs:940:async fn disabled_desktop_default_prompt(
+crates/agent-control-plane/src/http/mod.rs:945:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:948:async fn disabled_desktop_scope(
+crates/agent-control-plane/src/http/mod.rs:953:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:956:async fn disabled_desktop_assistant_surface(
+crates/agent-control-plane/src/http/mod.rs:961:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:964:async fn disabled_desktop_global_preset(
+crates/agent-control-plane/src/http/mod.rs:969:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:972:async fn disabled_desktop_global_notification(
+crates/agent-control-plane/src/http/mod.rs:977:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:980:async fn disabled_desktop_global_completion_check(
+crates/agent-control-plane/src/http/mod.rs:988:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:991:async fn disabled_desktop_notification_upsert(
+crates/agent-control-plane/src/http/mod.rs:1005:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1008:async fn disabled_desktop_completion_check_upsert(
+crates/agent-control-plane/src/http/mod.rs:1013:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1016:async fn disabled_desktop_session_notifications(
+crates/agent-control-plane/src/http/mod.rs:1022:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1025:async fn disabled_desktop_session_completion_check(
+crates/agent-control-plane/src/http/mod.rs:1035:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1038:async fn disabled_desktop_session_archive(
+crates/agent-control-plane/src/http/mod.rs:1044:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1047:async fn desktop_session_detail(
+crates/agent-control-plane/src/http/mod.rs:1055:    let snapshot = match control_plane.desktop_snapshot() {
+crates/agent-control-plane/src/http/mod.rs:1069:async fn disabled_http_session_state_mutation(
+crates/agent-control-plane/src/http/mod.rs:1072:    disabled_http_session_state_mutation_for_socket(socket_addr)
+crates/agent-control-plane/src/http/mod.rs:1075:fn disabled_http_session_state_mutation_for_socket(socket_addr: SocketAddr) -> Response {
+crates/agent-control-plane/src/http/mod.rs:1079:    disabled_http_session_state_mutation_response()
+crates/agent-control-plane/src/http/mod.rs:1243:async fn mobile_health(headers: HeaderMap) -> impl IntoResponse {
+crates/agent-control-plane/src/http/mod.rs:1259:async fn mobile_connection_code(
+crates/agent-control-plane/src/http/mod.rs:1284:async fn mobile_connection_orb_png(
+crates/agent-control-plane/src/http/mod.rs:1309:async fn mobile_connection_orb(
+crates/agent-control-plane/src/http/mod.rs:1322:async fn mobile_snapshot_handler(
+crates/agent-control-plane/src/http/mod.rs:1332:async fn mobile_session_minis_handler(
+crates/agent-control-plane/src/http/mod.rs:1340:    mobile_session_minis_delta_response(
+crates/agent-control-plane/src/http/mod.rs:1347:async fn mobile_session_minis_snapshot_handler(
+crates/agent-control-plane/src/http/mod.rs:1354:    mobile_session_minis_snapshot_response(&control_plane)
+crates/agent-control-plane/src/http/mod.rs:1372:    let snapshot = match mobile_desktop_snapshot(&control_plane) {
+crates/agent-control-plane/src/http/mod.rs:1391:async fn mobile_session_content_handler(
+crates/agent-control-plane/src/http/mod.rs:1466:async fn mobile_passkey_registration_challenge(
+crates/agent-control-plane/src/http/mod.rs:1480:async fn mobile_passkey_registration(
+crates/agent-control-plane/src/http/mod.rs:1495:async fn mobile_passkey_authentication_challenge(
+crates/agent-control-plane/src/http/mod.rs:1510:async fn mobile_passkey_authentication(
+crates/agent-control-plane/src/http/mod.rs:1525:async fn mobile_passkey_revocation(
+crates/agent-control-plane/src/http/session_actions.rs:8:pub(super) fn disabled_http_session_state_mutation_response() -> Response {

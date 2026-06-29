@@ -114,16 +114,23 @@ pub fn mobile_session_minis(
     )
 }
 
-pub fn mobile_session_mini_snapshot(latest_seq: i64, records: &[MobileSessionMiniRecord]) -> Value {
-    mobile_session_mini_response(latest_seq, records, true)
+pub fn mobile_session_mini_snapshot(
+    latest_seq: i64,
+    revision: &str,
+    server_time: &str,
+    records: &[MobileSessionMiniRecord],
+) -> Value {
+    mobile_session_mini_response(latest_seq, revision, server_time, records, true)
 }
 
 pub fn mobile_session_mini_delta(
     latest_seq: i64,
+    revision: &str,
+    server_time: &str,
     records: &[MobileSessionMiniRecord],
     replace: bool,
 ) -> Value {
-    mobile_session_mini_response(latest_seq, records, replace)
+    mobile_session_mini_response(latest_seq, revision, server_time, records, replace)
 }
 
 pub fn compact_mobile_session_mini_record(record: &MobileSessionMiniRecord) -> Option<String> {
@@ -248,6 +255,8 @@ fn session_mini_record_has_mode(record: &MobileSessionMiniRecord) -> bool {
 
 fn mobile_session_mini_response(
     latest_seq: i64,
+    revision: &str,
+    server_time: &str,
     records: &[MobileSessionMiniRecord],
     replace: bool,
 ) -> Value {
@@ -259,6 +268,19 @@ fn mobile_session_mini_response(
     json!({
         "latest_seq": latest_seq,
         "latestSeq": latest_seq,
+        "revision": revision,
+        "server_time": server_time,
+        "serverTime": server_time,
+        "freshness": {
+            "source": "mobile-session-mini-projection",
+            "latest_seq": latest_seq,
+            "latestSeq": latest_seq,
+            "revision": revision,
+            "server_time": server_time,
+            "serverTime": server_time,
+        },
+        "snapshot_kind": "recovery",
+        "snapshotKind": "recovery",
         "replace": replace,
         "sessions": sessions,
     })
@@ -657,14 +679,19 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let payload = mobile_session_mini_delta(42, &records, true).to_string();
+        let payload =
+            mobile_session_mini_delta(42, "revision-42", "2026-06-24T00:00:00Z", &records, true)
+                .to_string();
+        let payload_json: Value = serde_json::from_str(&payload).expect("payload json");
+        let sessions_json = payload_json["sessions"].to_string();
 
         assert!(payload.len() < SESSION_MINI_CONTROL_FRAME_MAX_BYTES);
-        assert!(!payload.contains("\"revision\""));
-        assert!(!payload.contains("globalSettings"));
-        assert!(!payload.contains("\"spawn\""));
-        assert!(!payload.contains("\"sources\""));
-        assert!(!payload.contains("\"tags\""));
+        assert_eq!(payload_json["revision"], "revision-42");
+        assert!(!sessions_json.contains("\"revision\""));
+        assert!(!sessions_json.contains("globalSettings"));
+        assert!(!sessions_json.contains("\"spawn\""));
+        assert!(!sessions_json.contains("\"sources\""));
+        assert!(!sessions_json.contains("\"tags\""));
     }
 
     #[test]
