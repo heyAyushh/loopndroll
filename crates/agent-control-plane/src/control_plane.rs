@@ -122,6 +122,12 @@ enum SnapshotInspectionMode {
     Mobile,
 }
 
+impl SnapshotInspectionMode {
+    fn includes_diagnostic_details(self) -> bool {
+        self == Self::Live
+    }
+}
+
 const MOBILE_CONNECTION_KIND: &str = "mobile";
 const READ_ONLY_CONNECTION_ACTION_HINT: &str = "Detected from local Codex state.";
 const DEVIN_CONNECTION_ACTION_HINT: &str =
@@ -1456,7 +1462,8 @@ impl ControlPlane {
         compaction_file_scan_limit: usize,
         inspection_mode: SnapshotInspectionMode,
     ) -> Result<DesktopSnapshot> {
-        let prune_diagnostic_details = inspection_mode != SnapshotInspectionMode::Live;
+        let include_diagnostic_details = inspection_mode.includes_diagnostic_details();
+        let prune_diagnostic_details = !include_diagnostic_details;
         let control_plane_status = if prune_diagnostic_details {
             bounded_control_plane_status(self.status())
         } else {
@@ -1473,60 +1480,11 @@ impl ControlPlane {
                     .get(&thread.thread_id)
                     .cloned()
                     .ok_or_else(|| anyhow!("missing capabilities for {}", thread.thread_id))?;
-                let transcript_modified_at_ms = thread
-                    .transcript_path
-                    .as_deref()
-                    .and_then(|path| metadata_modified_at_ms(Path::new(path)));
-                let transcript_preview = thread
-                    .transcript_path
-                    .as_deref()
-                    .and_then(|path| transcript_preview_for_path_fast(Path::new(path)));
-                let latest_message_at_ms = transcript_preview
-                    .as_ref()
-                    .and_then(|preview| preview.latest_message_at_ms);
-                let latest_transcript_activity_at_ms = transcript_preview
-                    .as_ref()
-                    .and_then(|preview| preview.latest_activity_at_ms);
-                let assistant_preview = transcript_preview.as_ref().and_then(|preview| {
-                    preview
-                        .latest_assistant_message
-                        .as_ref()
-                        .map(|message| message.text.clone())
-                });
-                let first_user_prompt = transcript_preview
-                    .as_ref()
-                    .and_then(|preview| preview.first_user_prompt.clone());
-                let updated_at_ms = latest_millis([
-                    thread.updated_at_ms,
-                    transcript_modified_at_ms,
-                    latest_transcript_activity_at_ms,
-                    latest_message_at_ms,
-                ]);
-                Ok(DesktopThread {
-                    thread_id: thread.thread_id.clone(),
-                    title: thread.title.clone(),
-                    cwd: thread.cwd.clone(),
-                    transcript_path: thread.transcript_path.clone(),
-                    source: thread.source.clone(),
-                    originator: thread.originator.clone(),
-                    model: thread.model.clone(),
-                    reasoning_effort: thread.reasoning_effort.clone(),
-                    git_sha: thread.git_sha.clone(),
-                    git_branch: thread.git_branch.clone(),
-                    cli_version: thread.cli_version.clone(),
-                    agent_nickname: thread.agent_nickname.clone(),
-                    agent_role: thread.agent_role.clone(),
-                    agent_path: thread.agent_path.clone(),
-                    created_at_ms: thread.created_at_ms,
-                    updated_at_ms,
-                    latest_message_at_ms,
-                    assistant_preview,
-                    first_user_prompt,
-                    runtime_status: None,
-                    archived: thread.archived,
-                    goal: None,
+                Ok(codex_thread_to_desktop_thread(
+                    thread,
                     capabilities,
-                })
+                    include_diagnostic_details,
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
         let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
@@ -1545,7 +1503,8 @@ impl ControlPlane {
         desktop_threads.extend(
             limited_items(&claude_sessions, thread_limit).map(claude_session_to_desktop_thread),
         );
-        let devin_discovery = self.devin_sessions_for_snapshot(thread_limit);
+        let devin_discovery =
+            self.devin_sessions_for_snapshot(thread_limit, include_diagnostic_details);
         let devin_total_count = devin_discovery.total_count;
         let devin_active_thread_count = devin_discovery.active_count;
         let devin_archived_thread_count = devin_discovery.archived_count;
@@ -1768,13 +1727,21 @@ impl ControlPlane {
         .unwrap_or_default()
     }
 
-    fn devin_sessions_for_snapshot(&self, thread_limit: Option<usize>) -> DevinSessionDiscovery {
-        match thread_limit {
-            Some(limit) => {
+    fn devin_sessions_for_snapshot(
+        &self,
+        thread_limit: Option<usize>,
+        include_assistant_previews: bool,
+    ) -> DevinSessionDiscovery {
+        match (thread_limit, include_assistant_previews) {
+            (Some(limit), true) => {
                 discover_recent_devin_sessions_with_previews(&self.config.home_path, limit)
                     .unwrap_or_else(|_| empty_devin_session_discovery())
             }
-            None => discover_devin_sessions_with_previews(&self.config.home_path)
+            (Some(limit), false) => discover_recent_devin_sessions(&self.config.home_path, limit)
+                .unwrap_or_else(|_| empty_devin_session_discovery()),
+            (None, true) => discover_devin_sessions_with_previews(&self.config.home_path)
+                .unwrap_or_else(|_| empty_devin_session_discovery()),
+            (None, false) => discover_devin_sessions_without_previews(&self.config.home_path)
                 .unwrap_or_else(|_| empty_devin_session_discovery()),
         }
     }
@@ -2019,6 +1986,75 @@ fn desktop_thread_source_score(thread: &DesktopThread) -> u8 {
         Some(CODEX_STATE_SOURCE) => 3,
         Some(CODEX_ACP_SOURCE) => 2,
         _ => 1,
+    }
+}
+
+fn codex_thread_to_desktop_thread(
+    thread: &ThreadRecord,
+    capabilities: ThreadCapabilities,
+    include_diagnostic_details: bool,
+) -> DesktopThread {
+    let transcript_preview = include_diagnostic_details
+        .then(|| {
+            thread
+                .transcript_path
+                .as_deref()
+                .and_then(|path| transcript_preview_for_path_fast(Path::new(path)))
+        })
+        .flatten();
+    let transcript_modified_at_ms = include_diagnostic_details
+        .then(|| {
+            thread
+                .transcript_path
+                .as_deref()
+                .and_then(|path| metadata_modified_at_ms(Path::new(path)))
+        })
+        .flatten();
+    let latest_message_at_ms = transcript_preview
+        .as_ref()
+        .and_then(|preview| preview.latest_message_at_ms);
+    let latest_transcript_activity_at_ms = transcript_preview
+        .as_ref()
+        .and_then(|preview| preview.latest_activity_at_ms);
+    let assistant_preview = transcript_preview.as_ref().and_then(|preview| {
+        preview
+            .latest_assistant_message
+            .as_ref()
+            .map(|message| message.text.clone())
+    });
+    let first_user_prompt = transcript_preview
+        .as_ref()
+        .and_then(|preview| preview.first_user_prompt.clone());
+    let updated_at_ms = latest_millis([
+        thread.updated_at_ms,
+        transcript_modified_at_ms,
+        latest_transcript_activity_at_ms,
+        latest_message_at_ms,
+    ]);
+    DesktopThread {
+        thread_id: thread.thread_id.clone(),
+        title: thread.title.clone(),
+        cwd: thread.cwd.clone(),
+        transcript_path: thread.transcript_path.clone(),
+        source: thread.source.clone(),
+        originator: thread.originator.clone(),
+        model: thread.model.clone(),
+        reasoning_effort: thread.reasoning_effort.clone(),
+        git_sha: thread.git_sha.clone(),
+        git_branch: thread.git_branch.clone(),
+        cli_version: thread.cli_version.clone(),
+        agent_nickname: thread.agent_nickname.clone(),
+        agent_role: thread.agent_role.clone(),
+        agent_path: thread.agent_path.clone(),
+        created_at_ms: thread.created_at_ms,
+        updated_at_ms,
+        latest_message_at_ms,
+        assistant_preview,
+        first_user_prompt,
+        runtime_status: None,
+        archived: thread.archived,
+        goal: None,
+        capabilities,
     }
 }
 
@@ -2458,6 +2494,10 @@ fn revision_hash(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::assistant::{AssistantRuntime, AssistantRuntimeKind};
+    use serde_json::json;
+
+    const STORED_THREAD_UPDATED_AT_MS: i64 = 1;
+    const TRANSCRIPT_MESSAGE_AT_MS: i64 = 1_781_568_060_000;
 
     fn thread_record(thread_id: &str, updated_at_ms: i64) -> ThreadRecord {
         ThreadRecord {
@@ -2494,6 +2534,50 @@ mod tests {
         }
     }
 
+    fn codex_capabilities(thread_id: &str) -> ThreadCapabilities {
+        ThreadCapabilities {
+            thread_id: thread_id.to_owned(),
+            assistant_kind: AssistantKind::Codex,
+            tools: Vec::new(),
+            mcp_tools: Vec::new(),
+            app_tools: Vec::new(),
+            automation_tools: Vec::new(),
+            spawn: SpawnGraph {
+                parent_thread_id: None,
+                root_thread_id: thread_id.to_owned(),
+                children: Vec::new(),
+                launch_kind: LaunchKind::Main,
+            },
+            diff: DiffSummary {
+                git_branch: None,
+                git_sha: None,
+                produced_file_changes: false,
+                paths: Vec::new(),
+            },
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+        }
+    }
+
+    fn transcript_record(role: &str, content_key: &str, text: &str) -> String {
+        json!({
+            "type": "response_item",
+            "timestamp": "2026-06-16T00:01:00Z",
+            "payload": {
+                "type": "message",
+                "role": role,
+                "content": [
+                    {
+                        "type": content_key,
+                        "text": text
+                    }
+                ]
+            }
+        })
+        .to_string()
+    }
+
     #[test]
     fn limited_snapshot_threads_use_most_recent_codex_threads() {
         let threads = vec![
@@ -2510,6 +2594,44 @@ mod tests {
                 .map(|thread| thread.thread_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["new", "middle"]
+        );
+    }
+
+    #[test]
+    fn pruned_codex_desktop_thread_skips_transcript_details() {
+        let fixture_dir = tempfile::tempdir().expect("tempdir");
+        let transcript_path = fixture_dir.path().join("transcript.jsonl");
+        std::fs::write(
+            &transcript_path,
+            format!(
+                "{}\n{}",
+                transcript_record("assistant", "output_text", "live assistant"),
+                transcript_record("user", "input_text", "first prompt")
+            ),
+        )
+        .expect("write transcript");
+        let mut thread = thread_record("thread-1", STORED_THREAD_UPDATED_AT_MS);
+        thread.transcript_path = Some(transcript_path.display().to_string());
+        let capabilities = codex_capabilities(&thread.thread_id);
+
+        let live_thread = codex_thread_to_desktop_thread(&thread, capabilities.clone(), true);
+        assert_eq!(
+            live_thread.assistant_preview.as_deref(),
+            Some("live assistant")
+        );
+        assert_eq!(
+            live_thread.latest_message_at_ms,
+            Some(TRANSCRIPT_MESSAGE_AT_MS)
+        );
+        assert_ne!(live_thread.updated_at_ms, Some(STORED_THREAD_UPDATED_AT_MS));
+
+        let pruned_thread = codex_thread_to_desktop_thread(&thread, capabilities, false);
+        assert_eq!(pruned_thread.assistant_preview, None);
+        assert_eq!(pruned_thread.first_user_prompt, None);
+        assert_eq!(pruned_thread.latest_message_at_ms, None);
+        assert_eq!(
+            pruned_thread.updated_at_ms,
+            Some(STORED_THREAD_UPDATED_AT_MS)
         );
     }
 

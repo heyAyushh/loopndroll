@@ -2580,7 +2580,7 @@ enum SessionDisplayPolicy {
 }
 
 struct SessionSections: Sendable {
-    static let empty = SessionSections(sessions: [])
+    static let empty = SessionSections(localProjectionSessions: [])
 
     let active: [SessionSummary]
     let running: [SessionSummary]
@@ -2591,10 +2591,56 @@ struct SessionSections: Sendable {
 
     init(sessions: [SessionSummary]) {
         guard let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions) else {
-            self.init(fallbackSessions: sessions)
+            self.init(localProjectionSessions: sessions)
             return
         }
         self.init(projection: projection, sessions: sessions)
+    }
+
+    init(localProjectionSessions sessions: [SessionSummary]) {
+        var active: [SessionSummary] = []
+        var running: [SessionSummary] = []
+        var waiting: [SessionSummary] = []
+        var stopped: [SessionSummary] = []
+        var needsAttention: [SessionSummary] = []
+        var archived: [SessionSummary] = []
+
+        active.reserveCapacity(sessions.count)
+        for session in sessions {
+            if session.isArchived || session.status == .archived {
+                archived.append(session)
+                continue
+            }
+
+            active.append(session)
+            if session.hasBlockedGoal {
+                needsAttention.append(session)
+                continue
+            }
+
+            switch session.status {
+            case .active:
+                running.append(session)
+            case .waiting:
+                waiting.append(session)
+                needsAttention.append(session)
+            case .stopped:
+                if session.hasRunningGoal {
+                    running.append(session)
+                } else {
+                    stopped.append(session)
+                }
+            case .archived:
+                archived.append(session)
+            }
+        }
+
+        self.active = active
+        self.running = running
+        self.waiting = waiting
+        self.stopped = stopped
+        self.needsAttention = needsAttention
+        self.archived = archived
     }
 
     init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {
@@ -2623,14 +2669,6 @@ struct SessionSections: Sendable {
         }
     }
 
-    private init(fallbackSessions sessions: [SessionSummary]) {
-        archived = sessions.filter(\.isArchived)
-        needsAttention = sessions.filter { !$0.isArchived && $0.hasBlockedGoal }
-        running = sessions.filter { !$0.isArchived && $0.hasRunningGoal }
-        active = sessions.filter { !$0.isArchived && $0.status == .active }
-        waiting = sessions.filter { !$0.isArchived && $0.status == .waiting }
-        stopped = sessions.filter { !$0.isArchived && $0.status == .stopped }
-    }
 }
 
 private enum SessionSectionsProjectionCodec {

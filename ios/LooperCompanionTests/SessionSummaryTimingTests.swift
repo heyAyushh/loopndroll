@@ -11,6 +11,9 @@ struct SessionSummaryTimingTests {
         static let activityMilliseconds: Int64 = 1_781_596_920_321
         static let olderActivityMilliseconds: Int64 = 1_781_596_920_123
         static let messageMilliseconds: Int64 = 1_781_596_860_123
+        static let largeSurfaceSessionCount = 1_500
+        static let hostSyncTime = "2026-06-16T08:02:00Z"
+        static let refreshedHostSyncTime = "2026-06-16T08:03:00Z"
     }
 
     private let decoder = JSONDecoder()
@@ -502,6 +505,93 @@ struct SessionSummaryTimingTests {
         #expect(store.selectedAssistantSurface == .devin)
         #expect(store.sessionSections.active.map(\.ref) == ["D2", "D1"])
         #expect(store.sessionSections.running.map(\.ref) == ["D2", "D1"])
+    }
+
+    @MainActor
+    @Test("Assistant surface switch uses cached local projections for large snapshots")
+    func assistantSurfaceSwitchUsesCachedLocalProjectionsForLargeSnapshots() throws {
+        let codexSessions = try (0..<Constants.largeSurfaceSessionCount).map { index in
+            try sessionSummary(
+                id: "codex-thread-\(index)",
+                ref: "C\(index)",
+                activityMilliseconds: Constants.activityMilliseconds - Int64(index),
+                messageMilliseconds: Constants.messageMilliseconds
+            )
+        }
+        let zedSession = try sessionSummary(
+            id: "zed-thread",
+            ref: "Z1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let claudeSession = try sessionSummary(
+            id: "claude-thread",
+            ref: "CL1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let grokSession = try sessionSummary(
+            id: "grok-thread",
+            ref: "G1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = MobileSnapshot(
+            revision: "large-surface-switch",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: Constants.hostSyncTime
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: codexSessions,
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: codexSessions,
+                CompanionAssistantSurface.zed.rawValue: [zedSession],
+                CompanionAssistantSurface.claudeCode.rawValue: [claudeSession],
+                CompanionAssistantSurface.grokBuild.rawValue: [grokSession],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+
+        store.applySnapshot(snapshot)
+        let sessionIndexIdentity = store.sessionIndexIdentity
+        #expect(store.sessionSections.active.count == Constants.largeSurfaceSessionCount)
+        #expect(store.applyHostSyncTime(Constants.refreshedHostSyncTime))
+        #expect(store.snapshot?.host.lastSyncedAt == Constants.hostSyncTime)
+
+        #expect(store.selectAssistantSurface(.zed))
+        #expect(store.selectedAssistantSurface == .zed)
+        #expect(store.sessionSections.active.map(\.id) == ["zed-thread"])
+        #expect(store.sessionIndexIdentity == sessionIndexIdentity)
+        #expect(store.snapshot?.host.lastSyncedAt == Constants.refreshedHostSyncTime)
+
+        #expect(store.selectAssistantSurface(.claudeCode))
+        #expect(store.selectedAssistantSurface == .claudeCode)
+        #expect(store.sessionSections.active.map(\.id) == ["claude-thread"])
+        #expect(store.sessionIndexIdentity == sessionIndexIdentity)
+
+        #expect(store.selectAssistantSurface(.grokBuild))
+        #expect(store.selectedAssistantSurface == .grokBuild)
+        #expect(store.sessionSections.active.map(\.id) == ["grok-thread"])
+        #expect(store.sessionIndexIdentity == sessionIndexIdentity)
+
+        #expect(store.selectAssistantSurface(.codex))
+        #expect(store.selectedAssistantSurface == .codex)
+        #expect(store.sessionSections.active.count == Constants.largeSurfaceSessionCount)
+        #expect(store.sessionIndexIdentity == sessionIndexIdentity)
     }
 
     @Test("Session row display identity includes assistant surface")
