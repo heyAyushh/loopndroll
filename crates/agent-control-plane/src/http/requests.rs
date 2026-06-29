@@ -4,6 +4,19 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopSnapshotQuery {
     pub(super) profile: Option<String>,
+    pub(super) offset: Option<usize>,
+    pub(super) limit: Option<usize>,
+}
+
+impl DesktopSnapshotQuery {
+    pub(super) fn requested_thread_count(&self) -> Option<usize> {
+        let limit = self.limit?;
+        Some(self.offset.unwrap_or_default().saturating_add(limit))
+    }
+
+    pub(super) fn has_thread_range(&self) -> bool {
+        self.offset.unwrap_or_default() > 0 || self.limit.is_some()
+    }
 }
 
 #[derive(Deserialize)]

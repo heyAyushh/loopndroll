@@ -351,6 +351,13 @@ pub fn read_state(codex_home: &Path) -> Result<StateData> {
     read_state_with_thread_limit(codex_home, None)
 }
 
+pub fn read_snapshot_state_with_thread_limit(
+    codex_home: &Path,
+    thread_limit: Option<usize>,
+) -> Result<StateData> {
+    read_state_with_options(codex_home, thread_limit, false)
+}
+
 pub fn read_thread_revision_state(
     codex_home: &Path,
     thread_limit: usize,
@@ -378,6 +385,14 @@ pub fn read_state_with_thread_limit(
     codex_home: &Path,
     thread_limit: Option<usize>,
 ) -> Result<StateData> {
+    read_state_with_options(codex_home, thread_limit, true)
+}
+
+fn read_state_with_options(
+    codex_home: &Path,
+    thread_limit: Option<usize>,
+    refresh_rollout_paths_on_request: bool,
+) -> Result<StateData> {
     let sources = discover_sources(codex_home);
     let Some(state_db) = sources.state_db else {
         return Ok(StateData {
@@ -391,15 +406,20 @@ pub fn read_state_with_thread_limit(
     };
     let connection = Connection::open(&state_db)
         .with_context(|| format!("open Codex state DB {}", state_db.display()))?;
-    let mut threads = read_threads(&connection, None)?;
-    refresh_thread_rollout_paths(
-        &mut threads,
-        &sources.sessions_root,
-        thread_limit.map(bounded_rollout_refresh_candidate_limit),
-    );
-    if let Some(limit) = thread_limit {
-        threads = latest_thread_records(threads, limit);
-    }
+    let mut threads = if refresh_rollout_paths_on_request {
+        let mut threads = read_threads(&connection, None)?;
+        refresh_thread_rollout_paths(
+            &mut threads,
+            &sources.sessions_root,
+            thread_limit.map(bounded_rollout_refresh_candidate_limit),
+        );
+        if let Some(limit) = thread_limit {
+            threads = latest_thread_records(threads, limit);
+        }
+        threads
+    } else {
+        read_threads(&connection, thread_limit)?
+    };
     apply_session_index_titles(&mut threads, &sources.session_index);
     let selected_thread_ids = threads
         .iter()
@@ -1477,7 +1497,8 @@ mod tests {
     use super::{
         CodexServerOwner, LaunchKind, SpawnEdge, ThreadRecord, build_spawn_graph,
         inspect_codex_servers_from_process_lines, latest_matching_file,
-        read_state_with_thread_limit, refresh_thread_rollout_paths, rollout_session_ids,
+        read_snapshot_state_with_thread_limit, read_state_with_thread_limit,
+        refresh_thread_rollout_paths, rollout_session_ids,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -1684,6 +1705,65 @@ mod tests {
             state.threads[0].transcript_path.as_deref(),
             Some(resumed_rollout.to_str().expect("utf8 path"))
         );
+    }
+
+    #[test]
+    fn snapshot_state_applies_thread_limit_without_rollout_scan() {
+        let tempdir = tempdir().expect("tempdir");
+        let state_db = tempdir.path().join("state_1.sqlite");
+        let connection = Connection::open(&state_db).expect("open state db");
+        connection
+            .execute(
+                "create table threads (
+                    id text primary key,
+                    rollout_path text,
+                    updated_at_ms integer,
+                    archived integer
+                )",
+                [],
+            )
+            .expect("create threads");
+        for index in 0..12 {
+            connection
+                .execute(
+                    "insert into threads (id, updated_at_ms, archived) values (?1, ?2, 0)",
+                    (format!("newer-thread-{index}"), 10_000_i64 - index),
+                )
+                .expect("insert newer thread");
+        }
+
+        let sessions_root = create_test_sessions_root(tempdir.path());
+        let stale_rollout = sessions_root
+            .join("rollout-2026-06-16T00-00-00-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl");
+        let resumed_rollout = sessions_root
+            .join("rollout-2026-06-16T13-05-58-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl");
+        write_session_meta_rollout(&stale_rollout, "thread-13");
+        write_session_meta_rollout(&resumed_rollout, "thread-13");
+        connection
+            .execute(
+                "insert into threads (id, rollout_path, updated_at_ms, archived)
+                 values (?1, ?2, ?3, 0)",
+                ("thread-13", stale_rollout.display().to_string(), 1_i64),
+            )
+            .expect("insert stale thread");
+
+        let state =
+            read_snapshot_state_with_thread_limit(tempdir.path(), Some(12)).expect("read state");
+
+        assert_eq!(state.threads.len(), 12);
+        assert!(
+            state
+                .threads
+                .iter()
+                .all(|thread| thread.thread_id != "thread-13")
+        );
+        assert!(state.threads.iter().all(|thread| {
+            thread
+                .transcript_path
+                .as_deref()
+                .map(|path| path != resumed_rollout.to_str().expect("utf8 path"))
+                .unwrap_or(true)
+        }));
     }
 
     #[test]

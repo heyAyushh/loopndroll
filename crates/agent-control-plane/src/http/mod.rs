@@ -17,7 +17,7 @@ use serde::Deserialize;
 use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
-use crate::control_plane::{ControlPlane, HookMutationTarget};
+use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
 use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
 use crate::hook_integration::{HookBridgeContract, hook_bridge_contract_toml};
@@ -731,17 +731,41 @@ async fn desktop_snapshot(
 ) -> impl IntoResponse {
     let snapshot = if query.profile.as_deref() == Some("menu") {
         control_plane.desktop_menu_snapshot()
+    } else if let Some(thread_count) = query.requested_thread_count() {
+        control_plane.desktop_snapshot_with_thread_limit(thread_count)
     } else {
         control_plane.desktop_snapshot()
     };
     match snapshot {
-        Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Ok(snapshot) => (
+            StatusCode::OK,
+            Json(apply_desktop_snapshot_range(snapshot, &query)),
+        )
+            .into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
     }
+}
+
+fn apply_desktop_snapshot_range(
+    mut snapshot: DesktopSnapshot,
+    query: &DesktopSnapshotQuery,
+) -> DesktopSnapshot {
+    if !query.has_thread_range() {
+        return snapshot;
+    }
+
+    let offset = query.offset.unwrap_or_default();
+    let mut threads = snapshot.threads.into_iter().skip(offset);
+    snapshot.threads = if let Some(limit) = query.limit {
+        threads.by_ref().take(limit).collect()
+    } else {
+        threads.collect()
+    };
+    snapshot
 }
 
 async fn desktop_connections(

@@ -33,7 +33,8 @@ use crate::claude_code::{
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    inspect_control_plane, read_state, read_state_with_thread_limit, read_thread_revision_state,
+    inspect_control_plane, read_snapshot_state_with_thread_limit, read_state,
+    read_thread_revision_state,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::devin::{
@@ -1429,6 +1430,18 @@ impl ControlPlane {
         )
     }
 
+    pub fn desktop_snapshot_with_thread_limit(
+        &self,
+        thread_limit: usize,
+    ) -> Result<DesktopSnapshot> {
+        self.desktop_snapshot_with_limits(
+            Some(thread_limit.min(DESKTOP_SNAPSHOT_THREAD_LIMIT)),
+            DESKTOP_COMPACTION_LIMIT,
+            DESKTOP_COMPACTION_FILE_SCAN_LIMIT,
+            SnapshotInspectionMode::Live,
+        )
+    }
+
     pub fn desktop_menu_snapshot(&self) -> Result<DesktopSnapshot> {
         self.response_cache.desktop_menu_snapshot.get_or_refresh(
             DESKTOP_MENU_RESPONSE_CACHE_TTL,
@@ -1465,7 +1478,7 @@ impl ControlPlane {
         } else {
             self.status()
         };
-        let state = read_state_with_thread_limit(&self.config.codex_home, thread_limit)?;
+        let state = read_snapshot_state_with_thread_limit(&self.config.codex_home, thread_limit)?;
         let all_threads = state.threads.clone();
         let snapshot_codex_threads = codex_threads_for_snapshot(&all_threads, thread_limit);
         let capabilities = self.capabilities_by_threads(&state, &snapshot_codex_threads);
