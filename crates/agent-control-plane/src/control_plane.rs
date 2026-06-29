@@ -91,6 +91,7 @@ const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(300);
+const SESSION_MINI_PROJECTION_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
@@ -175,6 +176,7 @@ pub struct ControlPlane {
     zed_acp_runtime: LooperAcpRuntime,
     response_cache: Arc<ControlPlaneResponseCache>,
     prompt_delivery_cache: Arc<PromptDeliveryActionCache>,
+    session_mini_reconciler: Arc<SessionMiniProjectionReconciler>,
 }
 
 struct ControlPlaneResponseCache {
@@ -183,6 +185,61 @@ struct ControlPlaneResponseCache {
     acp_client_hosts: TimedResponseCache<AcpClientHostsResponse>,
     devin_desktop_status: TimedResponseCache<DevinDesktopStatus>,
     zed_status: TimedResponseCache<ZedStatus>,
+}
+
+struct SessionMiniProjectionReconciler {
+    state: Mutex<SessionMiniProjectionReconcileState>,
+}
+
+#[derive(Default)]
+struct SessionMiniProjectionReconcileState {
+    in_flight: bool,
+    last_started_at: Option<Instant>,
+}
+
+struct SessionMiniProjectionReconcilePermit {
+    reconciler: Arc<SessionMiniProjectionReconciler>,
+}
+
+impl SessionMiniProjectionReconciler {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(SessionMiniProjectionReconcileState::default()),
+        }
+    }
+
+    fn try_acquire(
+        self: &Arc<Self>,
+        now: Instant,
+        min_interval: Duration,
+    ) -> Option<SessionMiniProjectionReconcilePermit> {
+        let mut state = self.state.lock().expect("session mini reconciler lock");
+        if state.in_flight {
+            return None;
+        }
+        if state
+            .last_started_at
+            .is_some_and(|last_started_at| now.duration_since(last_started_at) < min_interval)
+        {
+            return None;
+        }
+        state.in_flight = true;
+        state.last_started_at = Some(now);
+        Some(SessionMiniProjectionReconcilePermit {
+            reconciler: self.clone(),
+        })
+    }
+
+    fn finish(&self) {
+        let mut state = self.state.lock().expect("session mini reconciler lock");
+        state.in_flight = false;
+    }
+}
+
+impl Drop for SessionMiniProjectionReconcilePermit {
+    fn drop(&mut self) {
+        self.reconciler.finish();
+    }
 }
 
 impl ControlPlaneResponseCache {
@@ -437,6 +494,7 @@ impl ControlPlane {
             zed_acp_runtime: LooperAcpRuntime::new(ZED_CLIENT_ID),
             response_cache: Arc::new(ControlPlaneResponseCache::new()),
             prompt_delivery_cache: Arc::new(PromptDeliveryActionCache::default()),
+            session_mini_reconciler: Arc::new(SessionMiniProjectionReconciler::new()),
         }
     }
 
@@ -547,6 +605,22 @@ impl ControlPlane {
             .record_mobile_event_replacing_session_minis(&event, minis)?;
         self.mobile_events.publish_persisted(record);
         Ok(true)
+    }
+
+    pub fn spawn_mobile_session_mini_projection_reconcile_if_due(&self) {
+        let Some(permit) = self
+            .session_mini_reconciler
+            .try_acquire(Instant::now(), SESSION_MINI_PROJECTION_RECONCILE_INTERVAL)
+        else {
+            return;
+        };
+        let control_plane = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            if let Err(error) = control_plane.reconcile_mobile_session_mini_projection() {
+                eprintln!("mobile session mini reconcile failed: {error}");
+            }
+        });
     }
 
     fn persist_and_publish_mobile_event(
