@@ -58,8 +58,9 @@ use crate::events::{
 };
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
-    GrokHookOwner, GrokHookStatus, discover_grok_sessions, grok_session_to_desktop_thread,
-    inspect_grok_hooks, register_owned_grok_hooks, unregister_owned_grok_hooks,
+    GrokHookOwner, GrokHookStatus, GrokSessionRecord, discover_grok_sessions,
+    grok_session_to_desktop_thread, inspect_grok_hooks, register_owned_grok_hooks,
+    unregister_owned_grok_hooks,
 };
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
 use crate::mobile::api::{
@@ -101,6 +102,7 @@ const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(300);
 const SESSION_MINI_PROJECTION_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const BOUNDED_SNAPSHOT_STALE_HEALTH: &str = "stale";
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
@@ -129,6 +131,10 @@ enum SnapshotInspectionMode {
 impl SnapshotInspectionMode {
     fn includes_diagnostic_details(self) -> bool {
         self == Self::Live
+    }
+
+    fn discovers_live_external_sessions(self) -> bool {
+        self != Self::CachedMenu
     }
 }
 
@@ -469,6 +475,24 @@ pub struct GrokBuildStatus {
     pub hooks: GrokHookStatus,
     pub session_count: usize,
     pub active_session_count: usize,
+}
+
+struct SnapshotExternalSessions {
+    grok_sessions: Vec<GrokSessionRecord>,
+    grok_build: GrokBuildStatus,
+    claude_sessions: Vec<ClaudeSessionRecord>,
+    devin_discovery: DevinSessionDiscovery,
+}
+
+impl SnapshotExternalSessions {
+    fn stale() -> Self {
+        Self {
+            grok_sessions: Vec::new(),
+            grok_build: stale_grok_build_status(),
+            claude_sessions: Vec::new(),
+            devin_discovery: empty_devin_session_discovery(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1510,28 +1534,27 @@ impl ControlPlane {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
-        let grok_build = GrokBuildStatus {
-            hooks: inspect_grok_hooks(&self.config.grok_home),
-            session_count: grok_sessions.len(),
-            active_session_count: grok_sessions
-                .iter()
-                .filter(|session| session.running)
-                .count(),
-        };
+        let external_sessions = self.external_sessions_for_snapshot(
+            thread_limit,
+            inspection_mode,
+            include_diagnostic_details,
+        );
+        let SnapshotExternalSessions {
+            grok_sessions,
+            grok_build,
+            claude_sessions,
+            devin_discovery,
+        } = external_sessions;
         desktop_threads.extend(
             limited_items(&grok_sessions, thread_limit).map(grok_session_to_desktop_thread),
         );
-        let claude_sessions = self.claude_sessions_for_snapshot(thread_limit);
         desktop_threads.extend(
             limited_items(&claude_sessions, thread_limit).map(claude_session_to_desktop_thread),
         );
-        let devin_discovery =
-            self.devin_sessions_for_snapshot(thread_limit, include_diagnostic_details);
         let devin_total_count = devin_discovery.total_count;
         let devin_active_thread_count = devin_discovery.active_count;
         let devin_archived_thread_count = devin_discovery.archived_count;
-        let devin_session_errors = devin_discovery.errors.clone();
+        let devin_session_errors = devin_discovery.errors;
         let devin_sessions = devin_discovery.sessions;
         desktop_threads.extend(
             limited_items(&devin_sessions, thread_limit).map(devin_session_to_desktop_thread),
@@ -1748,6 +1771,37 @@ impl ControlPlane {
             None => discover_claude_sessions(&claude_home),
         }
         .unwrap_or_default()
+    }
+
+    fn external_sessions_for_snapshot(
+        &self,
+        thread_limit: Option<usize>,
+        inspection_mode: SnapshotInspectionMode,
+        include_assistant_previews: bool,
+    ) -> SnapshotExternalSessions {
+        if !inspection_mode.discovers_live_external_sessions() {
+            return SnapshotExternalSessions::stale();
+        }
+
+        let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
+        let grok_build = GrokBuildStatus {
+            hooks: inspect_grok_hooks(&self.config.grok_home),
+            session_count: grok_sessions.len(),
+            active_session_count: grok_sessions
+                .iter()
+                .filter(|session| session.running)
+                .count(),
+        };
+        let claude_sessions = self.claude_sessions_for_snapshot(thread_limit);
+        let devin_discovery =
+            self.devin_sessions_for_snapshot(thread_limit, include_assistant_previews);
+
+        SnapshotExternalSessions {
+            grok_sessions,
+            grok_build,
+            claude_sessions,
+            devin_discovery,
+        }
     }
 
     fn devin_sessions_for_snapshot(
@@ -2317,6 +2371,20 @@ fn limited_items<T>(items: &[T], limit: Option<usize>) -> impl Iterator<Item = &
 
 fn empty_devin_session_discovery() -> DevinSessionDiscovery {
     DevinSessionDiscovery::default()
+}
+
+fn stale_grok_build_status() -> GrokBuildStatus {
+    GrokBuildStatus {
+        hooks: GrokHookStatus {
+            registered_events: Vec::new(),
+            active_command: None,
+            owner: GrokHookOwner::None,
+            health: BOUNDED_SNAPSHOT_STALE_HEALTH.to_owned(),
+            hooks_path: None,
+        },
+        session_count: 0,
+        active_session_count: 0,
+    }
 }
 
 fn desktop_thread_to_thread_record(thread: &DesktopThread) -> ThreadRecord {

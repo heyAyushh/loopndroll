@@ -255,6 +255,14 @@ async fn desktop_snapshot_reads_latest_assistant_preview() {
 async fn desktop_limited_snapshot_skips_request_time_transcript_preview() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
+    fixture.write_grok_session("grok-live-leak", "/tmp/project", "Grok live leak");
+    fixture.write_claude_session(
+        "claude-live-leak",
+        "/tmp/claude-project",
+        "Claude live prompt",
+        "Claude live leak",
+    );
+    fixture.write_devin_next_session();
     let transcript_path = fixture.write_transcript(
         "thread-main-limited-preview.jsonl",
         &[
@@ -299,6 +307,26 @@ async fn desktop_limited_snapshot_skips_request_time_transcript_preview() {
 
     assert_eq!(main_thread["assistant_preview"], serde_json::Value::Null);
     assert_eq!(main_thread["first_user_prompt"], serde_json::Value::Null);
+    assert_eq!(snapshot["grok_build"]["session_count"], 0);
+    assert_eq!(snapshot["grok_build"]["active_session_count"], 0);
+    assert_eq!(snapshot["grok_build"]["hooks"]["health"], "stale");
+    assert_eq!(snapshot["devin_session_count"], 0);
+    assert_eq!(snapshot["devin_active_session_count"], 0);
+
+    let live_discovery_thread_ids = [
+        "grok-live-leak",
+        "claude:claude-live-leak",
+        "devin:devin-cli:brindle-cadet",
+    ];
+    let threads = snapshot["threads"].as_array().expect("threads");
+    for thread_id in live_discovery_thread_ids {
+        assert!(
+            threads
+                .iter()
+                .all(|thread| thread["thread_id"] != thread_id),
+            "limited snapshot leaked live discovery thread {thread_id}"
+        );
+    }
 }
 
 #[tokio::test]

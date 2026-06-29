@@ -1,0 +1,8 @@
+
+running 4 tests
+test session_mini_snapshot_requires_produced_projection ... ok
+test session_mini_snapshot_requires_recovery_for_partial_cache_without_replacement_marker ... ok
+test session_mini_snapshot_includes_old_stopped_unarchived_sessions ... ok
+test session_mini_snapshot_is_recovery_only ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 1.32s
