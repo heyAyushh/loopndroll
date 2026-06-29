@@ -24,6 +24,13 @@ public struct MenuBarClientCoreMenuSnapshotStreamResult: Sendable {
 }
 
 public struct MenuBarSessionMini: Equatable, Sendable {
+    private enum PendingText {
+        static let singleNotificationReply = "Reply pending"
+        static func notificationReplies(_ count: Int) -> String {
+            "\(count) replies pending"
+        }
+    }
+
     public let sessionID: String
     public let assistantSurface: String
     public let seq: Int64
@@ -47,17 +54,26 @@ public struct MenuBarSessionMini: Equatable, Sendable {
     public let lastActivityAtMs: Int64?
     public let updatedAtMs: Int64?
 
-    fileprivate init(_ mini: ClientMenuBarSessionMini) {
+    fileprivate init(
+        _ mini: ClientMenuBarSessionMini,
+        pendingCommands: [MenuBarSessionMiniPendingCommand] = []
+    ) {
+        let pendingNotificationReplyCount = pendingCommands.pendingNotificationReplyCount(
+            for: mini.sessionId
+        )
         self.sessionID = mini.sessionId
         self.assistantSurface = mini.assistantSurface
         self.seq = mini.seq
         self.revision = mini.revision
         self.ref = mini.refId
         self.title = mini.title
-        self.subtitle = mini.subtitle
+        self.subtitle = Self.subtitle(
+            mini.subtitle,
+            pendingNotificationReplyCount: pendingNotificationReplyCount
+        )
         self.status = mini.status
         self.effectiveMode = mini.hasEffectiveMode ? mini.effectiveMode : nil
-        self.replyable = mini.replyable
+        self.replyable = pendingNotificationReplyCount == 0 && mini.replyable
         self.promptUnavailableReason =
             mini.hasPromptUnavailableReason ? mini.promptUnavailableReason : nil
         self.blockedGoal = mini.hasBlockedGoal ? MenuBarSessionMiniBlockedGoal(mini.blockedGoal) : nil
@@ -66,13 +82,49 @@ public struct MenuBarSessionMini: Equatable, Sendable {
         self.notificationStatus = mini.hasNotificationStatus
             ? MenuBarSessionMiniNotificationStatus(mini.notificationStatus)
             : nil
-        self.notificationTitle = mini.hasNotificationTitle ? mini.notificationTitle : nil
+        self.notificationTitle = Self.notificationTitle(
+            mini.hasNotificationTitle ? mini.notificationTitle : nil,
+            pendingNotificationReplyCount: pendingNotificationReplyCount
+        )
         self.isArchived = mini.isArchived
         self.assistantPreview = mini.hasAssistantPreview ? mini.assistantPreview : nil
         self.projectName = mini.hasProjectName ? mini.projectName : nil
         self.projectPath = mini.hasProjectPath ? mini.projectPath : nil
         self.lastActivityAtMs = mini.hasLastActivityAtMs ? mini.lastActivityAtMs : nil
         self.updatedAtMs = mini.hasUpdatedAtMs ? mini.updatedAtMs : nil
+    }
+
+    private static func subtitle(
+        _ subtitle: String,
+        pendingNotificationReplyCount: Int
+    ) -> String {
+        let pendingTitle = pendingNotificationReplyTitle(count: pendingNotificationReplyCount)
+        guard let pendingTitle else {
+            return subtitle
+        }
+        guard !subtitle.contains(pendingTitle) else {
+            return subtitle
+        }
+        guard !subtitle.isEmpty else {
+            return pendingTitle
+        }
+        return "\(subtitle) - \(pendingTitle)"
+    }
+
+    private static func notificationTitle(
+        _ notificationTitle: String?,
+        pendingNotificationReplyCount: Int
+    ) -> String? {
+        pendingNotificationReplyTitle(count: pendingNotificationReplyCount) ?? notificationTitle
+    }
+
+    private static func pendingNotificationReplyTitle(count: Int) -> String? {
+        guard count > 0 else {
+            return nil
+        }
+        return count == 1
+            ? PendingText.singleNotificationReply
+            : PendingText.notificationReplies(count)
     }
 }
 
@@ -350,10 +402,13 @@ public enum MenuBarSessionRuntimeError: LocalizedError {
 
 private extension MenuBarSessionMiniLocalSnapshot {
     init(_ snapshot: ClientMenuBarSessionMiniLocalSnapshot) {
+        let pendingCommands = snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init)
         self.init(
             latestSeq: snapshot.latestSeq,
-            sessions: snapshot.sessions.map(MenuBarSessionMini.init),
-            pendingCommands: snapshot.pendingCommands.map(MenuBarSessionMiniPendingCommand.init),
+            sessions: snapshot.sessions.map {
+                MenuBarSessionMini($0, pendingCommands: pendingCommands)
+            },
+            pendingCommands: pendingCommands,
             clientCoreSnapshot: snapshot
         )
     }
@@ -380,6 +435,15 @@ private extension MenuBarSessionMiniPendingCommand {
             prompt: command.prompt.nilIfBlank,
             attemptCount: Int(command.attemptCount)
         )
+    }
+}
+
+private extension [MenuBarSessionMiniPendingCommand] {
+    func pendingNotificationReplyCount(for threadID: String) -> Int {
+        filter {
+            $0.kind == .submitNotificationReply
+                && $0.threadID == threadID
+        }.count
     }
 }
 

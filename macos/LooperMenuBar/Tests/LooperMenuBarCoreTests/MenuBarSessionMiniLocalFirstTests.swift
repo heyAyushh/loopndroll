@@ -209,8 +209,8 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(pendingCommands.first?.attemptCount == 1)
     }
 
-    @Test("notification reply redraw can use local accepted snapshot before stream echo")
-    func testNotificationReplyRedrawCanUseLocalAcceptedSnapshotBeforeStreamEcho() async throws {
+    @Test("notification reply redraw shows pending state before stream echo")
+    func testNotificationReplyRedrawShowsPendingStateBeforeStreamEcho() async throws {
         let runtime = try seededRuntime(latestSeq: 203, records: [
             miniRecord(
                 id: "thread-main",
@@ -233,6 +233,10 @@ struct MenuBarSessionMiniLocalFirstTests {
 
         #expect(result.accepted)
         #expect(snapshot.sessions.map(\.sessionID) == ["thread-main"])
+        let row = try #require(snapshot.sessions.first)
+        #expect(row.replyable == false)
+        #expect(row.subtitle.contains("Reply pending"))
+        #expect(row.notificationTitle == "Reply pending")
         #expect(snapshot.pendingCommands.count == 1)
         #expect(snapshot.pendingCommands.first?.kind == .submitNotificationReply)
         #expect(snapshot.pendingCommands.first?.notificationID == "notif-main")
