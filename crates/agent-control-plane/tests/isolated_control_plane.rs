@@ -2610,6 +2610,65 @@ async fn session_mini_snapshot_exposes_projection_seq_when_event_log_is_newer() 
 }
 
 #[tokio::test]
+async fn session_mini_delta_exposes_projection_seq_when_event_log_is_newer() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
+    let projection_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("projection seq");
+    let projection_revision = latest_session_mini_revision(
+        &control_plane
+            .store()
+            .mobile_session_minis()
+            .expect("mini records"),
+    )
+    .expect("mini revision");
+    control_plane
+        .store()
+        .record_mobile_event(&snapshot_revision_changed_event(
+            "newer-delta-event-without-mini-projection".to_owned(),
+        ))
+        .expect("newer mobile event");
+    let latest_event_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest event seq");
+    assert!(
+        latest_event_seq > projection_seq,
+        "fixture must leave the event log ahead of the mini projection"
+    );
+
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let delta = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={projection_seq}&limit=10"),
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(delta["latestSeq"], projection_seq);
+    assert!(
+        delta["latestSeq"].as_i64().expect("delta seq") < latest_event_seq,
+        "HTTP delta recovery must not advertise event-log freshness beyond projected minis"
+    );
+    assert_eq!(delta["latest_seq"], delta["latestSeq"]);
+    assert_eq!(delta["freshness"]["latestSeq"], delta["latestSeq"]);
+    assert_eq!(delta["revision"], projection_revision);
+    assert_ne!(
+        delta["revision"], "newer-delta-event-without-mini-projection",
+        "HTTP delta recovery must not advertise a non-projected event revision as mini freshness"
+    );
+    assert_eq!(delta["freshness"]["revision"], delta["revision"]);
+    assert_eq!(delta["snapshotKind"], "recovery");
+}
+
+#[tokio::test]
 async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

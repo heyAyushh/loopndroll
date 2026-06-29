@@ -1,0 +1,46 @@
+   Compiling agent-control-plane v1.1.5 (/Users/ay/Documents/looper/crates/agent-control-plane)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.71s
+     Running unittests src/lib.rs (crates/agent-control-plane/target/debug/deps/agent_control_plane-54abcc23c51856ed)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 229 filtered out; finished in 0.00s
+
+     Running unittests src/bin/agent-control-plane.rs (crates/agent-control-plane/target/debug/deps/agent_control_plane-fc2007eb437ec995)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/looper.rs (crates/agent-control-plane/target/debug/deps/looper-218065dada13b94b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/looper-cli.rs (crates/agent-control-plane/target/debug/deps/looper_cli-3bcb5c388691fb6d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/looper-server.rs (crates/agent-control-plane/target/debug/deps/looper_server-df244b86dc500f0b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/isolated_control_plane.rs (crates/agent-control-plane/target/debug/deps/isolated_control_plane-9b897f1176705183)
+
+running 2 tests
+test session_mini_snapshot_exposes_projection_seq_when_event_log_is_newer ... ok
+test session_mini_delta_exposes_projection_seq_when_event_log_is_newer ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 102 filtered out; finished in 1.24s
+
+     Running tests/mobile_auth.rs (crates/agent-control-plane/target/debug/deps/mobile_auth-12581dfa53999964)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+

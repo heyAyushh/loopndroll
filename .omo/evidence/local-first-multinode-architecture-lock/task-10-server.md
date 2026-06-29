@@ -17,8 +17,18 @@
 - `crates/agent-control-plane/tests/isolated_control_plane.rs`
 - `.omo/evidence/local-first-multinode-architecture-lock/task-10-server.md`
 
+## Repair update
+
+- Review blocker repaired: `/api/mobile/session-minis?after_seq=...` now derives delta `latest_seq` / `latestSeq`, `revision`, and `freshness` from the cached session-mini projection it returns, not from newer non-projected mobile event-log rows.
+- If no complete session-mini projection baseline exists, the delta route uses the existing `recovery_required` conflict path instead of stamping an event-log seq onto an unready mini payload.
+- Added focused regression test `session_mini_delta_exposes_projection_seq_when_event_log_is_newer` beside the existing snapshot stale-projection test.
+- Repo-required web check: MDN HTTP caching guidance defines freshness/staleness by response age, and MDN ETag guidance identifies validators with a specific resource version. The code repair keeps Looper's explicit mini freshness/revision tied to the mini representation returned.
+
 ## Evidence outputs
 
+- `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-delta-projection.txt`
+- `.omo/evidence/local-first-multinode-architecture-lock/task-10-repair-cargo-fmt-check.txt`
+- `.omo/evidence/local-first-multinode-architecture-lock/task-10-repair-git-diff-check.txt`
 - `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-snapshot.txt`
 - `.omo/evidence/local-first-multinode-architecture-lock/task-10-mobile-snapshot.txt`
 - `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-unit.txt`
@@ -31,6 +41,7 @@
 
 - `/api/mobile/snapshot` now carries top-level `latest_seq` / `latestSeq`, `revision`, `server_time` / `serverTime`, `snapshot_kind` / `snapshotKind`, and a `freshness` object sourced from `desktop-mobile-snapshot`.
 - `/api/mobile/session-minis/snapshot` and `/api/mobile/session-minis?after_seq=...` now carry top-level `latest_seq` / `latestSeq`, `revision`, `server_time` / `serverTime`, `snapshot_kind` / `snapshotKind`, and a `freshness` object sourced from `mobile-session-mini-projection`.
+- Delta recovery uses the projected mini seq/revision when returning rows, so a newer non-projected event-log row cannot make stale mini rows look fresher than they are.
 - `seq_gap` and `recovery_required` responses now also include `revision`, `serverTime`, and the same freshness block so clients can reject stale HTTP recovery snapshots against newer stream state.
 - A focused stale-projection test appends a newer mobile event without updating the mini projection and proves HTTP recovery reports the older projected seq/revision, not the newer non-projected event revision.
 
@@ -81,6 +92,9 @@
 
 ## Tests and gates
 
+- `cargo test --manifest-path crates/agent-control-plane/Cargo.toml exposes_projection_seq_when_event_log_is_newer -- --nocapture`
+  - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-delta-projection.txt`
+  - Result: passed, 2 focused integration tests: snapshot stale-projection and delta stale-projection.
 - `cargo test --manifest-path crates/agent-control-plane/Cargo.toml session_mini_snapshot -- --nocapture`
   - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-snapshot.txt`
   - Result: passed, 5 focused integration tests.
@@ -91,10 +105,10 @@
   - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-session-mini-unit.txt`
   - Result: passed, 1 focused unit test.
 - `cargo fmt --manifest-path crates/agent-control-plane/Cargo.toml --check`
-  - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-cargo-fmt-check.txt`
+  - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-repair-cargo-fmt-check.txt`
   - Result: passed, empty output.
 - `git diff --check`
-  - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-git-diff-check.txt`
+  - Output: `.omo/evidence/local-first-multinode-architecture-lock/task-10-repair-git-diff-check.txt`
   - Result: passed, empty output.
 
 ## Not run

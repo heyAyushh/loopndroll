@@ -126,12 +126,15 @@ pub(super) fn mobile_session_minis_delta_response(
             return internal_mobile_error_response(error.to_string());
         }
     };
-    let all_records = match control_plane.store().mobile_session_minis() {
-        Ok(records) => records,
-        Err(error) => return internal_mobile_error_response(error.to_string()),
-    };
+    let (latest_projection_seq, all_records) =
+        match cached_mobile_session_mini_projection(control_plane) {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return mobile_session_minis_recovery_required_response(control_plane),
+            Err(error) => return internal_mobile_error_response(error),
+        };
     match control_plane.store().latest_mobile_state_event_seq() {
-        Ok(latest_seq) => {
+        Ok(latest_event_seq) => {
+            let latest_seq = latest_projection_seq.min(latest_event_seq);
             let revision = session_mini_recovery_revision(control_plane, latest_seq, &all_records);
             let server_time = current_mobile_time();
             let has_changes = latest_seq > after_seq;
@@ -174,11 +177,7 @@ fn cached_mobile_session_mini_projection(
         .store()
         .latest_mobile_state_event_seq()
         .map_err(|error| error.to_string())?;
-    let latest_projection_seq = records
-        .iter()
-        .map(|record| record.seq)
-        .max()
-        .unwrap_or_default();
+    let latest_projection_seq = latest_session_mini_projection_seq(&records);
     let has_produced_replacement_baseline = control_plane
         .store()
         .latest_mobile_session_mini_replacement_event_seq_after(-1)
@@ -227,6 +226,14 @@ fn session_mini_recovery_revision(
             .flatten()
             .unwrap_or_else(|| fallback_mobile_state_revision(latest_seq))
     })
+}
+
+fn latest_session_mini_projection_seq(records: &[MobileSessionMiniRecord]) -> i64 {
+    records
+        .iter()
+        .map(|record| record.seq)
+        .max()
+        .unwrap_or_default()
 }
 
 fn latest_mobile_state_revision(control_plane: &ControlPlane, latest_seq: i64) -> String {
