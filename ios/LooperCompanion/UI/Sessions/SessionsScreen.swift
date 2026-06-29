@@ -297,8 +297,9 @@ struct SessionsScreen: View {
         }
 
         _ = model.consumePendingOpenSessionID()
-        navigationPath = NavigationPath()
-        navigationPath.append(session)
+        var path = NavigationPath()
+        path.append(session)
+        navigationPath = path
     }
 
     private func updateAssistantSurface(_ surface: CompanionAssistantSurface) {

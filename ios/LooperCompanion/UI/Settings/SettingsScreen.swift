@@ -575,8 +575,9 @@ struct SettingsScreen: View {
                 scrollTarget = nil
                 return
             }
-            settingsPath = NavigationPath()
-            settingsPath.append(target)
+            var path = NavigationPath()
+            path.append(target)
+            settingsPath = path
             scrollTarget = nil
         case .connection, .continuePrompt, .stopQuickActions, .security:
             settingsPath = NavigationPath()
