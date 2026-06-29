@@ -86,6 +86,7 @@ use acp_hosts::{
 
 const DESKTOP_COMPACTION_LIMIT: usize = 50;
 const DESKTOP_COMPACTION_FILE_SCAN_LIMIT: usize = 250;
+const DESKTOP_SNAPSHOT_THREAD_LIMIT: usize = 250;
 const DESKTOP_MENU_COMPACTION_LIMIT: usize = 10;
 const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
@@ -1421,7 +1422,7 @@ impl ControlPlane {
 
     pub fn desktop_snapshot(&self) -> Result<DesktopSnapshot> {
         self.desktop_snapshot_with_limits(
-            None,
+            Some(DESKTOP_SNAPSHOT_THREAD_LIMIT),
             DESKTOP_COMPACTION_LIMIT,
             DESKTOP_COMPACTION_FILE_SCAN_LIMIT,
             SnapshotInspectionMode::Live,
