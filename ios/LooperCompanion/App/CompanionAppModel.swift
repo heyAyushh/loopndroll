@@ -723,12 +723,19 @@ final class CompanionAppModel {
                 applyStateMiniRecoveryFailure(StateMiniRecoveryError.emptySnapshot, reason: reason)
                 return .empty
             }
-            applyCachedSnapshot(
-                recoveredSnapshot,
-                reason: "session-mini-recovery-\(reason.rawValue)"
+            let didApplySnapshot = applyCachedSessionMiniSnapshot(
+                recoveredSnapshot.snapshot,
+                reason: "session-mini-recovery-\(reason.rawValue)",
+                latestSeq: recoveredSnapshot.latestSeq
             )
+            guard didApplySnapshot else {
+                CompanionDiagnostics.record(
+                    "session-mini:recovery-stale-skip reason=\(reason.rawValue) seq=\(recoveredSnapshot.latestSeq)"
+                )
+                return .skipped
+            }
             CompanionDiagnostics.record(
-                "session-mini:recovery-applied reason=\(reason.rawValue) sessions=\(recoveredSnapshot.sessions.count)"
+                "session-mini:recovery-applied reason=\(reason.rawValue) sessions=\(recoveredSnapshot.snapshot.sessions.count)"
             )
             return .applied
         } catch {
@@ -1777,13 +1784,21 @@ final class CompanionAppModel {
         )
     }
 
+    @discardableResult
     private func applyCachedSessionMiniSnapshot(
         _ cachedSnapshot: MobileSnapshot,
         reason: String,
         latestSeq: Int64
-    ) {
+    ) -> Bool {
+        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq) else {
+            CompanionDiagnostics.record(
+                "session-mini:cache-skip reason=\(reason) latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
+            )
+            return false
+        }
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
         applyCachedSnapshot(cachedSnapshot, reason: reason)
+        return true
     }
 
     private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {
@@ -1812,6 +1827,19 @@ final class CompanionAppModel {
             return false
         }
         return snapshotState.allSessions.isEmpty && !nextSnapshot.sessions.isEmpty
+    }
+
+    private func shouldApplyStateMiniSnapshot(latestSeq: Int64) -> Bool {
+        if snapshot == nil || !snapshotState.hasSnapshot {
+            return true
+        }
+        if realtimeLatestSeq <= 0 {
+            return true
+        }
+        if snapshotState.allSessions.isEmpty {
+            return true
+        }
+        return latestSeq > realtimeLatestSeq
     }
 
     private func markCachedSnapshotReadyIfNeeded(reason: String) {

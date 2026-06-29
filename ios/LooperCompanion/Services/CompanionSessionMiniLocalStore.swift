@@ -38,6 +38,11 @@ struct CompanionSessionMiniLivenessUpdate: Sendable {
     let endpointURL: URL?
 }
 
+struct CompanionRecoveredSessionMiniSnapshot: Sendable {
+    let snapshot: MobileSnapshot
+    let latestSeq: Int64
+}
+
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
     CompanionSessionMiniSyncUpdate
 ) -> Void
@@ -368,7 +373,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         try localStore.currentStateMiniSnapshot()
     }
 
-    func recoverStateMiniSnapshot() async throws -> MobileSnapshot? {
+    func recoverStateMiniSnapshot() async throws -> CompanionRecoveredSessionMiniSnapshot? {
         guard let startConfiguration = currentStartConfiguration() else {
             throw CompanionSessionRuntimeError.notConfigured
         }
@@ -383,7 +388,13 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             bearerToken: startConfiguration.bearerToken ?? "",
             mobileSessionHeader: CompanionMobileSessionStore.loadValidHeaderValue() ?? ""
         )
-        return try localStore.mobileSnapshot(from: localSnapshot)
+        guard let snapshot = try localStore.mobileSnapshot(from: localSnapshot) else {
+            return nil
+        }
+        return CompanionRecoveredSessionMiniSnapshot(
+            snapshot: snapshot,
+            latestSeq: localSnapshot.latestSeq
+        )
     }
 
     func enqueueNotificationReplyCommand(

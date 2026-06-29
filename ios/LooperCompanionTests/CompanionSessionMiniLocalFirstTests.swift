@@ -620,6 +620,48 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testOlderStateMiniCacheCannotReplayOverNewerRenderedState() async throws {
+        let staleSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Stale Mini",
+            ref: "C1",
+            status: .active
+        )
+        let freshSession = Self.sessionSummary(
+            id: "fresh-thread",
+            title: "Fresh Mini",
+            ref: "F1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: staleSession, seq: 8, revision: "stale-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let freshSnapshot = Self.mobileSnapshot(
+            revision: "fresh-revision-20",
+            sessions: [freshSession]
+        )
+        model.realtimeLatestSeq = 20
+        model.snapshot = freshSnapshot
+
+        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+
+        #expect(model.realtimeLatestSeq == 20)
+        #expect(model.snapshot?.session(withID: freshSession.id)?.title == "Fresh Mini")
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID) == nil)
+        #expect(model.viewState.activeSessions.map(\.id) == [freshSession.id])
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testReconnectingSessionMiniTruthWinsOverSuccessfulHttpSnapshot() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1165,8 +1207,18 @@ struct CompanionSessionMiniLocalFirstTests {
             ref: "N1",
             status: .active
         )
-        return MobileSnapshot(
+        return mobileSnapshot(
             revision: "network-revision",
+            sessions: [session]
+        )
+    }
+
+    private static func mobileSnapshot(
+        revision: String,
+        sessions: [SessionSummary]
+    ) -> MobileSnapshot {
+        return MobileSnapshot(
+            revision: revision,
             host: HostSummary(
                 id: "host",
                 name: "Looper",
@@ -1183,8 +1235,8 @@ struct CompanionSessionMiniLocalFirstTests {
                 completionCheckWaitForReply: false,
                 assistantSurface: .codex
             ),
-            sessions: [session],
-            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [session]],
+            sessions: sessions,
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: sessions],
             notifications: [],
             completionChecks: []
         )
