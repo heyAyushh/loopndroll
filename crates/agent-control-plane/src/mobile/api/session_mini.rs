@@ -11,12 +11,6 @@ use super::overrides::{is_deleted, session_override};
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
-const MINI_TITLE_MAX_CHARS: usize = 240;
-const MINI_PREVIEW_MAX_CHARS: usize = 600;
-const MINI_REASON_MAX_CHARS: usize = 240;
-const MINI_METADATA_TEXT_MAX_CHARS: usize = 320;
-const MINI_SCALAR_TEXT_MAX_CHARS: usize = 320;
-const MINI_NOTIFICATION_TARGET_MAX_COUNT: usize = 8;
 const EMBEDDED_CONTROL_FIELDS: &[&str] = &["revision", "globalSettings"];
 const DETAIL_METADATA_FIELDS: &[&str] = &["spawn", "sources", "tags"];
 const COMPACT_SESSION_MINI_FIELDS: &[&str] = &[
@@ -345,20 +339,10 @@ fn session_mini_value(
     ] {
         copy_summary_field(summary, &mut mini, field);
     }
-    copy_bounded_summary_field(summary, &mut mini, "title", MINI_TITLE_MAX_CHARS);
-    copy_bounded_summary_field(
-        summary,
-        &mut mini,
-        "promptDeliveryUnavailableReason",
-        MINI_REASON_MAX_CHARS,
-    );
-    copy_bounded_summary_field(
-        summary,
-        &mut mini,
-        "assistantPreview",
-        MINI_PREVIEW_MAX_CHARS,
-    );
-    if let Some(metadata) = bounded_metadata(summary.get("metadata")) {
+    copy_summary_field(summary, &mut mini, "title");
+    copy_summary_field(summary, &mut mini, "promptDeliveryUnavailableReason");
+    copy_summary_field(summary, &mut mini, "assistantPreview");
+    if let Some(metadata) = compact_metadata(summary.get("metadata")) {
         mini.insert("metadata".to_owned(), metadata);
     }
     mini.insert(
@@ -411,16 +395,13 @@ fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
         let Some(value) = object.get(*field) else {
             continue;
         };
-        let bounded = match *field {
-            "title" => bounded_value(value, MINI_TITLE_MAX_CHARS),
-            "assistantPreview" => bounded_value(value, MINI_PREVIEW_MAX_CHARS),
-            "promptDeliveryUnavailableReason" => bounded_value(value, MINI_REASON_MAX_CHARS),
-            "metadata" => bounded_metadata(Some(value)).unwrap_or(Value::Null),
-            "blockedGoal" => bounded_blocked_goal_payload(value).unwrap_or(Value::Null),
-            "notificationStatus" => bounded_notification_status(value).unwrap_or(Value::Null),
-            _ => bounded_value(value, MINI_SCALAR_TEXT_MAX_CHARS),
+        let compacted = match *field {
+            "metadata" => compact_metadata(Some(value)).unwrap_or(Value::Null),
+            "blockedGoal" => compact_blocked_goal_payload(value).unwrap_or(Value::Null),
+            "notificationStatus" => compact_notification_status(value).unwrap_or(Value::Null),
+            _ => value.clone(),
         };
-        compact.insert((*field).to_owned(), bounded);
+        compact.insert((*field).to_owned(), compacted);
     }
     Some(Value::Object(compact))
 }
@@ -428,17 +409,6 @@ fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
 fn copy_summary_field(summary: &Map<String, Value>, mini: &mut Map<String, Value>, field: &str) {
     if let Some(value) = summary.get(field) {
         mini.insert(field.to_owned(), value.clone());
-    }
-}
-
-fn copy_bounded_summary_field(
-    summary: &Map<String, Value>,
-    mini: &mut Map<String, Value>,
-    field: &str,
-    max_chars: usize,
-) {
-    if let Some(value) = summary.get(field) {
-        mini.insert(field.to_owned(), bounded_value(value, max_chars));
     }
 }
 
@@ -451,10 +421,7 @@ fn blocked_goal(goal: Option<&Value>) -> Option<Value> {
     let mut blocked_goal = goal.as_object()?.clone();
     blocked_goal.insert("reason".to_owned(), json!(status));
     if let Some(title) = blocked_goal.get("title").cloned() {
-        blocked_goal.insert(
-            "title".to_owned(),
-            bounded_value(&title, MINI_TITLE_MAX_CHARS),
-        );
+        blocked_goal.insert("title".to_owned(), title);
     }
     Some(Value::Object(blocked_goal))
 }
@@ -466,9 +433,9 @@ fn session_mini_is_unarchived(mini: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn bounded_metadata(metadata: Option<&Value>) -> Option<Value> {
+fn compact_metadata(metadata: Option<&Value>) -> Option<Value> {
     let metadata = metadata?.as_object()?;
-    let mut bounded = Map::new();
+    let mut compact = Map::new();
     for field in [
         "kind",
         "source",
@@ -481,92 +448,63 @@ fn bounded_metadata(metadata: Option<&Value>) -> Option<Value> {
         "pullRequestURL",
     ] {
         if let Some(value) = metadata.get(field) {
-            bounded.insert(
-                field.to_owned(),
-                bounded_value(value, MINI_METADATA_TEXT_MAX_CHARS),
-            );
+            compact.insert(field.to_owned(), value.clone());
         }
     }
     for field in ["transcriptAvailable", "supportsSubagents"] {
         if let Some(value) = metadata.get(field) {
-            bounded.insert(field.to_owned(), value.clone());
+            compact.insert(field.to_owned(), value.clone());
         }
     }
-    if let Some(git_repository) = bounded_git_repository(metadata.get("gitRepository")) {
-        bounded.insert("gitRepository".to_owned(), git_repository);
+    if let Some(git_repository) = compact_git_repository(metadata.get("gitRepository")) {
+        compact.insert("gitRepository".to_owned(), git_repository);
     }
-    bounded.insert("installedPlugins".to_owned(), Value::Array(Vec::new()));
-    Some(Value::Object(bounded))
+    compact.insert("installedPlugins".to_owned(), Value::Array(Vec::new()));
+    Some(Value::Object(compact))
 }
 
-fn bounded_blocked_goal_payload(blocked_goal: &Value) -> Option<Value> {
+fn compact_blocked_goal_payload(blocked_goal: &Value) -> Option<Value> {
     if blocked_goal.is_null() {
         return Some(Value::Null);
     }
     let blocked_goal = blocked_goal.as_object()?;
-    let mut bounded = Map::new();
+    let mut compact = Map::new();
     for field in ["id", "title", "reason", "status"] {
         if let Some(value) = blocked_goal.get(field) {
-            bounded.insert(
-                field.to_owned(),
-                bounded_value(value, MINI_METADATA_TEXT_MAX_CHARS),
-            );
+            compact.insert(field.to_owned(), value.clone());
         }
     }
-    Some(Value::Object(bounded))
+    Some(Value::Object(compact))
 }
 
-fn bounded_notification_status(notification_status: &Value) -> Option<Value> {
+fn compact_notification_status(notification_status: &Value) -> Option<Value> {
     if notification_status.is_null() {
         return Some(Value::Null);
     }
     let notification_status = notification_status.as_object()?;
-    let mut bounded = Map::new();
+    let mut compact = Map::new();
     for field in ["enabled", "usesDefault"] {
         if let Some(value) = notification_status.get(field) {
-            bounded.insert(field.to_owned(), value.clone());
+            compact.insert(field.to_owned(), value.clone());
         }
     }
     let target_ids = notification_status
         .get("targetIds")
-        .and_then(Value::as_array)
-        .map(|target_ids| {
-            Value::Array(
-                target_ids
-                    .iter()
-                    .take(MINI_NOTIFICATION_TARGET_MAX_COUNT)
-                    .map(|target_id| bounded_value(target_id, MINI_METADATA_TEXT_MAX_CHARS))
-                    .collect(),
-            )
-        })
+        .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new()));
-    bounded.insert("targetIds".to_owned(), target_ids);
-    Some(Value::Object(bounded))
+    compact.insert("targetIds".to_owned(), target_ids);
+    Some(Value::Object(compact))
 }
 
-fn bounded_git_repository(git_repository: Option<&Value>) -> Option<Value> {
+fn compact_git_repository(git_repository: Option<&Value>) -> Option<Value> {
     let git_repository = git_repository?.as_object()?;
-    let mut bounded = Map::new();
+    let mut compact = Map::new();
     for field in ["repositoryName", "repositoryPath", "remoteURL", "branch"] {
         if let Some(value) = git_repository.get(field) {
-            bounded.insert(
-                field.to_owned(),
-                bounded_value(value, MINI_METADATA_TEXT_MAX_CHARS),
-            );
+            compact.insert(field.to_owned(), value.clone());
         }
     }
-    Some(Value::Object(bounded))
-}
-
-fn bounded_value(value: &Value, max_chars: usize) -> Value {
-    value
-        .as_str()
-        .map(|value| Value::String(truncate_chars(value, max_chars)))
-        .unwrap_or_else(|| value.clone())
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
+    Some(Value::Object(compact))
 }
 
 #[cfg(test)]
@@ -574,51 +512,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bounded_card_fields_limit_large_text() {
-        let mut mini = Map::new();
-        let summary = Map::from_iter([
-            (
-                "title".to_owned(),
-                Value::String("t".repeat(MINI_TITLE_MAX_CHARS + 10)),
-            ),
-            (
-                "assistantPreview".to_owned(),
-                Value::String("p".repeat(MINI_PREVIEW_MAX_CHARS + 10)),
-            ),
-        ]);
+    fn compact_session_mini_payload_preserves_oversized_allowed_text() {
+        let oversized_title = "t".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES + 1);
+        let oversized_preview = "p".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES + 1);
+        let payload = json!({
+            "sessionId": "thread-main",
+            "title": oversized_title,
+            "assistantPreview": oversized_preview,
+            "unknownHuge": "x".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES),
+        });
 
-        copy_bounded_summary_field(&summary, &mut mini, "title", MINI_TITLE_MAX_CHARS);
-        copy_bounded_summary_field(
-            &summary,
-            &mut mini,
-            "assistantPreview",
-            MINI_PREVIEW_MAX_CHARS,
-        );
+        let compacted = compact_session_mini_payload(payload).expect("compacted payload");
 
         assert_eq!(
-            mini["title"].as_str().expect("title").chars().count(),
-            MINI_TITLE_MAX_CHARS
+            compacted["title"].as_str().expect("title").len(),
+            SESSION_MINI_CONTROL_FRAME_MAX_BYTES + 1
         );
         assert_eq!(
-            mini["assistantPreview"]
+            compacted["assistantPreview"]
                 .as_str()
                 .expect("assistant preview")
-                .chars()
-                .count(),
-            MINI_PREVIEW_MAX_CHARS
+                .len(),
+            SESSION_MINI_CONTROL_FRAME_MAX_BYTES + 1
         );
+        assert!(compacted.get("unknownHuge").is_none());
     }
 
     #[test]
-    fn bounded_metadata_limits_text_and_list_fields() {
+    fn compact_metadata_preserves_allowed_text_and_removes_detail_fields() {
+        let oversized_project_path = "/".to_owned() + &"project/".repeat(100);
+        let oversized_repository_path = "/".to_owned() + &"looper/".repeat(100);
+        let oversized_project_path_len = oversized_project_path.len();
+        let oversized_repository_path_len = oversized_repository_path.len();
         let metadata = json!({
             "kind": "project",
             "source": "codex",
             "sourceDisplayName": "Codex",
-            "projectPath": "/".to_owned() + &"project/".repeat(100),
+            "projectPath": oversized_project_path,
             "gitRepository": {
                 "repositoryName": "looper",
-                "repositoryPath": "/".to_owned() + &"looper/".repeat(100),
+                "repositoryPath": oversized_repository_path,
                 "branch": "main",
             },
             "tags": vec!["tag".repeat(40); METADATA_DETAIL_FIXTURE_TAG_COUNT],
@@ -627,31 +560,29 @@ mod tests {
             "installedPlugins": vec![json!({"name": "plugin"})],
         });
 
-        let bounded = bounded_metadata(Some(&metadata)).expect("bounded metadata");
+        let compacted = compact_metadata(Some(&metadata)).expect("compacted metadata");
 
         assert!(
-            bounded["projectPath"]
+            compacted["projectPath"]
                 .as_str()
                 .expect("project path")
-                .chars()
-                .count()
-                <= MINI_METADATA_TEXT_MAX_CHARS
+                .len()
+                == oversized_project_path_len
         );
-        assert_eq!(bounded["gitRepository"]["repositoryName"], "looper");
+        assert_eq!(compacted["gitRepository"]["repositoryName"], "looper");
         assert!(
-            bounded["gitRepository"]["repositoryPath"]
+            compacted["gitRepository"]["repositoryPath"]
                 .as_str()
                 .expect("repository path")
-                .chars()
-                .count()
-                <= MINI_METADATA_TEXT_MAX_CHARS
+                .len()
+                == oversized_repository_path_len
         );
-        assert_eq!(bounded["gitRepository"]["branch"], "main");
-        assert!(bounded.get("tags").is_none());
-        assert!(bounded.get("sources").is_none());
-        assert!(bounded.get("spawn").is_none());
+        assert_eq!(compacted["gitRepository"]["branch"], "main");
+        assert!(compacted.get("tags").is_none());
+        assert!(compacted.get("sources").is_none());
+        assert!(compacted.get("spawn").is_none());
         assert!(
-            bounded["installedPlugins"]
+            compacted["installedPlugins"]
                 .as_array()
                 .expect("installed plugins")
                 .is_empty()

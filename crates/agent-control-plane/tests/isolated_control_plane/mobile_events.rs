@@ -1120,7 +1120,7 @@ async fn grpc_session_frame_payload_instructs_recovery_for_oversized_replacement
 }
 
 #[tokio::test]
-async fn grpc_session_stream_compacts_single_oversized_session_mini_delta() {
+async fn grpc_session_stream_recovers_single_oversized_session_mini_delta() {
     let fixture = IsolatedCodexFixture::new();
     let control_plane = fixture.control_plane();
     let previous = control_plane
@@ -1173,7 +1173,7 @@ async fn grpc_session_stream_compacts_single_oversized_session_mini_delta() {
     )
     .await;
 
-    let delta = next_session_state_delta(&mut stream, "oversized compact state delta").await;
+    let delta = next_session_state_delta(&mut stream, "oversized recovery state delta").await;
     assert_eq!(delta.seq, oversized.seq);
     assert_state_delta_frame_under_test_cap(&delta);
     assert!(
@@ -1182,18 +1182,16 @@ async fn grpc_session_stream_compacts_single_oversized_session_mini_delta() {
         delta.payload_json.len()
     );
     let payload: serde_json::Value =
-        serde_json::from_str(&delta.payload_json).expect("compact payload json");
-    assert_eq!(payload["sessionId"], "thread-main");
-    assert_eq!(payload["assistantSurface"], "codex");
-    assert_eq!(payload["status"], "waiting");
-    assert_eq!(payload["canSendPrompt"], true);
-    assert!(payload["title"].as_str().expect("bounded title").len() < oversized_text.len());
-    assert!(payload.get("revision").is_none());
-    assert!(payload.get("globalSettings").is_none());
-    assert!(payload.get("unknownHuge").is_none());
-    assert!(payload["metadata"].get("spawn").is_none());
-    assert!(payload["metadata"].get("sources").is_none());
-    assert!(payload["metadata"].get("tags").is_none());
+        serde_json::from_str(&delta.payload_json).expect("recovery payload json");
+    assert_eq!(payload["controlOnly"], true);
+    assert_eq!(payload["reason"], "projection-frame-cap-exceeded");
+    assert_eq!(payload["entityId"], "thread-main");
+    assert_eq!(payload["latestSeq"], oversized.seq);
+    assert_eq!(payload["recoveryRequired"], true);
+    assert_eq!(payload["recovery"], "session-mini-snapshot");
+    assert!(payload.get("sessions").is_none());
+    assert!(payload.get("title").is_none());
+    assert!(payload.get("assistantPreview").is_none());
 }
 
 #[tokio::test]

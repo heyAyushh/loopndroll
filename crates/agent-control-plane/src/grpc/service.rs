@@ -801,7 +801,7 @@ fn state_delta_frames(
     } else {
         state_delta_control_payload_json(record, STATE_DELTA_NO_PROJECTION_REASON)
     };
-    state_delta_frame(record, payload_json).map(|frame| vec![frame])
+    single_state_delta_frame(record, payload_json)
 }
 
 fn state_delta_frame(
@@ -821,6 +821,21 @@ fn state_delta_frame(
         )),
     };
     checked_server_frame(frame)
+}
+
+fn single_state_delta_frame(
+    record: &MobileStateEventRecord,
+    payload_json: String,
+) -> Result<Vec<proto::ServerFrame>, Status> {
+    match state_delta_frame(record, payload_json) {
+        Ok(frame) => Ok(vec![frame]),
+        Err(status) if status.code() == tonic::Code::ResourceExhausted => state_delta_frame(
+            record,
+            state_delta_recovery_payload_json(record, STATE_DELTA_FRAME_CAP_EXCEEDED_REASON),
+        )
+        .map(|frame| vec![frame]),
+        Err(status) => Err(status),
+    }
 }
 
 fn replacement_state_delta_frames(
