@@ -543,9 +543,9 @@ impl ControlPlane {
         let mut event = build_mobile_event(input);
         event.revision = self
             .store
-            .mobile_session_minis()
+            .latest_mobile_session_mini_revision()
             .ok()
-            .and_then(|records| latest_session_mini_revision(&records));
+            .flatten();
         self.persist_and_publish_mobile_event(event, None);
     }
 
@@ -553,9 +553,9 @@ impl ControlPlane {
         let mut event = build_mobile_event(input);
         event.revision = self
             .store
-            .mobile_session_minis()
+            .latest_mobile_session_mini_revision()
             .ok()
-            .and_then(|records| latest_session_mini_revision(&records));
+            .flatten();
         self.mobile_events.publish_ephemeral(event);
     }
 
@@ -567,9 +567,9 @@ impl ControlPlane {
         let mut event = build_mobile_event(input);
         event.revision = self
             .store
-            .mobile_session_minis()
+            .latest_mobile_session_mini_revision()
             .ok()
-            .and_then(|records| latest_session_mini_revision(&records));
+            .flatten();
         self.persist_and_publish_mobile_event(event, Some(minis));
     }
 
@@ -581,20 +581,21 @@ impl ControlPlane {
     }
 
     pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
-        let revision = self.mobile_snapshot_revision()?;
+        let snapshot = mobile_desktop_snapshot(self)?;
+        let revision = snapshot.revision.trim().to_owned();
         if revision.trim().is_empty() {
             return Ok(false);
         }
         let stored_revision = self
             .store
-            .mobile_session_minis()
+            .latest_mobile_session_mini_revision()
             .ok()
-            .and_then(|records| latest_session_mini_revision(&records));
+            .flatten();
         if stored_revision.as_deref() == Some(revision.as_str()) {
             return Ok(false);
         }
 
-        let minis = self.session_mini_projection_inputs(&revision)?;
+        let minis = self.session_mini_projection_inputs_for_snapshot(&snapshot, &revision)?;
         let event = snapshot_revision_changed_event(revision);
         let record = self
             .store
@@ -659,16 +660,16 @@ impl ControlPlane {
             })
     }
 
-    fn session_mini_projection_inputs(
+    fn session_mini_projection_inputs_for_snapshot(
         &self,
+        snapshot: &DesktopSnapshot,
         revision: &str,
     ) -> Result<Vec<MobileSessionMiniProjectionInput>> {
-        let snapshot = mobile_desktop_snapshot(self)?;
         let session_state = self.mobile_session_service().state()?;
         let queued_prompt_counts = self.mobile_session_service().queued_prompt_counts()?;
         let latest_seq = self.store.latest_mobile_state_event_seq()?;
         Ok(session_mini_projection_inputs(
-            &snapshot,
+            snapshot,
             &session_state,
             &queued_prompt_counts,
             latest_seq,
