@@ -55,6 +55,20 @@ private enum AssistantSurfaceETTraceMetric {
     }
 }
 
+private enum AssistantSurfaceSelectionLogEvent {
+    static let requested = "Selection requested"
+    static let applied = "Selection applied"
+    static let stale = "Selection stale"
+    static let cancelled = "Selection cancelled"
+    static let failed = "Selection failed"
+}
+
+private enum AssistantSurfaceSelectionFailureReason {
+    static let noChange = "no-change"
+    static let projectionRejected = "projection-rejected"
+    static let selectedSurfaceMismatch = "selected-surface-mismatch"
+}
+
 enum StateMiniRecoveryResult: Equatable {
     case skipped
     case applied
@@ -1601,9 +1615,13 @@ final class CompanionAppModel {
 
     @discardableResult
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Task<Bool, Never>? {
+        logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.requested, surface: surface)
+
         guard snapshotState.selectedAssistantSurface != surface else {
-            CompanionDiagnostics.assistantSurface.debug(
-                "Selection ignored surface=\(surface.rawValue, privacy: .public) reason=no-change"
+            logAssistantSurfaceSelection(
+                AssistantSurfaceSelectionLogEvent.cancelled,
+                surface: surface,
+                reason: AssistantSurfaceSelectionFailureReason.noChange
             )
             CompanionDiagnostics.record("assistant-surface:ignored surface=\(surface.rawValue) reason=no-change")
             return nil
@@ -1614,9 +1632,26 @@ final class CompanionAppModel {
             AssistantSurfaceETTraceMetric.postEnded(for: surface)
         }
         guard snapshotState.selectAssistantSurface(surface) else {
+            logAssistantSurfaceSelection(
+                AssistantSurfaceSelectionLogEvent.failed,
+                surface: surface,
+                reason: AssistantSurfaceSelectionFailureReason.projectionRejected
+            )
             return nil
         }
 
+        let selectedSurface = snapshotState.selectedAssistantSurface
+        guard selectedSurface == surface else {
+            logAssistantSurfaceSelection(
+                AssistantSurfaceSelectionLogEvent.stale,
+                surface: surface,
+                selectedSurface: selectedSurface,
+                reason: AssistantSurfaceSelectionFailureReason.selectedSurfaceMismatch
+            )
+            return Task { false }
+        }
+
+        logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.applied, surface: surface)
         CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
         lastUpdatedAt = Date()
         return Task { true }
@@ -2045,6 +2080,21 @@ final class CompanionAppModel {
 
     private func assistantSurface(for sessionID: String) -> CompanionAssistantSurface {
         snapshotState.assistantSurface(for: sessionID)
+    }
+
+    private func logAssistantSurfaceSelection(
+        _ event: String,
+        surface: CompanionAssistantSurface,
+        selectedSurface: CompanionAssistantSurface? = nil,
+        reason: String? = nil
+    ) {
+        #if DEBUG
+        let selectedSurfaceValue = selectedSurface?.rawValue ?? ""
+        let reasonValue = reason ?? ""
+        CompanionDiagnostics.assistantSurface.info(
+            "\(event, privacy: .public) surface=\(surface.rawValue, privacy: .public) selectedSurface=\(selectedSurfaceValue, privacy: .public) reason=\(reasonValue, privacy: .public) source=local command=false streamRestart=false"
+        )
+        #endif
     }
 
     private func siriSessionEntity(for session: SessionSummary) -> LooperSessionEntity {
