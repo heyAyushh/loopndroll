@@ -7,6 +7,7 @@ pub mod cli;
 pub mod codex;
 pub mod codex_resume;
 pub mod compaction;
+pub mod content_slices;
 pub mod control_plane;
 pub mod devin;
 pub mod events;

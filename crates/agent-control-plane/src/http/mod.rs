@@ -17,6 +17,7 @@ use serde::Deserialize;
 use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::acp::runtime::{LooperAcpObservedSession, LooperAcpRuntime};
 use crate::claude_code::inspect_claude_hooks;
+use crate::content_slices::{ContentSliceError, SessionContentSliceRequest};
 use crate::control_plane::{ControlPlane, DesktopSnapshot, HookMutationTarget};
 use crate::devin::{DevinAcpControlError, LEGACY_LOOPER_ACP_ROUTE};
 use crate::grok_build::inspect_grok_hooks;
@@ -54,7 +55,8 @@ use self::requests::{
     DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionArchiveRequest,
     DesktopSessionModeRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
     DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
-    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest, MobileSessionDetailQuery,
+    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest, MobileSessionContentQuery,
+    MobileSessionDetailQuery,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -300,6 +302,10 @@ fn mobile_routes() -> Router<ControlPlane> {
         .route(
             "/api/mobile/sessions/:thread_id",
             get(mobile_session_detail_handler),
+        )
+        .route(
+            "/api/mobile/sessions/:thread_id/content",
+            get(mobile_session_content_handler),
         )
         .route(
             "/api/mobile/passkeys/registration-challenge",
@@ -1379,6 +1385,81 @@ async fn mobile_session_detail_handler(
     ) {
         Some(detail) => (StatusCode::OK, Json(detail)).into_response(),
         None => mobile_session_not_found_response(),
+    }
+}
+
+async fn mobile_session_content_handler(
+    State(control_plane): State<ControlPlane>,
+    headers: HeaderMap,
+    Path(thread_id): Path<String>,
+    Query(query): Query<MobileSessionContentQuery>,
+) -> Response {
+    if let Err(error) = authorize_mobile_api_request(&control_plane, &headers) {
+        return mobile_authorization_error_response(error);
+    }
+    let request = SessionContentSliceRequest {
+        session_id: &thread_id,
+        range: query.range.as_deref(),
+        limit: query.limit,
+        cursor: query.cursor.as_deref(),
+        revision: query.revision.as_deref(),
+    };
+    match control_plane.session_content_slice(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => mobile_session_content_error_response(error),
+    }
+}
+
+fn mobile_session_content_error_response(error: ContentSliceError) -> Response {
+    match error {
+        ContentSliceError::SessionNotFound => mobile_session_not_found_response(),
+        ContentSliceError::TranscriptUnavailable => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": "transcript_unavailable",
+                "message": "Session transcript content is unavailable."
+            })),
+        )
+            .into_response(),
+        ContentSliceError::InvalidLimit { requested, max } => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "invalid_limit",
+                "message": "Content chunk limit must be between 1 and the maximum bounded chunk size.",
+                "requested_limit": requested,
+                "max_bytes": max
+            })),
+        )
+            .into_response(),
+        ContentSliceError::InvalidCursor => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "invalid_cursor",
+                "message": "Content cursor must use the after:<revision>:<offset> form."
+            })),
+        )
+            .into_response(),
+        ContentSliceError::UnsupportedRange(range) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "unsupported_range",
+                "message": "Only latest tail and after-cursor content slices are available in this cut.",
+                "requested_range": range,
+                "supported_ranges": ["tail", "after"]
+            })),
+        )
+            .into_response(),
+        ContentSliceError::StaleRevision { requested, current } => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "code": "stale_revision",
+                "message": "Content revision is stale; refetch the latest chunk cursor before paging.",
+                "requested_revision": requested,
+                "current_revision": current
+            })),
+        )
+            .into_response(),
+        ContentSliceError::Filesystem(message) => internal_mobile_error_response(message),
     }
 }
 

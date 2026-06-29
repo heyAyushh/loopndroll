@@ -1,0 +1,30 @@
+tracked_status
+## main
+ M crates/agent-control-plane/proto/looper/v1/control_plane.proto
+ M crates/agent-control-plane/src/control_plane.rs
+ M crates/agent-control-plane/src/grpc/service.rs
+ M crates/agent-control-plane/src/http/mod.rs
+ M crates/agent-control-plane/src/http/requests.rs
+ M crates/agent-control-plane/src/lib.rs
+ M crates/agent-control-plane/src/mobile/realtime_ack.rs
+ M crates/agent-control-plane/src/mobile/realtime_commands.rs
+ M crates/agent-control-plane/tests/isolated_control_plane.rs
+ M crates/agent-control-plane/tests/isolated_control_plane/mobile_events.rs
+ M crates/looper-client-core/src/client.rs
+ M crates/looper-client-core/src/command_batch.rs
+ M crates/looper-client-core/src/model.rs
+ M crates/looper-client-core/src/session_transport.rs
+
+task_5_artifacts
+.omo/evidence/local-first-multinode-architecture-lock/task-5-connection-code.json
+.omo/evidence/local-first-multinode-architecture-lock/task-5-content-tests.txt
+.omo/evidence/local-first-multinode-architecture-lock/task-5-curl-codex-home
+.omo/evidence/local-first-multinode-architecture-lock/task-5-curl-control-plane.sqlite
+.omo/evidence/local-first-multinode-architecture-lock/task-5-data-plane.md
+.omo/evidence/local-first-multinode-architecture-lock/task-5-fmt-check.txt
+.omo/evidence/local-first-multinode-architecture-lock/task-5-git-diff-check.txt
+.omo/evidence/local-first-multinode-architecture-lock/task-5-post-status.txt
+.omo/evidence/local-first-multinode-architecture-lock/task-5-server.log
+.omo/evidence/local-first-multinode-architecture-lock/task-5-server.pid
+.omo/evidence/local-first-multinode-architecture-lock/task-5-tail-curl.txt
+.omo/evidence/local-first-multinode-architecture-lock/task-5-tail.json

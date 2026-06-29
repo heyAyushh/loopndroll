@@ -35,6 +35,7 @@ use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
@@ -52,6 +53,7 @@ const GOAL_FIXTURE_TIME_USED_SECONDS: i64 = 7;
 const GOAL_FIXTURE_CREATED_AT_MS: i64 = 1_000;
 const GOAL_FIXTURE_UPDATED_AT_MS: i64 = 2_000;
 const SESSION_COMMAND_ACK_POLL_LIMIT: usize = 8;
+const TEST_CONTENT_CHUNK_LIMIT_BYTES: usize = 65_536;
 
 #[path = "isolated_control_plane/acp_hosts/mod.rs"]
 mod acp_hosts;
@@ -2447,6 +2449,198 @@ async fn mobile_session_detail_reads_latest_assistant_transcript_message() {
 }
 
 #[tokio::test]
+async fn mobile_session_content_tail_returns_bounded_chunk_metadata() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-content-tail.jsonl",
+        &[
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "a".repeat(TEST_CONTENT_CHUNK_LIMIT_BYTES + 2048)
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "latest-tail"
+                        }
+                    ]
+                }
+            }),
+        ],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let response = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-main/content?range=tail&limit=65536",
+        &[(axum::http::header::AUTHORIZATION, &authorization)],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    let chunk = &json["chunk"];
+    let transcript = fs::read(&transcript_path).expect("transcript bytes");
+    let expected_offset = transcript.len() - TEST_CONTENT_CHUNK_LIMIT_BYTES;
+    let expected_chunk = &transcript[expected_offset..];
+
+    assert_eq!(json["content_type"], "transcript");
+    assert_eq!(chunk["account_id"], "local-account");
+    assert_eq!(chunk["node_id"], "local-node");
+    assert_eq!(chunk["session_id"], "thread-main");
+    assert_eq!(chunk["offset"], expected_offset);
+    assert_eq!(chunk["length"], TEST_CONTENT_CHUNK_LIMIT_BYTES);
+    assert_eq!(chunk["sha256"], sha256_hex(expected_chunk));
+    assert_eq!(
+        chunk["content"].as_str().expect("content").as_bytes(),
+        expected_chunk
+    );
+    assert_eq!(
+        chunk["next_cursor"],
+        format!(
+            "after:{}:{}",
+            chunk["revision"].as_str().expect("revision"),
+            transcript.len()
+        )
+    );
+    assert!(chunk["merkle_root"].is_null());
+    assert!(chunk["merkle_proof"].is_null());
+}
+
+#[tokio::test]
+async fn mobile_session_content_rejects_stale_revision() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-content-stale.jsonl",
+        &[serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "revision conflict"
+                    }
+                ]
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let response = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/sessions/thread-main/content?range=tail&limit=65536&revision=stale-revision",
+        &[(axum::http::header::AUTHORIZATION, &authorization)],
+        Some("127.0.0.1:49152".parse().expect("loopback socket")),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["code"], "stale_revision");
+    assert_eq!(json["requested_revision"], "stale-revision");
+    assert!(
+        json["current_revision"]
+            .as_str()
+            .is_some_and(|revision| revision.starts_with("transcript:"))
+    );
+}
+
+#[tokio::test]
+async fn mobile_session_content_rejects_malformed_input() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-content-input.jsonl",
+        &[serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "input guards"
+                    }
+                ]
+            }
+        })],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    for (path, expected_code) in [
+        (
+            "/api/mobile/sessions/thread-main/content?range=after&limit=65536&cursor=not-a-cursor",
+            "invalid_cursor",
+        ),
+        (
+            "/api/mobile/sessions/thread-main/content?range=tail&limit=524289",
+            "invalid_limit",
+        ),
+        (
+            "/api/mobile/sessions/thread-main/content?range=search&limit=65536",
+            "unsupported_range",
+        ),
+    ] {
+        let response = request_with_options(
+            &router,
+            Method::GET,
+            path,
+            &[(axum::http::header::AUTHORIZATION, &authorization)],
+            Some("127.0.0.1:49152".parse().expect("loopback socket")),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["code"], expected_code, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn mobile_session_controls_are_owned_by_rust() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -3971,6 +4165,11 @@ fn record_thread_stopped(control_plane: &ControlPlane, thread_id: &str) {
             false,
         )
         .expect("record stopped mobile lifecycle");
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
 }
 
 fn prime_state_mini_cache(control_plane: &ControlPlane) {

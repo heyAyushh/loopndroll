@@ -37,6 +37,10 @@ use crate::codex::{
     read_thread_revision_state,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
+use crate::content_slices::{
+    ContentSliceError, SessionContentSliceRequest, SessionContentSliceResponse,
+    session_content_slice,
+};
 use crate::devin::{
     DevinAcpBridgeProbe, DevinAcpBridgeStatus, DevinAcpControlCancelResponse, DevinAcpControlError,
     DevinAcpControlPromptResponse, DevinAcpControlSessionResponse, DevinAcpRuntime,
@@ -907,6 +911,13 @@ impl ControlPlane {
 
     pub fn codex_executable(&self) -> Option<&str> {
         self.config.codex_executable.as_deref()
+    }
+
+    pub fn session_content_slice(
+        &self,
+        request: SessionContentSliceRequest<'_>,
+    ) -> Result<SessionContentSliceResponse, ContentSliceError> {
+        session_content_slice(&self.config.codex_home, request)
     }
 
     pub fn grok_home(&self) -> &PathBuf {

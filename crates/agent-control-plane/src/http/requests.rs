@@ -78,6 +78,15 @@ pub(super) struct MobileSessionDetailQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct MobileSessionContentQuery {
+    pub(super) range: Option<String>,
+    pub(super) limit: Option<usize>,
+    pub(super) cursor: Option<String>,
+    pub(super) revision: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct DesktopDefaultPromptRequest {
     pub(super) default_prompt: String,
 }
