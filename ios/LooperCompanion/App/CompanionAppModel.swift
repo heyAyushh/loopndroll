@@ -13,6 +13,10 @@ private enum CachedSnapshotRestoreReason {
     static let loadFailure = "load-failure"
 }
 
+private enum SessionMiniSnapshotReasonPrefix {
+    static let acceptedClientCoreCommand = "client-core-"
+}
+
 private enum SiriDonationEvent {
     static let openSession = "open-session"
     static let setDefaultSession = "set-default-session"
@@ -1157,12 +1161,47 @@ final class CompanionAppModel {
                 threadID: sessionID,
                 preset: preset
             )
-            applyAcceptedClientCoreLocalSnapshot(reason: "mode")
+            if !applyAcceptedModeProjection(preset, sessionID: sessionID) {
+                applyAcceptedClientCoreLocalSnapshot(reason: "mode")
+            }
             recordModeAccepted(result, sessionID: sessionID)
             return true
         } catch {
             applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: false)
             Haptics.error()
+            return false
+        }
+    }
+
+    @discardableResult
+    private func applyAcceptedModeProjection(_ preset: SessionMode?, sessionID: String) -> Bool {
+        guard let sourceSnapshot = snapshot else {
+            return false
+        }
+        do {
+            let snapshotJSON = try encodeMobileSnapshot(sourceSnapshot)
+            let projection = try reduceMobileSnapshotOptimisticMode(
+                snapshotJson: snapshotJSON,
+                detailJson: "",
+                sessionId: sessionID,
+                preset: preset?.rawValue ?? "",
+                selectedAssistantSurface: snapshotState.selectedAssistantSurface.rawValue
+            )
+            guard projection.didUpdate,
+                  let visibleSnapshot = decodeMobileSnapshot(projection.visibleSnapshotJson)
+            else {
+                return false
+            }
+            snapshotState.applySnapshot(
+                visibleSnapshot,
+                preferredSurface: snapshotState.selectedAssistantSurface
+            )
+            lastUpdatedAt = Date()
+            return true
+        } catch {
+            CompanionDiagnostics.record(
+                "mode:optimistic-projection-failed id=\(sessionID) error=\(error.localizedDescription)"
+            )
             return false
         }
     }
@@ -1730,7 +1769,9 @@ final class CompanionAppModel {
 
     @discardableResult
     private func applyAcceptedClientCoreLocalSnapshot(reason: String) -> Bool {
-        restoreCachedSessionMiniSnapshotIfAvailable(reason: "client-core-\(reason)")
+        restoreCachedSessionMiniSnapshotIfAvailable(
+            reason: "\(SessionMiniSnapshotReasonPrefix.acceptedClientCoreCommand)\(reason)"
+        )
     }
 
     @discardableResult
@@ -1739,6 +1780,13 @@ final class CompanionAppModel {
         onlyWhenSnapshotMissing: Bool,
         restoreRevision: Int
     ) async -> Bool {
+        if hasKnownSessionMiniCursor() {
+            CompanionDiagnostics.record(
+                "snapshot:cache-restore-session-cursor-skip reason=\(reason) realtimeSeq=\(realtimeLatestSeq)"
+            )
+            return false
+        }
+
         if snapshotState.shouldSkipCachedRestore(onlyWhenSnapshotMissing: onlyWhenSnapshotMissing) {
             CompanionDiagnostics.record("snapshot:cache-restore-skip reason=\(reason) existingSnapshot=true")
             return false
@@ -1793,7 +1841,7 @@ final class CompanionAppModel {
         reason: String,
         latestSeq: Int64
     ) -> Bool {
-        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq) else {
+        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason) else {
             CompanionDiagnostics.record(
                 "session-mini:cache-skip reason=\(reason) latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
             )
@@ -1819,20 +1867,53 @@ final class CompanionAppModel {
         )
     }
 
-    private func shouldApplyNetworkSnapshot(_ nextSnapshot: MobileSnapshot) -> Bool {
-        if snapshot == nil || !snapshotState.hasSnapshot {
-            return true
-        }
-        if realtimeLatestSeq <= 0 {
-            return true
-        }
-        if !realtimeStreamIsLive {
+    private func shouldApplyNetworkSnapshot(_: MobileSnapshot) -> Bool {
+        if hasKnownSessionMiniCursor() {
             return false
         }
-        return snapshotState.allSessions.isEmpty && !nextSnapshot.sessions.isEmpty
+        return snapshot == nil || !snapshotState.hasSnapshot
     }
 
-    private func shouldApplyStateMiniSnapshot(latestSeq: Int64) -> Bool {
+    private func encodeMobileSnapshot(_ snapshot: MobileSnapshot) throws -> String {
+        let data = try JSONEncoder().encode(snapshot)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw HTTPCompanionServiceError.invalidResponse
+        }
+        return json
+    }
+
+    private func decodeMobileSnapshot(_ json: String) -> MobileSnapshot? {
+        try? JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
+    }
+
+    private func hasKnownSessionMiniCursor() -> Bool {
+        if realtimeLatestSeq > 0 {
+            return true
+        }
+        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+            return false
+        }
+        do {
+            let localSnapshot = try sessionRuntime.currentStateMiniSnapshot()
+            guard localSnapshot.latestSeq > 0 else {
+                return false
+            }
+            if localSnapshot.sessions.isEmpty {
+                return true
+            }
+            return try sessionRuntime.cachedSnapshot() != nil
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:cursor-read-failed error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func shouldApplyStateMiniSnapshot(latestSeq: Int64, reason: String) -> Bool {
+        if reason.hasPrefix(SessionMiniSnapshotReasonPrefix.acceptedClientCoreCommand) {
+            return true
+        }
         if snapshot == nil || !snapshotState.hasSnapshot {
             return true
         }

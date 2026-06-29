@@ -798,6 +798,28 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testKnownSessionCursorDoesNotFillEmptyProjectionFromHttpSnapshot() async throws {
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 12,
+            records: []
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.connectionState = .connecting
+        model.realtimeStreamIsLive = false
+
+        await model.loadSnapshot()
+
+        #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
+        #expect(model.viewState.activeSessions.isEmpty)
+        #expect(service.loadSnapshotCallCount == 1)
+    }
+
+    @MainActor
+    @Test
     func testRoutePreferenceSwitchClearsStaleRouteUntilCoreReportsReplacement() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
