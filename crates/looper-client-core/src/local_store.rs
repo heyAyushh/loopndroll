@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -13,9 +13,10 @@ use crate::{
         ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
     state_mini::{
-        DEFAULT_NODE_ID, fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis,
-        normalize_state_minis, require_valid_sequence, same_state_mini_key, sort_state_minis,
-        state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
+        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_node_ids,
+        last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
+        sort_state_minis, state_mini_key, state_mini_node_id,
+        state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
     },
 };
 
@@ -557,21 +558,24 @@ impl StoredState {
                 .map(|incoming_seq| current.seq > *incoming_seq)
                 .unwrap_or(true)
         });
+        let mut index_by_key: HashMap<StateMiniKey, usize> =
+            HashMap::with_capacity(self.sessions.len());
+        for (index, current) in self.sessions.iter().enumerate() {
+            index_by_key.entry(state_mini_key(current)).or_insert(index);
+        }
         let mut changed = false;
         for incoming in sessions {
-            if !fresh_node_ids.contains(&state_mini_node_id(&incoming)) {
+            let key = state_mini_key(&incoming);
+            if !fresh_node_ids.contains(key.node_id()) {
                 continue;
             }
-            if let Some(index) = self
-                .sessions
-                .iter()
-                .position(|current| same_state_mini_key(current, &incoming))
-            {
+            if let Some(index) = index_by_key.get(&key).copied() {
                 if incoming.seq >= self.sessions[index].seq {
                     changed = self.sessions[index] != incoming || changed;
                     self.sessions[index] = incoming;
                 }
             } else {
+                index_by_key.insert(key, self.sessions.len());
                 self.sessions.push(incoming);
                 changed = true;
             }
@@ -860,6 +864,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    const MANY_STALE_LOCAL_MINI_KEYS: i64 = 2_048;
+    const STALE_AND_FRESH_MINI_VERSIONS_PER_KEY: i64 = 2;
+    const FIRST_LOCAL_MINI_SEQUENCE: i64 = 1;
+    const TEST_ACCOUNT_ID: &str = "local-account";
+    const TEST_NODE_ID: &str = "node-a";
+    const TEST_ASSISTANT_SURFACE: &str = "codex";
 
     #[test]
     fn local_store_dedupes_outbox_attempts_and_persists_minis() {
@@ -1261,6 +1272,71 @@ mod tests {
         assert_eq!(snapshot.latest_seq, 5206);
         assert_eq!(snapshot.sessions.len(), 1);
         assert_eq!(snapshot.sessions[0].seq, 5206);
+    }
+
+    #[test]
+    fn local_store_load_normalizes_many_stale_minis_without_quadratic_scan() {
+        let path = temp_store_path("many-stale-local-minis");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        let mut sessions = Vec::with_capacity(
+            (MANY_STALE_LOCAL_MINI_KEYS * STALE_AND_FRESH_MINI_VERSIONS_PER_KEY) as usize,
+        );
+        for index in 0..MANY_STALE_LOCAL_MINI_KEYS {
+            let session_id = format!("thread-{index}");
+            let stale_seq = FIRST_LOCAL_MINI_SEQUENCE + index;
+            let fresh_seq = stale_seq + MANY_STALE_LOCAL_MINI_KEYS;
+            sessions.push(node_state_mini(
+                TEST_NODE_ID,
+                &session_id,
+                TEST_ASSISTANT_SURFACE,
+                stale_seq,
+                &format!("rev-{stale_seq}"),
+                &format!("stale {index}"),
+            ));
+            sessions.push(node_state_mini(
+                TEST_NODE_ID,
+                &session_id,
+                TEST_ASSISTANT_SURFACE,
+                fresh_seq,
+                &format!("rev-{fresh_seq}"),
+                &format!("fresh {index}"),
+            ));
+        }
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": MANY_STALE_LOCAL_MINI_KEYS * STALE_AND_FRESH_MINI_VERSIONS_PER_KEY,
+                "sessions": sessions,
+            })
+            .to_string(),
+        )
+        .expect("write stale cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let snapshot = store.snapshot().expect("snapshot");
+
+        assert_eq!(snapshot.sessions.len(), MANY_STALE_LOCAL_MINI_KEYS as usize);
+        for (index, session) in snapshot.sessions.iter().enumerate() {
+            let expected_seq =
+                FIRST_LOCAL_MINI_SEQUENCE + index as i64 + MANY_STALE_LOCAL_MINI_KEYS;
+            assert_eq!(session.seq, expected_seq);
+            let payload = payload_value(session);
+            assert_eq!(payload["accountId"], TEST_ACCOUNT_ID);
+            assert_eq!(payload["nodeId"], TEST_NODE_ID);
+            assert_eq!(payload["title"], format!("fresh {index}"));
+        }
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
+                .expect("repaired json");
+        assert_eq!(
+            persisted["sessions"]
+                .as_array()
+                .expect("persisted sessions")
+                .len(),
+            MANY_STALE_LOCAL_MINI_KEYS as usize
+        );
     }
 
     #[test]

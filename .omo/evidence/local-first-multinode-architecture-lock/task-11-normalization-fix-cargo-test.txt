@@ -1,0 +1,8 @@
+   Compiling looper-client-core v0.1.0 (/Users/ay/Documents/looper/crates/looper-client-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.82s
+     Running unittests src/lib.rs (crates/looper-client-core/target/debug/deps/looper_client_core-198df08d44d24352)
+
+running 1 test
+test local_store::tests::local_store_load_normalizes_many_stale_minis_without_quadratic_scan ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 163 filtered out; finished in 0.73s

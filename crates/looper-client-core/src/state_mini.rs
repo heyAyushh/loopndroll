@@ -2,7 +2,7 @@
 use crate::model::ClientStateMiniDelta;
 use crate::{error::ClientCoreError, model::ClientStateMini};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const INITIAL_SEQUENCE: i64 = 0;
 pub(crate) const DEFAULT_ACCOUNT_ID: &str = "local-account";
@@ -35,6 +35,28 @@ const NOTIFICATION_TARGET_IDS_FIELD: &str = "targetIds";
 const NOTIFICATION_USES_DEFAULT_FIELD: &str = "usesDefault";
 const FRESHNESS_SOURCE_FIELD: &str = "freshnessSource";
 const ROUTE_ENDPOINT_FIELD: &str = "routeEndpoint";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct StateMiniKey {
+    account_id: String,
+    node_id: String,
+    session_id: String,
+}
+
+impl StateMiniKey {
+    pub(crate) fn node_id(&self) -> &str {
+        &self.node_id
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct StateMiniSortKey {
+    seq: i64,
+    account_id: String,
+    node_id: String,
+    assistant_surface: String,
+    session_id: String,
+}
 
 pub(crate) fn require_valid_sequence(sequence: i64) -> Result<(), ClientCoreError> {
     if sequence < INITIAL_SEQUENCE {
@@ -77,17 +99,17 @@ pub(crate) fn normalize_state_minis_for_source(
     freshness_source: Option<&str>,
     route_endpoint: Option<&str>,
 ) -> Vec<ClientStateMini> {
-    let mut normalized = Vec::with_capacity(sessions.len());
+    let mut normalized: Vec<ClientStateMini> = Vec::with_capacity(sessions.len());
+    let mut index_by_key: HashMap<StateMiniKey, usize> = HashMap::with_capacity(sessions.len());
     for session in sessions {
-        let session = normalize_state_mini_for_source(session, freshness_source, route_endpoint);
-        if let Some(index) = normalized
-            .iter()
-            .position(|current| same_state_mini_key(current, &session))
-        {
+        let (session, key) =
+            normalize_state_mini_for_source_with_key(session, freshness_source, route_endpoint);
+        if let Some(index) = index_by_key.get(&key).copied() {
             if session.seq >= normalized[index].seq {
                 normalized[index] = session;
             }
         } else {
+            index_by_key.insert(key, normalized.len());
             normalized.push(session);
         }
     }
@@ -96,20 +118,11 @@ pub(crate) fn normalize_state_minis_for_source(
 }
 
 pub(crate) fn sort_state_minis(sessions: &mut [ClientStateMini]) {
-    sessions.sort_by(|lhs, rhs| {
-        lhs.seq
-            .cmp(&rhs.seq)
-            .then_with(|| state_mini_account_id(lhs).cmp(&state_mini_account_id(rhs)))
-            .then_with(|| state_mini_node_id(lhs).cmp(&state_mini_node_id(rhs)))
-            .then_with(|| lhs.assistant_surface.cmp(&rhs.assistant_surface))
-            .then_with(|| lhs.session_id.cmp(&rhs.session_id))
-    });
+    sessions.sort_by_cached_key(state_mini_sort_key);
 }
 
 pub(crate) fn same_state_mini_key(lhs: &ClientStateMini, rhs: &ClientStateMini) -> bool {
-    state_mini_account_id(lhs) == state_mini_account_id(rhs)
-        && state_mini_node_id(lhs) == state_mini_node_id(rhs)
-        && lhs.session_id == rhs.session_id
+    state_mini_key(lhs) == state_mini_key(rhs)
 }
 
 pub(crate) fn latest_state_mini_revision(sessions: &[ClientStateMini]) -> Option<String> {
@@ -126,10 +139,18 @@ pub(crate) fn latest_state_mini_revision(sessions: &[ClientStateMini]) -> Option
 }
 
 pub(crate) fn normalize_state_mini_for_source(
-    mut session: ClientStateMini,
+    session: ClientStateMini,
     freshness_source: Option<&str>,
     route_endpoint: Option<&str>,
 ) -> ClientStateMini {
+    normalize_state_mini_for_source_with_key(session, freshness_source, route_endpoint).0
+}
+
+fn normalize_state_mini_for_source_with_key(
+    mut session: ClientStateMini,
+    freshness_source: Option<&str>,
+    route_endpoint: Option<&str>,
+) -> (ClientStateMini, StateMiniKey) {
     let mut payload = payload_object(&session.payload_json);
     let account_id = first_nonblank_string(
         &payload,
@@ -158,6 +179,11 @@ pub(crate) fn normalize_state_mini_for_source(
     session.session_id = session_id;
     session.assistant_surface = assistant_surface.clone();
     session.revision = revision.clone();
+    let key = StateMiniKey {
+        account_id: account_id.clone(),
+        node_id: node_id.clone(),
+        session_id: session.session_id.clone(),
+    };
 
     payload.insert(ACCOUNT_ID_FIELD.to_owned(), Value::String(account_id));
     payload.insert(NODE_ID_FIELD.to_owned(), Value::String(node_id));
@@ -226,7 +252,39 @@ pub(crate) fn normalize_state_mini_for_source(
     }
 
     session.payload_json = serde_json::to_string(&Value::Object(payload)).unwrap_or_default();
-    session
+    (session, key)
+}
+
+pub(crate) fn state_mini_key(session: &ClientStateMini) -> StateMiniKey {
+    let payload = payload_object(&session.payload_json);
+    StateMiniKey {
+        account_id: first_nonblank_string(
+            &payload,
+            &[
+                ACCOUNT_ID_FIELD,
+                ACCOUNT_ID_ALIAS_FIELD,
+                ACCOUNT_ID_SNAKE_FIELD,
+            ],
+        )
+        .unwrap_or_else(|| DEFAULT_ACCOUNT_ID.to_owned()),
+        node_id: first_nonblank_string(
+            &payload,
+            &[NODE_ID_FIELD, NODE_ID_ALIAS_FIELD, NODE_ID_SNAKE_FIELD],
+        )
+        .unwrap_or_else(|| DEFAULT_NODE_ID.to_owned()),
+        session_id: session.session_id.clone(),
+    }
+}
+
+fn state_mini_sort_key(session: &ClientStateMini) -> StateMiniSortKey {
+    let key = state_mini_key(session);
+    StateMiniSortKey {
+        seq: session.seq,
+        account_id: key.account_id,
+        node_id: key.node_id,
+        assistant_surface: session.assistant_surface.clone(),
+        session_id: key.session_id,
+    }
 }
 
 pub(crate) fn state_mini_node_id(session: &ClientStateMini) -> String {
@@ -236,19 +294,6 @@ pub(crate) fn state_mini_node_id(session: &ClientStateMini) -> String {
         &[NODE_ID_FIELD, NODE_ID_ALIAS_FIELD, NODE_ID_SNAKE_FIELD],
     )
     .unwrap_or_else(|| DEFAULT_NODE_ID.to_owned())
-}
-
-pub(crate) fn state_mini_account_id(session: &ClientStateMini) -> String {
-    let payload = payload_object(&session.payload_json);
-    first_nonblank_string(
-        &payload,
-        &[
-            ACCOUNT_ID_FIELD,
-            ACCOUNT_ID_ALIAS_FIELD,
-            ACCOUNT_ID_SNAKE_FIELD,
-        ],
-    )
-    .unwrap_or_else(|| DEFAULT_ACCOUNT_ID.to_owned())
 }
 
 pub(crate) fn last_seq_by_node_from_minis(sessions: &[ClientStateMini]) -> BTreeMap<String, i64> {
