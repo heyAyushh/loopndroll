@@ -1552,23 +1552,26 @@ final class CompanionAppModel {
         }
 
         AssistantSurfaceETTraceMetric.postStarted(for: surface)
-
-        guard let selectionTask = sessionSyncEngine.selectAssistantSurface(surface) else {
-            applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
-            Haptics.error()
-            AssistantSurfaceETTraceMetric.postEnded(for: surface)
-            return nil
-        }
-
-        let previousSurface = snapshotState.selectedAssistantSurface
         _ = snapshotState.selectAssistantSurface(surface)
 
         return Task { @MainActor [weak self] in
-            let result = await selectionTask.value
+            await Task.yield()
             guard let self else {
                 AssistantSurfaceETTraceMetric.postEnded(for: surface)
                 return false
             }
+
+            guard let selectionTask = self.sessionSyncEngine.selectAssistantSurface(surface) else {
+                self.applyConnectionFailure(
+                    HTTPCompanionServiceError.localStoreUnavailable,
+                    suppressErrorWhenSnapshotUsable: true
+                )
+                Haptics.error()
+                AssistantSurfaceETTraceMetric.postEnded(for: surface)
+                return false
+            }
+
+            let result = await selectionTask.value
             defer {
                 AssistantSurfaceETTraceMetric.postEnded(for: surface)
             }
@@ -1599,9 +1602,6 @@ final class CompanionAppModel {
             case .stale:
                 return false
             case let .failed(message):
-                if self.snapshotState.selectedAssistantSurface == surface {
-                    _ = self.snapshotState.selectAssistantSurface(previousSurface)
-                }
                 self.applyConnectionFailure(
                     AssistantSurfaceSelectionFailure(message: message),
                     suppressErrorWhenSnapshotUsable: true

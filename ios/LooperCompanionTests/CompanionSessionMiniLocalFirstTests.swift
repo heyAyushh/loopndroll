@@ -239,6 +239,39 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testAssistantSurfaceSwitchPaintsBeforeRuntimeDispatch() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 8, revision: "mini-revision-8"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        let selectionTask = try #require(model.selectAssistantSurface(.devin))
+
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(model.pendingSessionRuntimeCommandCount == 0)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+
+        #expect(await selectionTask.value)
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).count == 1)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -293,7 +326,7 @@ struct CompanionSessionMiniLocalFirstTests {
         let devinTask = try #require(model.selectAssistantSurface(.devin))
 
         #expect(model.viewState.selectedAssistantSurface == .devin)
-        #expect(model.pendingSessionRuntimeCommandCount == 1)
+        #expect(model.pendingSessionRuntimeCommandCount == 0)
         #expect(await claudeTask.value)
         #expect(await devinTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
