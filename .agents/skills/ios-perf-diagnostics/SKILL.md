@@ -44,8 +44,10 @@ bash scripts/ios-diagnostics.sh lldb-trap --preset ui --attach
 5. For invalidation or latency regressions, run repeatable xctrace captures. Always pass the simulator UDID so `perf-loop` cannot attach a host process with the same name:
 
 ```bash
-bash scripts/ios-diagnostics.sh perf-loop --device <simulator-udid> --iterations 3 --time-limit 15s
+bash scripts/ios-diagnostics.sh perf-loop --device <simulator-udid> --launch --iterations 3 --time-limit 15s
 ```
+
+The wrapper resolves `dev.looper.app.ios` through `simctl appinfo`, launches the simulator app when `--launch` is present, and passes the concrete host PID to `perf-loop`. Use `--pid <pid>` only when you have already captured the exact simulator app PID.
 
 6. For ETTrace, keep instrumentation temporary unless the task explicitly asks for permanent app wiring. Capture dSYMs from the matching build when available:
 

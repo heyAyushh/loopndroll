@@ -80,6 +80,44 @@ print_artifact() {
     printf 'artifact: %s\n' "$1" >&2
 }
 
+simulator_app_executable() {
+    local device="$1"
+    local bundle_id="$2"
+    xcrun simctl appinfo "$device" "$bundle_id" 2>/dev/null |
+        awk -F' = ' '/CFBundleExecutable/ { gsub(/[\";]/, "", $2); print $2; exit }'
+}
+
+host_pid_for_executable() {
+    local executable="$1"
+    ps axww -o pid= -o command= |
+        while IFS= read -r line; do
+            local trimmed="${line#"${line%%[![:space:]]*}"}"
+            local pid="${trimmed%%[[:space:]]*}"
+            local command="${trimmed#"$pid"}"
+            command="${command#"${command%%[![:space:]]*}"}"
+            if [[ "$command" == "$executable" || "$command" == "$executable "* ]]; then
+                printf '%s\n' "$pid"
+                return 0
+            fi
+        done
+}
+
+simulator_app_pid() {
+    local device="$1"
+    local bundle_id="$2"
+    local executable
+    executable="$(simulator_app_executable "$device" "$bundle_id")"
+    [[ -n "$executable" ]] || return 1
+    host_pid_for_executable "$executable"
+}
+
+launch_simulator_app() {
+    local device="$1"
+    local bundle_id="$2"
+    xcrun simctl launch "$device" "$bundle_id" |
+        awk -F': ' -v bundle_id="$bundle_id" '$1 == bundle_id { print $2; exit }'
+}
+
 command_doctor() {
     optional_tool_status oslog-live
     optional_tool_status lldb-trap
@@ -203,6 +241,7 @@ command_perf_loop() {
     require_tool perf-loop
 
     local process="$DEFAULT_PROCESS"
+    local bundle_id="$DEFAULT_BUNDLE_ID"
     local iterations="$DEFAULT_PERF_ITERATIONS"
     local time_limit="$DEFAULT_PERF_TIME_LIMIT"
     local cooldown="$DEFAULT_PERF_COOLDOWN"
@@ -210,12 +249,17 @@ command_perf_loop() {
     local output_dir=""
     local run_name="$DEFAULT_PERF_RUN_NAME"
     local device="${LOOPER_IOS_SIMULATOR:-}"
+    local attach_pid=""
+    local launch_app="false"
     local dry_run_flag=()
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --process|--attach) process="$2"; shift 2 ;;
+            --process|--attach) process="$2"; bundle_id=""; shift 2 ;;
+            --bundle-id) bundle_id="$2"; shift 2 ;;
+            --pid) attach_pid="$2"; shift 2 ;;
+            --launch) launch_app="true"; shift ;;
             --iterations) iterations="$2"; shift 2 ;;
             --time-limit) time_limit="$2"; shift 2 ;;
             --cooldown) cooldown="$2"; shift 2 ;;
@@ -239,8 +283,26 @@ command_perf_loop() {
         fail "perf-loop requires --device or LOOPER_IOS_SIMULATOR to avoid attaching the host process"
     fi
 
+    local attach_target="$process"
+    if [[ -n "$attach_pid" ]]; then
+        attach_target="$attach_pid"
+    elif [[ -n "$bundle_id" ]]; then
+        attach_target="$(simulator_app_pid "$device" "$bundle_id" || true)"
+        if [[ "$launch_app" == "true" ]]; then
+            attach_target="$(launch_simulator_app "$device" "$bundle_id")"
+            [[ -n "$attach_target" ]] || fail "simctl launch did not return a pid for ${bundle_id} on ${device}"
+        fi
+        if [[ -z "$attach_target" ]]; then
+            fail "no running simulator process for ${bundle_id} on ${device}; rerun with --launch or pass --pid"
+        fi
+        if ! ps -p "$attach_target" >/dev/null 2>&1; then
+            fail "resolved pid ${attach_target} for ${bundle_id} is not running on the host"
+        fi
+        printf 'resolved simulator app %s on %s to pid %s\n' "$bundle_id" "$device" "$attach_target" >&2
+    fi
+
     local perf_args=(
-        --attach "$process"
+        --attach "$attach_target"
         --iterations "$iterations"
         --time-limit "$time_limit"
         --cooldown "$cooldown"
