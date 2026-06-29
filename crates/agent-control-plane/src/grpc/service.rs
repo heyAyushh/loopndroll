@@ -2,7 +2,6 @@ use std::{pin::Pin, time::Duration};
 
 use async_stream::stream;
 use futures_core::Stream;
-use serde_json::{Value, json};
 use tonic::{Request, Response, Status};
 
 use crate::control_plane::ControlPlane;
@@ -755,23 +754,24 @@ fn replacement_state_delta_frames(
 ) -> Result<Vec<proto::ServerFrame>, Status> {
     let mut frames = Vec::new();
     let mut chunk = Vec::new();
+    let mut chunk_bytes = replacement_state_delta_payload_overhead(record.seq, true);
     let mut chunk_replaces = true;
 
     for mini in minis {
-        let Some(value) = compact_mobile_session_mini_value(mini) else {
+        let Some(payload) = compact_mobile_session_mini_record(mini) else {
             continue;
         };
-        chunk.push(value);
-        let payload_json = replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
-        if payload_json.len() > SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES && chunk.len() > 1 {
-            let overflow = chunk.pop().expect("overflow item");
+        let candidate_bytes = chunk_bytes + payload.len() + usize::from(!chunk.is_empty());
+        if candidate_bytes > SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES && !chunk.is_empty() {
             let payload_json =
                 replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
             frames.push(state_delta_frame(record, payload_json)?);
             chunk.clear();
-            chunk.push(overflow);
             chunk_replaces = false;
+            chunk_bytes = replacement_state_delta_payload_overhead(record.seq, chunk_replaces);
         }
+        chunk_bytes += payload.len() + usize::from(!chunk.is_empty());
+        chunk.push(payload);
     }
 
     if frames.is_empty() || !chunk.is_empty() {
@@ -782,23 +782,21 @@ fn replacement_state_delta_frames(
     Ok(frames)
 }
 
-fn compact_mobile_session_mini_value(record: &MobileSessionMiniRecord) -> Option<Value> {
-    let payload = compact_mobile_session_mini_record(record)?;
-    serde_json::from_str(&payload).ok()
-}
-
 fn replacement_state_delta_payload_json(
     latest_seq: i64,
-    sessions: &[Value],
+    sessions: &[String],
     replace: bool,
 ) -> String {
-    json!({
-        "latest_seq": latest_seq,
-        "latestSeq": latest_seq,
-        "replace": replace,
-        "sessions": sessions,
-    })
-    .to_string()
+    let mut payload = format!(
+        "{{\"latest_seq\":{latest_seq},\"latestSeq\":{latest_seq},\"replace\":{replace},\"sessions\":["
+    );
+    payload.push_str(&sessions.join(","));
+    payload.push_str("]}");
+    payload
+}
+
+fn replacement_state_delta_payload_overhead(latest_seq: i64, replace: bool) -> usize {
+    replacement_state_delta_payload_json(latest_seq, &[], replace).len()
 }
 
 fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {

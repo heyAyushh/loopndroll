@@ -357,11 +357,16 @@ create index if not exists mobile_session_minis_seq
         let created_at_ms = current_time_millis();
         let input = mobile_state_event_input_for_mobile_event(event);
         let state_record = insert_mobile_state_event(&transaction, &input, created_at_ms, None)?;
+        let projection_revision = event
+            .revision
+            .as_deref()
+            .filter(|revision| !revision.is_empty())
+            .unwrap_or(state_record.revision.as_str());
         replace_mobile_session_minis_in_transaction(
             &transaction,
             minis,
             state_record.seq,
-            &state_record.revision,
+            projection_revision,
             created_at_ms,
         )?;
         transaction.commit()?;

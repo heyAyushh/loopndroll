@@ -2041,6 +2041,12 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
             .expect("reconcile projection"),
         "fresh transcript activity should publish a replacement mini event"
     );
+    assert!(
+        !control_plane
+            .reconcile_mobile_session_mini_projection()
+            .expect("second reconcile projection"),
+        "stored projection revision should make repeated reconcile a no-op"
+    );
 
     let latest_seq = control_plane
         .store()
