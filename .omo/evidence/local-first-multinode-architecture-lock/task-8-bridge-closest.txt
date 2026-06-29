@@ -1,0 +1,17 @@
+Building for debugging...
+[Using on-disk description]
+[1 / 5]
+Build complete! (0.54 sec)
+􀟈  Test run started.
+􀄵  Testing Library Version: 2067.1
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite "LooperClientCoreTests" started.
+􀟈  Test mobileProjectionBuildsSnapshotFromStateMinis() started.
+􁁛  Test mobileProjectionBuildsSnapshotFromStateMinis() passed after 0.005 seconds.
+􀟈  Test mobileProjectionAppliesPendingCommandsFromRust() started.
+􁁛  Test mobileProjectionAppliesPendingCommandsFromRust() passed after 0.001 seconds.
+􀟈  Test mobileProjectionBucketsCodexCompatibleClientsUnderCodex() started.
+􁁛  Test mobileProjectionBucketsCodexCompatibleClientsUnderCodex() passed after 0.001 seconds.
+􁁛  Suite "LooperClientCoreTests" passed after 0.006 seconds.
+􁁛  Test run with 3 tests in 1 suite passed after 0.006 seconds.
+exit=0

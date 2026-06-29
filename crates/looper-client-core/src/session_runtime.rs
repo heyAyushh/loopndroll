@@ -8,7 +8,7 @@ use crate::{
         ClientMenuBarSessionMiniLocalSnapshot, ClientMenuSnapshotStreamUpdate,
         reduce_state_minis_menu_snapshot,
     },
-    mobile_snapshot::reduce_state_minis_mobile_snapshot,
+    mobile_snapshot::reduce_state_minis_mobile_snapshot_with_pending_commands,
     model::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
@@ -149,6 +149,7 @@ impl LooperClientCoreSessionRuntime {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        let endpoints = self.local_store.endpoints_with_last_good(endpoints)?;
         let recovered = self.client_core.recover_state_mini_snapshot(
             endpoints,
             bearer_token,
@@ -512,9 +513,10 @@ impl LooperClientCoreSessionRuntime {
             });
         }
 
-        let projection = reduce_state_minis_mobile_snapshot(
+        let projection = reduce_state_minis_mobile_snapshot_with_pending_commands(
             latest_seq,
             update.snapshot.sessions,
+            update.snapshot.pending_commands,
             server_time.clone(),
         )?;
 
@@ -671,6 +673,10 @@ impl From<ClientStateSnapshot> for ClientStateMiniSnapshot {
 mod tests {
     use super::*;
     use crate::model::{ClientEndpoint, ClientPendingCommandKind, ClientStateMini};
+    use crate::session_transport::proto;
+    use std::{net::TcpListener, time::Duration};
+    use tokio::sync::mpsc;
+    use tokio_stream::wrappers::ReceiverStream;
 
     #[test]
     fn runtime_persists_prompt_before_transport() {
@@ -1021,6 +1027,75 @@ mod tests {
     }
 
     #[test]
+    fn runtime_persists_first_ready_fallback_endpoint_as_last_good() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let path = temp_store_path("first-ready-fallback");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+        let stale_url = unused_local_url();
+        runtime
+            .local_store
+            .mark_last_good_endpoint(stale_url.clone())
+            .expect("seed stale last-good endpoint");
+
+        let fallback_url = test_runtime.block_on(async {
+            let (fallback_url, server) = spawn_realtime_session_server().await;
+            let started = runtime
+                .start(
+                    vec![
+                        ClientEndpoint {
+                            url: stale_url.clone(),
+                            last_good: false,
+                        },
+                        ClientEndpoint {
+                            url: fallback_url.clone(),
+                            last_good: false,
+                        },
+                    ],
+                    String::new(),
+                    String::new(),
+                )
+                .expect("start runtime");
+
+            assert_eq!(started.phase, crate::model::ConnectionPhase::Connecting);
+            assert!(started.endpoint_url.is_empty());
+
+            let update = tokio::time::timeout(Duration::from_secs(1), runtime.observe())
+                .await
+                .expect("observe first ready endpoint")
+                .expect("runtime update");
+            assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Heartbeat);
+            assert_eq!(update.snapshot.phase, crate::model::ConnectionPhase::Ready);
+            assert_eq!(
+                update.snapshot.endpoint_url,
+                fallback_url.trim_end_matches('/')
+            );
+
+            server.abort();
+            let _ = server.await;
+            fallback_url
+        });
+        drop(runtime);
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let endpoints = reopened
+            .local_store
+            .endpoints_with_last_good(vec![
+                ClientEndpoint {
+                    url: stale_url,
+                    last_good: false,
+                },
+                ClientEndpoint {
+                    url: fallback_url,
+                    last_good: false,
+                },
+            ])
+            .expect("stored endpoints");
+
+        assert!(!endpoints[0].last_good);
+        assert!(endpoints[1].last_good);
+    }
+
+    #[test]
     fn runtime_does_not_seed_empty_durable_state_as_replay_cursor() {
         let path = temp_store_path("empty-state-mini-cursor");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
@@ -1292,6 +1367,56 @@ mod tests {
             let _ = std::fs::remove_dir_all(parent);
         }
         path.to_string_lossy().into_owned()
+    }
+
+    fn unused_local_url() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused port");
+        let address = listener.local_addr().expect("unused addr");
+        drop(listener);
+        format!("http://{address}")
+    }
+
+    async fn spawn_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind realtime server port");
+        let address = listener.local_addr().expect("realtime server addr");
+        drop(listener);
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(
+                TestRealtimeSessionService,
+            );
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), handle)
+    }
+
+    struct TestRealtimeSessionService;
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for TestRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let (_sender, receiver) = mpsc::channel(1);
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
     }
 
     fn state_mini(

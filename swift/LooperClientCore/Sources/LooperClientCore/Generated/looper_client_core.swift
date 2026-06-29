@@ -4647,6 +4647,16 @@ public func reduceStateMinisMobileSnapshot(latestSeq: Int64, sessions: [ClientSt
     )
 })
 }
+public func reduceStateMinisMobileSnapshotWithPendingCommands(latestSeq: Int64, sessions: [ClientStateMini], pendingCommands: [ClientPendingCommand], serverTime: String)throws  -> ClientMobileSnapshotProjection  {
+    return try  FfiConverterTypeClientMobileSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_func_reduce_state_minis_mobile_snapshot_with_pending_commands(
+        FfiConverterInt64.lower(latestSeq),
+        FfiConverterSequenceTypeClientStateMini.lower(sessions),
+        FfiConverterSequenceTypeClientPendingCommand.lower(pendingCommands),
+        FfiConverterString.lower(serverTime),$0
+    )
+})
+}
 public func defaultBaseUrlRaceFallbackDelayNanoseconds() -> UInt64  {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
     uniffi_looper_client_core_fn_func_default_base_url_race_fallback_delay_nanoseconds($0
@@ -4767,6 +4777,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot() != 11614) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_func_reduce_state_minis_mobile_snapshot_with_pending_commands() != 34171) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_default_base_url_race_fallback_delay_nanoseconds() != 23556) {

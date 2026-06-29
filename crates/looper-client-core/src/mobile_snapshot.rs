@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::error::ClientCoreError;
-use crate::model::ClientStateMini;
+use crate::model::{ClientPendingCommand, ClientPendingCommandKind, ClientStateMini};
 
 const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 const DEFAULT_PROMPT: &str = "Continue";
@@ -14,6 +14,7 @@ const HOST_ID: &str = "local-session-mini-cache";
 const HOST_NAME: &str = "Looper";
 const REVISION_PREFIX: &str = "mini:";
 const REVISION_SURFACE_FIELD_PREFIX: &str = "surface=";
+const STATUS_ARCHIVED: &str = "archived";
 
 const KNOWN_ASSISTANT_SURFACES: [&str; 5] = ["codex", "claude-code", "devin", "grok-build", "zed"];
 const CODEX_SURFACE_ASSISTANT_CLIENTS: [&str; 4] = [
@@ -96,6 +97,291 @@ pub fn reduce_state_minis_mobile_snapshot(
         has_snapshot: true,
         snapshot_json,
     })
+}
+
+#[uniffi::export]
+pub fn reduce_state_minis_mobile_snapshot_with_pending_commands(
+    latest_seq: i64,
+    sessions: Vec<ClientStateMini>,
+    pending_commands: Vec<ClientPendingCommand>,
+    server_time: String,
+) -> Result<ClientMobileSnapshotProjection, ClientCoreError> {
+    let mut projection = reduce_state_minis_mobile_snapshot(latest_seq, sessions, server_time)?;
+    if !projection.has_snapshot || pending_commands.is_empty() {
+        return Ok(projection);
+    }
+
+    let mut snapshot = serde_json::from_str::<Value>(&projection.snapshot_json)
+        .map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    apply_pending_commands(&mut snapshot, &pending_commands);
+    projection.snapshot_json =
+        serde_json::to_string(&snapshot).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    Ok(projection)
+}
+
+fn apply_pending_commands(snapshot: &mut Value, commands: &[ClientPendingCommand]) {
+    for command in commands {
+        match command.kind {
+            ClientPendingCommandKind::SetSessionMode => {
+                apply_pending_mode(snapshot, &command.thread_id, &command.preset);
+            }
+            ClientPendingCommandKind::SetSiriCurrentSession => apply_pending_siri_session(
+                snapshot,
+                "siriCurrentSessionId",
+                "siriCurrentAssistantSurface",
+                &command.thread_id,
+                &command.assistant_surface,
+            ),
+            ClientPendingCommandKind::SetSiriDefaultSession => apply_pending_siri_session(
+                snapshot,
+                "siriDefaultSessionId",
+                "siriDefaultAssistantSurface",
+                &command.thread_id,
+                &command.assistant_surface,
+            ),
+            ClientPendingCommandKind::SaveDefaultPrompt => {
+                apply_pending_default_prompt(snapshot, &command.prompt);
+            }
+            ClientPendingCommandKind::SetSessionArchived => {
+                apply_pending_archive(snapshot, &command.thread_id, command.archived);
+            }
+            ClientPendingCommandKind::DeleteSession => {
+                apply_pending_delete(snapshot, &command.thread_id);
+            }
+            ClientPendingCommandKind::SendSessionPrompt
+            | ClientPendingCommandKind::SubmitNotificationReply
+            | ClientPendingCommandKind::SetAssistantSurface
+            | ClientPendingCommandKind::SetDefaultNotificationTargets
+            | ClientPendingCommandKind::MuteSession => {}
+        }
+    }
+    refresh_visible_sessions_from_selected_surface(snapshot);
+}
+
+fn apply_pending_mode(snapshot: &mut Value, session_id: &str, preset: &str) {
+    let session_id = normalized_pending_text(session_id);
+    if session_id.is_empty() {
+        return;
+    }
+    let mode = pending_session_mode_value(preset);
+    update_pending_sessions(snapshot, &session_id, &mut |session| {
+        session.insert("effectiveMode".to_owned(), mode.clone());
+    });
+}
+
+fn apply_pending_siri_session(
+    snapshot: &mut Value,
+    session_field: &str,
+    surface_field: &str,
+    session_id: &str,
+    assistant_surface: &str,
+) {
+    let normalized_session_id = normalized_pending_text(session_id);
+    let Some(settings) = global_settings_mut(snapshot) else {
+        return;
+    };
+    if normalized_session_id.is_empty() {
+        settings.insert(session_field.to_owned(), Value::Null);
+        settings.insert(surface_field.to_owned(), Value::Null);
+        if session_field == "siriCurrentSessionId" {
+            settings.insert("siriCurrentUpdatedAtMs".to_owned(), Value::Null);
+        }
+        return;
+    }
+    settings.insert(
+        session_field.to_owned(),
+        Value::String(normalized_session_id),
+    );
+    settings.insert(
+        surface_field.to_owned(),
+        pending_assistant_surface_value(assistant_surface),
+    );
+}
+
+fn apply_pending_default_prompt(snapshot: &mut Value, prompt: &str) {
+    let prompt = normalized_pending_text(prompt);
+    if prompt.is_empty() {
+        return;
+    }
+    let Some(settings) = global_settings_mut(snapshot) else {
+        return;
+    };
+    settings.insert("defaultPrompt".to_owned(), Value::String(prompt));
+}
+
+fn apply_pending_archive(snapshot: &mut Value, session_id: &str, archived: bool) {
+    let session_id = normalized_pending_text(session_id);
+    if session_id.is_empty() {
+        return;
+    }
+    update_pending_sessions(snapshot, &session_id, &mut |session| {
+        session.insert("isArchived".to_owned(), Value::Bool(archived));
+        if archived {
+            session.insert(
+                "status".to_owned(),
+                Value::String(STATUS_ARCHIVED.to_owned()),
+            );
+        }
+    });
+}
+
+fn apply_pending_delete(snapshot: &mut Value, session_id: &str) {
+    let session_id = normalized_pending_text(session_id);
+    if session_id.is_empty() {
+        return;
+    }
+    if let Some(surface_sessions) = snapshot
+        .get_mut("surfaceSessions")
+        .and_then(Value::as_object_mut)
+    {
+        for sessions in surface_sessions.values_mut() {
+            remove_session_from_array(sessions, &session_id);
+        }
+    } else if let Some(sessions) = snapshot.get_mut("sessions") {
+        remove_session_from_array(sessions, &session_id);
+    }
+    clear_pending_siri_targets(snapshot, &session_id);
+}
+
+fn update_pending_sessions(
+    snapshot: &mut Value,
+    session_id: &str,
+    mutate: &mut impl FnMut(&mut serde_json::Map<String, Value>),
+) {
+    if let Some(surface_sessions) = snapshot
+        .get_mut("surfaceSessions")
+        .and_then(Value::as_object_mut)
+    {
+        for sessions in surface_sessions.values_mut() {
+            update_session_array(sessions, session_id, mutate);
+        }
+        return;
+    }
+
+    if let Some(sessions) = snapshot.get_mut("sessions") {
+        update_session_array(sessions, session_id, mutate);
+    }
+}
+
+fn update_session_array(
+    sessions: &mut Value,
+    session_id: &str,
+    mutate: &mut impl FnMut(&mut serde_json::Map<String, Value>),
+) {
+    let Some(sessions) = sessions.as_array_mut() else {
+        return;
+    };
+    for session in sessions {
+        let Some(session) = session.as_object_mut() else {
+            continue;
+        };
+        if session
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id == session_id)
+        {
+            mutate(session);
+        }
+    }
+}
+
+fn remove_session_from_array(sessions: &mut Value, session_id: &str) {
+    let Some(sessions) = sessions.as_array_mut() else {
+        return;
+    };
+    sessions.retain(|session| {
+        session
+            .get("id")
+            .and_then(Value::as_str)
+            .map(|id| id != session_id)
+            .unwrap_or(true)
+    });
+}
+
+fn clear_pending_siri_targets(snapshot: &mut Value, session_id: &str) {
+    let Some(settings) = global_settings_mut(snapshot) else {
+        return;
+    };
+    if settings
+        .get("siriCurrentSessionId")
+        .and_then(Value::as_str)
+        .is_some_and(|current| current == session_id)
+    {
+        settings.insert("siriCurrentSessionId".to_owned(), Value::Null);
+        settings.insert("siriCurrentAssistantSurface".to_owned(), Value::Null);
+        settings.insert("siriCurrentUpdatedAtMs".to_owned(), Value::Null);
+    }
+    if settings
+        .get("siriDefaultSessionId")
+        .and_then(Value::as_str)
+        .is_some_and(|default| default == session_id)
+    {
+        settings.insert("siriDefaultSessionId".to_owned(), Value::Null);
+        settings.insert("siriDefaultAssistantSurface".to_owned(), Value::Null);
+    }
+}
+
+fn refresh_visible_sessions_from_selected_surface(snapshot: &mut Value) {
+    let selected_surface = snapshot
+        .get("globalSettings")
+        .and_then(|settings| settings.get("assistantSurface"))
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_ASSISTANT_SURFACE)
+        .to_owned();
+    let Some(surface_sessions) = snapshot
+        .get("surfaceSessions")
+        .and_then(Value::as_object)
+        .filter(|surface_sessions| !surface_sessions.is_empty())
+    else {
+        return;
+    };
+    let sessions = surface_sessions
+        .get(&selected_surface)
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    if let Some(snapshot) = snapshot.as_object_mut() {
+        snapshot.insert("sessions".to_owned(), sessions);
+    }
+}
+
+fn global_settings_mut(snapshot: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    snapshot
+        .get_mut("globalSettings")
+        .and_then(Value::as_object_mut)
+}
+
+fn pending_session_mode_value(preset: &str) -> Value {
+    let preset = normalized_pending_text(preset);
+    if is_known_session_mode(&preset) {
+        Value::String(preset)
+    } else {
+        Value::Null
+    }
+}
+
+fn pending_assistant_surface_value(assistant_surface: &str) -> Value {
+    let assistant_surface = normalized_pending_text(assistant_surface);
+    if is_known_assistant_surface(&assistant_surface) {
+        Value::String(assistant_surface)
+    } else {
+        Value::Null
+    }
+}
+
+fn is_known_session_mode(mode: &str) -> bool {
+    matches!(
+        mode,
+        "infinite"
+            | "await-reply"
+            | "completion-checks"
+            | "max-turns-1"
+            | "max-turns-2"
+            | "max-turns-3"
+    )
+}
+
+fn normalized_pending_text(value: &str) -> String {
+    value.trim().to_owned()
 }
 
 fn decodable_sessions(sessions: &[ClientStateMini]) -> Vec<(&ClientStateMini, Value)> {
@@ -583,6 +869,86 @@ mod tests {
     }
 
     #[test]
+    fn mobile_snapshot_applies_pending_commands_in_rust_projection() {
+        let projection = reduce_state_minis_mobile_snapshot_with_pending_commands(
+            31,
+            vec![mini("thread-main", "codex", 31, "rev-31", "S31", 300)],
+            vec![
+                pending_command(
+                    ClientPendingCommandKind::SetSessionMode,
+                    "thread-main",
+                    "max-turns-2",
+                ),
+                pending_command(
+                    ClientPendingCommandKind::SetSiriCurrentSession,
+                    "thread-main",
+                    "codex",
+                ),
+                pending_command(
+                    ClientPendingCommandKind::SaveDefaultPrompt,
+                    "",
+                    "Keep going",
+                ),
+                pending_command(
+                    ClientPendingCommandKind::SetSessionArchived,
+                    "thread-main",
+                    "",
+                ),
+            ],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("pending projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let session = &snapshot["sessions"][0];
+
+        assert!(projection.has_snapshot);
+        assert_eq!(session["effectiveMode"], "max-turns-2");
+        assert_eq!(session["isArchived"], true);
+        assert_eq!(session["status"], STATUS_ARCHIVED);
+        assert_eq!(snapshot["globalSettings"]["defaultPrompt"], "Keep going");
+        assert_eq!(
+            snapshot["globalSettings"]["siriCurrentSessionId"],
+            "thread-main"
+        );
+        assert_eq!(
+            snapshot["globalSettings"]["siriCurrentAssistantSurface"],
+            "codex"
+        );
+    }
+
+    #[test]
+    fn mobile_snapshot_applies_pending_delete_across_surfaces_in_rust_projection() {
+        let projection = reduce_state_minis_mobile_snapshot_with_pending_commands(
+            42,
+            vec![
+                mini("thread-delete", "codex", 42, "rev-42", "S42", 400),
+                mini("thread-keep", "codex", 41, "rev-41", "S41", 300),
+            ],
+            vec![
+                pending_command(
+                    ClientPendingCommandKind::SetSiriDefaultSession,
+                    "thread-delete",
+                    "codex",
+                ),
+                pending_command(ClientPendingCommandKind::DeleteSession, "thread-delete", ""),
+            ],
+            SERVER_TIME.to_owned(),
+        )
+        .expect("pending delete projection");
+        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let session_ids = snapshot["surfaceSessions"]["codex"]
+            .as_array()
+            .expect("codex sessions")
+            .iter()
+            .map(|session| session["id"].as_str().expect("id"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(session_ids, vec!["thread-keep"]);
+        assert!(snapshot["globalSettings"]["siriDefaultSessionId"].is_null());
+        assert!(snapshot["globalSettings"]["siriDefaultAssistantSurface"].is_null());
+    }
+
+    #[test]
     fn mobile_snapshot_repairs_partial_git_repository_metadata() {
         let projection = reduce_state_minis_mobile_snapshot(
             22,
@@ -635,6 +1001,42 @@ mod tests {
             seq,
             revision: revision.to_owned(),
             payload_json: session_json(session_id, ref_id, activity_ms),
+        }
+    }
+
+    fn pending_command(
+        kind: ClientPendingCommandKind,
+        thread_id: &str,
+        value: &str,
+    ) -> ClientPendingCommand {
+        ClientPendingCommand {
+            kind,
+            client_mutation_id: format!("pending-{kind:?}-{thread_id}"),
+            thread_id: thread_id.to_owned(),
+            preset: if kind == ClientPendingCommandKind::SetSessionMode {
+                value.to_owned()
+            } else {
+                String::new()
+            },
+            assistant_surface: if matches!(
+                kind,
+                ClientPendingCommandKind::SetSiriCurrentSession
+                    | ClientPendingCommandKind::SetSiriDefaultSession
+            ) {
+                value.to_owned()
+            } else {
+                String::new()
+            },
+            prompt_intent: String::new(),
+            prompt: if kind == ClientPendingCommandKind::SaveDefaultPrompt {
+                value.to_owned()
+            } else {
+                String::new()
+            },
+            notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: kind == ClientPendingCommandKind::SetSessionArchived,
+            attempt_count: 0,
         }
     }
 

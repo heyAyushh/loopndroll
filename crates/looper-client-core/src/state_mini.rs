@@ -2,7 +2,7 @@
 use crate::model::ClientStateMiniDelta;
 use crate::{error::ClientCoreError, model::ClientStateMini};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const INITIAL_SEQUENCE: i64 = 0;
 pub(crate) const DEFAULT_ACCOUNT_ID: &str = "local-account";
@@ -259,6 +259,75 @@ pub(crate) fn last_seq_by_node_from_minis(sessions: &[ClientStateMini]) -> BTree
         *entry = (*entry).max(session.seq);
     }
     last_seq_by_node
+}
+
+pub(crate) fn state_mini_snapshot_is_stale_for_all_nodes(
+    current_latest_seq: i64,
+    current_last_seq_by_node: &BTreeMap<String, i64>,
+    current_sessions: &[ClientStateMini],
+    incoming_latest_seq: i64,
+    incoming_sessions: &[ClientStateMini],
+) -> bool {
+    let current_last_seq_by_node = merged_current_last_seq_by_node(
+        current_latest_seq,
+        current_last_seq_by_node,
+        current_sessions,
+    );
+    let incoming_last_seq_by_node = last_seq_by_node_from_minis(incoming_sessions);
+    if incoming_last_seq_by_node.is_empty() {
+        return incoming_latest_seq <= current_latest_seq && current_latest_seq > INITIAL_SEQUENCE;
+    }
+
+    fresh_state_mini_snapshot_node_ids(
+        current_latest_seq,
+        &current_last_seq_by_node,
+        current_sessions,
+        incoming_sessions,
+    )
+    .is_empty()
+}
+
+pub(crate) fn fresh_state_mini_snapshot_node_ids(
+    current_latest_seq: i64,
+    current_last_seq_by_node: &BTreeMap<String, i64>,
+    current_sessions: &[ClientStateMini],
+    incoming_sessions: &[ClientStateMini],
+) -> BTreeSet<String> {
+    let current_last_seq_by_node = merged_current_last_seq_by_node(
+        current_latest_seq,
+        current_last_seq_by_node,
+        current_sessions,
+    );
+    last_seq_by_node_from_minis(incoming_sessions)
+        .into_iter()
+        .filter_map(|(node_id, incoming_seq)| {
+            let current_seq = current_last_seq_by_node
+                .get(&node_id)
+                .copied()
+                .unwrap_or(INITIAL_SEQUENCE);
+            if incoming_seq > current_seq {
+                Some(node_id)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn merged_current_last_seq_by_node(
+    current_latest_seq: i64,
+    current_last_seq_by_node: &BTreeMap<String, i64>,
+    current_sessions: &[ClientStateMini],
+) -> BTreeMap<String, i64> {
+    let mut merged = last_seq_by_node_from_minis(current_sessions);
+    for (node_id, seq) in current_last_seq_by_node {
+        let entry = merged.entry(node_id.clone()).or_insert(INITIAL_SEQUENCE);
+        *entry = (*entry).max(*seq);
+    }
+    if merged.is_empty() && current_latest_seq > INITIAL_SEQUENCE {
+        merged.insert(DEFAULT_NODE_ID.to_owned(), current_latest_seq);
+    }
+    merged
 }
 
 fn payload_object(payload_json: &str) -> Map<String, Value> {

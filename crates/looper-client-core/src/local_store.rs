@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -13,9 +13,9 @@ use crate::{
         ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
     state_mini::{
-        DEFAULT_NODE_ID, last_seq_by_node_from_minis, normalize_state_minis,
-        require_valid_sequence, same_state_mini_key, sort_state_minis, state_mini_node_id,
-        validate_state_minis,
+        DEFAULT_NODE_ID, fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis,
+        normalize_state_minis, require_valid_sequence, same_state_mini_key, sort_state_minis,
+        state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
     },
 };
 
@@ -103,7 +103,22 @@ impl LooperClientCoreLocalStore {
 
         let mut state = self.lock_state()?;
         let sessions = normalize_state_minis(snapshot.sessions);
-        state.merge_snapshot_minis_preserving_newer(sessions);
+        if state_mini_snapshot_is_stale_for_all_nodes(
+            state.latest_seq,
+            &state.last_seq_by_node,
+            &state.sessions,
+            snapshot.latest_seq,
+            &sessions,
+        ) {
+            return Ok(state.snapshot());
+        }
+        let fresh_node_ids = fresh_state_mini_snapshot_node_ids(
+            state.latest_seq,
+            &state.last_seq_by_node,
+            &state.sessions,
+            &sessions,
+        );
+        state.merge_snapshot_minis_preserving_newer(sessions, &fresh_node_ids);
         state.merge_last_seq_by_node_from_minis();
         if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
             state
@@ -525,17 +540,28 @@ impl StoredState {
         self.last_seq_by_node != original
     }
 
-    fn merge_snapshot_minis_preserving_newer(&mut self, sessions: Vec<ClientStateMini>) -> bool {
+    fn merge_snapshot_minis_preserving_newer(
+        &mut self,
+        sessions: Vec<ClientStateMini>,
+        fresh_node_ids: &BTreeSet<String>,
+    ) -> bool {
         let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
         let before = self.sessions.clone();
         self.sessions.retain(|current| {
+            let node_id = state_mini_node_id(current);
+            if !fresh_node_ids.contains(&node_id) {
+                return true;
+            }
             incoming_last_seq_by_node
-                .get(&state_mini_node_id(current))
+                .get(&node_id)
                 .map(|incoming_seq| current.seq > *incoming_seq)
                 .unwrap_or(true)
         });
         let mut changed = false;
         for incoming in sessions {
+            if !fresh_node_ids.contains(&state_mini_node_id(&incoming)) {
+                continue;
+            }
             if let Some(index) = self
                 .sessions
                 .iter()
@@ -929,6 +955,14 @@ mod tests {
                 latest_seq: 21,
                 sessions: vec![
                     node_state_mini("node-a", "thread-a", "codex", 15, "rev-a-15", "stale a"),
+                    node_state_mini(
+                        "node-a",
+                        "thread-a-stale-extra",
+                        "codex",
+                        15,
+                        "rev-a-extra-15",
+                        "stale extra a",
+                    ),
                     node_state_mini("node-b", "thread-b", "zed", 21, "rev-b-21", "fresh b"),
                 ],
                 server_time: "2026-06-24T00:00:01Z".to_owned(),
@@ -947,6 +981,12 @@ mod tests {
             .expect("updated node-b");
         assert_eq!(payload_value(thread_a)["title"], "stream a");
         assert_eq!(payload_value(thread_b)["title"], "fresh b");
+        assert!(
+            snapshot
+                .sessions
+                .iter()
+                .all(|session| session.session_id != "thread-a-stale-extra")
+        );
 
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");

@@ -28,7 +28,10 @@ pub use menu_snapshot::{
     ClientMenuSnapshotStreamUpdate, reduce_menu_snapshot_human_status,
     reduce_state_minis_menu_snapshot,
 };
-pub use mobile_snapshot::{ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot};
+pub use mobile_snapshot::{
+    ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot,
+    reduce_state_minis_mobile_snapshot_with_pending_commands,
+};
 pub use model::{
     ClientBaseUrlRaceCandidate, ClientCommandKind, ClientEndpoint, ClientLocalStateSnapshot,
     ClientMobileSnapshotStreamUpdate, ClientNotificationReplyIntentResult,

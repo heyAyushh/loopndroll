@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (crates/looper-client-core/target/debug/deps/looper_client_core-198df08d44d24352)
+
+running 14 tests
+test session_transport::tests::session_transport_endpoints_keep_fallbacks_after_last_good ... ok
+test local_store::tests::local_store_persists_winning_endpoint_as_last_good ... ok
+test session_transport::tests::snapshot_recovery_endpoints_keep_fallbacks_after_last_good ... ok
+test client::tests::heartbeat_updates_displayed_endpoint_to_live_session_route ... ok
+test client::tests::start_keeps_live_endpoint_for_retained_stream_configuration ... ok
+test client::tests::recover_state_mini_snapshot_rejects_missing_endpoint_without_state_change ... ok
+test client::tests::recovered_snapshot_adopts_endpoint_without_rewinding_cached_minis ... ok
+test session_transport::tests::successful_session_endpoint_becomes_next_last_good ... ok
+test session_transport::tests::state_mini_snapshot_url_uses_http_api_port_for_realtime_endpoint ... ok
+test client::tests::connect_prefers_last_good_endpoint ... ok
+test client::tests::start_state_mini_stream_keeps_running_stream_for_same_endpoint ... ok
+test client::tests::start_state_mini_stream_replaces_finished_stream_for_same_endpoint ... ok
+test session_runtime::tests::runtime_persists_first_ready_fallback_endpoint_as_last_good ... ok
+test session_transport::tests::state_mini_snapshot_recovery_uses_first_ready_endpoint ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 149 filtered out; finished in 0.91s
+
+exit=0

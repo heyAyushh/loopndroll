@@ -30,9 +30,10 @@ use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
     DEFAULT_NODE_ID, FRESHNESS_SOURCE_LOCAL, FRESHNESS_SOURCE_RECOVERY, FRESHNESS_SOURCE_STREAM,
-    last_seq_by_node_from_minis, latest_state_mini_revision, normalize_state_mini_for_source,
-    normalize_state_minis_for_source, require_valid_sequence, same_state_mini_key,
-    sort_state_minis, state_mini_node_id, validate_state_minis,
+    fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis, latest_state_mini_revision,
+    normalize_state_mini_for_source, normalize_state_minis_for_source, require_valid_sequence,
+    same_state_mini_key, sort_state_minis, state_mini_node_id,
+    state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
 };
 #[cfg(test)]
 use crate::transport::validate_endpoint_url;
@@ -1981,7 +1982,24 @@ impl ClientCoreState {
             Some(freshness_source),
             Some(route_endpoint),
         );
-        let did_change = self.merge_snapshot_minis_preserving_newer(sessions);
+        if state_mini_snapshot_is_stale_for_all_nodes(
+            self.latest_seq,
+            &self.last_seq_by_node,
+            &self.state_minis,
+            snapshot.latest_seq,
+            &sessions,
+        ) {
+            self.pending_replacement = None;
+            self.last_error.clear();
+            return false;
+        }
+        let fresh_node_ids = fresh_state_mini_snapshot_node_ids(
+            self.latest_seq,
+            &self.last_seq_by_node,
+            &self.state_minis,
+            &sessions,
+        );
+        let did_change = self.merge_snapshot_minis_preserving_newer(sessions, &fresh_node_ids);
         self.merge_last_seq_by_node_from_minis(&self.state_minis.clone());
         if self.last_seq_by_node.is_empty() && snapshot.latest_seq > EMPTY_SEQUENCE {
             self.advance_node_cursor(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
@@ -1996,17 +2014,28 @@ impl ClientCoreState {
         did_change
     }
 
-    fn merge_snapshot_minis_preserving_newer(&mut self, sessions: Vec<ClientStateMini>) -> bool {
+    fn merge_snapshot_minis_preserving_newer(
+        &mut self,
+        sessions: Vec<ClientStateMini>,
+        fresh_node_ids: &BTreeSet<String>,
+    ) -> bool {
         let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
         let before = self.state_minis.clone();
         self.state_minis.retain(|current| {
+            let node_id = state_mini_node_id(current);
+            if !fresh_node_ids.contains(&node_id) {
+                return true;
+            }
             incoming_last_seq_by_node
-                .get(&state_mini_node_id(current))
+                .get(&node_id)
                 .map(|incoming_seq| current.seq > *incoming_seq)
                 .unwrap_or(true)
         });
         let mut did_change = false;
         for incoming in sessions {
+            if !fresh_node_ids.contains(&state_mini_node_id(&incoming)) {
+                continue;
+            }
             if let Some(index) = self
                 .state_minis
                 .iter()
@@ -3739,6 +3768,14 @@ mod tests {
                     latest_seq: 21,
                     sessions: vec![
                         node_state_mini("node-a", "thread-a", "codex", 15, "rev-a-15", "stale a"),
+                        node_state_mini(
+                            "node-a",
+                            "thread-a-stale-extra",
+                            "codex",
+                            15,
+                            "rev-a-extra-15",
+                            "stale extra a",
+                        ),
                         node_state_mini("node-b", "thread-b", "zed", 21, "rev-b-21", "fresh b"),
                     ],
                     server_time: SERVER_TIME.to_owned(),
@@ -3764,6 +3801,13 @@ mod tests {
             .expect("updated node-b mini");
         assert!(thread_a.payload_json.contains("stream a"));
         assert!(thread_b.payload_json.contains("fresh b"));
+        assert!(
+            update
+                .snapshot
+                .state_minis
+                .iter()
+                .all(|session| session.session_id != "thread-a-stale-extra")
+        );
     }
 
     #[test]

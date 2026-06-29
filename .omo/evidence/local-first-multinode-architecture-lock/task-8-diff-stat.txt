@@ -1,0 +1,19 @@
+ crates/looper-client-core/src/client.rs            |  56 ++-
+ crates/looper-client-core/src/lib.rs               |   5 +-
+ crates/looper-client-core/src/local_store.rs       |  54 ++-
+ crates/looper-client-core/src/mobile_snapshot.rs   | 404 ++++++++++++++++++++-
+ crates/looper-client-core/src/session_runtime.rs   | 129 ++++++-
+ crates/looper-client-core/src/state_mini.rs        |  71 +++-
+ .../Services/CompanionSessionMiniLocalStore.swift  | 172 +--------
+ .../LooperClientCoreFFI.xcframework/Info.plist     |  18 +-
+ .../Headers/looper_client_coreFFI.h                |  11 +
+ .../looper_client_coreFFI                          | Bin 31097592 -> 31308176 bytes
+ .../Headers/looper_client_coreFFI.h                |  11 +
+ .../looper_client_coreFFI                          | Bin 31134112 -> 31340920 bytes
+ .../Versions/A/Headers/looper_client_coreFFI.h     |  11 +
+ .../Versions/A/looper_client_coreFFI               | Bin 62920912 -> 63402160 bytes
+ .../Generated/looper_client_core.swift             |  13 +
+ .../Generated/looper_client_coreFFI.h              |  11 +
+ .../LooperClientCoreTests.swift                    |  52 +++
+ 17 files changed, 822 insertions(+), 196 deletions(-)
+exit=0

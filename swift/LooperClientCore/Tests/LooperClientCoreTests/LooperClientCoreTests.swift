@@ -62,6 +62,37 @@ struct LooperClientCoreTests {
     }
 
     @Test
+    func mobileProjectionAppliesPendingCommandsFromRust() throws {
+        let projection = try reduceStateMinisMobileSnapshotWithPendingCommands(
+            latestSeq: 11,
+            sessions: [
+                stateMini(sessionID: threadID, seq: 11, revision: "rev-11", title: "pending")
+            ],
+            pendingCommands: [
+                pendingCommand(
+                    kind: .setSessionMode,
+                    threadID: threadID,
+                    preset: "max-turns-2"
+                ),
+                pendingCommand(
+                    kind: .setSiriCurrentSession,
+                    threadID: threadID,
+                    assistantSurface: "codex"
+                ),
+            ],
+            serverTime: serverTime
+        )
+        let snapshot = try decodedSnapshot(projection.snapshotJson)
+        let sessions = try #require(snapshot["sessions"] as? [[String: Any]])
+        let globalSettings = try #require(snapshot["globalSettings"] as? [String: Any])
+
+        #expect(projection.hasSnapshot)
+        #expect(sessions.first?["effectiveMode"] as? String == "max-turns-2")
+        #expect(globalSettings["siriCurrentSessionId"] as? String == threadID)
+        #expect(globalSettings["siriCurrentAssistantSurface"] as? String == "codex")
+    }
+
+    @Test
     func mobileProjectionBucketsCodexCompatibleClientsUnderCodex() throws {
         let projection = try reduceStateMinisMobileSnapshot(
             latestSeq: 12,
@@ -133,6 +164,27 @@ struct LooperClientCoreTests {
             seq: seq,
             revision: revision,
             payloadJson: #"{"id":"\#(sessionID)","sessionId":"\#(sessionID)","assistantSurface":"\#(surface)","title":"\#(title)","ref":"\#(sessionID)","status":"active","lastActivityAtMs":\#(seq)}"#
+        )
+    }
+
+    private func pendingCommand(
+        kind: ClientPendingCommandKind,
+        threadID: String,
+        preset: String = "",
+        assistantSurface: String = ""
+    ) -> ClientPendingCommand {
+        ClientPendingCommand(
+            kind: kind,
+            clientMutationId: "swift-test-\(kind)-\(threadID)",
+            threadId: threadID,
+            preset: preset,
+            assistantSurface: assistantSurface,
+            promptIntent: "",
+            prompt: "",
+            notificationId: "",
+            notificationTargetIds: [],
+            archived: false,
+            attemptCount: 0
         )
     }
 

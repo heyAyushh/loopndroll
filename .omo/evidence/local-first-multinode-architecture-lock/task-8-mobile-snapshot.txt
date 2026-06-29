@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (crates/looper-client-core/target/debug/deps/looper_client_core-198df08d44d24352)
+
+running 1 test
+test mobile_snapshot::tests::mobile_snapshot_applies_pending_commands_in_rust_projection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 162 filtered out; finished in 0.00s
+
+exit=0

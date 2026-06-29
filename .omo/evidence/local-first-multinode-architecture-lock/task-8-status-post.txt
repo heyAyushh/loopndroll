@@ -1,0 +1,31 @@
+ M crates/looper-client-core/src/client.rs
+ M crates/looper-client-core/src/lib.rs
+ M crates/looper-client-core/src/local_store.rs
+ M crates/looper-client-core/src/mobile_snapshot.rs
+ M crates/looper-client-core/src/session_runtime.rs
+ M crates/looper-client-core/src/state_mini.rs
+ M ios/LooperCompanion/Services/CompanionSessionMiniLocalStore.swift
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/Info.plist
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/ios-arm64-simulator/looper_client_coreFFI.framework/Headers/looper_client_coreFFI.h
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/ios-arm64-simulator/looper_client_coreFFI.framework/looper_client_coreFFI
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/ios-arm64/looper_client_coreFFI.framework/Headers/looper_client_coreFFI.h
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/ios-arm64/looper_client_coreFFI.framework/looper_client_coreFFI
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/macos-arm64_x86_64/looper_client_coreFFI.framework/Versions/A/Headers/looper_client_coreFFI.h
+ M swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework/macos-arm64_x86_64/looper_client_coreFFI.framework/Versions/A/looper_client_coreFFI
+ M swift/LooperClientCore/Sources/LooperClientCore/Generated/looper_client_core.swift
+ M swift/LooperClientCore/Sources/LooperClientCore/Generated/looper_client_coreFFI.h
+ M swift/LooperClientCore/Tests/LooperClientCoreTests/LooperClientCoreTests.swift
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-bridge-closest.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-bridge.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-cargo-fmt-check.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-command.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-diff-stat.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-endpoint.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-generate-client-core-package.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-git-diff-check.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-last-seq-by-node.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-mobile-snapshot.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-recovered-snapshot.txt
+?? .omo/evidence/local-first-multinode-architecture-lock/task-8-status-post.txt
+?? swift/LooperClientCore/AGENTS.md
+exit=0

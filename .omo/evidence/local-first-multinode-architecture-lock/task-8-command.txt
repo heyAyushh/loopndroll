@@ -1,0 +1,29 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (crates/looper-client-core/target/debug/deps/looper_client_core-198df08d44d24352)
+
+running 21 tests
+test client::tests::command_flush_retries_only_transient_failures ... ok
+test command_batch::tests::duplicate_acks_are_ignored_after_first_match ... ok
+test command_batch::tests::batch_matches_acks_by_mutation_and_preserves_command_metadata ... ok
+test command_batch::tests::empty_batch_is_accepted ... ok
+test client::tests::command_batch_response_reconciles_all_acks_in_rust_core ... ok
+test client::tests::duplicate_client_mutation_replaces_queued_command ... ok
+test command_batch::tests::expected_command_ack_rejects_missing_ack ... ok
+test client::tests::command_methods_queue_session_frames_and_pending_mutations ... ok
+test client::tests::durable_prompt_command_emits_local_outbox_update_before_transport ... ok
+test command_batch::tests::expected_command_ack_returns_matching_envelope ... ok
+test command_batch::tests::missing_ack_keeps_batch_unaccepted ... ok
+test command_batch::tests::rejected_ack_marks_batch_rejected_and_overrides_dispatch_kind ... ok
+test client::tests::command_ack_receiver_buffers_unexpected_acks ... ok
+test mobile_snapshot::tests::mobile_snapshot_applies_pending_commands_in_rust_projection ... ok
+test local_store::tests::local_store_recovery_snapshot_preserves_pending_commands ... ok
+test client::tests::submit_expected_outbox_keeps_commands_queued_when_transport_fails ... ok
+test local_store::tests::local_store_coalesces_siri_current_session_to_latest_command ... ok
+test client::tests::durable_mode_command_emits_local_state_update_before_transport ... ok
+test client::tests::submit_expected_outbox_keeps_commands_queued_while_ack_is_pending ... ok
+test session_runtime::tests::runtime_start_replays_cached_pending_commands_for_menu_overlay ... ok
+test session_runtime::tests::runtime_restores_durable_pending_commands_into_core_outbox ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 142 filtered out; finished in 0.01s
+
+exit=0

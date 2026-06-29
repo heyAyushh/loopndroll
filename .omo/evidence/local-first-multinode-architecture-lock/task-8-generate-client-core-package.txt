@@ -1,0 +1,6 @@
+Building looper-client-core host library for UniFFI metadata
+Generating Swift UniFFI bindings into /Users/ay/Documents/looper/swift/LooperClientCore/Sources/LooperClientCore/Generated
+Replacing /Users/ay/Documents/looper/swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework
+Creating /Users/ay/Documents/looper/swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework
+xcframework successfully written out to: /Users/ay/Documents/looper/swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework
+Created /Users/ay/Documents/looper/swift/LooperClientCore/Frameworks/LooperClientCoreFFI.xcframework

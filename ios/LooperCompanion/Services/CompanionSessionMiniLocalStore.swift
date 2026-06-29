@@ -95,18 +95,17 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
         pendingCommands: [ClientPendingCommand],
         serverTime: String?
     ) throws -> MobileSnapshot? {
-        let projection = try reduceStateMinisMobileSnapshot(
+        let projection = try reduceStateMinisMobileSnapshotWithPendingCommands(
             latestSeq: latestSeq,
             sessions: minis,
+            pendingCommands: pendingCommands,
             serverTime: serverTime ?? ""
         )
         guard projection.hasSnapshot else {
             return nil
         }
 
-        var snapshot = try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
-        snapshot.applyPendingClientCoreCommands(pendingCommands)
-        return snapshot
+        return try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
     }
 
     fileprivate func mobileSnapshot(from snapshot: ClientLocalStateSnapshot) throws -> MobileSnapshot? {
@@ -119,171 +118,6 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     }
 
 }
-
-private extension MobileSnapshot {
-    mutating func applyPendingClientCoreCommands(_ commands: [ClientPendingCommand]) {
-        for command in commands {
-            switch command.kind {
-            case .setSessionMode:
-                applyPendingMode(command.preset, sessionID: command.threadId)
-            case .setAssistantSurface:
-                break
-            case .setSiriCurrentSession:
-                applyPendingSiriCurrentSession(
-                    sessionID: command.threadId,
-                    assistantSurface: command.assistantSurface
-                )
-            case .setSiriDefaultSession:
-                applyPendingSiriDefaultSession(
-                    sessionID: command.threadId,
-                    assistantSurface: command.assistantSurface
-                )
-            case .saveDefaultPrompt:
-                applyPendingDefaultPrompt(command.prompt)
-            case .setDefaultNotificationTargets:
-                break
-            case .setSessionArchived:
-                applyPendingArchive(command.archived, sessionID: command.threadId)
-            case .deleteSession:
-                applyPendingDelete(sessionID: command.threadId)
-            case .sendSessionPrompt,
-                 .submitNotificationReply,
-                 .muteSession:
-                break
-            }
-        }
-        refreshVisibleSessionsFromSelectedSurface()
-    }
-
-    mutating func applyPendingMode(_ preset: String, sessionID: String) {
-        let normalizedSessionID = normalizedPendingText(sessionID)
-        guard !normalizedSessionID.isEmpty else {
-            return
-        }
-        let mode = normalizedPendingText(preset).nilIfEmpty.flatMap(SessionMode.init(rawValue:))
-        updatePendingSession(sessionID: normalizedSessionID) { session in
-            session.effectiveMode = mode
-        }
-    }
-
-    mutating func applyPendingSiriCurrentSession(
-        sessionID: String,
-        assistantSurface rawSurface: String
-    ) {
-        let normalizedSessionID = normalizedPendingText(sessionID).nilIfEmpty
-        globalSettings.siriCurrentSessionId = normalizedSessionID
-        globalSettings.siriCurrentAssistantSurface = normalizedSessionID == nil
-            ? nil
-            : pendingAssistantSurface(rawSurface)
-    }
-
-    mutating func applyPendingSiriDefaultSession(
-        sessionID: String,
-        assistantSurface rawSurface: String
-    ) {
-        let normalizedSessionID = normalizedPendingText(sessionID).nilIfEmpty
-        globalSettings.siriDefaultSessionId = normalizedSessionID
-        globalSettings.siriDefaultAssistantSurface = normalizedSessionID == nil
-            ? nil
-            : pendingAssistantSurface(rawSurface)
-    }
-
-    mutating func applyPendingDefaultPrompt(_ prompt: String) {
-        let normalizedPrompt = normalizedPendingText(prompt)
-        guard !normalizedPrompt.isEmpty else {
-            return
-        }
-        globalSettings.defaultPrompt = normalizedPrompt
-    }
-
-    mutating func applyPendingArchive(_ archived: Bool, sessionID: String) {
-        let normalizedSessionID = normalizedPendingText(sessionID)
-        guard !normalizedSessionID.isEmpty else {
-            return
-        }
-        updatePendingSession(sessionID: normalizedSessionID) { session in
-            session.isArchived = archived
-            if archived {
-                session.status = .archived
-            }
-        }
-    }
-
-    mutating func applyPendingDelete(sessionID: String) {
-        let normalizedSessionID = normalizedPendingText(sessionID)
-        guard !normalizedSessionID.isEmpty else {
-            return
-        }
-        if surfaceSessions.isEmpty {
-            sessions.removeAll { session in
-                session.id == normalizedSessionID
-            }
-        } else {
-            for surface in Array(surfaceSessions.keys) {
-                surfaceSessions[surface]?.removeAll { session in
-                    session.id == normalizedSessionID
-                }
-            }
-        }
-        clearPendingSiriTargetsIfNeeded(sessionID: normalizedSessionID)
-    }
-
-    mutating func updatePendingSession(
-        sessionID: String,
-        mutate: (inout SessionSummary) -> Void
-    ) {
-        if surfaceSessions.isEmpty {
-            updateSessions(&sessions, sessionID: sessionID, mutate: mutate)
-            return
-        }
-
-        for surface in Array(surfaceSessions.keys) {
-            guard var surfaceSessionList = surfaceSessions[surface] else {
-                continue
-            }
-            updateSessions(&surfaceSessionList, sessionID: sessionID, mutate: mutate)
-            surfaceSessions[surface] = surfaceSessionList
-        }
-    }
-
-    mutating func clearPendingSiriTargetsIfNeeded(sessionID: String) {
-        if globalSettings.siriCurrentSessionId == sessionID {
-            globalSettings.siriCurrentSessionId = nil
-            globalSettings.siriCurrentAssistantSurface = nil
-            globalSettings.siriCurrentUpdatedAtMs = nil
-        }
-        if globalSettings.siriDefaultSessionId == sessionID {
-            globalSettings.siriDefaultSessionId = nil
-            globalSettings.siriDefaultAssistantSurface = nil
-        }
-    }
-
-    mutating func refreshVisibleSessionsFromSelectedSurface() {
-        guard !surfaceSessions.isEmpty else {
-            return
-        }
-        sessions = self.sessions(for: globalSettings.assistantSurface)
-    }
-
-    func pendingAssistantSurface(_ rawSurface: String) -> CompanionAssistantSurface? {
-        CompanionAssistantSurface(rawValue: normalizedPendingText(rawSurface))
-    }
-
-    func normalizedPendingText(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func updateSessions(
-        _ sessions: inout [SessionSummary],
-        sessionID: String,
-        mutate: (inout SessionSummary) -> Void
-    ) {
-        for index in sessions.indices where sessions[index].id == sessionID {
-            mutate(&sessions[index])
-        }
-    }
-}
-
 final class CompanionSessionRuntime: @unchecked Sendable {
     static let defaultFileName = CompanionSessionMiniLocalStore.defaultFileName
 
