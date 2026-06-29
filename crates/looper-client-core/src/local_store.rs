@@ -552,10 +552,7 @@ fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
             }
             Ok(state)
         }
-        Err(ClientCoreError::InvalidSnapshotJson) => {
-            let _ = std::fs::remove_file(file_path);
-            Ok(StoredState::default())
-        }
+        Err(ClientCoreError::InvalidSnapshotJson) => Err(ClientCoreError::InvalidSnapshotJson),
         Err(error) => Err(error),
     }
 }
@@ -566,7 +563,7 @@ fn load(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     }
     let data = std::fs::read(file_path).map_err(|_| ClientCoreError::LocalStoreReadFailed)?;
     if data.is_empty() {
-        return Ok(StoredState::default());
+        return Err(ClientCoreError::InvalidSnapshotJson);
     }
     serde_json::from_slice(&data).map_err(|_| ClientCoreError::InvalidSnapshotJson)
 }
@@ -1195,18 +1192,36 @@ mod tests {
     }
 
     #[test]
-    fn local_store_recovers_corrupt_cache() {
+    fn local_store_surfaces_corrupt_cache_without_deleting() {
         let path = temp_store_path("corrupt");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(&path, b"not-json").expect("write corrupt");
 
-        let store =
-            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("recover");
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("corrupt cache should not be replaced with empty state");
 
-        let snapshot = store.snapshot().expect("snapshot");
-        assert_eq!(snapshot.latest_seq, 0);
-        assert!(snapshot.sessions.is_empty());
-        assert!(snapshot.pending_commands.is_empty());
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+        assert_eq!(
+            std::fs::read(&path).expect("corrupt cache retained"),
+            b"not-json"
+        );
+    }
+
+    #[test]
+    fn local_store_surfaces_empty_cache_without_seq_zero_collapse() {
+        let path = temp_store_path("empty-cache");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(&path, b"").expect("write empty cache");
+
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("empty cache should not be treated as an empty snapshot");
+
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+        assert!(
+            std::fs::read(&path)
+                .expect("empty cache retained")
+                .is_empty()
+        );
     }
 
     #[test]

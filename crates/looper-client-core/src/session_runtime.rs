@@ -64,6 +64,7 @@ impl LooperClientCoreSessionRuntime {
         let snapshot = self
             .client_core
             .start(endpoints, bearer_token, mobile_session_header)?;
+        self.emit_cached_local_state(&snapshot)?;
         self.client_core.spawn_restored_command_ack_flush(
             self.local_store.clone(),
             restored_client_mutation_ids,
@@ -444,6 +445,18 @@ impl LooperClientCoreSessionRuntime {
             .mark_last_good_endpoint(snapshot.endpoint_url.clone())
     }
 
+    fn emit_cached_local_state(
+        &self,
+        snapshot: &ClientStateSnapshot,
+    ) -> Result<(), ClientCoreError> {
+        let local_snapshot = self.local_store.snapshot()?;
+        if local_snapshot.sessions.is_empty() && local_snapshot.pending_commands.is_empty() {
+            return Ok(());
+        }
+        self.client_core.emit_local_state_update(snapshot.clone());
+        Ok(())
+    }
+
     fn local_state_stream_update(
         &self,
         update: ClientStateMiniStreamUpdate,
@@ -637,7 +650,7 @@ impl From<ClientStateSnapshot> for ClientStateMiniSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ClientPendingCommandKind, ClientStateMini};
+    use crate::model::{ClientEndpoint, ClientPendingCommandKind, ClientStateMini};
 
     #[test]
     fn runtime_persists_prompt_before_transport() {
@@ -858,6 +871,98 @@ mod tests {
         assert_eq!(
             runtime.local_snapshot().expect("local snapshot").latest_seq,
             7
+        );
+    }
+
+    #[test]
+    fn runtime_start_emits_cached_mobile_snapshot_before_recovery() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("cached-mobile-start"))
+            .expect("runtime");
+        seed_runtime_state_minis(
+            &runtime,
+            ClientStateMiniSnapshot {
+                latest_seq: 7,
+                sessions: vec![state_mini("thread-main", "codex", 7, "rev-7", "Cached")],
+                server_time: "2026-06-26T00:00:00Z".to_owned(),
+            },
+        );
+
+        let started = runtime
+            .start(
+                vec![ClientEndpoint {
+                    url: "http://127.0.0.1:1".to_owned(),
+                    last_good: false,
+                }],
+                String::new(),
+                String::new(),
+            )
+            .expect("start cached runtime");
+        assert_eq!(started.phase, crate::model::ConnectionPhase::Connecting);
+        assert_eq!(started.latest_seq, 7);
+        assert_eq!(started.state_minis.len(), 1);
+
+        let update = test_runtime
+            .block_on(runtime.observe_mobile_snapshot_change())
+            .expect("cached mobile update");
+        assert!(update.has_snapshot);
+        assert_eq!(update.sync_reason, "delta");
+        assert_eq!(update.latest_seq, 7);
+        assert!(update.snapshot_json.contains(r#""id":"thread-main""#));
+        assert!(update.snapshot_json.contains(r#""title":"Cached""#));
+    }
+
+    #[test]
+    fn runtime_start_replays_cached_pending_commands_for_menu_overlay() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime = LooperClientCoreSessionRuntime::new(temp_store_path("cached-menu-pending"))
+            .expect("runtime");
+        seed_runtime_state_minis(
+            &runtime,
+            ClientStateMiniSnapshot {
+                latest_seq: 11,
+                sessions: vec![state_mini(
+                    "thread-menu",
+                    "codex",
+                    11,
+                    "rev-11",
+                    "Menu Cached",
+                )],
+                server_time: "2026-06-26T00:00:11Z".to_owned(),
+            },
+        );
+        runtime
+            .local_store
+            .enqueue_notification_reply_command(
+                "notification-menu".to_owned(),
+                "thread-menu".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "notification-reply:notification-menu".to_owned(),
+            )
+            .expect("enqueue pending reply");
+
+        runtime
+            .start(
+                vec![ClientEndpoint {
+                    url: "http://127.0.0.1:1".to_owned(),
+                    last_good: false,
+                }],
+                String::new(),
+                String::new(),
+            )
+            .expect("start cached runtime");
+
+        let update = test_runtime
+            .block_on(runtime.observe_menu_snapshot_change())
+            .expect("cached menu update");
+        assert!(update.has_snapshot);
+        assert_eq!(update.snapshot.latest_seq, 11);
+        assert_eq!(update.snapshot.sessions[0].session_id, "thread-menu");
+        assert_eq!(update.snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            update.snapshot.pending_commands[0].client_mutation_id,
+            "notification-reply:notification-menu"
         );
     }
 

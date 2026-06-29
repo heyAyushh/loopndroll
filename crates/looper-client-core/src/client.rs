@@ -500,17 +500,7 @@ impl LooperClientCore {
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        if snapshot.latest_seq < state.latest_seq {
-            return Ok(state.snapshot());
-        }
-        state.latest_seq = snapshot.latest_seq;
-        state.server_time = snapshot.server_time;
-        state.state_minis = normalize_state_minis(snapshot.sessions);
-        state.pending_replacement = None;
-        if let Some(revision) = latest_state_mini_revision(&state.state_minis) {
-            state.revision = revision;
-        }
-        state.last_error.clear();
+        state.replace_state_minis(snapshot);
         Ok(state.snapshot())
     }
 
@@ -893,11 +883,30 @@ impl LooperClientCore {
         let recovered = receiver
             .recv()
             .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
-        let state_snapshot = self.replace_state_minis(recovered.snapshot)?;
+        let state_snapshot =
+            self.adopt_recovered_state_minis(recovered.snapshot, recovered.endpoint_url.clone())?;
+        self.emit_local_state_update(state_snapshot.clone());
         Ok(RecoveredStateMiniSnapshot {
             snapshot: ClientStateMiniSnapshot::from(state_snapshot),
             endpoint_url: recovered.endpoint_url,
         })
+    }
+
+    fn adopt_recovered_state_minis(
+        &self,
+        snapshot: ClientStateMiniSnapshot,
+        endpoint_url: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_valid_sequence(snapshot.latest_seq)?;
+        validate_state_minis(&snapshot.sessions)?;
+
+        let mut state = self.lock_state()?;
+        state.replace_state_minis(snapshot);
+        if !endpoint_url.trim().is_empty() {
+            state.endpoint_url = endpoint_url;
+        }
+        state.last_error.clear();
+        Ok(state.snapshot())
     }
 
     fn start_state_mini_stream(
@@ -1222,7 +1231,7 @@ impl LooperClientCore {
         result
     }
 
-    fn emit_local_state_update(&self, snapshot: ClientStateSnapshot) {
+    pub(crate) fn emit_local_state_update(&self, snapshot: ClientStateSnapshot) {
         let _ = self.local_update_sender.send(ClientStateMiniStreamUpdate {
             reason: ClientStateMiniStreamUpdateReason::Delta,
             did_change: true,
@@ -1844,6 +1853,21 @@ impl ClientCoreState {
             self.revision = revision;
         }
         update_server_time_if_newer(&mut self.server_time, replacement.server_time);
+        self.last_error.clear();
+        true
+    }
+
+    fn replace_state_minis(&mut self, snapshot: ClientStateMiniSnapshot) -> bool {
+        if snapshot.latest_seq < self.latest_seq {
+            return false;
+        }
+        self.latest_seq = snapshot.latest_seq;
+        self.server_time = snapshot.server_time;
+        self.state_minis = normalize_state_minis(snapshot.sessions);
+        self.pending_replacement = None;
+        if let Some(revision) = latest_state_mini_revision(&self.state_minis) {
+            self.revision = revision;
+        }
         self.last_error.clear();
         true
     }
@@ -3175,6 +3199,41 @@ mod tests {
 
         assert_eq!(error, ClientCoreError::NoEndpoint);
         assert!(core.snapshot().expect("snapshot").state_minis.is_empty());
+    }
+
+    #[test]
+    fn recovered_snapshot_adopts_endpoint_without_rewinding_cached_minis() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 20,
+            sessions: vec![state_mini("thread-zed", "zed", 20, "rev-20", "zed")],
+            server_time: "2026-06-25T00:00:20Z".to_owned(),
+        })
+        .expect("seed realtime state mini");
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Reconnecting;
+            state.endpoint_url = ENDPOINT_PRIMARY.to_owned();
+            state.last_error = "seq_gap".to_owned();
+        }
+
+        let snapshot = core
+            .adopt_recovered_state_minis(
+                ClientStateMiniSnapshot {
+                    latest_seq: 10,
+                    sessions: vec![state_mini("thread-codex", "codex", 10, "rev-10", "codex")],
+                    server_time: "2026-06-25T00:00:10Z".to_owned(),
+                },
+                ENDPOINT_LAST_GOOD.to_owned(),
+            )
+            .expect("adopt recovered endpoint");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Reconnecting);
+        assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+        assert_eq!(snapshot.latest_seq, 20);
+        assert_eq!(snapshot.state_minis.len(), 1);
+        assert_eq!(snapshot.state_minis[0].session_id, "thread-zed");
+        assert!(snapshot.last_error.is_empty());
     }
 
     #[test]
