@@ -482,9 +482,15 @@ impl LooperClientCoreSessionRuntime {
         &self,
         update: ClientStateMiniStreamUpdate,
     ) -> Result<ClientLocalStateStreamUpdate, ClientCoreError> {
+        let pending_commands = self.local_store.pending_commands()?;
         Ok(ClientLocalStateStreamUpdate {
             reason: update.reason,
-            snapshot: self.local_snapshot()?,
+            snapshot: ClientLocalStateSnapshot {
+                latest_seq: update.snapshot.latest_seq,
+                sessions: update.snapshot.state_minis,
+                pending_commands,
+                server_time: update.snapshot.server_time,
+            },
             did_change: update.did_change,
             error_description: update.error_description,
         })

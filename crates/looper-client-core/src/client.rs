@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc},
 };
 
@@ -30,10 +30,10 @@ use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
     DEFAULT_NODE_ID, FRESHNESS_SOURCE_LOCAL, FRESHNESS_SOURCE_RECOVERY, FRESHNESS_SOURCE_STREAM,
-    fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis, latest_state_mini_revision,
-    normalize_state_mini_for_source, normalize_state_minis_for_source, require_valid_sequence,
-    same_state_mini_key, sort_state_minis, state_mini_node_id,
-    state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
+    StateMiniKey, fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis,
+    latest_state_mini_revision, normalize_state_mini_for_source, normalize_state_minis_for_source,
+    require_valid_sequence, same_state_mini_key, sort_state_minis, state_mini_key,
+    state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
 };
 #[cfg(test)]
 use crate::transport::validate_endpoint_url;
@@ -654,8 +654,9 @@ impl LooperClientCore {
             preset.clone(),
             client_mutation_id.clone(),
         )?;
-        local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id)?;
-        let local_snapshot = persist_state_minis_to_local_store(&local_store, snapshot.clone())?;
+        local_store.replace_local_state_minis(ClientStateMiniSnapshot::from(snapshot.clone()))?;
+        let local_snapshot =
+            local_store.enqueue_set_mode_command(thread_id, preset, client_mutation_id)?;
         self.emit_local_state_update(snapshot);
         Ok(local_snapshot)
     }
@@ -1938,16 +1939,17 @@ impl ClientCoreState {
 
         self.state_minis
             .retain(|session| !fresh_node_ids.contains(&state_mini_node_id(session)));
-        for session in normalize_state_minis_for_source(
+        let replacement_sessions = normalize_state_minis_for_source(
             replacement.sessions,
             Some(FRESHNESS_SOURCE_STREAM),
             Some(replacement.route_endpoint.as_str()),
-        ) {
-            if !fresh_node_ids.contains(&state_mini_node_id(&session)) {
-                continue;
-            }
-            self.upsert_state_mini(session);
-        }
+        );
+        self.state_minis.extend(
+            replacement_sessions
+                .into_iter()
+                .filter(|session| fresh_node_ids.contains(state_mini_key(session).node_id())),
+        );
+        sort_state_minis(&mut self.state_minis);
         for (node_id, seq) in fresh_last_seq_by_node {
             self.advance_node_cursor(node_id, seq);
         }
@@ -2031,22 +2033,25 @@ impl ClientCoreState {
                 .map(|incoming_seq| current.seq > *incoming_seq)
                 .unwrap_or(true)
         });
+        let mut index_by_key: HashMap<StateMiniKey, usize> =
+            HashMap::with_capacity(self.state_minis.len());
+        for (index, current) in self.state_minis.iter().enumerate() {
+            index_by_key.entry(state_mini_key(current)).or_insert(index);
+        }
         let mut did_change = false;
         for incoming in sessions {
-            if !fresh_node_ids.contains(&state_mini_node_id(&incoming)) {
+            let key = state_mini_key(&incoming);
+            if !fresh_node_ids.contains(key.node_id()) {
                 continue;
             }
-            if let Some(index) = self
-                .state_minis
-                .iter()
-                .position(|current| same_state_mini_key(current, &incoming))
-            {
+            if let Some(index) = index_by_key.get(&key).copied() {
                 if incoming.seq >= self.state_minis[index].seq {
                     did_change = self.state_minis[index] != incoming || did_change;
                     self.state_minis[index] = incoming;
                 }
             } else {
                 self.state_minis.push(incoming);
+                index_by_key.insert(key, self.state_minis.len() - 1);
                 did_change = true;
             }
         }

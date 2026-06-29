@@ -95,6 +95,16 @@ impl LooperClientCoreLocalStore {
         Ok(self.lock_state()?.snapshot())
     }
 
+    pub(crate) fn pending_commands(&self) -> Result<Vec<ClientPendingCommand>, ClientCoreError> {
+        Ok(self
+            .lock_state()?
+            .pending_commands
+            .iter()
+            .cloned()
+            .map(ClientPendingCommand::from)
+            .collect())
+    }
+
     pub(crate) fn replace_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
@@ -120,6 +130,29 @@ impl LooperClientCoreLocalStore {
             &sessions,
         );
         state.merge_snapshot_minis_preserving_newer(sessions, &fresh_node_ids);
+        state.merge_last_seq_by_node_from_minis();
+        if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
+            state
+                .last_seq_by_node
+                .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
+        }
+        state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
+        if let Some(server_time) = non_empty(snapshot.server_time) {
+            state.server_time = Some(server_time);
+        }
+        self.persist_locked(&state)?;
+        Ok(state.snapshot())
+    }
+
+    pub(crate) fn replace_local_state_minis(
+        &self,
+        snapshot: ClientStateMiniSnapshot,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_valid_sequence(snapshot.latest_seq)?;
+        validate_state_minis(&snapshot.sessions)?;
+
+        let mut state = self.lock_state()?;
+        state.sessions = normalize_state_minis(snapshot.sessions);
         state.merge_last_seq_by_node_from_minis();
         if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
             state
