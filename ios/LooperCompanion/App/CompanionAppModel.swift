@@ -22,14 +22,6 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
-private struct AssistantSurfaceSelectionFailure: LocalizedError {
-    let message: String
-
-    var errorDescription: String? {
-        message
-    }
-}
-
 private enum AssistantSurfaceETTraceMetric {
     static let startedNotification = Notification.Name(rawValue: "EmergeMetricStarted")
     static let endedNotification = Notification.Name(rawValue: "EmergeMetricEnded")
@@ -155,7 +147,6 @@ final class CompanionAppModel {
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
     @ObservationIgnored private let sessionDetailCoordinator = CompanionSessionDetailCoordinator()
     @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
-    @ObservationIgnored private let sessionSyncEngine: SessionSyncEngine
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var notificationCoordinator: CompanionNotificationCoordinator?
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
@@ -178,7 +169,6 @@ final class CompanionAppModel {
             ?? providedSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
         self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
-        self.sessionSyncEngine = SessionSyncEngine(commandDispatcher: sessionRuntime)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
@@ -344,6 +334,19 @@ final class CompanionAppModel {
     ) {
         guard connectionRevision == self.connectionRevision else {
             CompanionDiagnostics.record("session-mini:sync-stale-skip")
+            return
+        }
+
+        guard update.latestSeq > realtimeLatestSeq || !snapshotState.hasSnapshot else {
+            applyRealtimeStreamLiveness(
+                serverTime: update.snapshot.host.lastSyncedAt,
+                latestSeq: update.latestSeq,
+                isLive: true,
+                endpointURL: update.endpointURL
+            )
+            CompanionDiagnostics.record(
+                "session-mini:sync-duplicate-skip reason=\(update.reason) seq=\(update.latestSeq)"
+            )
             return
         }
 
@@ -818,10 +821,6 @@ final class CompanionAppModel {
         }
 
         return activeSessionRouteBaseURL
-    }
-
-    var pendingSessionRuntimeCommandCount: Int {
-        sessionSyncEngine.pendingCommandCount
     }
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
@@ -1552,64 +1551,16 @@ final class CompanionAppModel {
         }
 
         AssistantSurfaceETTraceMetric.postStarted(for: surface)
-        _ = snapshotState.selectAssistantSurface(surface)
-
-        return Task { @MainActor [weak self] in
-            await Task.yield()
-            guard let self else {
-                AssistantSurfaceETTraceMetric.postEnded(for: surface)
-                return false
-            }
-
-            guard let selectionTask = self.sessionSyncEngine.selectAssistantSurface(surface) else {
-                self.applyConnectionFailure(
-                    HTTPCompanionServiceError.localStoreUnavailable,
-                    suppressErrorWhenSnapshotUsable: true
-                )
-                Haptics.error()
-                AssistantSurfaceETTraceMetric.postEnded(for: surface)
-                return false
-            }
-
-            let result = await selectionTask.value
-            defer {
-                AssistantSurfaceETTraceMetric.postEnded(for: surface)
-            }
-
-            switch result.status {
-            case .applied:
-                guard let appliedSurface = result.appliedSurface else {
-                    return false
-                }
-
-                let didApplySurface = self.snapshotState.applyAcceptedAssistantSurface(appliedSurface)
-                let didSelectSurface = self.snapshotState.selectedAssistantSurface == appliedSurface
-                    ? false
-                    : self.snapshotState.selectAssistantSurface(appliedSurface)
-                if !(didApplySurface || didSelectSurface) {
-                    CompanionDiagnostics.assistantSurface.debug(
-                        "Selection accepted without visible change surface=\(appliedSurface.rawValue, privacy: .public) generation=\(result.generation, privacy: .public)"
-                    )
-                    CompanionDiagnostics.record(
-                        "assistant-surface:no-visible-change surface=\(appliedSurface.rawValue) generation=\(result.generation)"
-                    )
-                }
-
-                CompanionDiagnostics.record("assistant-surface:selected surface=\(appliedSurface.rawValue)")
-                self.errorMessage = nil
-                self.lastUpdatedAt = Date()
-                return true
-            case .stale:
-                return false
-            case let .failed(message):
-                self.applyConnectionFailure(
-                    AssistantSurfaceSelectionFailure(message: message),
-                    suppressErrorWhenSnapshotUsable: true
-                )
-                Haptics.error()
-                return false
-            }
+        defer {
+            AssistantSurfaceETTraceMetric.postEnded(for: surface)
         }
+        guard snapshotState.selectAssistantSurface(surface) else {
+            return nil
+        }
+
+        CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
+        lastUpdatedAt = Date()
+        return Task { true }
     }
 
     private func recordPromptAccepted(
