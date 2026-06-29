@@ -337,7 +337,11 @@ final class CompanionAppModel {
             return
         }
 
-        guard update.latestSeq > realtimeLatestSeq || !snapshotState.hasSnapshot else {
+        guard applyCachedSessionMiniSnapshot(
+            update.snapshot,
+            reason: "session-mini-sync-\(update.reason)",
+            latestSeq: update.latestSeq
+        ) else {
             applyRealtimeStreamLiveness(
                 serverTime: update.snapshot.host.lastSyncedAt,
                 latestSeq: update.latestSeq,
@@ -345,12 +349,11 @@ final class CompanionAppModel {
                 endpointURL: update.endpointURL
             )
             CompanionDiagnostics.record(
-                "session-mini:sync-duplicate-skip reason=\(update.reason) seq=\(update.latestSeq)"
+                "session-mini:sync-snapshot-skip reason=\(update.reason) seq=\(update.latestSeq)"
             )
             return
         }
 
-        applyCachedSnapshot(update.snapshot, reason: "session-mini-sync-\(update.reason)")
         applyRealtimeStreamLiveness(
             serverTime: update.snapshot.host.lastSyncedAt,
             latestSeq: update.latestSeq,
@@ -1721,7 +1724,7 @@ final class CompanionAppModel {
                 cachedSnapshot,
                 reason: reason,
                 latestSeq: latestSeq
-            )
+            ) ?? false
         }
     }
 
