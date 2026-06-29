@@ -2597,10 +2597,6 @@ struct SessionSections: Sendable {
         self.init(projection: projection, sessions: sessions)
     }
 
-    init(localSessions sessions: [SessionSummary]) {
-        self.init(fallbackSessions: sessions)
-    }
-
     init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {
         active = Self.sessions(at: projection.activeIndexes, in: sessions)
         running = Self.sessions(at: projection.runningIndexes, in: sessions)

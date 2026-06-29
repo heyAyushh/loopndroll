@@ -446,6 +446,64 @@ struct SessionSummaryTimingTests {
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
     }
 
+    @MainActor
+    @Test("Assistant surface switch keeps reducer freshness order immediately")
+    func assistantSurfaceSwitchKeepsReducerFreshnessOrderImmediately() throws {
+        let codexSession = try sessionSummary(
+            id: "codex-thread",
+            ref: "C1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let olderDevinSession = try sessionSummary(
+            id: "older-devin-thread",
+            ref: "D1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let newerDevinSession = try sessionSummary(
+            id: "newer-devin-thread",
+            ref: "D2",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = MobileSnapshot(
+            revision: "surface-switch-order",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [codexSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession],
+                CompanionAssistantSurface.devin.rawValue: [olderDevinSession, newerDevinSession],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+
+        store.applySnapshot(snapshot)
+        #expect(store.sessionSections.active.map(\.ref) == ["C1"])
+
+        #expect(store.selectAssistantSurface(.devin))
+        #expect(store.selectedAssistantSurface == .devin)
+        #expect(store.sessionSections.active.map(\.ref) == ["D2", "D1"])
+        #expect(store.sessionSections.running.map(\.ref) == ["D2", "D1"])
+    }
+
     @Test("Session row display identity includes assistant surface")
     func sessionRowDisplayIdentityIncludesAssistantSurface() throws {
         let session = try sessionSummary(
