@@ -1,0 +1,10 @@
+# curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}
+' http://127.0.0.1:8765/health
+{"claude_hooks":{"active_command":"LOOPER_CLAUDE_HOOK=1 '/Applications/looper.app/Contents/MacOS/looper-server' --hook --managed-by looper","health":"healthy","owner":"looper-rust","registered_events":["PermissionRequest","PostToolUse","PostToolUseFailure","PreToolUse","SessionStart","Stop","StopFailure","UserPromptSubmit"],"settings_path":"/Users/ay/.claude/settings.json"},"grok_hooks":{"active_command":"'/Applications/looper.app/Contents/MacOS/looper-server' --hook --managed-by looper","health":"healthy","hooks_path":"/Users/ay/.grok/hooks/looper.json","owner":"looper-rust","registered_events":["SessionStart","Stop","UserPromptSubmit"]},"hooks":{"active_command":"'/Applications/looper.app/Contents/MacOS/looper-server' --hook --managed-by looper","enabled":true,"health":"healthy","issues":[],"owner":"looper-rust","recent_failures_count":0,"registered_events":["SessionStart","Stop","UserPromptSubmit"]},"ok":true,"service":"looper","source":{"codex_home":"/Users/ay/.codex","degraded_reason":null,"health":"healthy","logs_db":"/Users/ay/.codex/logs_2.sqlite","sessions_root":"/Users/ay/.codex/sessions","state_db":"/Users/ay/.codex/state_5.sqlite"}}HTTP 200 time=0.083956 size=1162
+# curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}
+' http://127.0.0.1:8765/api/mobile/session-minis/snapshot
+{"code":"pairing_token_required","message":"Pair this iPhone with the Mac before using the mobile API."}HTTP 401 time=0.000574 size=104
+# curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}
+' 'http://127.0.0.1:8765/desktop/snapshot?limit=30'
+curl: (28) Operation timed out after 2006 milliseconds with 0 bytes received
+HTTP 000 time=2.006097 size=0
