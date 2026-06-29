@@ -42,11 +42,14 @@ public enum LooperDiagnosticsContent {
     }
 
     private static func stateTitle(for result: MenuRefreshResult) -> String {
-        if result.snapshot != nil {
-            return "connected"
-        }
         if result.sessionMiniSnapshot != nil {
-            return "local-state"
+            if result.error != nil {
+                return "local-state+degraded-http"
+            }
+            return result.snapshot == nil ? "local-state" : "local-state+http-enrichment"
+        }
+        if result.snapshot != nil {
+            return "http-recovery"
         }
         return "unavailable"
     }

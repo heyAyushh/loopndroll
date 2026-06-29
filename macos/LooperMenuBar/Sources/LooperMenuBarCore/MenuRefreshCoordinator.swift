@@ -53,7 +53,7 @@ public struct MenuRefreshResult: Equatable, Sendable {
     ) -> MenuRefreshResult {
         MenuRefreshResult(
             didFetchHTTP: didFetchHTTP,
-            sessionMiniSnapshot: nextSessionMiniSnapshot,
+            sessionMiniSnapshot: nextSessionMiniSnapshot ?? sessionMiniSnapshot,
             snapshot: snapshot,
             connections: connections,
             acpClientHosts: acpClientHosts,

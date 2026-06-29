@@ -155,9 +155,9 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.health != nil)
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.requiresLiveProof)
-        #expect(readiness.mobileStatusTitle == "Waiting for Session proof")
-        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
-        #expect(readiness.tailscaleStatusTitle == "Waiting for Session proof")
+        #expect(readiness.mobileStatusTitle == "Local cache: waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
+        #expect(readiness.tailscaleStatusTitle == "Local cache: waiting for Session proof")
         #expect(readiness.provenReachableHandoffBaseURL == nil)
 
         readiness.applySessionState(
@@ -176,7 +176,7 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: oldGeneration
         )
         #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
 
         readiness.applySessionState(
             phase: .ready,
@@ -186,15 +186,15 @@ struct MenuRefreshCoordinatorTests {
         #expect(!readiness.requiresLiveProof)
         #expect(readiness.hasLiveRouteProof)
         #expect(readiness.supportsNativeHandoff)
-        #expect(readiness.mobileStatusTitle == "Handoff route proven")
-        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
-        #expect(readiness.tailscaleStatusTitle == "Connected: 100.119.200.69")
+        #expect(readiness.mobileStatusTitle == "Fresh handoff route")
+        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
+        #expect(readiness.tailscaleStatusTitle == "Fresh Session: 100.119.200.69")
         #expect(readiness.provenReachableHandoffBaseURL?.absoluteString == "http://100.119.200.69:8765")
 
         _ = readiness.invalidateForRouteSwitch()
         #expect(readiness.health == nil)
         #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
     }
 
     @Test("ready Session route without HTTP health is not handoff proof")
@@ -211,8 +211,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.hasLiveRouteProof)
         #expect(!readiness.supportsNativeHandoff)
         #expect(readiness.provenReachableHandoffBaseURL == nil)
-        #expect(readiness.mobileStatusTitle == "Session connected")
-        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
+        #expect(readiness.mobileStatusTitle == "Fresh Session")
+        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
     }
 
     @Test("route switch marks previous endpoint stale until Session reconnects")
@@ -233,9 +233,9 @@ struct MenuRefreshCoordinatorTests {
         let switchGeneration = readiness.invalidateForRouteSwitch()
 
         #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.mobileStatusTitle == "Stale: waiting for Session proof")
-        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
-        #expect(readiness.tailscaleStatusTitle == "Stale: 100.119.200.69, waiting for Session proof")
+        #expect(readiness.mobileStatusTitle == "Cached route: waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+        #expect(readiness.tailscaleStatusTitle == "Cached route: 100.119.200.69; waiting for Session proof")
 
         readiness.applySessionState(
             phase: .ready,
@@ -243,7 +243,7 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: switchGeneration
         )
         #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Stale: Tailscale: 100.119.200.69, waiting for Session proof")
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
 
         readiness.applySessionState(
             phase: .reconnecting,
@@ -256,7 +256,7 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: switchGeneration
         )
         #expect(readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Connected: Tailscale: 100.119.200.69")
+        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
 
         let nextSwitchGeneration = readiness.invalidateForRouteSwitch()
         readiness.applySessionState(
@@ -265,7 +265,7 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: nextSwitchGeneration
         )
         #expect(readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Connected: LAN: 192.168.1.33")
+        #expect(readiness.routeStatusTitle == "Fresh Session: LAN: 192.168.1.33")
     }
 
     @Test("ACP host failure keeps successful snapshot")
@@ -372,7 +372,7 @@ struct MenuRefreshCoordinatorTests {
         let result = await coordinator.refresh(force: true)
         let report = LooperDiagnosticsContent.report(from: result)
 
-        #expect(report.contains("State: local-state"))
+        #expect(report.contains("State: local-state+degraded-http"))
         #expect(!report.contains("State: connected"))
     }
 
@@ -397,6 +397,9 @@ struct MenuRefreshCoordinatorTests {
         #expect(result.snapshot != nil)
         #expect(result.sessionMiniSnapshot?.latestSeq == 303)
         #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        let report = LooperDiagnosticsContent.report(from: result)
+        #expect(report.contains("State: local-state+http-enrichment"))
+        #expect(!report.contains("State: connected"))
         #expect(client.snapshotCalls == 1)
     }
 
@@ -427,6 +430,37 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 0)
         #expect(client.connectionCalls == 0)
         #expect(client.acpHostCalls == 0)
+        #expect(client.mobileStateCalls == 1)
+        #expect(client.pushDeviceCalls == 1)
+        #expect(client.healthCalls == 1)
+    }
+
+    @Test("cached refresh preserves SessionMini when local reread is unavailable")
+    func cachedRefreshPreservesSessionMiniWhenLocalRereadUnavailable() async throws {
+        let seeded = try seededRuntimeWithFileURL(
+            latestSeq: 306,
+            sessionID: "thread-local",
+            title: "Stable local menu truth"
+        )
+        let client = MenuRefreshRecordingClient()
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: seeded.runtime,
+            freshReuseDuration: .seconds(5)
+        )
+
+        let initial = await coordinator.refresh()
+        #expect(initial.sessionMiniSnapshot?.latestSeq == 306)
+
+        try Data("{not-json".utf8).write(to: seeded.fileURL, options: .atomic)
+
+        let cached = await coordinator.refresh()
+
+        #expect(cached.succeeded)
+        #expect(cached.sessionMiniSnapshot?.latestSeq == 306)
+        #expect(cached.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        #expect(cached.sessionMiniSnapshot?.sessions.first?.title == "Stable local menu truth")
+        #expect(client.snapshotCalls == 0)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
@@ -755,6 +789,18 @@ private func seededRuntime(
     sessionID: String,
     title: String
 ) throws -> MenuBarSessionRuntime {
+    try seededRuntimeWithFileURL(
+        latestSeq: latestSeq,
+        sessionID: sessionID,
+        title: title
+    ).runtime
+}
+
+private func seededRuntimeWithFileURL(
+    latestSeq: Int64,
+    sessionID: String,
+    title: String
+) throws -> (runtime: MenuBarSessionRuntime, fileURL: URL) {
     let fileURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("LooperMenuRefreshTests-\(UUID().uuidString)", isDirectory: true)
         .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
@@ -797,7 +843,7 @@ private func seededRuntime(
         withIntermediateDirectories: true
     )
     try data.write(to: fileURL, options: .atomic)
-    return try MenuBarSessionRuntime(fileURL: fileURL)
+    return (try MenuBarSessionRuntime(fileURL: fileURL), fileURL)
 }
 
 private struct TestMenuRefreshMiniPayload: Encodable {

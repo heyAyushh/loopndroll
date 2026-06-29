@@ -13,12 +13,12 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
     }
 
     private enum Titles {
-        static let unknown = "Unknown"
-        static let waitingForSessionProof = "Waiting for Session proof"
-        static let staleWaitingForSessionProof = "Stale: waiting for Session proof"
-        static let staleSessionProofSuffix = "waiting for Session proof"
-        static let handoffRouteProven = "Handoff route proven"
-        static let sessionConnected = "Session connected"
+        static let localSessionProofUnavailable = "Local cache: Session proof unavailable"
+        static let localWaitingForSessionProof = "Local cache: waiting for Session proof"
+        static let cachedWaitingForSessionProof = "Cached route: waiting for Session proof"
+        static let sessionProofSuffix = "waiting for Session proof"
+        static let freshHandoffRoute = "Fresh handoff route"
+        static let freshSession = "Fresh Session"
         static let notProven = "Not proven"
         static let notActive = "Not active"
     }
@@ -77,7 +77,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             return pendingProofStatusTitle
         }
 
-        return supportsNativeHandoff ? Titles.handoffRouteProven : Titles.sessionConnected
+        return supportsNativeHandoff ? Titles.freshHandoffRoute : Titles.freshSession
     }
 
     public var routeStatusTitle: String {
@@ -85,21 +85,21 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             guard let staleRealtimeEndpoint, requiresLiveProof else {
                 return pendingProofStatusTitle
             }
-            return "Stale: \(routeSummaryTitle(for: staleRealtimeEndpoint)), \(Titles.staleSessionProofSuffix)"
+            return "Cached route: \(routeSummaryTitle(for: staleRealtimeEndpoint)); \(Titles.sessionProofSuffix)"
         }
 
-        return "Connected: \(routeSummaryTitle(for: provenRealtimeEndpoint))"
+        return "Fresh Session: \(routeSummaryTitle(for: provenRealtimeEndpoint))"
     }
 
     public var tailscaleStatusTitle: String {
         guard let provenRealtimeEndpoint, hasLiveRouteProof else {
             guard let staleRealtimeEndpoint, requiresLiveProof else {
-                return requiresLiveProof ? Titles.waitingForSessionProof : Titles.notProven
+                return requiresLiveProof ? Titles.localWaitingForSessionProof : Titles.notProven
             }
             guard MobileRouteURLPolicy.routeTitle(for: staleRealtimeEndpoint) == "Tailscale" else {
-                return Titles.waitingForSessionProof
+                return Titles.localWaitingForSessionProof
             }
-            return "Stale: \(hostTitle(for: staleRealtimeEndpoint)), \(Titles.staleSessionProofSuffix)"
+            return "Cached route: \(hostTitle(for: staleRealtimeEndpoint)); \(Titles.sessionProofSuffix)"
         }
 
         let routeTitle = MobileRouteURLPolicy.routeTitle(for: provenRealtimeEndpoint)
@@ -107,7 +107,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             return Titles.notActive
         }
 
-        return "Connected: \(hostTitle(for: provenRealtimeEndpoint))"
+        return "Fresh Session: \(hostTitle(for: provenRealtimeEndpoint))"
     }
 
     public func httpEnrichmentStatusTitle(now: Date = Date()) -> String? {
@@ -183,11 +183,11 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
 
     private var pendingProofStatusTitle: String {
         guard requiresLiveProof else {
-            return Titles.unknown
+            return Titles.localSessionProofUnavailable
         }
         return staleRealtimeEndpoint == nil
-            ? Titles.waitingForSessionProof
-            : Titles.staleWaitingForSessionProof
+            ? Titles.localWaitingForSessionProof
+            : Titles.cachedWaitingForSessionProof
     }
 
     private func acceptsReadyEndpoint(_ endpointURL: URL) -> Bool {
