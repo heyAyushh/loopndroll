@@ -13,7 +13,7 @@
       "status": "active",
       "worktree_path": null,
       "started_at": "2026-06-29T12:45:00Z",
-      "last_commit": "a1926fb27d5d14bb31fc4c78a9164d601700788a",
+      "last_commit": "2b387a57bf3fa496232ba1c635b51402d93a912c",
       "last_side_merge": {
         "thread": "019f1429-c9c4-78e2-b3e2-7f6669802425",
         "source_commit": "9c32912ffb293aa7a7838a63d1172d8d5776afcd",
@@ -26,7 +26,7 @@
         "os": "27.0"
       },
       "evidence_root": ".omo/evidence/local-first-multinode-architecture-lock",
-      "todos_completed": 9,
+      "todos_completed": 10,
       "todos_total": 12,
       "final_wave_completed": 0,
       "final_wave_total": 4

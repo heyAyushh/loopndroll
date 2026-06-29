@@ -179,7 +179,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   QA scenarios: happy: `bash scripts/ios-diagnostics.sh oslog --timeout 30s --category AssistantSurface --output-dir .omo/evidence/local-first-multinode-architecture-lock/task-9-oslog` plus ETTrace capture; PASS if logs show local selection events only and no `setAssistantSurface`/stream restart; failure: automated switch loop toggles Codex/Zed/Claude/Grok 100x and asserts no minis disappear and no route badge claims connected before live endpoint proof.
   Commit: Y | `fix(ios): make assistant switching local-first`
 
-- [ ] 10. Delete or demote old HTTP/snapshot truth paths.
+- [x] 10. Delete or demote old HTTP/snapshot truth paths.
   What to do / Must NOT do: Keep HTTP only for `/health`, pairing/auth handoff, full snapshot on first install/corruption/seq gap/manual diagnostics, and bounded data-plane content if chosen. Delete or demote any remaining mutable visible-session actions from HTTP truth. Full snapshot recovery must be small, range-aware, and freshness-gated.
   Parallelization: Wave 6 | Blocked by: 8, 9 | Blocks: 11, 12
   References: `docs/architecture/decisions.md:48-52`, `docs/architecture/decisions.md:327-337`, `crates/agent-control-plane/src/http/mod.rs:728-765`, `crates/agent-control-plane/src/http/mobile_state.rs:56-77`, `crates/agent-control-plane/src/http/mobile_state.rs:138-167`

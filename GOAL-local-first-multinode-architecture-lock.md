@@ -72,10 +72,10 @@ Strict runtime grep (plan Verification strategy) must be clean; artifact saved t
 
 ## Current next action
 
-Todos 1-9 are complete and reviewed. Execute Todo 10 next:
+Todos 1-10 are complete and reviewed. Execute Todo 11 next:
 
-- Delete or demote old HTTP/snapshot truth paths.
-- Keep HTTP only for health, pairing/auth handoff, bootstrap/recovery snapshots, diagnostics, and bounded content data plane.
-- Prove strict runtime grep and stale-snapshot rejection with focused gates only.
+- Run profiler-led simulator and installed proof.
+- Use OSLog, ETTrace/perf-loop, Codex in-app Browser simulator proof, macOS install/launch proof, and one physical iPhone install/launch proof.
+- Record p95 mode/prompt/switch timings plus server health/snapshot timings.
 
-Do not run repeated full builds or installs during this cut. Each worker returns either a commit hash plus focused gate evidence, or one exact blocker with file/line and failing command.
+Do not repeat install/build loops. Run the final proof sequence once per surface unless a concrete blocker requires a retry.
