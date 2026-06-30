@@ -82,7 +82,7 @@ impl LooperClientCoreSessionRuntime {
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let update = self.client_core.observe().await?;
         self.persist_last_good_endpoint(&update.snapshot)?;
-        if update.did_change || update.reason == ClientStateMiniStreamUpdateReason::Heartbeat {
+        if update.did_change {
             self.persist_core_snapshot(&update.snapshot)?;
         }
         Ok(update)
@@ -1121,6 +1121,59 @@ mod tests {
 
         assert!(!endpoints[0].last_good);
         assert!(endpoints[1].last_good);
+    }
+
+    #[test]
+    fn runtime_does_not_rewrite_local_store_for_duplicate_heartbeat() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let path = temp_store_path("duplicate-heartbeat-no-store-write");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+
+        let heartbeat_url = test_runtime.block_on(async {
+            let (heartbeat_url, server) = spawn_realtime_session_server().await;
+            runtime
+                .local_store
+                .mark_last_good_endpoint(heartbeat_url.clone())
+                .expect("seed last-good endpoint");
+            let before = std::fs::read(&path).expect("read initial local store");
+
+            runtime
+                .start(
+                    vec![ClientEndpoint {
+                        url: heartbeat_url.clone(),
+                        last_good: false,
+                    }],
+                    String::new(),
+                    String::new(),
+                )
+                .expect("start runtime");
+
+            let update = tokio::time::timeout(Duration::from_secs(1), runtime.observe())
+                .await
+                .expect("observe heartbeat")
+                .expect("runtime update");
+            assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Heartbeat);
+            assert!(!update.did_change);
+
+            let after = std::fs::read(&path).expect("read local store after heartbeat");
+            assert_eq!(after, before);
+
+            server.abort();
+            let _ = server.await;
+            heartbeat_url
+        });
+
+        drop(runtime);
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let endpoints = reopened
+            .local_store
+            .endpoints_with_last_good(vec![ClientEndpoint {
+                url: heartbeat_url,
+                last_good: false,
+            }])
+            .expect("stored endpoints");
+
+        assert!(endpoints[0].last_good);
     }
 
     #[test]
