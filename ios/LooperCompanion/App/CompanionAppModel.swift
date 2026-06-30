@@ -410,41 +410,67 @@ final class CompanionAppModel {
             return
         }
 
-        applyRealtimeStreamLiveness(
+        let didChange = applyRealtimeStreamLiveness(
             serverTime: update.serverTime,
             latestSeq: update.latestSeq,
             isLive: update.isLive,
             endpointURL: update.endpointURL
         )
+        guard didChange else {
+            return
+        }
         lastUpdatedAt = Date()
         CompanionDiagnostics.record(
             "session-mini:liveness-applied reason=\(update.reason) seq=\(update.latestSeq)"
         )
     }
 
-    private func applyRealtimeStreamLiveness(
+    @discardableResult
+    func applyRealtimeStreamLiveness(
         serverTime: String,
         latestSeq: Int64,
         isLive: Bool,
         endpointURL: URL?
-    ) {
+    ) -> Bool {
+        var didChange = false
         if !serverTime.isEmpty {
-            realtimeServerTime = serverTime
-            _ = snapshotState.applyHostSyncTime(serverTime)
+            if realtimeServerTime != serverTime {
+                realtimeServerTime = serverTime
+                didChange = true
+            }
+            didChange = snapshotState.applyHostSyncTime(serverTime) || didChange
         }
-        realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
-        realtimeStreamIsLive = isLive
-        activeSessionRouteBaseURL = isLive ? endpointURL : nil
-        if isLive {
+        let nextLatestSeq = max(realtimeLatestSeq, latestSeq)
+        if realtimeLatestSeq != nextLatestSeq {
+            realtimeLatestSeq = nextLatestSeq
+            didChange = true
+        }
+        if realtimeStreamIsLive != isLive {
+            realtimeStreamIsLive = isLive
+            didChange = true
+        }
+        let nextRouteBaseURL = isLive ? endpointURL : nil
+        if activeSessionRouteBaseURL != nextRouteBaseURL {
+            activeSessionRouteBaseURL = nextRouteBaseURL
+            didChange = true
+        }
+        if isLive, isAwaitingRouteSessionProof {
             isAwaitingRouteSessionProof = false
+            didChange = true
         }
-        connectionState = Self.connectionStateForSessionLiveness(
+        let nextConnectionState = Self.connectionStateForSessionLiveness(
             isLive: isLive,
             currentState: connectionState
         )
-        if isLive {
-            errorMessage = nil
+        if connectionState != nextConnectionState {
+            connectionState = nextConnectionState
+            didChange = true
         }
+        if isLive, errorMessage != nil {
+            errorMessage = nil
+            didChange = true
+        }
+        return didChange
     }
 
     private func prepareSessionRuntimeInBackground() {
