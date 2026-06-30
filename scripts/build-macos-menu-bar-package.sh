@@ -31,8 +31,6 @@ resolve_macos_provisioning_profile() {
   fi
 
   local expected_application_identifier="$MACOS_APPLICATION_IDENTIFIER"
-  local fallback_profile=""
-  local fallback_application_identifier=""
   local profile
   for profile in "${MACOS_PROVISIONING_PROFILE_DIR}"/*.provisionprofile; do
     [[ -f "$profile" ]] || continue
@@ -51,19 +49,7 @@ resolve_macos_provisioning_profile() {
       printf '%s\n' "$profile"
       return
     fi
-
-    if [[ -z "$fallback_profile" ]]; then
-      fallback_profile="$profile"
-      fallback_application_identifier="$application_identifier"
-    fi
   done
-
-  if [[ -n "$fallback_profile" ]]; then
-    printf 'warning: using fallback macOS provisioning profile with application-identifier=%s; expected %s\n' \
-      "${fallback_application_identifier:-unknown}" \
-      "$expected_application_identifier" >&2
-    printf '%s\n' "$fallback_profile"
-  fi
 }
 
 profile_application_identifier() {
@@ -80,9 +66,17 @@ extract_macos_profile_entitlements() {
   local provisioning_profile="$1"
   local output_path="$2"
 
-  # Keep signing entitlements tied to the embedded profile; wildcard profiles are valid.
   security cms -D -i "$provisioning_profile" |
     plutil -extract Entitlements xml1 -o "$output_path" -
+}
+
+validate_macos_provisioning_profile() {
+  local provisioning_profile="$1"
+  local application_identifier
+  application_identifier="$(profile_application_identifier "$provisioning_profile")"
+  if [[ "$application_identifier" != "$MACOS_APPLICATION_IDENTIFIER" ]]; then
+    fail "macOS provisioning profile application-identifier=${application_identifier:-unknown}; expected ${MACOS_APPLICATION_IDENTIFIER}"
+  fi
 }
 
 APP_NAME="looper"
@@ -211,6 +205,7 @@ if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" != "0" ]]; th
     fi
   else
     require_file "$PROVISIONING_PROFILE"
+    validate_macos_provisioning_profile "$PROVISIONING_PROFILE"
     cp "$PROVISIONING_PROFILE" "$embedded_profile_path"
     extract_macos_profile_entitlements "$PROVISIONING_PROFILE" "$entitlements_path"
     codesign_entitlements_args=(--entitlements "$entitlements_path")
