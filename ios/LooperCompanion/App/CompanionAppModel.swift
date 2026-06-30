@@ -432,6 +432,13 @@ final class CompanionAppModel {
         isLive: Bool,
         endpointURL: URL?
     ) -> Bool {
+        guard latestSeq >= realtimeLatestSeq else {
+            CompanionDiagnostics.record(
+                "session-mini:liveness-stale-skip latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
+            )
+            return false
+        }
+
         var didChange = false
         if !serverTime.isEmpty {
             if realtimeServerTime != serverTime {
