@@ -1681,8 +1681,14 @@ async fn mobile_snapshot_uses_rust_auth_and_codex_threads() {
     assert_eq!(snapshot["freshness"]["latestSeq"], snapshot["latestSeq"]);
     assert_eq!(snapshot["freshness"]["revision"], snapshot["revision"]);
     assert_eq!(snapshot["freshness"]["serverTime"], snapshot["serverTime"]);
-    assert_eq!(snapshot["sessions"][0]["id"], "thread-child");
-    assert_eq!(snapshot["sessions"][1]["id"], "thread-main");
+    assert_eq!(snapshot["sessions"][0]["id"], "thread-main");
+    assert!(
+        !snapshot["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .any(|session| session["id"] == "thread-child")
+    );
 }
 
 #[tokio::test]
@@ -1703,14 +1709,14 @@ async fn mobile_snapshot_includes_full_recent_thread_list() {
     .await;
 
     let sessions = snapshot["sessions"].as_array().expect("sessions");
-    assert_eq!(sessions.len(), EXTRA_MOBILE_SNAPSHOT_THREADS + 2);
+    assert_eq!(sessions.len(), EXTRA_MOBILE_SNAPSHOT_THREADS + 1);
     assert!(
         sessions
             .iter()
             .any(|session| session["id"] == "thread-main")
     );
     assert!(
-        sessions
+        !sessions
             .iter()
             .any(|session| session["id"] == "thread-child")
     );
@@ -1908,10 +1914,15 @@ async fn session_mini_projection_includes_card_blocked_goal_and_notification_sta
 
     assert_eq!(snapshot["latestSeq"], snapshot["latest_seq"]);
     let session = session_mini_snapshot_session(&snapshot, "thread-main");
+    assert!(!session_mini_snapshot_has_session(
+        &snapshot,
+        "thread-child"
+    ));
     assert_eq!(session["id"], "thread-main");
     assert_eq!(session["sessionId"], "thread-main");
     assert_eq!(session["title"], "Main task");
-    assert_eq!(session["ref"], "T2");
+    assert_eq!(session["ref"], "T1");
+    assert_eq!(session["assistantClient"], "codex");
     assert_eq!(session["assistantSurface"], "codex");
     assert_eq!(session["effectiveMode"], "await-reply");
     assert_eq!(session["canSendPrompt"], serde_json::json!(true));
@@ -4837,6 +4848,18 @@ fn session_mini_snapshot_has_session(snapshot: &serde_json::Value, session_id: &
     snapshot["sessions"]
         .as_array()
         .expect("session minis")
+        .iter()
+        .any(|session| session["id"] == session_id)
+}
+
+fn mobile_surface_has_session(
+    snapshot: &serde_json::Value,
+    surface: &str,
+    session_id: &str,
+) -> bool {
+    snapshot["surfaceSessions"][surface]
+        .as_array()
+        .expect("surface sessions")
         .iter()
         .any(|session| session["id"] == session_id)
 }

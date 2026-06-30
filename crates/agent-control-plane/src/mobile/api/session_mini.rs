@@ -7,7 +7,7 @@ use crate::mobile::session::{
     MobileSessionState, NOTIFICATION_TARGET_IPHONE, NOTIFICATION_TARGET_MACOS,
 };
 
-use super::overrides::{is_deleted, session_override};
+use super::overrides::{is_mobile_home_visible_thread, session_override};
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
@@ -17,6 +17,7 @@ const COMPACT_SESSION_MINI_FIELDS: &[&str] = &[
     "id",
     "sessionId",
     "seq",
+    "assistantClient",
     "assistantSurface",
     "ref",
     "status",
@@ -362,8 +363,8 @@ fn session_mini_values(
     snapshot
         .threads
         .iter()
+        .filter(|thread| is_mobile_home_visible_thread(thread, session_state))
         .enumerate()
-        .filter(|(_, thread)| !is_deleted(thread, session_state))
         .map(|(index, thread)| {
             session_mini_value(
                 thread,
@@ -403,6 +404,7 @@ fn session_mini_value(
     copy_summary_field(summary, &mut mini, "id");
     mini.insert("sessionId".to_owned(), json!(thread.thread_id));
     mini.insert("seq".to_owned(), json!(seq));
+    copy_summary_field(summary, &mut mini, "assistantClient");
     mini.insert(
         "assistantSurface".to_owned(),
         summary

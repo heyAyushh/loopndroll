@@ -1,3 +1,5 @@
+use crate::assistant::AssistantKind;
+use crate::codex::LaunchKind;
 use crate::control_plane::DesktopThread;
 use crate::mobile::session::{MobileSessionOverride, MobileSessionState};
 
@@ -58,4 +60,13 @@ pub(super) fn is_deleted(thread: &DesktopThread, session_state: &MobileSessionSt
     session_override(thread, session_state)
         .map(|state| state.deleted)
         .unwrap_or(false)
+}
+
+pub(super) fn is_mobile_home_visible_thread(
+    thread: &DesktopThread,
+    session_state: &MobileSessionState,
+) -> bool {
+    let codex_subagent = matches!(thread.capabilities.assistant_kind, AssistantKind::Codex)
+        && thread.capabilities.spawn.launch_kind == LaunchKind::Subagent;
+    !is_deleted(thread, session_state) && !codex_subagent
 }

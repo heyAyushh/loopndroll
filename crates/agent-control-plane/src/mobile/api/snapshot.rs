@@ -6,7 +6,7 @@ use crate::control_plane::DesktopSnapshot;
 use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionState};
 
 use super::assistant_identity::thread_matches_assistant_surface;
-use super::overrides::is_deleted;
+use super::overrides::is_mobile_home_visible_thread;
 use super::settings::{completion_check_summary, mobile_global_settings, notification_summary};
 use super::status::{mobile_devin_desktop_status, mobile_grok_build_status};
 use super::summary::session_summary;
@@ -94,9 +94,9 @@ fn mobile_sessions_for_surface(
     snapshot
         .threads
         .iter()
+        .filter(|thread| is_mobile_home_visible_thread(thread, session_state))
+        .filter(|thread| thread_matches_assistant_surface(thread, surface))
         .enumerate()
-        .filter(|(_, thread)| !is_deleted(thread, session_state))
-        .filter(|(_, thread)| thread_matches_assistant_surface(thread, surface))
         .map(|(index, thread)| session_summary(thread, index, session_state))
         .collect()
 }
