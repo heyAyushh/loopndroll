@@ -86,16 +86,8 @@ final class LooperContinuationActivityPublisher {
 
     @discardableResult
     func requestFocusAssistedActivation() -> Bool {
-        guard isHandoffSupported else {
-            deactivateFocusAssist()
-            refreshCurrentActivity(allowsIdleActivation: false)
-            logger.info("handoff activation ignored because support gate is closed")
-            return false
-        }
-
         activateFocusAssist(reason: "hotkey")
-        presentCurrentActivity(presentation: .activateApplication)
-        return true
+        return republishCurrentActivity(presentation: .activateApplication)
     }
 
     func attachHost(_ host: NSResponder?) {
@@ -172,18 +164,20 @@ final class LooperContinuationActivityPublisher {
         logger.debug("handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public)")
     }
 
-    private func presentCurrentActivity(presentation: LooperContinuationPresentation) {
+    private func republishCurrentActivity(presentation: LooperContinuationPresentation) -> Bool {
         guard let currentDescriptor else {
             refreshCurrentActivity()
-            return
+            return false
         }
 
-        let activity = currentActivity ?? NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        currentActivity?.invalidate()
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
         configure(activity, with: currentDescriptor)
         activityOwner.publish(activity, descriptor: currentDescriptor, presentation: presentation)
         logPublishedActivity(activity, descriptor: currentDescriptor)
         currentActivity = activity
         startCurrentActivityRefreshLoop()
+        return true
     }
 
     private func presentationForRefresh(allowsIdleActivation: Bool = true) -> LooperContinuationPresentation {
