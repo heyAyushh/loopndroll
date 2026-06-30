@@ -45,6 +45,12 @@ const REPLACE_FIELD: &str = "replace";
 const REPLACEMENT_COMPLETE_FIELD: &str = "replacementComplete";
 const REPLACEMENT_COMPLETE_ALIAS_FIELD: &str = "replacement_complete";
 const SESSIONS_FIELD: &str = "sessions";
+const RECOVERY_REQUIRED_FIELD: &str = "recoveryRequired";
+const RECOVERY_REQUIRED_ALIAS_FIELD: &str = "recovery_required";
+const RECOVERY_FIELD: &str = "recovery";
+const RECOVERY_INSTRUCTION_STATE_MINI_SNAPSHOT: &str = "session-mini-snapshot";
+const REASON_FIELD: &str = "reason";
+const DEFAULT_RECOVERY_REQUIRED_REASON: &str = "state-mini snapshot recovery required";
 
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
@@ -836,6 +842,12 @@ fn client_state_mini_delta(
     let Some(payload) = payload else {
         return Ok(seq_only_state_mini_delta(delta));
     };
+    if state_mini_payload_requires_snapshot_recovery(&payload) {
+        return Err(StateMiniTransportError::RecoveryRequired {
+            latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
+            error_description: state_mini_payload_recovery_reason(&payload),
+        });
+    }
     let replace_sessions = payload
         .get(REPLACE_FIELD)
         .and_then(Value::as_bool)
@@ -929,6 +941,30 @@ fn state_mini_payload_latest_seq(payload: &Value, fallback: i64) -> i64 {
         .or_else(|| payload.get(LATEST_SEQ_ALIAS_FIELD))
         .and_then(Value::as_i64)
         .unwrap_or(fallback)
+}
+
+fn state_mini_payload_requires_snapshot_recovery(payload: &Value) -> bool {
+    let recovery_required = payload
+        .get(RECOVERY_REQUIRED_FIELD)
+        .or_else(|| payload.get(RECOVERY_REQUIRED_ALIAS_FIELD))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let recovery_instruction = payload
+        .get(RECOVERY_FIELD)
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    recovery_required && recovery_instruction == RECOVERY_INSTRUCTION_STATE_MINI_SNAPSHOT
+}
+
+fn state_mini_payload_recovery_reason(payload: &Value) -> String {
+    payload
+        .get(REASON_FIELD)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or(DEFAULT_RECOVERY_REQUIRED_REASON)
+        .to_owned()
 }
 
 fn state_mini_payload_sessions(payload: &Value) -> Vec<ClientStateMini> {
@@ -1148,6 +1184,42 @@ mod tests {
 
         assert_eq!(error, ClientCoreError::StateMiniSnapshotTransportFailed);
         let _ = server.join();
+    }
+
+    #[test]
+    fn state_mini_delta_recovery_instruction_triggers_snapshot_recovery() {
+        let result = client_state_mini_delta(proto::StateMiniDelta {
+            seq: 57,
+            entity_id: "mobile-state".to_owned(),
+            kind: "state_mini".to_owned(),
+            revision: "rev-57".to_owned(),
+            server_time: "2026-06-30T00:00:00Z".to_owned(),
+            payload_json: json!({
+                "controlOnly": true,
+                "reason": "state_delta_frame_cap_exceeded",
+                "entityId": "mobile-state",
+                "kind": "state_mini",
+                "latestSeq": 57,
+                "recoveryRequired": true,
+                "recovery": "session-mini-snapshot"
+            })
+            .to_string(),
+        });
+
+        match result {
+            Err(StateMiniTransportError::RecoveryRequired {
+                latest_seq,
+                error_description,
+            }) => {
+                assert_eq!(latest_seq, 57);
+                assert_eq!(error_description, "state_delta_frame_cap_exceeded");
+            }
+            Err(other) => panic!("expected recovery-required error, got {other:?}"),
+            Ok(delta) => panic!(
+                "expected recovery-required error, got delta seq {}",
+                delta.seq
+            ),
+        }
     }
 
     #[test]
