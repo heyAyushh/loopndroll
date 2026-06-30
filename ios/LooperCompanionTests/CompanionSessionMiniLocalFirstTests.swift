@@ -471,6 +471,67 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testCappedNetworkSnapshotDoesNotCollapseLocalCanonicalMinis() throws {
+        let localSessionCount = 300
+        let cappedNetworkSessionCount = 250
+        let sessionsPerSurface = localSessionCount / CompanionAssistantSurface.allCases.count
+        let localSurfaceSessions = Dictionary(
+            uniqueKeysWithValues: CompanionAssistantSurface.allCases.map { surface in
+                (
+                    surface.rawValue,
+                    (0..<sessionsPerSurface).map { index in
+                        Self.sessionSummary(
+                            id: "local-\(surface.rawValue)-\(index)",
+                            title: "Local \(surface.rawValue) \(index)",
+                            ref: "L\(index)",
+                            status: index.isMultiple(of: 2) ? .active : .waiting
+                        )
+                    }
+                )
+            }
+        )
+        let localSessions = CompanionAssistantSurface.allCases.flatMap { surface in
+            localSurfaceSessions[surface.rawValue] ?? []
+        }
+        let cappedNetworkSessions = (0..<cappedNetworkSessionCount).map { index in
+            Self.sessionSummary(
+                id: "network-codex-\(index)",
+                title: "Network Codex \(index)",
+                ref: "N\(index)",
+                status: .active
+            )
+        }
+        let store = CompanionSnapshotStateStore()
+        let localSnapshot = Self.mobileSnapshot(
+            revision: "local-revision",
+            sessions: localSessions,
+            surfaceSessions: localSurfaceSessions
+        )
+        let cappedNetworkSnapshot = Self.mobileSnapshot(
+            revision: "network-capped-revision",
+            sessions: cappedNetworkSessions,
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: cappedNetworkSessions]
+        )
+
+        store.applySnapshot(localSnapshot)
+        store.applySnapshot(cappedNetworkSnapshot)
+
+        #expect(store.allSessionSections.active.count == localSessionCount + cappedNetworkSessionCount)
+        #expect(store.sessionSections.active.count == sessionsPerSurface + cappedNetworkSessionCount)
+        #expect(store.snapshot?.sessions.count == sessionsPerSurface + cappedNetworkSessionCount)
+        #expect(store.sessions(for: .devin).count == sessionsPerSurface)
+        #expect(store.sessions(for: .zed).count == sessionsPerSurface)
+        #expect(store.sessions(for: .grokBuild).count == sessionsPerSurface)
+
+        store.applyVisibleAssistantSurface(.devin)
+
+        #expect(store.selectedAssistantSurface == .devin)
+        #expect(store.sessionSections.active.count == sessionsPerSurface)
+        #expect(store.snapshot?.sessions.map(\.id).allSatisfy { $0.hasPrefix("local-devin-") } == true)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1942,7 +2003,8 @@ struct CompanionSessionMiniLocalFirstTests {
 
     private static func mobileSnapshot(
         revision: String,
-        sessions: [SessionSummary]
+        sessions: [SessionSummary],
+        surfaceSessions: [String: [SessionSummary]]? = nil
     ) -> MobileSnapshot {
         return MobileSnapshot(
             revision: revision,
@@ -1963,7 +2025,7 @@ struct CompanionSessionMiniLocalFirstTests {
                 assistantSurface: .codex
             ),
             sessions: sessions,
-            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: sessions],
+            surfaceSessions: surfaceSessions ?? [CompanionAssistantSurface.codex.rawValue: sessions],
             notifications: [],
             completionChecks: []
         )

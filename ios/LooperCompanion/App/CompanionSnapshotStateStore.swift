@@ -106,10 +106,11 @@ final class CompanionSnapshotStateStore {
         _ nextSnapshot: MobileSnapshot,
         preferredSurface: CompanionAssistantSurface? = nil
     ) -> CompanionSnapshotApplyResult {
-        canonicalSnapshot = nextSnapshot
-        refreshCanonicalProjectionCache(from: nextSnapshot)
+        let reconciledSnapshot = locallyPreservingSnapshot(for: nextSnapshot)
+        canonicalSnapshot = reconciledSnapshot
+        refreshCanonicalProjectionCache(from: reconciledSnapshot)
         let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
-            snapshot: nextSnapshot,
+            snapshot: reconciledSnapshot,
             preferredSurface: preferredSurface,
             hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
             currentSelectedAssistantSurface: selectedAssistantSurface
@@ -120,7 +121,7 @@ final class CompanionSnapshotStateStore {
               ),
               let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
         else {
-            return applySnapshotWithoutProjection(nextSnapshot, preferredSurface: preferredSurface)
+            return applySnapshotWithoutProjection(reconciledSnapshot, preferredSurface: preferredSurface)
         }
 
         return CompanionSnapshotApplyResult(
@@ -475,6 +476,90 @@ final class CompanionSnapshotStateStore {
         canonicalSessionIndex = SessionIndex(snapshot: sourceSnapshot)
         canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
         visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: sourceSnapshot)
+    }
+
+    private func locallyPreservingSnapshot(for nextSnapshot: MobileSnapshot) -> MobileSnapshot {
+        guard let currentSnapshot = sourceSnapshotForProjection(),
+              currentSnapshot.sessionsAcrossSurfaces.count > nextSnapshot.sessionsAcrossSurfaces.count
+        else {
+            return nextSnapshot
+        }
+
+        let currentSurfaceSessions = Self.surfaceSessions(from: currentSnapshot)
+        var nextSurfaceSessions = Self.surfaceSessions(from: nextSnapshot)
+        var didPreserveLocalMini = false
+
+        for surface in CompanionAssistantSurface.allCases {
+            let currentSessions = currentSurfaceSessions[surface] ?? []
+            let nextSessions = nextSurfaceSessions[surface] ?? []
+            let nextKeys = Set(nextSessions.map { Self.surfaceSessionKey(surface: surface, session: $0) })
+            let preservedSessions = currentSessions.filter { session in
+                !nextKeys.contains(Self.surfaceSessionKey(surface: surface, session: session))
+            }
+            guard !preservedSessions.isEmpty else {
+                continue
+            }
+
+            nextSurfaceSessions[surface] = nextSessions + preservedSessions
+            didPreserveLocalMini = true
+        }
+
+        guard didPreserveLocalMini else {
+            return nextSnapshot
+        }
+
+        var reconciledSnapshot = nextSnapshot
+        reconciledSnapshot.surfaceSessions = Self.rawSurfaceSessions(from: nextSurfaceSessions)
+        reconciledSnapshot.sessions = Self.flattenSurfaceSessions(nextSurfaceSessions)
+        return reconciledSnapshot
+    }
+
+    private static func surfaceSessions(
+        from snapshot: MobileSnapshot
+    ) -> [CompanionAssistantSurface: [SessionSummary]] {
+        var surfaceSessions = Dictionary(
+            uniqueKeysWithValues: CompanionAssistantSurface.allCases.map { surface in
+                (surface, snapshot.sessions(for: surface))
+            }
+        )
+        if surfaceSessions.values.allSatisfy(\.isEmpty), !snapshot.sessions.isEmpty {
+            surfaceSessions[snapshot.globalSettings.assistantSurface] = snapshot.sessions
+        }
+        return surfaceSessions
+    }
+
+    private static func rawSurfaceSessions(
+        from surfaceSessions: [CompanionAssistantSurface: [SessionSummary]]
+    ) -> [String: [SessionSummary]] {
+        Dictionary(
+            uniqueKeysWithValues: surfaceSessions.map { surface, sessions in
+                (surface.rawValue, sessions)
+            }
+        )
+    }
+
+    private static func flattenSurfaceSessions(
+        _ surfaceSessions: [CompanionAssistantSurface: [SessionSummary]]
+    ) -> [SessionSummary] {
+        var seenKeys = Set<String>()
+        var sessions: [SessionSummary] = []
+        for surface in CompanionAssistantSurface.allCases {
+            for session in surfaceSessions[surface] ?? [] {
+                let key = surfaceSessionKey(surface: surface, session: session)
+                guard seenKeys.insert(key).inserted else {
+                    continue
+                }
+                sessions.append(session)
+            }
+        }
+        return sessions
+    }
+
+    private static func surfaceSessionKey(
+        surface: CompanionAssistantSurface,
+        session: SessionSummary
+    ) -> String {
+        "\(surface.rawValue):\(session.id)"
     }
 
     private func snapshotWithHostSyncTime(
