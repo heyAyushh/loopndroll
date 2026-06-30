@@ -139,7 +139,7 @@ public actor MenuRefreshCoordinator {
         let now = clock.now
         if !force,
            let cachedRefresh,
-           cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration
+           shouldReuse(cachedRefresh: cachedRefresh, at: now)
         {
             return refreshLocalSessionMiniSnapshotDroppingHTTPEnrichment(in: cachedRefresh.result)
         }
@@ -149,6 +149,15 @@ public actor MenuRefreshCoordinator {
 
     public func clearCache() {
         cachedRefresh = nil
+    }
+
+    private func shouldReuse(cachedRefresh: CachedRefresh, at now: ContinuousClock.Instant) -> Bool {
+        if cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration {
+            return true
+        }
+
+        return cachedRefresh.result.sessionMiniSnapshot != nil
+            && Self.fetchSessionMiniSnapshot(sessionRuntime) != nil
     }
 
     private func performRefresh(bypassingCache: Bool) async -> MenuRefreshResult {
