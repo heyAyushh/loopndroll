@@ -199,10 +199,11 @@ struct LooperContinuationActivityTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
 
-        MobileRoutePreference.remote.save(in: defaults)
+        defaults.set(MobileRoutePreference.remote.rawValue, forKey: MobileRoutePreference.userDefaultsKey)
 
-        #expect(MobileRoutePreference.stored(in: defaults) == .remote)
-        #expect(MobileRoutePreference.remote.menuTitle == "Remote first")
+        #expect(MobileRoutePreference.stored(in: defaults) == .tailscale)
+        #expect(MobileRoutePreference.allOptions == [.tailscale, .lan])
+        #expect(MobileRoutePreference.remote.menuTitle == "Tailscale first")
         defaults.removePersistentDomain(forName: suiteName)
     }
 

@@ -7,7 +7,7 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
 
     public static let userDefaultsKey = "mobileRoutePreference"
     public static let defaultOption: MobileRoutePreference = .tailscale
-    public static let allOptions: [MobileRoutePreference] = [.remote, .tailscale, .lan]
+    public static let allOptions: [MobileRoutePreference] = [.tailscale, .lan]
 
     public var id: String {
         rawValue
@@ -16,7 +16,7 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
     public var menuTitle: String {
         switch self {
         case .remote:
-            "Remote first"
+            "Tailscale first"
         case .tailscale:
             "Tailscale first"
         case .lan:
@@ -34,13 +34,22 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
             return defaultOption
         }
 
-        return option
+        return option.normalizedVisibleOption
     }
 
     public func save(
         in userDefaults: UserDefaults = .standard,
         key: String = userDefaultsKey
     ) {
-        userDefaults.set(rawValue, forKey: key)
+        userDefaults.set(normalizedVisibleOption.rawValue, forKey: key)
+    }
+
+    private var normalizedVisibleOption: MobileRoutePreference {
+        switch self {
+        case .remote:
+            .tailscale
+        case .tailscale, .lan:
+            self
+        }
     }
 }
