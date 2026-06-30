@@ -56,7 +56,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
 - Evidence root: `.omo/evidence/local-first-multinode-architecture-lock/`
 - Required live proof commands:
   - Server health: `curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}\n' http://127.0.0.1:8765/health`
-  - Mini recovery: `curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}\n' http://127.0.0.1:8765/api/mobile/session-minis/snapshot`
+  - Mini recovery: authenticated mobile recovery only. Generate a short-lived local mobile auth pair through the repo harness, then run `curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}\n' -H "Authorization: Bearer <redacted-pairing-token>" -H "X-Looper-Mobile-Session: <redacted-mobile-session>" http://127.0.0.1:8765/api/mobile/session-minis/snapshot`. Artifacts must redact both header values. An unauthenticated `401 pairing_token_required` is expected auth behavior, not a server latency failure.
   - Desktop snapshot recovery: `curl --silent --show-error --max-time 2 -w 'HTTP %{http_code} time=%{time_total} size=%{size_download}\n' 'http://127.0.0.1:8765/desktop/snapshot?limit=30'`
   - Server sample during recovery: `sample <looper-server-pid> 5 -file .omo/evidence/local-first-multinode-architecture-lock/server-snapshot.sample.txt`
   - iOS diagnostics doctor: `bash scripts/ios-diagnostics.sh doctor`
@@ -111,7 +111,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   What to do / Must NOT do: Capture current live server timings, installed app versions, phone local store shape if needed, and current dirty files. Write a short architecture note naming the bug class as multi-owner state drift over federated single-writer RSMs. Do not edit product code or install anything in this todo.
   Parallelization: Wave 0 | Blocked by: none | Blocks: all other todos
   References: `docs/architecture/decisions.md:8-30`, `docs/architecture/decisions.md:327-350`, current dirty state from `git status --short`
-  Acceptance criteria (agent-executable): `.omo/evidence/local-first-multinode-architecture-lock/baseline.md` records `/health`, `/desktop/mobile-state`, `/api/mobile/session-minis/snapshot`, `/desktop/snapshot?limit=30`, server CPU sample, dirty worktree exclusions, and the stale-owner taxonomy.
+  Acceptance criteria (agent-executable): `.omo/evidence/local-first-multinode-architecture-lock/baseline.md` records `/health`, `/desktop/mobile-state`, authenticated `/api/mobile/session-minis/snapshot`, `/desktop/snapshot?limit=30`, server CPU sample, dirty worktree exclusions, and the stale-owner taxonomy. Missing mobile auth may be recorded as `401 pairing_token_required` only as an auth-gate proof, not as a recovery-latency pass.
   QA scenarios (name exact tool + invocation): happy: run the four `curl --max-time 2` commands listed in Verification strategy and save stdout to `.omo/evidence/local-first-multinode-architecture-lock/baseline-http.txt`; failure: if any timeout occurs, run `sample <looper-server-pid> 5 -file .omo/evidence/local-first-multinode-architecture-lock/baseline-server.sample.txt` and record the stack owner.
   Commit: Y | `docs(architecture): record local-first state-machine lock`
 
@@ -127,7 +127,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   What to do / Must NOT do: Ensure Codex transcript/session discovery, rollout path repair, ACP observation, hook events, and prompt delivery cache rebuilds run in bounded producer paths that append events/projection records. Session stream pollers and HTTP snapshot handlers may only drain already-produced records or return bounded recovery data.
   Parallelization: Wave 1 | Blocked by: 1, 2 | Blocks: 4, 8, 10
   References: `docs/architecture/decisions.md:111-130`, `docs/architecture/decisions.md:216-258`, `crates/agent-control-plane/src/codex.rs:689-718`, `crates/agent-control-plane/src/control_plane.rs:1451-1485`, `crates/agent-control-plane/src/http/mobile_state.rs:138-167`
-  Acceptance criteria (agent-executable): server sample taken during `/desktop/snapshot?limit=30` and `/api/mobile/session-minis/snapshot` contains no dominant `refresh_thread_rollout_paths`, JSONL scan, transcript preview scan, or session discovery stack under the request handler.
+  Acceptance criteria (agent-executable): server sample taken during `/desktop/snapshot?limit=30` and authenticated `/api/mobile/session-minis/snapshot` contains no dominant `refresh_thread_rollout_paths`, JSONL scan, transcript preview scan, or session discovery stack under the request handler.
   QA scenarios: happy: `sample <pid> 5 -file .omo/evidence/local-first-multinode-architecture-lock/task-3-snapshot.sample.txt` while curling snapshot; PASS if sample does not show request-time rollout/transcript scan; failure: unit/integration test forces missing projection and expects bounded `RecoveryRequired` or cached projection, not a sync rebuild on the hot path.
   Commit: Y | `perf(server): keep discovery off recovery requests`
 
@@ -187,7 +187,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   QA scenarios: happy: run strict runtime grep from Verification strategy and save output to `.omo/evidence/local-first-multinode-architecture-lock/task-10-strict-grep.txt`; failure: focused test applies snapshot with lower `latest_seq` after stream delta and asserts reject/degraded marker.
   Commit: Y | `refactor(transport): demote http to recovery only`
 
-- [ ] 11. Run profiler-led installed/simulator UX proof.
+- [x] 11. Run profiler-led installed/simulator UX proof.
   What to do / Must NOT do: Use OSLog, ETTrace, perf-loop, Codex in-app Browser simulator proof, and only then one physical iPhone install. Do not repeatedly rebuild/install while coding. Always wait for profiler export or record why it failed.
   Parallelization: Wave 6 | Blocked by: 9, 10 | Blocks: 12
   References: `.agents/skills/ios-perf-diagnostics/SKILL.md:21-69`, `scripts/ios-diagnostics.sh:21-48`, `scripts/ios-diagnostics.sh:83-153`
@@ -195,7 +195,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   QA scenarios: happy: execute diagnostics commands from Verification strategy and install once using existing repo iOS/macOS install scripts; failure: if ETTrace or device logs fail, capture exact command/error and fall back to OSLog + perf-loop only after recording the blocker.
   Commit: N | proof-only unless scripts/docs change.
 
-- [ ] 12. Add architecture/dependency guardrails.
+- [x] 12. Add architecture/dependency guardrails.
   What to do / Must NOT do: Add or tighten lints so regressions fail fast: no generated-file hand edits, no old transport strings, no Swift reducers owning Session truth, no Session frame over cap, no content blob in control frames, no product code touching game surfaces for realtime cuts.
   Parallelization: Wave 6 | Blocked by: 2-11 | Blocks: final
   References: `docs/architecture/decisions.md:381-391`, `package.json` check scripts, `scripts/check-client-core-boundaries.sh`, strict grep command in Verification strategy
@@ -218,7 +218,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
   - Verify generated Swift was regenerated, not hand-edited.
 
 - [ ] F3. Real manual QA
-  - Installed macOS app: `/Applications/looper.app` launches and live server answers `/health`, `/api/mobile/session-minis/snapshot`, and bounded `/desktop/snapshot?limit=30` quickly.
+  - Installed macOS app: `/Applications/looper.app` launches and live server answers `/health`, auth-gated `/api/mobile/session-minis/snapshot`, and bounded `/desktop/snapshot?limit=30` quickly.
   - iPhone: installed app renders cached account sessions immediately, then per-node live endpoint proof updates route without clearing sessions from other nodes.
   - Assistant switch loop: 100 switches in 2-3 seconds equivalent produce no stream restart and no old-first/latest jump.
   - Mode/prompt/reply: UI unblocks on accepted ACK, delivery appears later.
@@ -254,7 +254,7 @@ Your next move: approve this plan for execution in the main thread, or ask for a
 - No route/Tailscale/LAN label claims connected before Rust client-core has a proven live endpoint.
 - Cached minis never collapse to a partial list while recovery is stalled.
 - HTTP snapshot/data-plane results cannot overwrite newer stream `seq`.
-- `/desktop/snapshot?limit=30`, `/api/mobile/session-minis/snapshot`, and `/health` are responsive while streams are connected.
+- `/desktop/snapshot?limit=30`, authenticated `/api/mobile/session-minis/snapshot`, and `/health` are responsive while streams are connected.
 - Full transcript/log/search/detail content is fetched by bounded chunk/range/cursor with SHA-256 and optional Merkle proof, never through home/card minis or one giant Session frame.
 - Account Plane routes identity, devices, APNs, node registry, and optional relay/queueing; it never emits final accepted/rejected command ACKs.
 - Multi-node state uses `last_seq_by_node`; a single global cursor is forbidden unless a future account relay becomes a true ordered aggregate.

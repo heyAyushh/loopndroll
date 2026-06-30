@@ -392,20 +392,28 @@ command_ettrace() {
 
 command_capture() {
     local process="$DEFAULT_PROCESS"
+    local bundle_id="$DEFAULT_BUNDLE_ID"
+    local attach_pid=""
     local subsystem="$DEFAULT_SUBSYSTEM"
     local timeout="$DEFAULT_OSLOG_TIMEOUT"
     local iterations="$DEFAULT_PERF_ITERATIONS"
     local time_limit="$DEFAULT_PERF_TIME_LIMIT"
     local device="${LOOPER_IOS_SIMULATOR:-}"
+    local launch_app="false"
+    local dry_run="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --process) process="$2"; shift 2 ;;
+            --bundle-id) bundle_id="$2"; shift 2 ;;
+            --pid) attach_pid="$2"; shift 2 ;;
+            --launch) launch_app="true"; shift ;;
             --subsystem) subsystem="$2"; shift 2 ;;
             --timeout) timeout="$2"; shift 2 ;;
             --iterations) iterations="$2"; shift 2 ;;
             --time-limit) time_limit="$2"; shift 2 ;;
             --device) device="$2"; shift 2 ;;
+            --dry-run) dry_run="true"; shift ;;
             -h|--help) usage; exit 0 ;;
             *) fail "unknown capture option: $1" ;;
         esac
@@ -419,6 +427,20 @@ command_capture() {
     run_dir="$(new_run_dir capture)"
     print_artifact "$run_dir"
 
+    local perf_args=(--bundle-id "$bundle_id" --iterations "$iterations" --time-limit "$time_limit" --output-dir "${run_dir}/perf-loop" --device "$device")
+    if [[ -n "$attach_pid" ]]; then
+        perf_args+=(--pid "$attach_pid")
+    fi
+    if [[ "$launch_app" == "true" ]]; then
+        perf_args+=(--launch)
+    fi
+    if [[ "$dry_run" == "true" ]]; then
+        printf 'oslog-live --process %q --subsystem %q --timeout %q --level %q --style %q > %q\n' \
+            "$process" "$subsystem" "$timeout" "$DEFAULT_OSLOG_LEVEL" "$DEFAULT_OSLOG_STYLE" "${run_dir}/oslog.${DEFAULT_OSLOG_STYLE}"
+        command_perf_loop "${perf_args[@]}" --dry-run
+        return
+    fi
+
     command_oslog \
         --process "$process" \
         --subsystem "$subsystem" \
@@ -426,10 +448,6 @@ command_capture() {
         --output-dir "$run_dir" &
     local oslog_pid="$!"
 
-    local perf_args=(--attach "$process" --iterations "$iterations" --time-limit "$time_limit" --output-dir "${run_dir}/perf-loop")
-    if [[ -n "$device" ]]; then
-        perf_args+=(--device "$device")
-    fi
     set +e
     command_perf_loop "${perf_args[@]}"
     local perf_status="$?"

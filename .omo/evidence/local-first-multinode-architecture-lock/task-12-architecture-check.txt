@@ -1,0 +1,2 @@
+client-core boundary self-test passed
+client-core boundary check passed (strict runtime + client-core)

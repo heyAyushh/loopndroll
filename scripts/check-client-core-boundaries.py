@@ -240,8 +240,14 @@ def check_retired_runtime_roots() -> list[Finding]:
 
 
 def check_generated_text_provenance() -> list[Finding]:
+    return check_generated_text_provenance_for_paths(
+        tracked_source_files(GENERATED_SOURCE_ROOTS)
+    )
+
+
+def check_generated_text_provenance_for_paths(paths: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
-    for path in tracked_source_files(GENERATED_SOURCE_ROOTS):
+    for path in paths:
         marker = GENERATED_TEXT_PROVENANCE.get(path.suffix)
         if marker is None:
             continue
@@ -249,7 +255,7 @@ def check_generated_text_provenance() -> list[Finding]:
         if marker not in text[:512]:
             findings.append(
                 Finding(
-                    path=path.relative_to(ROOT_DIR),
+                    path=relative_or_name(path),
                     line=1,
                     rule="generated provenance missing",
                     text=f"missing generated-file marker: {marker}",
@@ -295,6 +301,13 @@ def check_session_control_frame_contract() -> list[Finding]:
         )
     )
     return findings
+
+
+def relative_or_name(path: Path) -> Path:
+    try:
+        return path.relative_to(ROOT_DIR)
+    except ValueError:
+        return Path(path.name)
 
 
 def run_self_test_script() -> int:
