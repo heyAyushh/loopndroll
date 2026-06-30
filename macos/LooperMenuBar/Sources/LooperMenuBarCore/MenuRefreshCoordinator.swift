@@ -63,6 +63,22 @@ public struct MenuRefreshResult: Equatable, Sendable {
             error: error
         )
     }
+
+    public func replacingSessionMiniSnapshotDroppingHTTPEnrichment(
+        _ nextSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+    ) -> MenuRefreshResult {
+        MenuRefreshResult(
+            didFetchHTTP: false,
+            sessionMiniSnapshot: nextSessionMiniSnapshot ?? sessionMiniSnapshot,
+            snapshot: nil,
+            connections: nil,
+            acpClientHosts: nil,
+            mobileState: nil,
+            pushDevices: nil,
+            mobileHealth: nil,
+            error: error
+        )
+    }
 }
 
 protocol MenuBarSessionMiniSnapshotProviding: Sendable {
@@ -125,7 +141,7 @@ public actor MenuRefreshCoordinator {
            let cachedRefresh,
            cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration
         {
-            return refreshLocalSessionMiniSnapshot(in: cachedRefresh.result)
+            return refreshLocalSessionMiniSnapshotDroppingHTTPEnrichment(in: cachedRefresh.result)
         }
 
         return await performRefresh(bypassingCache: false)
@@ -170,6 +186,14 @@ public actor MenuRefreshCoordinator {
 
     private func refreshLocalSessionMiniSnapshot(in result: MenuRefreshResult) -> MenuRefreshResult {
         result.replacingSessionMiniSnapshot(Self.fetchSessionMiniSnapshot(sessionRuntime))
+    }
+
+    private func refreshLocalSessionMiniSnapshotDroppingHTTPEnrichment(
+        in result: MenuRefreshResult
+    ) -> MenuRefreshResult {
+        result.replacingSessionMiniSnapshotDroppingHTTPEnrichment(
+            Self.fetchSessionMiniSnapshot(sessionRuntime)
+        )
     }
 
     private static func fetch(
