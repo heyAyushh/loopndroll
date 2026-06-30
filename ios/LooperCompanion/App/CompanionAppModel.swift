@@ -146,6 +146,10 @@ enum CompanionLocalSessionReconcileReason: String {
             return false
         }
     }
+
+    var shouldSkipLocalReplayWhenStreamIsLive: Bool {
+        self == .fallbackTimer
+    }
 }
 
 @MainActor
@@ -707,6 +711,13 @@ final class CompanionAppModel {
 
     func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
         startSessionRuntimeSyncIfNeeded()
+
+        if reason.shouldSkipLocalReplayWhenStreamIsLive, realtimeStreamIsLive {
+            CompanionDiagnostics.record(
+                "session-mini:local-reconcile-live-skip reason=\(reason.rawValue)"
+            )
+            return
+        }
 
         if reason.shouldRecoverStateMiniSnapshotBeforeCachedReplay {
             let recoveryResult = await recoverStateMiniSnapshotIfNeeded(reason: reason)

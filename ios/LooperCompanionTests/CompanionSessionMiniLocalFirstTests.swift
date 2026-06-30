@@ -1071,6 +1071,35 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testFallbackTimerDoesNotReplayLocalCacheWhenSessionStreamIsLive() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 14, revision: "mini-revision-14"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        model.realtimeStreamIsLive = true
+        model.snapshot = nil
+
+        await model.reconcileLocalSessionState(reason: .fallbackTimer)
+
+        #expect(model.snapshot == nil)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testDeviceHubAPIStatusDoesNotUseStaleHealthWithoutLiveStream() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
