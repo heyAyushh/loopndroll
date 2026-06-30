@@ -231,6 +231,32 @@ fn accept_legacy_session_prompt(
     })
 }
 
+fn accept_non_acp_session_prompt(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+    prompt: &str,
+) -> Result<AcceptedPromptDelivery, MobileSessionError> {
+    let accepted_delivery =
+        accept_legacy_session_prompt(control_plane, thread_id, assistant_surface, prompt)?;
+    if let Some(delivery) = &accepted_delivery.after_ack {
+        ensure_non_acp_delivery_action(&delivery.action)?;
+    }
+    Ok(accepted_delivery)
+}
+
+fn ensure_non_acp_delivery_action(action: &PromptDeliveryAction) -> Result<(), MobileSessionError> {
+    if matches!(
+        action,
+        PromptDeliveryAction::SendDevinAcp { .. } | PromptDeliveryAction::SendLooperAcp { .. }
+    ) {
+        return Err(MobileSessionError::PromptResumeUnavailable(
+            "automation prompt direct ACP delivery is unsupported".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn dispatch_session_prompt_after_ack(
     control_plane: ControlPlane,
     delivery: Option<PromptDeliveryAfterAck>,
@@ -305,22 +331,8 @@ pub fn send_non_acp_session_prompt(
     thread_id: &str,
     prompt: &str,
 ) -> Result<PromptDispatch, MobileSessionError> {
-    let prompt = required_prompt(prompt)?;
-    let snapshot = mobile_desktop_snapshot(control_plane)
-        .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
-    let session_state = control_plane.mobile_session_service().state()?;
-    let action = prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?;
-    if matches!(
-        action,
-        PromptDeliveryAction::SendDevinAcp { .. } | PromptDeliveryAction::SendLooperAcp { .. }
-    ) {
-        return Err(MobileSessionError::PromptResumeUnavailable(
-            "automation prompt direct ACP delivery is unsupported".to_owned(),
-        ));
-    }
-    let dispatch = dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)?;
-    emit_prompt_dispatch(control_plane, thread_id, &dispatch);
-    Ok(dispatch)
+    let accepted_delivery = accept_non_acp_session_prompt(control_plane, thread_id, None, prompt)?;
+    dispatch_session_prompt_now(control_plane, accepted_delivery)
 }
 
 pub fn queue_desktop_batch_prompt(
@@ -333,24 +345,19 @@ pub fn queue_desktop_batch_prompt(
         return Err(MobileSessionError::SessionNotFound);
     }
 
-    let snapshot = mobile_desktop_snapshot(control_plane)
-        .map_err(|error| MobileSessionError::PromptSnapshotUnavailable(error.to_string()))?;
-    let session_state = control_plane.mobile_session_service().state()?;
-    let actions = thread_ids
+    let accepted_deliveries = thread_ids
         .iter()
-        .map(|thread_id| prompt_delivery_action_for_target(&snapshot, &session_state, thread_id))
+        .map(|thread_id| accept_non_acp_session_prompt(control_plane, thread_id, None, &prompt))
         .collect::<Result<Vec<_>, _>>()?;
 
     let session_service = control_plane.mobile_session_service();
     let mut prompt_ids = Vec::with_capacity(thread_ids.len());
     let mut resumed_thread_ids = Vec::new();
-    for (thread_id, action) in thread_ids.iter().zip(actions) {
+    for (thread_id, accepted_delivery) in thread_ids.iter().zip(accepted_deliveries) {
         if let Some(preset) = input.preset.as_deref() {
             session_service.set_session_preset(thread_id, Some(preset))?;
         }
-        let dispatch =
-            dispatch_session_prompt_with_action(control_plane, thread_id, &prompt, action)?;
-        emit_prompt_dispatch(control_plane, thread_id, &dispatch);
+        let dispatch = dispatch_session_prompt_now(control_plane, accepted_delivery)?;
         match dispatch {
             PromptDispatch::Accepted => {}
             PromptDispatch::Delivered { prompt_id } => prompt_ids.push(prompt_id),
@@ -365,10 +372,6 @@ pub fn queue_desktop_batch_prompt(
         prompt_ids,
         resumed_thread_ids,
     })
-}
-
-pub fn mobile_desktop_snapshot(control_plane: &ControlPlane) -> anyhow::Result<DesktopSnapshot> {
-    control_plane.desktop_mobile_snapshot()
 }
 
 fn dispatch_session_prompt_with_action(
@@ -539,9 +542,10 @@ fn emit_prompt_delivery_failed(
 mod tests {
     use super::{
         delivery_action_cache_key, invalidate_delivery_action_cache, locked_delivery_action_cache,
-        unique_thread_ids,
+        send_non_acp_session_prompt, unique_thread_ids,
     };
     use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+    use crate::mobile::session::MobileSessionError;
     use tempfile::TempDir;
 
     #[test]
@@ -640,6 +644,25 @@ mod tests {
                 .keys()
                 .all(|key| key.thread_id != thread_id)
         );
+    }
+
+    #[test]
+    fn non_acp_prompt_does_not_recompute_cold_delivery_action() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let control_plane = test_control_plane(&temp_dir);
+        let thread_id = "cold-cache-non-acp-prompt";
+
+        invalidate_delivery_action_cache(&control_plane, thread_id);
+        let error = send_non_acp_session_prompt(&control_plane, thread_id, "hello")
+            .expect_err("cold delivery action cache should reject without snapshot recomputation");
+
+        match error {
+            MobileSessionError::PromptSnapshotUnavailable(message) => assert!(
+                message.contains("cache is cold"),
+                "unexpected cold-cache message: {message}"
+            ),
+            other => panic!("unexpected error for cold delivery cache: {other}"),
+        }
     }
 
     fn test_control_plane(temp_dir: &TempDir) -> ControlPlane {
