@@ -303,6 +303,7 @@ struct SettingsScreen: View {
             TextEditor(text: $draftPrompt)
                 .font(.body)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
+                .scrollDisabled(focusedInput != .continuePrompt)
                 .focused($focusedInput, equals: .continuePrompt)
                 .accessibilityIdentifier("settings.default-prompt-editor")
         } header: {
