@@ -175,7 +175,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let routeReadinessGeneration = mobileRouteReadiness.generation
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if !force, let sessionMiniSnapshot {
-      replaceMenu(snapshot: nil, sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
+      replaceMenuWithCachedEnrichment(sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
     }
 
     let result = await menuRefreshCoordinator.refresh(force: force)
@@ -203,11 +203,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     } else {
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
-      replaceMenu(
-        snapshot: nil,
+      replaceMenuWithCachedEnrichment(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
-        connections: nil,
-        acpClientHosts: nil,
         error: latestSessionMiniSnapshot == nil ? result.error : nil
       )
     }
@@ -407,8 +404,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         prompt: prompt,
         assistantSurface: nil
       )
-      replaceMenu(
-        snapshot: nil,
+      replaceMenuWithCachedEnrichment(
         sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
         error: nil
       )
@@ -422,22 +418,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
             assistantSurface: nil,
             clientMutationID: persisted.clientMutationId
           )
-          replaceMenu(
-            snapshot: nil,
+          replaceMenuWithCachedEnrichment(
             sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
             error: nil
           )
         } catch {
-          replaceMenu(
-            snapshot: nil,
+          replaceMenuWithCachedEnrichment(
             sessionMiniSnapshot: reloadSessionMiniSnapshotFromStore() ?? currentSessionMiniSnapshot(),
             error: error
           )
         }
       }
     } catch {
-      replaceMenu(
-        snapshot: nil,
+      replaceMenuWithCachedEnrichment(
         sessionMiniSnapshot: currentSessionMiniSnapshot(),
         error: error
       )
@@ -538,6 +531,20 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     )
     statusItem?.menu = menu
     self.menu = menu
+  }
+
+  private func replaceMenuWithCachedEnrichment(
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
+    error: Error?
+  ) {
+    let enrichment = cachedMenuEnrichment
+    replaceMenu(
+      snapshot: enrichment?.snapshot,
+      sessionMiniSnapshot: sessionMiniSnapshot,
+      connections: enrichment?.connections,
+      acpClientHosts: enrichment?.acpClientHosts,
+      error: error
+    )
   }
 
   private func makeMenu(
@@ -788,7 +795,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       return false
     }
 
-    replaceMenu(snapshot: nil, sessionMiniSnapshot: snapshot, connections: nil, acpClientHosts: nil, error: nil)
+    replaceMenuWithCachedEnrichment(sessionMiniSnapshot: snapshot, error: nil)
     return true
   }
 
@@ -815,8 +822,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         _ = try await self.configureSessionClientCoreRuntimeIfNeeded(
           routeReadinessGeneration: routeReadinessGeneration
         )
-        self.replaceMenu(
-          snapshot: nil,
+        self.replaceMenuWithCachedEnrichment(
           sessionMiniSnapshot: self.currentSessionMiniSnapshot(),
           error: nil
         )
@@ -874,7 +880,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func applySessionMiniSnapshot(_ snapshot: MenuBarSessionMiniLocalSnapshot) {
     let previousSnapshot = cachedSessionMiniSnapshot
     cachedSessionMiniSnapshot = snapshot
-    replaceMenu(snapshot: nil, sessionMiniSnapshot: snapshot, connections: nil, acpClientHosts: nil, error: nil)
+    replaceMenuWithCachedEnrichment(sessionMiniSnapshot: snapshot, error: nil)
     Task { @MainActor [weak self] in
       await self?.deliverSessionMiniStopNotifications(
         previousSnapshot: previousSnapshot,

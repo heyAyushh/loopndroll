@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use tokio::{
@@ -938,21 +938,14 @@ impl LooperClientCore {
 }
 
 impl LooperClientCore {
-    pub(crate) fn recover_state_mini_snapshot(
+    pub(crate) async fn recover_state_mini_snapshot(
         &self,
         endpoints: Vec<ClientEndpoint>,
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<RecoveredStateMiniSnapshot, ClientCoreError> {
-        let (sender, receiver) = std_mpsc::sync_channel(1);
-        self.runtime.spawn(async move {
-            let result =
-                fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await;
-            let _ = sender.send(result);
-        });
-        let recovered = receiver
-            .recv()
-            .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
+        let recovered =
+            fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await?;
         let state_snapshot =
             self.adopt_recovered_state_minis(recovered.snapshot, recovered.endpoint_url.clone())?;
         self.emit_local_state_update(state_snapshot.clone());
@@ -3678,9 +3671,10 @@ mod tests {
     #[test]
     fn recover_state_mini_snapshot_rejects_missing_endpoint_without_state_change() {
         let core = LooperClientCore::new();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
-        let error = core
-            .recover_state_mini_snapshot(Vec::new(), String::new(), String::new())
+        let error = runtime
+            .block_on(core.recover_state_mini_snapshot(Vec::new(), String::new(), String::new()))
             .expect_err("missing endpoint rejects");
 
         assert_eq!(error, ClientCoreError::NoEndpoint);

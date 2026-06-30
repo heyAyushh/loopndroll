@@ -1,6 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Empty, Limited};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
@@ -28,6 +28,7 @@ const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const STATE_MINI_STREAM_FALLBACK_RACE_DELAY: Duration = Duration::from_millis(25);
 const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
+const MAX_STATE_MINI_SNAPSHOT_BYTES: usize = 512 * 1024;
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
 const DEFAULT_HTTP_API_PORT: u16 = 8765;
 const DEFAULT_REALTIME_GRPC_PORT: u16 = 8766;
@@ -152,8 +153,7 @@ async fn fetch_state_mini_snapshot_from_endpoint(
     if response.status() != StatusCode::OK {
         return Err(ClientCoreError::StateMiniSnapshotTransportFailed);
     }
-    let body = response
-        .into_body()
+    let body = Limited::new(response.into_body(), MAX_STATE_MINI_SNAPSHOT_BYTES)
         .collect()
         .await
         .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?
@@ -1128,6 +1128,29 @@ mod tests {
     }
 
     #[test]
+    fn state_mini_snapshot_recovery_rejects_oversized_body() {
+        let (url, server) = spawn_raw_snapshot_server(
+            Duration::from_millis(0),
+            "x".repeat(MAX_STATE_MINI_SNAPSHOT_BYTES + 1),
+        );
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        let error = runtime
+            .block_on(fetch_state_mini_snapshot(
+                vec![ClientEndpoint {
+                    url,
+                    last_good: true,
+                }],
+                String::new(),
+                String::new(),
+            ))
+            .expect_err("oversized snapshot rejects");
+
+        assert_eq!(error, ClientCoreError::StateMiniSnapshotTransportFailed);
+        let _ = server.join();
+    }
+
+    #[test]
     fn session_transport_endpoints_keep_fallbacks_after_last_good() {
         let endpoints = session_transport_endpoints(&[
             ClientEndpoint {
@@ -1284,6 +1307,30 @@ mod tests {
                 ]
             })
             .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (url, handle)
+    }
+
+    fn spawn_raw_snapshot_server(
+        delay: Duration,
+        body: String,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let url = format!("http://{}", listener.local_addr().expect("server addr"));
+        let handle = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            thread::sleep(delay);
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
