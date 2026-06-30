@@ -622,6 +622,61 @@ struct SessionSummaryTimingTests {
         #expect(store.sessionIndexIdentity == sessionIndexIdentity)
     }
 
+    @MainActor
+    @Test("Cached assistant surface switch makes matching snapshot echo a no-op")
+    func cachedAssistantSurfaceSwitchMakesMatchingSnapshotEchoNoOp() throws {
+        let codexSession = try sessionSummary(
+            id: "codex-thread",
+            ref: "C1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let zedSession = try sessionSummary(
+            id: "zed-thread",
+            ref: "Z1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        let snapshot = MobileSnapshot(
+            revision: "cached-surface-echo",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: Constants.hostSyncTime
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [codexSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession],
+                CompanionAssistantSurface.zed.rawValue: [zedSession],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+
+        #expect(store.applySnapshotResult(snapshot).didChangeVisibleSnapshot)
+        #expect(store.selectAssistantSurface(.zed))
+        #expect(store.selectedAssistantSurface == .zed)
+        #expect(store.sessionSections.active.map(\.id) == ["zed-thread"])
+
+        let echo = store.applySnapshotResult(snapshot)
+
+        #expect(!echo.didChangeVisibleSnapshot)
+        #expect(store.selectedAssistantSurface == .zed)
+        #expect(store.sessionSections.active.map(\.id) == ["zed-thread"])
+    }
+
     @Test("Session row display identity includes assistant surface")
     func sessionRowDisplayIdentityIncludesAssistantSurface() throws {
         let session = try sessionSummary(

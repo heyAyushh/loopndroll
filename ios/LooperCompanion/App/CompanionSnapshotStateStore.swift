@@ -279,7 +279,8 @@ final class CompanionSnapshotStateStore {
         )
         visibleSurfaceProjections[selectedSurface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
-            sessionSections: reducedSections
+            sessionSections: reducedSections,
+            fingerprint: nextFingerprint
         )
         snapshot = visibleSnapshot
         sessionSections = reducedSections
@@ -299,7 +300,7 @@ final class CompanionSnapshotStateStore {
         snapshot = projection.visibleSnapshot
         selectedAssistantSurface = selectedSurface
         sessionSections = projection.sessionSections
-        lastVisibleSnapshotFingerprint = nil
+        lastVisibleSnapshotFingerprint = projection.fingerprint
         return projection.visibleSnapshot
     }
 
@@ -325,7 +326,8 @@ final class CompanionSnapshotStateStore {
         let visibleSections = SessionSections(localProjectionSessions: visibleSnapshot.sessions)
         visibleSurfaceProjections[surface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
-            sessionSections: visibleSections
+            sessionSections: visibleSections,
+            fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         )
         snapshot = visibleSnapshot
         selectedAssistantSurface = surface
@@ -388,7 +390,8 @@ final class CompanionSnapshotStateStore {
                         visibleSnapshot: visibleSnapshot,
                         sessionSections: SessionSections(
                             localProjectionSessions: visibleSnapshot.sessions
-                        )
+                        ),
+                        fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
                     )
                 )
             }
@@ -533,9 +536,22 @@ private struct VisibleSnapshotFingerprint: Equatable {
         byteCount = json.utf8.count
         contentHash = json.hashValue
     }
+
+    init(snapshot: MobileSnapshot) {
+        if let data = try? JSONEncoder().encode(snapshot),
+           let json = String(data: data, encoding: .utf8) {
+            self.init(json: json)
+            return
+        }
+
+        let sessionIDs = snapshot.sessions.map(\.id).joined(separator: ",")
+        let revision = snapshot.revision ?? ""
+        self.init(json: "\(revision)#\(snapshot.sessions.count)#\(sessionIDs)")
+    }
 }
 
 private struct VisibleSurfaceProjection {
     let visibleSnapshot: MobileSnapshot
     let sessionSections: SessionSections
+    let fingerprint: VisibleSnapshotFingerprint
 }
