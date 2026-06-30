@@ -10,7 +10,6 @@ use crate::mobile::api::{
     mobile_snapshot,
 };
 use crate::mobile::network::advertised_mobile_grpc_base_urls;
-use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 
 use super::mobile_access::{current_mobile_time, request_advertised_mobile_base_urls};
 use super::responses::{internal_mobile_error_response, mobile_session_error_response};
@@ -32,7 +31,7 @@ pub(super) fn mobile_snapshot_response(
     control_plane: &ControlPlane,
     headers: &HeaderMap,
 ) -> Response {
-    let snapshot = match mobile_desktop_snapshot(control_plane) {
+    let snapshot = match control_plane.desktop_mobile_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => return internal_mobile_error_response(error.to_string()),
     };

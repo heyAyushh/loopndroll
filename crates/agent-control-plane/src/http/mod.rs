@@ -28,7 +28,6 @@ use crate::mobile::auth::{
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
 };
 use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
-use crate::mobile::prompt_delivery::mobile_desktop_snapshot;
 use crate::mobile::push::MobilePushRegistrationRequest;
 use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
 mod handoff;
@@ -1369,7 +1368,7 @@ async fn mobile_session_detail_handler(
         return mobile_session_error_response(MobileSessionError::InvalidAssistantSurface);
     }
 
-    let snapshot = match mobile_desktop_snapshot(&control_plane) {
+    let snapshot = match control_plane.desktop_mobile_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => return internal_mobile_error_response(error.to_string()),
     };

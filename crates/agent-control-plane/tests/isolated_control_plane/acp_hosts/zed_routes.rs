@@ -225,3 +225,90 @@ async fn zed_acp_control_routes_install_create_prompt_and_cancel_looper_sessions
         Some(active_before_local_control)
     );
 }
+
+#[tokio::test]
+async fn acp_loopback_control_does_not_own_session_command_ack_truth() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
+    let loopback = Some("127.0.0.1:49153".parse().expect("loopback socket"));
+
+    prime_state_mini_cache(&control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let stream_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSessionMode(SetSessionModeRequest {
+            thread_id: "thread-main".to_owned(),
+            preset: "await-reply".to_owned(),
+            client_mutation_id: "session-stream-ack-owner".to_owned(),
+        }),
+    )
+    .await;
+    assert!(stream_ack.accepted);
+    assert!(
+        control_plane
+            .store()
+            .mobile_command_ack("SetSessionMode", "session-stream-ack-owner")
+            .expect("Session command ACK lookup")
+            .is_some(),
+        "Session stream commands must own hot command ACK truth"
+    );
+
+    let command_log_rows_before_acp_control = mobile_command_log_row_count(&fixture);
+    let created = request_json_body_with_options(
+        &router,
+        Method::POST,
+        "/desktop/acp-client-hosts/zed/sessions",
+        serde_json::json!({ "cwd": "/tmp/zed-looper" }),
+        &[],
+        loopback,
+    )
+    .await;
+    let thread_id = created["session"]["public_thread_id"]
+        .as_str()
+        .expect("public thread id");
+    assert!(thread_id.starts_with("zed:codex:looper:"));
+
+    let prompted = request_json_body_with_options(
+        &router,
+        Method::POST,
+        &format!("/desktop/acp-client-hosts/zed/sessions/{thread_id}/prompt"),
+        serde_json::json!({ "prompt": "control zed" }),
+        &[],
+        loopback,
+    )
+    .await;
+    assert_eq!(prompted["session"]["public_thread_id"], thread_id);
+    assert_eq!(
+        mobile_command_log_row_count(&fixture),
+        command_log_rows_before_acp_control,
+        "loopback ACP adapter prompt must not create Session command ACK truth"
+    );
+
+    let cancelled = request_json_with_options(
+        &router,
+        Method::POST,
+        &format!("/desktop/acp-client-hosts/zed/sessions/{thread_id}/cancel"),
+        &[],
+        loopback,
+    )
+    .await;
+    assert_eq!(cancelled["session"]["public_thread_id"], thread_id);
+    assert_eq!(
+        mobile_command_log_row_count(&fixture),
+        command_log_rows_before_acp_control,
+        "loopback ACP adapter cancel must not create Session command ACK truth"
+    );
+}
+
+fn mobile_command_log_row_count(fixture: &IsolatedCodexFixture) -> i64 {
+    let connection = Connection::open(fixture.temp_dir.path().join("control-plane.sqlite"))
+        .expect("control-plane sqlite");
+    connection
+        .query_row("select count(*) from mobile_command_log", [], |row| {
+            row.get(0)
+        })
+        .expect("mobile command log count")
+}

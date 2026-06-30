@@ -5810,7 +5810,6 @@ fn bench_delivery_action_miss_vs_hit() {
     use agent_control_plane::mobile::api::{
         PromptDeliveryAction, PromptResumeTarget, prompt_delivery_action_for_target,
     };
-    use agent_control_plane::mobile::prompt_delivery::mobile_desktop_snapshot;
 
     const ITERATIONS: u32 = 1_000;
     const THREAD_ID: &str = "thread-main";
@@ -5822,7 +5821,9 @@ fn bench_delivery_action_miss_vs_hit() {
 
     // Warm up: one full miss so SQLite page cache is hot.
     {
-        let snapshot = mobile_desktop_snapshot(&control_plane).expect("warm-up snapshot");
+        let snapshot = control_plane
+            .desktop_mobile_snapshot()
+            .expect("warm-up snapshot");
         let session_state = control_plane
             .mobile_session_service()
             .state()
@@ -5834,7 +5835,7 @@ fn bench_delivery_action_miss_vs_hit() {
     let mut miss_us: Vec<u64> = Vec::with_capacity(ITERATIONS as usize);
     for _ in 0..ITERATIONS {
         let t0 = Instant::now();
-        let snapshot = mobile_desktop_snapshot(&control_plane).expect("snapshot");
+        let snapshot = control_plane.desktop_mobile_snapshot().expect("snapshot");
         let session_state = control_plane
             .mobile_session_service()
             .state()
