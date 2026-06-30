@@ -2283,7 +2283,7 @@ extension SessionDetail {
             lastActivityAt: summary.lastActivityAt,
             lastMessageAt: summary.lastMessageAt,
             assistantPreview: summary.assistantPreview,
-            latestAssistantMessage: nil,
+            latestAssistantMessage: summary.assistantPreview,
             contentStatus: .localMiniOnly,
             firstUserPrompt: nil,
             isArchived: summary.isArchived,

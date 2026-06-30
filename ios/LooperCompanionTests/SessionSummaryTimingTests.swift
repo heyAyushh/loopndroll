@@ -445,6 +445,7 @@ struct SessionSummaryTimingTests {
         #expect(store.sessionSections.active.map(\.ref) == ["S1"])
         #expect(store.detail(for: "thread-main")?.effectiveMode == .maxTurns1)
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Codex ready")
+        #expect(store.detail(for: "thread-main")?.latestAssistantMessage == "Codex ready")
         let visibleHostSyncTime = store.snapshot?.host.lastSyncedAt
         #expect(store.applyHostSyncTime("2026-06-16T08:03:00Z"))
         #expect(store.snapshot?.host.lastSyncedAt == visibleHostSyncTime)
@@ -456,6 +457,7 @@ struct SessionSummaryTimingTests {
         #expect(store.session(withID: "thread-main")?.ref == "S2")
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Devin ready")
+        #expect(store.detail(for: "thread-main")?.latestAssistantMessage == "Devin ready")
 
         #expect(store.session(withID: "thread-main")?.effectiveMode == .awaitReply)
         #expect(store.detail(for: "thread-main")?.effectiveMode == .awaitReply)
@@ -471,6 +473,8 @@ struct SessionSummaryTimingTests {
         #expect(store.selectedAssistantSurface == .devin)
         #expect(store.sessionSections.active.map(\.ref) == ["S2"])
         #expect(store.detail(for: "thread-main")?.assistantPreview == "Devin refreshed")
+        #expect(store.refreshDetail(for: "thread-main"))
+        #expect(store.detail(for: "thread-main")?.latestAssistantMessage == "Devin refreshed")
 
         #expect(store.selectAssistantSurface(.codex))
         #expect(store.selectedAssistantSurface == .codex)

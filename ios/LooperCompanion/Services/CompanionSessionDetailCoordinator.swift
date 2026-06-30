@@ -4,6 +4,6 @@ final class CompanionSessionDetailCoordinator {
         id: String,
         snapshotState: CompanionSnapshotStateStore
     ) -> Bool {
-        snapshotState.detail(for: id) != nil
+        snapshotState.refreshDetail(for: id)
     }
 }

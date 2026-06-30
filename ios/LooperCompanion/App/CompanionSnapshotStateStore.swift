@@ -220,7 +220,15 @@ final class CompanionSnapshotStateStore {
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
-        visibleSession(withID: sessionID) ?? sessionIndex.session(withID: sessionID)
+        guard let sourceSnapshot = sourceSnapshotForProjection() else {
+            return visibleSession(withID: sessionID) ?? sessionIndex.session(withID: sessionID)
+        }
+
+        return sourceSnapshot.sessions(for: selectedAssistantSurface).first(where: { session in
+            session.id == sessionID
+        })
+            ?? canonicalSessionIndex(for: sourceSnapshot).session(withID: sessionID)
+            ?? visibleSession(withID: sessionID)
     }
 
     func containsSession(_ sessionID: String) -> Bool {
@@ -271,14 +279,29 @@ final class CompanionSnapshotStateStore {
 
     func detail(for sessionID: String) -> SessionDetail? {
         guard let sourceSnapshot = sourceSnapshotForProjection(),
-              let session = visibleSession(withID: sessionID)
-                ?? sessionIndex.session(withID: sessionID)
+              let session = sourceSnapshot.sessions(for: selectedAssistantSurface).first(where: { session in
+                  session.id == sessionID
+              })
                 ?? canonicalSessionIndex(for: sourceSnapshot).session(withID: sessionID)
+                ?? visibleSession(withID: sessionID)
         else {
             return nil
         }
 
         return SessionDetail(summary: session, snapshot: sourceSnapshot)
+    }
+
+    @discardableResult
+    func refreshDetail(for sessionID: String) -> Bool {
+        guard let sourceSnapshot = sourceSnapshotForProjection(),
+              detail(for: sessionID) != nil
+        else {
+            return false
+        }
+
+        visibleSurfaceProjections.removeValue(forKey: selectedAssistantSurface)
+        applyVisibleSnapshot(sourceSnapshot, surface: selectedAssistantSurface)
+        return true
     }
 
     func hasDetail(for sessionID: String) -> Bool {
