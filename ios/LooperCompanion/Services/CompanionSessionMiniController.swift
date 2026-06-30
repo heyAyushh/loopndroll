@@ -3,6 +3,7 @@ import Foundation
 private enum CompanionSessionMiniControllerRetry {
     static let delay: Duration = .milliseconds(750)
     static let restartReason = "runtime-restart"
+    static let unavailableReason = "runtime-unavailable"
     static let restartLatestSeq: Int64 = 0
     static let restartServerTime = ""
 }
@@ -39,7 +40,13 @@ final class CompanionSessionMiniController {
         onUpdate: @escaping SyncUpdateHandler,
         onLiveness: @escaping LivenessUpdateHandler
     ) {
-        guard syncTask == nil, let sessionRuntime else {
+        guard syncTask == nil else {
+            return
+        }
+
+        guard let sessionRuntime else {
+            CompanionDiagnostics.record("session-mini:sync-unavailable")
+            onLiveness(Self.runtimeUnavailableLivenessUpdate(), connectionRevision)
             return
         }
 
@@ -83,6 +90,16 @@ final class CompanionSessionMiniController {
     nonisolated static func restartLivenessUpdate() -> CompanionSessionMiniLivenessUpdate {
         CompanionSessionMiniLivenessUpdate(
             reason: CompanionSessionMiniControllerRetry.restartReason,
+            latestSeq: CompanionSessionMiniControllerRetry.restartLatestSeq,
+            serverTime: CompanionSessionMiniControllerRetry.restartServerTime,
+            isLive: false,
+            endpointURL: nil
+        )
+    }
+
+    nonisolated static func runtimeUnavailableLivenessUpdate() -> CompanionSessionMiniLivenessUpdate {
+        CompanionSessionMiniLivenessUpdate(
+            reason: CompanionSessionMiniControllerRetry.unavailableReason,
             latestSeq: CompanionSessionMiniControllerRetry.restartLatestSeq,
             serverTime: CompanionSessionMiniControllerRetry.restartServerTime,
             isLive: false,

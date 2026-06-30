@@ -26,6 +26,7 @@ struct SettingsScreen: View {
     @State private var localNetworkAccess = LocalNetworkAccessMonitor()
     @State private var scrollTarget: SettingsSearchTarget?
     @State private var settingsPath = NavigationPath()
+    @State private var lastSyncedDefaultPrompt: String?
     @FocusState private var focusedInput: SettingsInput?
 
     private var selectedQuickActions: Set<QuickActionOption> {
@@ -130,7 +131,7 @@ struct SettingsScreen: View {
             }
         }
         .task(id: model.viewState.defaultPrompt) {
-            draftPrompt = model.viewState.defaultPrompt
+            syncDraftPromptFromModelIfSafe()
         }
         .task(id: initialSearchTaskID) {
             openSettingsTarget(initialSearchTarget)
@@ -600,6 +601,33 @@ struct SettingsScreen: View {
         Task {
             await model.saveDefaultPrompt(draftPrompt)
         }
+    }
+
+    private func syncDraftPromptFromModelIfSafe() {
+        let nextDefaultPrompt = model.viewState.defaultPrompt
+        if draftPrompt == nextDefaultPrompt {
+            lastSyncedDefaultPrompt = nextDefaultPrompt
+            return
+        }
+
+        guard !hasUnsavedPromptEdits(relativeTo: nextDefaultPrompt) else {
+            return
+        }
+
+        draftPrompt = nextDefaultPrompt
+        lastSyncedDefaultPrompt = nextDefaultPrompt
+    }
+
+    private func hasUnsavedPromptEdits(relativeTo nextDefaultPrompt: String) -> Bool {
+        guard let lastSyncedDefaultPrompt else {
+            return !draftPrompt.isEmpty && draftPrompt != nextDefaultPrompt
+        }
+        if focusedInput == .continuePrompt {
+            return draftPrompt != lastSyncedDefaultPrompt ||
+                nextDefaultPrompt != lastSyncedDefaultPrompt
+        }
+        return draftPrompt != lastSyncedDefaultPrompt &&
+            draftPrompt != nextDefaultPrompt
     }
 }
 

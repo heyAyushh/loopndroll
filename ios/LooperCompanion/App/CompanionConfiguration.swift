@@ -127,10 +127,7 @@ enum CompanionConfiguration {
         }
         #endif
 
-        let bundledValue = (
-            Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
-                ?? Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL")
-        ) as? String
+        let bundledValue = Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URL") as? String
         let bundledListValue = Bundle.main.object(forInfoDictionaryKey: "LOOPER_API_BASE_URLS") as? String
         let bundledURLs = normalizedBaseURLs(
             from: [bundledValue, bundledListValue]

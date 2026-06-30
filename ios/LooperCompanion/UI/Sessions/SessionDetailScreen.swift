@@ -12,6 +12,7 @@ struct SessionDetailScreen: View {
     @State private var contextualPromptSuggestions: [String] = []
     @State private var isSendingPrompt = false
     @State private var showingDeleteConfirmation = false
+    @State private var openedLifecycleSessionID: String?
     @FocusState private var focusedInput: SessionDetailInput?
 
     private var detail: SessionDetail? {
@@ -113,10 +114,10 @@ struct SessionDetailScreen: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             syncDraftModeFromCurrentModeIfNeeded()
-            scheduleMarkCurrentSiriSession()
         }
         .onChange(of: session.id) {
             resetDraftMode()
+            openedLifecycleSessionID = nil
         }
         .onChange(of: currentMode) {
             syncDraftModeFromCurrentModeIfNeeded()
@@ -146,10 +147,8 @@ struct SessionDetailScreen: View {
                 .accessibilityIdentifier("session-detail.keyboard-done")
             }
         }
-        .task {
-            model.refreshSessionDetail(id: session.id)
-            await markCurrentSiriSessionIfNeeded()
-            await model.donateOpenedSiriSession(session)
+        .task(id: session.id) {
+            await runOpenedSessionLifecycleIfNeeded()
         }
         .task(id: promptSuggestionContextKey) {
             await refreshPromptSuggestions()
@@ -601,14 +600,18 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private func scheduleMarkCurrentSiriSession() {
-        Task {
-            await model.markCurrentSiriSession(session)
-        }
-    }
-
     private func markCurrentSiriSessionIfNeeded() async {
         await model.markCurrentSiriSession(session)
+    }
+
+    private func runOpenedSessionLifecycleIfNeeded() async {
+        guard openedLifecycleSessionID != session.id else {
+            return
+        }
+        openedLifecycleSessionID = session.id
+        model.refreshSessionDetail(id: session.id)
+        await markCurrentSiriSessionIfNeeded()
+        await model.donateOpenedSiriSession(session)
     }
 
 }

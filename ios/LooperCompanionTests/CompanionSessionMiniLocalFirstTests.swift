@@ -1914,6 +1914,49 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(restart.endpointURL == nil)
     }
 
+    @MainActor
+    @Test
+    func testRuntimeUnavailableLivenessDoesNotReportConnected() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 15,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 15, revision: "mini-revision-15"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = try #require(URL(string: "http://192.168.2.10:8766"))
+        #expect(model.applyRealtimeStreamLiveness(
+            serverTime: Constants.heartbeatTimestamp,
+            latestSeq: 15,
+            isLive: true,
+            endpointURL: route
+        ))
+
+        let unavailable = CompanionSessionMiniController.runtimeUnavailableLivenessUpdate()
+        #expect(model.applyRealtimeStreamLiveness(
+            serverTime: unavailable.serverTime,
+            latestSeq: unavailable.latestSeq,
+            isLive: unavailable.isLive,
+            endpointURL: unavailable.endpointURL
+        ))
+
+        #expect(unavailable.reason == "runtime-unavailable")
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.connectionState == .connecting)
+        #expect(model.activeConnectionRouteBaseURL == nil)
+        #expect(model.realtimeLatestSeq == 15)
+    }
+
     @Test
     func testStateMiniRecoveryEmptyResultIsNotApplied() {
         #expect(!StateMiniRecoveryResult.empty.didApplySnapshot)
