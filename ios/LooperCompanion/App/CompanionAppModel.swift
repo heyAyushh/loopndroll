@@ -342,8 +342,8 @@ final class CompanionAppModel {
         markSessionStreamStopped()
     }
 
-    private func stopSessionRuntimeSyncAndWait() async {
-        await sessionMiniController.stopSyncAndWait()
+    private func stopSessionRuntimeSyncForRestart() {
+        sessionMiniController.stopSync()
         markSessionStreamStopped()
     }
 
@@ -534,7 +534,7 @@ final class CompanionAppModel {
         connectionRevision += 1
         snapshotLoads.cancelCachedSnapshotRestore()
         snapshotLoads.cancelSnapshotLoad()
-        await stopSessionRuntimeSyncAndWait()
+        stopSessionRuntimeSyncForRestart()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         stopNotificationReplyOutboxDrain()
         serverHealth = nil
@@ -573,12 +573,12 @@ final class CompanionAppModel {
         reachedBaseURL = nil
         markSessionStreamStopped()
 
-        await restartSessionRuntimeSyncForRouteChange()
+        restartSessionRuntimeSyncForRouteChange()
     }
 
-    private func restartSessionRuntimeSyncForRouteChange() async {
+    private func restartSessionRuntimeSyncForRouteChange() {
         if sessionMiniController.isSyncing {
-            await sessionMiniController.stopSyncAndWait()
+            stopSessionRuntimeSyncForRestart()
         }
         startSessionRuntimeSyncIfNeeded()
     }
@@ -1182,7 +1182,7 @@ final class CompanionAppModel {
             return
         }
 
-        await stopSessionRuntimeSyncAndWait()
+        stopSessionRuntimeSyncForRestart()
         startSessionRuntimeSyncIfNeeded()
     }
 

@@ -115,15 +115,6 @@ final class CompanionSessionMiniController {
         sessionRuntime?.stopStateMiniStream()
     }
 
-    func stopSyncAndWait() async {
-        let task = syncTask
-        syncTask = nil
-        syncTaskID = nil
-        task?.cancel()
-        sessionRuntime?.stopStateMiniStream()
-        await task?.value
-    }
-
     @discardableResult
     func restoreCachedSnapshotIfAvailable(
         reason: String,
