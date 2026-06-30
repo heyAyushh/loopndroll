@@ -471,7 +471,46 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testCappedNetworkSnapshotDoesNotCollapseLocalCanonicalMinis() throws {
+    func testAuthoritativeSmallerSnapshotRemovesOmittedLocalMini() throws {
+        let codexSession = Self.sessionSummary(
+            id: "codex-thread",
+            title: "Codex Mini",
+            ref: "C1",
+            status: .active
+        )
+        let removedSession = Self.sessionSummary(
+            id: "removed-thread",
+            title: "Removed Mini",
+            ref: "R1",
+            status: .active
+        )
+        let store = CompanionSnapshotStateStore()
+        let localSnapshot = Self.mobileSnapshot(
+            revision: "local-revision",
+            sessions: [codexSession, removedSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession, removedSession],
+            ]
+        )
+        let authoritativeSnapshot = Self.mobileSnapshot(
+            revision: "authoritative-shrink-revision",
+            sessions: [codexSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession],
+            ]
+        )
+
+        store.applySnapshot(localSnapshot)
+        store.applySnapshot(authoritativeSnapshot)
+
+        #expect(store.allSessionSections.active.map(\.id) == ["codex-thread"])
+        #expect(store.snapshot?.sessionsAcrossSurfaces.map(\.id) == ["codex-thread"])
+        #expect(store.snapshot?.session(withID: "removed-thread") == nil)
+    }
+
+    @MainActor
+    @Test
+    func testCappedNetworkSnapshotFailsClosedWithoutExplicitPartialSignal() throws {
         let localSessionCount = 300
         let cappedNetworkSessionCount = 250
         let sessionsPerSurface = localSessionCount / CompanionAssistantSurface.allCases.count
@@ -516,18 +555,18 @@ struct CompanionSessionMiniLocalFirstTests {
         store.applySnapshot(localSnapshot)
         store.applySnapshot(cappedNetworkSnapshot)
 
-        #expect(store.allSessionSections.active.count == localSessionCount + cappedNetworkSessionCount)
-        #expect(store.sessionSections.active.count == sessionsPerSurface + cappedNetworkSessionCount)
-        #expect(store.snapshot?.sessions.count == sessionsPerSurface + cappedNetworkSessionCount)
-        #expect(store.sessions(for: .devin).count == sessionsPerSurface)
-        #expect(store.sessions(for: .zed).count == sessionsPerSurface)
-        #expect(store.sessions(for: .grokBuild).count == sessionsPerSurface)
+        #expect(store.allSessionSections.active.count == cappedNetworkSessionCount)
+        #expect(store.sessionSections.active.count == cappedNetworkSessionCount)
+        #expect(store.snapshot?.sessions.count == cappedNetworkSessionCount)
+        #expect(store.sessions(for: .devin).isEmpty)
+        #expect(store.sessions(for: .zed).isEmpty)
+        #expect(store.sessions(for: .grokBuild).isEmpty)
 
         store.applyVisibleAssistantSurface(.devin)
 
         #expect(store.selectedAssistantSurface == .devin)
-        #expect(store.sessionSections.active.count == sessionsPerSurface)
-        #expect(store.snapshot?.sessions.map(\.id).allSatisfy { $0.hasPrefix("local-devin-") } == true)
+        #expect(store.sessionSections.active.isEmpty)
+        #expect(store.snapshot?.sessions.isEmpty == true)
     }
 
     @MainActor
