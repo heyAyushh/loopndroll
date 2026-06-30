@@ -432,7 +432,10 @@ final class CompanionAppModel {
         isLive: Bool,
         endpointURL: URL?
     ) -> Bool {
-        guard latestSeq >= realtimeLatestSeq else {
+        guard latestSeq >= realtimeLatestSeq || Self.isStreamRestartLiveness(
+            latestSeq: latestSeq,
+            isLive: isLive
+        ) else {
             CompanionDiagnostics.record(
                 "session-mini:liveness-stale-skip latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
             )
@@ -2147,6 +2150,10 @@ final class CompanionAppModel {
         case .connecting, .connected, .offline:
             return .connecting
         }
+    }
+
+    private static func isStreamRestartLiveness(latestSeq: Int64, isLive: Bool) -> Bool {
+        !isLive && latestSeq == CompanionSessionMiniController.restartLivenessUpdate().latestSeq
     }
 
     private func scheduleLocalFallbackNotificationsIfNeeded(

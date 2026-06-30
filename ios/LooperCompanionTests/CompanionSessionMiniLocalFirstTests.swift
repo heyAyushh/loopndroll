@@ -1308,6 +1308,49 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testStreamRestartLivenessClearsLiveRouteWithoutLoweringSeq() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 15,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 15, revision: "mini-revision-15"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = try #require(URL(string: "http://192.168.2.10:8766"))
+
+        #expect(model.applyRealtimeStreamLiveness(
+            serverTime: Constants.heartbeatTimestamp,
+            latestSeq: 15,
+            isLive: true,
+            endpointURL: route
+        ))
+
+        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+        #expect(model.applyRealtimeStreamLiveness(
+            serverTime: restart.serverTime,
+            latestSeq: restart.latestSeq,
+            isLive: restart.isLive,
+            endpointURL: restart.endpointURL
+        ))
+
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.connectionState == .connecting)
+        #expect(model.activeConnectionRouteBaseURL == nil)
+        #expect(model.realtimeLatestSeq == 15)
+    }
+
+    @MainActor
+    @Test
     func testDeviceHubAPIStatusDoesNotUseStaleHealthWithoutLiveStream() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
