@@ -800,7 +800,7 @@ final class CompanionAppModel {
         case .sessionsPullRefresh,
              .searchPullRefresh,
              .manualRefresh:
-            return realtimeStreamIsLive
+            return false
         case .sessionOpen,
              .unlockRecovery:
             return false

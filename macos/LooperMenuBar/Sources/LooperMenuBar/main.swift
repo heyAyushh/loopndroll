@@ -833,9 +833,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         return
       }
       await sessionRuntime.runStateMiniSync(
-        onSnapshot: { [weak self] snapshot in
+        onSnapshot: { [weak self] snapshot, syncReason in
           self?.applyCurrentSessionRuntimeState(
-            routeReadinessGeneration: routeReadinessGeneration
+            routeReadinessGeneration: routeReadinessGeneration,
+            syncReason: MobileRouteSessionSyncReason(syncReason)
           )
           self?.applySessionMiniSnapshot(snapshot)
         },
@@ -890,16 +891,21 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
-  private func applyCurrentSessionRuntimeState(routeReadinessGeneration: UInt64) {
+  private func applyCurrentSessionRuntimeState(
+    routeReadinessGeneration: UInt64,
+    syncReason: MobileRouteSessionSyncReason = .unknown
+  ) {
     applySessionRuntimeState(
       try? sessionRuntime?.runtimeStateSnapshot(),
-      routeReadinessGeneration: routeReadinessGeneration
+      routeReadinessGeneration: routeReadinessGeneration,
+      syncReason: syncReason
     )
   }
 
   private func applySessionRuntimeState(
     _ snapshot: ClientStateSnapshot?,
-    routeReadinessGeneration: UInt64
+    routeReadinessGeneration: UInt64,
+    syncReason: MobileRouteSessionSyncReason = .unknown
   ) {
     guard let snapshot else {
       return
@@ -908,7 +914,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     mobileRouteReadiness.applySessionState(
       phase: MobileRouteSessionPhase(snapshot.phase),
       endpointURL: URL(string: snapshot.endpointUrl),
-      refreshGeneration: routeReadinessGeneration
+      refreshGeneration: routeReadinessGeneration,
+      syncReason: syncReason
     )
     continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }

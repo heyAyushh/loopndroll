@@ -19,6 +19,7 @@ public struct MenuBarSessionMiniPendingCommand: Equatable, Sendable {
 
 public struct MenuBarClientCoreMenuSnapshotStreamResult: Sendable {
     public let snapshot: MenuBarSessionMiniLocalSnapshot?
+    public let syncReason: String
     public let shouldStop: Bool
     public let debugMessage: String
 }
@@ -290,6 +291,7 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         guard streamUpdate.hasSnapshot else {
             return MenuBarClientCoreMenuSnapshotStreamResult(
                 snapshot: nil,
+                syncReason: streamUpdate.syncReason,
                 shouldStop: streamUpdate.shouldStop,
                 debugMessage: streamUpdate.debugMessage
             )
@@ -297,13 +299,14 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
 
         return MenuBarClientCoreMenuSnapshotStreamResult(
             snapshot: MenuBarSessionMiniLocalSnapshot(streamUpdate.snapshot),
+            syncReason: streamUpdate.syncReason,
             shouldStop: streamUpdate.shouldStop,
             debugMessage: streamUpdate.debugMessage
         )
     }
 
     public func runStateMiniSync(
-        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
+        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot, String) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async {
         defer {
@@ -385,13 +388,13 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     }
 
     private func drainStateMiniSync(
-        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot) -> Void,
+        onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot, String) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async throws {
         while !Task.isCancelled {
             let result = try await nextMenuSnapshotStreamResult()
             if let snapshot = result.snapshot {
-                await onSnapshot(snapshot)
+                await onSnapshot(snapshot, result.syncReason)
             }
             if !result.debugMessage.isEmpty {
                 await onDebugMessage(result.debugMessage)

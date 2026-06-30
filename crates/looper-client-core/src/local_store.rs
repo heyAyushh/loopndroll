@@ -15,8 +15,8 @@ use crate::{
     state_mini::{
         DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_node_ids,
         last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
-        sort_state_minis, state_mini_key, state_mini_node_id,
-        state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
+        sort_state_minis, state_mini_key, state_mini_snapshot_is_stale_for_all_nodes,
+        validate_state_minis,
     },
 };
 
@@ -579,18 +579,7 @@ impl StoredState {
         sessions: Vec<ClientStateMini>,
         fresh_node_ids: &BTreeSet<String>,
     ) -> bool {
-        let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
         let before = self.sessions.clone();
-        self.sessions.retain(|current| {
-            let node_id = state_mini_node_id(current);
-            if !fresh_node_ids.contains(&node_id) {
-                return true;
-            }
-            incoming_last_seq_by_node
-                .get(&node_id)
-                .map(|incoming_seq| current.seq > *incoming_seq)
-                .unwrap_or(true)
-        });
         let mut index_by_key: HashMap<StateMiniKey, usize> =
             HashMap::with_capacity(self.sessions.len());
         for (index, current) in self.sessions.iter().enumerate() {
@@ -1082,8 +1071,14 @@ mod tests {
             .expect("recover minis");
 
         assert_eq!(snapshot.latest_seq, 6);
-        assert_eq!(snapshot.sessions.len(), 1);
-        assert_eq!(snapshot.sessions[0].session_id, "thread-recovered");
+        assert_eq!(
+            snapshot
+                .sessions
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-old", "thread-recovered"]
+        );
         assert_eq!(snapshot.pending_commands.len(), 1);
         assert_eq!(
             snapshot.pending_commands[0].client_mutation_id,
@@ -1095,7 +1090,14 @@ mod tests {
         let reopened =
             LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
         let reopened_snapshot = reopened.snapshot().expect("snapshot");
-        assert_eq!(reopened_snapshot.sessions[0].session_id, "thread-recovered");
+        assert_eq!(
+            reopened_snapshot
+                .sessions
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-old", "thread-recovered"]
+        );
         assert_eq!(
             reopened_snapshot.pending_commands[0].client_mutation_id,
             "mutation-pending"

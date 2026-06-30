@@ -888,17 +888,23 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testPullRefreshSkipsRecoveryWhenSessionStreamIsLive() async throws {
+    func testPullRefreshRecoversFreshMinisWhenSessionStreamIsLive() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
             ref: "C1",
             status: .active
         )
+        let recoveredSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Recovered Mini",
+            ref: "C1",
+            status: .active
+        )
         let runtime = try Self.temporarySessionRuntime(
-            latestSeq: 12,
+            latestSeq: 13,
             records: [
-                Self.miniRecord(session: cachedSession, seq: 12, revision: "mini-revision-12"),
+                Self.miniRecord(session: recoveredSession, seq: 13, revision: "mini-revision-13"),
             ]
         )
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
@@ -915,7 +921,8 @@ struct CompanionSessionMiniLocalFirstTests {
 
         await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
 
-        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
+        #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Recovered Mini")
+        #expect(model.realtimeLatestSeq == 13)
         #expect(service.loadSnapshotCallCount == 0)
     }
 

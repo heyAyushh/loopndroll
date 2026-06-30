@@ -502,7 +502,7 @@ impl LooperClientCore {
         ack: ClientCommandAck,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let mut state = self.lock_state()?;
-        state.reconcile_ack(ack);
+        state.reconcile_ack(ack, None);
         Ok(state.snapshot())
     }
 
@@ -513,7 +513,7 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let mut state = self.lock_state()?;
         for envelope in response.command_acks {
-            state.reconcile_ack(envelope.ack);
+            state.reconcile_ack(envelope.ack, None);
         }
         Ok(state.snapshot())
     }
@@ -627,7 +627,10 @@ impl LooperClientCore {
         let mut state = self.lock_state()?;
         state.drain_submitted_outbox(&submitted_frames)?;
         for envelope in &response.command_acks {
-            state.reconcile_ack(envelope.ack.clone());
+            let submitted_frame = submitted_frames
+                .iter()
+                .find(|frame| frame.client_mutation_id == envelope.ack.client_mutation_id);
+            state.reconcile_ack(envelope.ack.clone(), submitted_frame);
         }
         Ok(response)
     }
@@ -1701,7 +1704,11 @@ impl ClientCoreState {
         Ok(())
     }
 
-    fn reconcile_ack(&mut self, ack: ClientCommandAck) {
+    fn reconcile_ack(
+        &mut self,
+        ack: ClientCommandAck,
+        submitted_frame: Option<&OutboundSessionFrame>,
+    ) {
         let reject_message = if ack.accepted {
             String::new()
         } else {
@@ -1717,6 +1724,16 @@ impl ClientCoreState {
             .iter()
             .find(|mutation| mutation.client_mutation_id == ack.client_mutation_id)
             .map(|mutation| mutation.command_kind);
+        let thread_id = submitted_frame
+            .map(|frame| frame.thread_id.clone())
+            .or_else(|| {
+                self.pending_mutations
+                    .iter()
+                    .find(|mutation| mutation.client_mutation_id == ack.client_mutation_id)
+                    .map(|mutation| mutation.thread_id.clone())
+            })
+            .filter(|thread_id| !thread_id.trim().is_empty())
+            .unwrap_or_else(|| ack.entity_id.clone());
         update_server_time_if_newer(&mut self.server_time, ack.server_time.clone());
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
@@ -1727,10 +1744,54 @@ impl ClientCoreState {
         }
 
         if ack.accepted {
+            self.apply_accepted_ack_command(command_kind, &thread_id, submitted_frame);
             self.last_error.clear();
         } else {
             self.last_error = reject_message;
         }
+    }
+
+    fn apply_accepted_ack_command(
+        &mut self,
+        command_kind: Option<ClientCommandKind>,
+        thread_id: &str,
+        submitted_frame: Option<&OutboundSessionFrame>,
+    ) {
+        match command_kind {
+            Some(ClientCommandKind::SetSessionArchived) => {
+                let archived = submitted_frame.map(|frame| frame.archived).unwrap_or(false);
+                self.apply_acknowledged_archive(thread_id, archived);
+            }
+            Some(ClientCommandKind::DeleteSession) => {
+                self.remove_session_minis(thread_id);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_acknowledged_archive(&mut self, thread_id: &str, archived: bool) {
+        if !archived {
+            return;
+        }
+        let mut did_update = false;
+        for session in self
+            .state_minis
+            .iter_mut()
+            .filter(|session| session.session_id == thread_id)
+        {
+            if let Some(payload_json) = archived_payload_json(&session.payload_json) {
+                session.payload_json = payload_json;
+                did_update = true;
+            }
+        }
+        if did_update {
+            sort_state_minis(&mut self.state_minis);
+        }
+    }
+
+    fn remove_session_minis(&mut self, thread_id: &str) {
+        self.state_minis
+            .retain(|session| session.session_id != thread_id);
     }
 
     fn upsert_state_mini(&mut self, session: ClientStateMini) -> bool {
@@ -1937,19 +1998,12 @@ impl ClientCoreState {
         let before_revision = self.revision.clone();
         let before_server_time = self.server_time.clone();
 
-        self.state_minis
-            .retain(|session| !fresh_node_ids.contains(&state_mini_node_id(session)));
         let replacement_sessions = normalize_state_minis_for_source(
             replacement.sessions,
             Some(FRESHNESS_SOURCE_STREAM),
             Some(replacement.route_endpoint.as_str()),
         );
-        self.state_minis.extend(
-            replacement_sessions
-                .into_iter()
-                .filter(|session| fresh_node_ids.contains(state_mini_key(session).node_id())),
-        );
-        sort_state_minis(&mut self.state_minis);
+        self.merge_snapshot_minis_preserving_newer(replacement_sessions, &fresh_node_ids);
         for (node_id, seq) in fresh_last_seq_by_node {
             self.advance_node_cursor(node_id, seq);
         }
@@ -2021,18 +2075,7 @@ impl ClientCoreState {
         sessions: Vec<ClientStateMini>,
         fresh_node_ids: &BTreeSet<String>,
     ) -> bool {
-        let incoming_last_seq_by_node = last_seq_by_node_from_minis(&sessions);
         let before = self.state_minis.clone();
-        self.state_minis.retain(|current| {
-            let node_id = state_mini_node_id(current);
-            if !fresh_node_ids.contains(&node_id) {
-                return true;
-            }
-            incoming_last_seq_by_node
-                .get(&node_id)
-                .map(|incoming_seq| current.seq > *incoming_seq)
-                .unwrap_or(true)
-        });
         let mut index_by_key: HashMap<StateMiniKey, usize> =
             HashMap::with_capacity(self.state_minis.len());
         for (index, current) in self.state_minis.iter().enumerate() {
@@ -2371,6 +2414,14 @@ fn optimistic_mode_payload_json(payload_json: &str, preset: &str) -> Option<Stri
     let mut payload = serde_json::from_str::<Value>(payload_json).ok()?;
     let payload_object = payload.as_object_mut()?;
     payload_object.insert("effectiveMode".to_owned(), optimistic_mode_value(preset));
+    serde_json::to_string(&payload).ok()
+}
+
+fn archived_payload_json(payload_json: &str) -> Option<String> {
+    let mut payload = serde_json::from_str::<Value>(payload_json).ok()?;
+    let payload_object = payload.as_object_mut()?;
+    payload_object.insert("isArchived".to_owned(), Value::Bool(true));
+    payload_object.insert("status".to_owned(), Value::String("archived".to_owned()));
     serde_json::to_string(&payload).ok()
 }
 
@@ -3215,6 +3266,137 @@ mod tests {
     }
 
     #[test]
+    fn accepted_archive_ack_marks_mini_archived_through_partial_replacement() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 7,
+            sessions: vec![
+                state_mini("thread-1", "codex", 7, "rev-7", "one"),
+                state_mini("thread-2", "codex", 7, "rev-7", "two"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+        core.set_session_archived("thread-1".to_owned(), true, "cmid-archive".to_owned())
+            .expect("queue archive");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                let frame = commands_receiver.recv().await.expect("command frame");
+                assert_eq!(frame.client_mutation_id, "cmid-archive");
+                assert_eq!(frame.command_kind, ClientCommandKind::SetSessionArchived);
+                assert!(frame.archived);
+                acks_sender
+                    .send(accepted_ack("cmid-archive", 42, "rev-42"))
+                    .await
+                    .expect("send ack");
+            });
+
+            core.submit_expected_outbox(vec!["cmid-archive".to_owned()])
+                .await
+                .expect("submit archive");
+            ack_task.await.expect("ack task");
+        });
+
+        let archived = core
+            .snapshot()
+            .expect("snapshot")
+            .state_minis
+            .into_iter()
+            .find(|session| session.session_id == "thread-1")
+            .expect("archived mini");
+        let payload = payload_value(&archived);
+        assert_eq!(payload["isArchived"], true);
+        assert_eq!(payload["status"], "archived");
+
+        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
+            seq: 43,
+            latest_seq: 43,
+            entity_id: "all".to_owned(),
+            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+            revision: "rev-43".to_owned(),
+            server_time: "2026-06-25T00:00:43Z".to_owned(),
+            has_session: false,
+            session: state_mini("", "", 43, "", ""),
+            sessions: Vec::new(),
+        })
+        .expect("stage empty replacement");
+        let finalized = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 43,
+                server_time: "2026-06-25T00:00:43Z".to_owned(),
+                endpoint_url: ENDPOINT_PRIMARY.to_owned(),
+            })
+            .expect("finalize replacement");
+        assert_eq!(
+            finalized
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-1", "thread-2"]
+        );
+        let payload = finalized
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-1")
+            .map(payload_value)
+            .expect("thread-1 payload");
+        assert_eq!(payload["status"], "archived");
+    }
+
+    #[test]
+    fn accepted_delete_ack_removes_only_deleted_mini() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 7,
+            sessions: vec![
+                state_mini("thread-1", "codex", 7, "rev-7", "one"),
+                state_mini("thread-2", "codex", 7, "rev-7", "two"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+        core.delete_session("thread-1".to_owned(), "cmid-delete".to_owned())
+            .expect("queue delete");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                let frame = commands_receiver.recv().await.expect("command frame");
+                assert_eq!(frame.client_mutation_id, "cmid-delete");
+                assert_eq!(frame.command_kind, ClientCommandKind::DeleteSession);
+                acks_sender
+                    .send(accepted_ack("cmid-delete", 42, "rev-42"))
+                    .await
+                    .expect("send ack");
+            });
+
+            core.submit_expected_outbox(vec!["cmid-delete".to_owned()])
+                .await
+                .expect("submit delete");
+            ack_task.await.expect("ack task");
+        });
+
+        assert_eq!(
+            core.snapshot()
+                .expect("snapshot")
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2"]
+        );
+    }
+
+    #[test]
     fn submit_expected_outbox_keeps_commands_queued_while_ack_is_pending() {
         let core = LooperClientCore::new();
         core.send_prompt(
@@ -4026,18 +4208,34 @@ mod tests {
             ClientStateMiniStreamUpdateReason::Heartbeat
         );
         assert!(finalized.did_change);
-        assert_eq!(finalized.snapshot.state_minis.len(), 1);
-        assert_eq!(finalized.snapshot.state_minis[0].session_id, "thread-codex");
-        assert_eq!(finalized.snapshot.state_minis[0].assistant_surface, "codex");
-        assert!(
-            finalized.snapshot.state_minis[0]
-                .payload_json
-                .contains("new codex")
+        assert_eq!(
+            finalized
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-devin", "thread-codex"]
         );
+        let codex = finalized
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-codex")
+            .expect("updated codex mini");
+        let devin = finalized
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-devin")
+            .expect("preserved absent devin mini");
+        assert_eq!(codex.assistant_surface, "codex");
+        assert!(codex.payload_json.contains("new codex"));
+        assert!(devin.payload_json.contains("devin"));
     }
 
     #[test]
-    fn state_mini_replacement_delta_replaces_only_covered_node() {
+    fn state_mini_replacement_delta_preserves_absent_sessions_for_covered_node() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 20,
@@ -4085,7 +4283,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-b", "thread-a-new"]
+            vec!["thread-b", "thread-a", "thread-a-new"]
         );
         assert!(
             finalized.snapshot.state_minis[0]
@@ -4094,6 +4292,11 @@ mod tests {
         );
         assert!(
             finalized.snapshot.state_minis[1]
+                .payload_json
+                .contains("old a")
+        );
+        assert!(
+            finalized.snapshot.state_minis[2]
                 .payload_json
                 .contains("new a")
         );
@@ -4236,7 +4439,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-1", "thread-2"]
+            vec!["thread-old", "thread-1", "thread-2"]
         );
     }
 
@@ -4324,7 +4527,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-1", "thread-2"]
+            vec!["thread-old", "thread-1", "thread-2"]
         );
     }
 
@@ -4639,7 +4842,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_delta_can_clear_local_projection_after_heartbeat() {
+    fn state_mini_replacement_delta_without_sessions_does_not_clear_local_projection() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 5,
@@ -4677,7 +4880,8 @@ mod tests {
 
         assert!(finalized.did_change);
         assert_eq!(finalized.snapshot.latest_seq, 6);
-        assert!(finalized.snapshot.state_minis.is_empty());
+        assert_eq!(finalized.snapshot.state_minis.len(), 1);
+        assert_eq!(finalized.snapshot.state_minis[0].session_id, "thread-1");
         assert_eq!(finalized.snapshot.revision, "rev-6");
     }
 

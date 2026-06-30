@@ -7,6 +7,30 @@ public enum MobileRouteSessionPhase: Equatable, Sendable {
     case reconnecting
 }
 
+public enum MobileRouteSessionSyncReason: String, Equatable, Sendable {
+    case delta
+    case heartbeat
+    case recovery
+    case reconnecting
+    case unknown
+
+    public init(_ rawValue: String?) {
+        let normalized = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        self = normalized.flatMap(Self.init(rawValue:)) ?? .unknown
+    }
+
+    public var provesLiveSession: Bool {
+        switch self {
+        case .delta, .heartbeat:
+            true
+        case .recovery, .reconnecting, .unknown:
+            false
+        }
+    }
+}
+
 public struct MobileRouteReadinessState: Equatable, Sendable {
     private enum Defaults {
         static let minimumElapsedSeconds = 0
@@ -153,9 +177,19 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
     public mutating func applySessionState(
         phase: MobileRouteSessionPhase,
         endpointURL: URL?,
-        refreshGeneration: UInt64
+        refreshGeneration: UInt64,
+        syncReason: MobileRouteSessionSyncReason = .unknown
     ) {
         guard refreshGeneration == generation else {
+            return
+        }
+
+        guard syncReason.provesLiveSession else {
+            if requiresLiveProof,
+               syncReason == .reconnecting || phase != .ready
+            {
+                observedSessionTransitionGeneration = generation
+            }
             return
         }
 

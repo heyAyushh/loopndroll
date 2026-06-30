@@ -173,7 +173,8 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .ready,
             endpointURL: provenEndpoint,
-            refreshGeneration: oldGeneration
+            refreshGeneration: oldGeneration,
+            syncReason: .heartbeat
         )
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
@@ -181,7 +182,17 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .ready,
             endpointURL: provenEndpoint,
-            refreshGeneration: nextGeneration
+            refreshGeneration: nextGeneration,
+            syncReason: .recovery
+        )
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: provenEndpoint,
+            refreshGeneration: nextGeneration,
+            syncReason: .heartbeat
         )
         #expect(!readiness.requiresLiveProof)
         #expect(readiness.hasLiveRouteProof)
@@ -205,7 +216,8 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .ready,
             endpointURL: endpoint,
-            refreshGeneration: readiness.generation
+            refreshGeneration: readiness.generation,
+            syncReason: .delta
         )
 
         #expect(readiness.hasLiveRouteProof)
@@ -226,7 +238,8 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .ready,
             endpointURL: oldEndpoint,
-            refreshGeneration: readiness.generation
+            refreshGeneration: readiness.generation,
+            syncReason: .heartbeat
         )
         #expect(readiness.hasLiveRouteProof)
 
@@ -248,12 +261,23 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .reconnecting,
             endpointURL: oldEndpoint,
-            refreshGeneration: switchGeneration
+            refreshGeneration: switchGeneration,
+            syncReason: .reconnecting
         )
         readiness.applySessionState(
             phase: .ready,
             endpointURL: oldEndpoint,
-            refreshGeneration: switchGeneration
+            refreshGeneration: switchGeneration,
+            syncReason: .recovery
+        )
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: oldEndpoint,
+            refreshGeneration: switchGeneration,
+            syncReason: .heartbeat
         )
         #expect(readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
@@ -262,7 +286,8 @@ struct MenuRefreshCoordinatorTests {
         readiness.applySessionState(
             phase: .ready,
             endpointURL: nextEndpoint,
-            refreshGeneration: nextSwitchGeneration
+            refreshGeneration: nextSwitchGeneration,
+            syncReason: .delta
         )
         #expect(readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Fresh Session: LAN: 192.168.1.33")

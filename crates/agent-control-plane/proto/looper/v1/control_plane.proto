@@ -208,6 +208,8 @@ message StateMiniDelta {
   string payload_json = 6;
 }
 
+// Ephemeral, bounded live text hint on the Session control stream.
+// Full transcript/log/output content belongs to the data plane.
 message TextChunk {
   int64 seq = 1;
   string thread_id = 2;
