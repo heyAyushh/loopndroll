@@ -849,7 +849,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.errorMessage == nil)
         #expect(model.activeConnectionRouteBaseURL == liveRoute)
         #expect(model.viewState.connectionRoutePresentation?.route == .tailscale)
-        #expect(service.loadSnapshotCallCount == 1)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
@@ -881,7 +881,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.connectionState == .connected)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
-        #expect(service.loadSnapshotCallCount == 1)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
@@ -1059,7 +1059,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
         #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
-        #expect(service.loadSnapshotCallCount == 1)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
@@ -1093,7 +1093,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
         #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(model.errorMessage == nil)
-        #expect(service.loadSnapshotCallCount == 1)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
@@ -1115,7 +1115,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
         #expect(model.viewState.activeSessions.isEmpty)
-        #expect(service.loadSnapshotCallCount == 1)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor

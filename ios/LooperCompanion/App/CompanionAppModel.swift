@@ -621,6 +621,18 @@ final class CompanionAppModel {
             }
 
             try Task.checkCancellation()
+            if hasKnownSessionMiniCursor() {
+                if !snapshotState.hasSnapshot {
+                    _ = restoreCachedSessionMiniSnapshotIfAvailable(
+                        reason: "network-snapshot-local-session-mini-cursor"
+                    )
+                }
+                markCachedSnapshotReadyIfNeeded(reason: "network-snapshot-local-session-mini-cursor")
+                CompanionDiagnostics.record(
+                    "snapshot:load-session-mini-cursor-skip realtimeSeq=\(realtimeLatestSeq)"
+                )
+                return
+            }
             let nextSnapshot = try await service.loadSnapshot()
             guard loadRevision == connectionRevision else {
                 CompanionDiagnostics.record("snapshot:load-stale-skip")
