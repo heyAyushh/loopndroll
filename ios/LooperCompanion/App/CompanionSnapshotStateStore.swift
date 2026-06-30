@@ -30,12 +30,17 @@ final class CompanionSnapshotStateStore {
         visibleProjectionState.sessionSections
     }
 
+    var allSessionSections: SessionSections {
+        canonicalSessionSections
+    }
+
     var sessionIndex: SessionIndex {
         visibleProjectionState.sessionIndex
     }
 
     @ObservationIgnored private var canonicalSnapshot: MobileSnapshot?
     @ObservationIgnored private var canonicalSessionIndex: SessionIndex = .empty
+    @ObservationIgnored private var canonicalSessionSections: SessionSections = .empty
     @ObservationIgnored private var visibleSurfaceProjections: [CompanionAssistantSurface: VisibleSurfaceProjection] = [:]
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
     @ObservationIgnored private var lastVisibleSnapshotFingerprint: VisibleSnapshotFingerprint?
@@ -56,6 +61,7 @@ final class CompanionSnapshotStateStore {
         visibleProjectionState = .empty()
         canonicalSnapshot = nil
         canonicalSessionIndex = .empty
+        canonicalSessionSections = .empty
         visibleSurfaceProjections = [:]
         hasUserSelectedAssistantSurface = false
         lastVisibleSnapshotFingerprint = nil
@@ -73,7 +79,7 @@ final class CompanionSnapshotStateStore {
 
         nextSnapshot.host.lastSyncedAt = syncedAt
         canonicalSnapshot = nextSnapshot
-        visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: nextSnapshot)
+        refreshCanonicalProjectionCache(from: nextSnapshot)
         return true
     }
 
@@ -296,6 +302,7 @@ final class CompanionSnapshotStateStore {
                 projection: projection.sessionIndex,
                 snapshot: canonicalSnapshot
             )
+            canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
         }
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
@@ -440,12 +447,14 @@ final class CompanionSnapshotStateStore {
 
     private func refreshCanonicalProjectionCache(from sourceSnapshot: MobileSnapshot) {
         canonicalSessionIndex = SessionIndex(snapshot: sourceSnapshot)
+        canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
         visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: sourceSnapshot)
     }
 
     private func canonicalSessionIndex(for sourceSnapshot: MobileSnapshot) -> SessionIndex {
         if canonicalSessionIndex == .empty {
             canonicalSessionIndex = SessionIndex(localSnapshot: sourceSnapshot)
+            canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
         }
         return canonicalSessionIndex
     }
