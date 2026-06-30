@@ -135,7 +135,7 @@ impl SnapshotInspectionMode {
     }
 
     fn discovers_live_external_sessions(self) -> bool {
-        self != Self::CachedMenu
+        self == Self::Live
     }
 }
 
@@ -1606,7 +1606,7 @@ impl ControlPlane {
 
     pub fn desktop_mobile_snapshot(&self) -> Result<DesktopSnapshot> {
         self.desktop_snapshot_with_limits(
-            None,
+            Some(DESKTOP_SNAPSHOT_THREAD_LIMIT),
             DESKTOP_MENU_COMPACTION_LIMIT,
             DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
             SnapshotInspectionMode::Mobile,
@@ -2796,6 +2796,34 @@ mod tests {
                 .map(|thread| thread.thread_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["new", "middle"]
+        );
+    }
+
+    #[test]
+    fn mobile_snapshot_mode_uses_bounded_cached_recovery_contract() {
+        assert!(!SnapshotInspectionMode::Mobile.discovers_live_external_sessions());
+        assert!(!SnapshotInspectionMode::CachedMenu.discovers_live_external_sessions());
+        assert!(SnapshotInspectionMode::Live.discovers_live_external_sessions());
+
+        let threads = (0..(DESKTOP_SNAPSHOT_THREAD_LIMIT + 1))
+            .map(|index| {
+                thread_record(
+                    &format!("thread-{index:03}"),
+                    i64::try_from(index).expect("thread index fits i64"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let bounded = codex_threads_for_snapshot(&threads, Some(DESKTOP_SNAPSHOT_THREAD_LIMIT));
+
+        assert_eq!(bounded.len(), DESKTOP_SNAPSHOT_THREAD_LIMIT);
+        assert_eq!(
+            bounded.first().map(|thread| thread.thread_id.as_str()),
+            Some("thread-250")
+        );
+        assert_eq!(
+            bounded.last().map(|thread| thread.thread_id.as_str()),
+            Some("thread-001")
         );
     }
 
