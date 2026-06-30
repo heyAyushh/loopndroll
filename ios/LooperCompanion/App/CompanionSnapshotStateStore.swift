@@ -35,6 +35,7 @@ final class CompanionSnapshotStateStore {
     }
 
     @ObservationIgnored private var canonicalSnapshot: MobileSnapshot?
+    @ObservationIgnored private var canonicalSessionIndex: SessionIndex = .empty
     @ObservationIgnored private var visibleSurfaceProjections: [CompanionAssistantSurface: VisibleSurfaceProjection] = [:]
     @ObservationIgnored private var hasUserSelectedAssistantSurface = false
     @ObservationIgnored private var lastVisibleSnapshotFingerprint: VisibleSnapshotFingerprint?
@@ -54,6 +55,7 @@ final class CompanionSnapshotStateStore {
     func reset() {
         visibleProjectionState = .empty()
         canonicalSnapshot = nil
+        canonicalSessionIndex = .empty
         visibleSurfaceProjections = [:]
         hasUserSelectedAssistantSurface = false
         lastVisibleSnapshotFingerprint = nil
@@ -96,7 +98,7 @@ final class CompanionSnapshotStateStore {
         preferredSurface: CompanionAssistantSurface? = nil
     ) -> CompanionSnapshotApplyResult {
         canonicalSnapshot = nextSnapshot
-        visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: nextSnapshot)
+        refreshCanonicalProjectionCache(from: nextSnapshot)
         let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
             snapshot: nextSnapshot,
             preferredSurface: preferredSurface,
@@ -168,7 +170,7 @@ final class CompanionSnapshotStateStore {
             return true
         }
 
-        visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: nextSnapshot)
+        refreshCanonicalProjectionCache(from: nextSnapshot)
         applyVisibleAssistantSurface(surface)
         return true
     }
@@ -289,14 +291,17 @@ final class CompanionSnapshotStateStore {
             sessionSections: reducedSections,
             fingerprint: nextFingerprint
         )
+        if let canonicalSnapshot {
+            canonicalSessionIndex = SessionIndex(
+                projection: projection.sessionIndex,
+                snapshot: canonicalSnapshot
+            )
+        }
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: reducedSections,
-            sessionIndex: SessionIndex(
-                projection: projection.sessionIndex,
-                snapshot: visibleSnapshot
-            )
+            sessionIndex: canonicalSessionIndex
         )
         lastVisibleSnapshotFingerprint = nextFingerprint
         return true
@@ -311,7 +316,7 @@ final class CompanionSnapshotStateStore {
             snapshot: projection.visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: projection.sessionSections,
-            sessionIndex: visibleProjectionState.sessionIndex
+            sessionIndex: canonicalSessionIndex
         )
         lastVisibleSnapshotFingerprint = projection.fingerprint
         return projection.visibleSnapshot
@@ -326,7 +331,9 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: SessionSections(sessions: visibleSnapshot.sessions),
-            sessionIndex: SessionIndex(snapshot: visibleSnapshot)
+            sessionIndex: canonicalSessionIndex == .empty
+                ? SessionIndex(snapshot: visibleSnapshot)
+                : canonicalSessionIndex
         )
         lastVisibleSnapshotFingerprint = nil
         return true
@@ -345,7 +352,7 @@ final class CompanionSnapshotStateStore {
             fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         )
         let nextSessionIndex = sessionIndex == .empty
-            ? SessionIndex(localSnapshot: sourceSnapshot)
+            ? canonicalSessionIndex(for: sourceSnapshot)
             : sessionIndex
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
@@ -429,6 +436,18 @@ final class CompanionSnapshotStateStore {
                 )
             }
         )
+    }
+
+    private func refreshCanonicalProjectionCache(from sourceSnapshot: MobileSnapshot) {
+        canonicalSessionIndex = SessionIndex(snapshot: sourceSnapshot)
+        visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: sourceSnapshot)
+    }
+
+    private func canonicalSessionIndex(for sourceSnapshot: MobileSnapshot) -> SessionIndex {
+        if canonicalSessionIndex == .empty {
+            canonicalSessionIndex = SessionIndex(localSnapshot: sourceSnapshot)
+        }
+        return canonicalSessionIndex
     }
 
     private static func millisecondsSinceEpoch(_ date: Date) -> Int64 {

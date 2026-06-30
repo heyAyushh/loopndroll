@@ -304,6 +304,84 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testRapidAssistantSurfaceSwitchUsesLastLocalSelectionAndCanonicalIndex() async throws {
+        let codexSession = Self.sessionSummary(
+            id: "codex-thread",
+            title: "Codex Mini",
+            ref: "C1",
+            status: .active
+        )
+        let claudeSession = Self.sessionSummary(
+            id: "claude-thread",
+            title: "Claude Mini",
+            ref: "CL1",
+            status: .active
+        )
+        let devinSession = Self.sessionSummary(
+            id: "devin-thread",
+            title: "Devin Mini",
+            ref: "D1",
+            status: .active
+        )
+        let grokSession = Self.sessionSummary(
+            id: "grok-thread",
+            title: "Grok Mini",
+            ref: "G1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(
+                    session: codexSession,
+                    assistantSurface: .codex,
+                    seq: 14,
+                    revision: "codex-revision"
+                ),
+                Self.miniRecord(
+                    session: claudeSession,
+                    assistantSurface: .claudeCode,
+                    seq: 13,
+                    revision: "claude-revision"
+                ),
+                Self.miniRecord(
+                    session: devinSession,
+                    assistantSurface: .devin,
+                    seq: 12,
+                    revision: "devin-revision"
+                ),
+                Self.miniRecord(
+                    session: grokSession,
+                    assistantSurface: .grokBuild,
+                    seq: 11,
+                    revision: "grok-revision"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+
+        _ = model.selectAssistantSurface(.claudeCode)
+        _ = model.selectAssistantSurface(.devin)
+        _ = model.selectAssistantSurface(.grokBuild)
+        let finalSelectionTask = try #require(model.selectAssistantSurface(.codex))
+
+        #expect(model.viewState.selectedAssistantSurface == .codex)
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+        #expect(model.viewState.assistantSurface(for: "codex-thread") == .codex)
+        #expect(model.viewState.assistantSurface(for: "claude-thread") == .claudeCode)
+        #expect(model.viewState.assistantSurface(for: "devin-thread") == .devin)
+        #expect(model.viewState.assistantSurface(for: "grok-thread") == .grokBuild)
+        #expect(await finalSelectionTask.value)
+        #expect(service.loadSnapshotCallCount == 0)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchPreservesLocalMiniSourceWithoutCommandsOrReload() async throws {
         let latestSeq: Int64 = 30
         let codexSession = Self.sessionSummary(

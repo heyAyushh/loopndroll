@@ -303,7 +303,11 @@ struct SessionsScreen: View {
     }
 
     private func updateAssistantSurface(_ surface: CompanionAssistantSurface) {
-        model.selectAssistantSurface(surface)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        _ = withTransaction(transaction) {
+            model.selectAssistantSurface(surface)
+        }
     }
 }
 

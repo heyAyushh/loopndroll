@@ -55,8 +55,7 @@ struct AssistantSurfacePicker: View {
                 HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
                     ForEach(CompanionAssistantSurface.allCases) { surface in
                         Button {
-                            selection = surface
-                            scrollProxy.scrollTo(surface.id, anchor: .center)
+                            select(surface)
                         } label: {
                             AssistantSurfacePickerItem(
                                 surface: surface,
@@ -84,6 +83,14 @@ struct AssistantSurfacePicker: View {
         .disabled(isDisabled)
         .accessibilityLabel("Assistant")
         .accessibilityIdentifier("assistant.surface.picker")
+    }
+
+    private func select(_ surface: CompanionAssistantSurface) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            selection = surface
+        }
     }
 }
 
