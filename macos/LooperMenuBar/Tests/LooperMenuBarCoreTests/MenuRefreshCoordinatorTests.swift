@@ -227,6 +227,35 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
     }
 
+    @Test("stale HTTP health cannot prove iPhone handoff readiness")
+    func staleHTTPHealthCannotProveIPhoneHandoffReadiness() throws {
+        let staleHealthAge: TimeInterval = 60
+        let recordedAt = Date(timeIntervalSinceNow: -staleHealthAge)
+        var readiness = MobileRouteReadinessState(
+            health: MenuRefreshRecordingClient.mobileHealth(),
+            healthRecordedAt: recordedAt
+        )
+        let endpoint = try #require(URL(string: "http://100.119.200.69:8766"))
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: endpoint,
+            refreshGeneration: readiness.generation,
+            syncReason: .heartbeat
+        )
+
+        #expect(readiness.hasLiveRouteProof)
+        #expect(!readiness.supportsNativeHandoff)
+        #expect(readiness.provenReachableHandoffBaseURL(now: recordedAt) != nil)
+        #expect(readiness.provenReachableHandoffBaseURL == nil)
+        #expect(readiness.mobileStatusTitle == "Fresh Session; HTTP enrichment stale")
+        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
+        #expect(
+            readiness.httpEnrichmentStatusTitle(now: recordedAt.addingTimeInterval(staleHealthAge))?
+                .contains("stale 60s old") == true
+        )
+    }
+
     @Test("route switch marks previous endpoint stale until Session reconnects")
     func routeSwitchMarksPreviousEndpointStaleUntilSessionReconnects() throws {
         var readiness = MobileRouteReadinessState(

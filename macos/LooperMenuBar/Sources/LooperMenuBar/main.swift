@@ -1338,9 +1338,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func addMobileRouteStatusItems(to menu: NSMenu) {
     addDisabledItem("Current route: \(mobileRouteReadiness.routeStatusTitle)", to: menu)
     addDisabledItem("Tailscale: \(mobileRouteReadiness.tailscaleStatusTitle)", to: menu)
-    if !mobileRouteReadiness.hasLiveRouteProof,
-      let enrichmentStatus = mobileRouteReadiness.httpEnrichmentStatusTitle()
-    {
+    if let enrichmentStatus = mobileRouteReadiness.httpEnrichmentStatusTitle() {
       addDisabledItem(enrichmentStatus, to: menu)
     }
   }

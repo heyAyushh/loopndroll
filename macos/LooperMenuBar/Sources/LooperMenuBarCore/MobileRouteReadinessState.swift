@@ -34,6 +34,7 @@ public enum MobileRouteSessionSyncReason: String, Equatable, Sendable {
 public struct MobileRouteReadinessState: Equatable, Sendable {
     private enum Defaults {
         static let minimumElapsedSeconds = 0
+        static let healthFreshnessWindow: TimeInterval = 30
     }
 
     private enum Titles {
@@ -42,6 +43,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         static let cachedWaitingForSessionProof = "Cached route: waiting for Session proof"
         static let sessionProofSuffix = "waiting for Session proof"
         static let freshHandoffRoute = "Fresh handoff route"
+        static let freshSessionHTTPStale = "Fresh Session; HTTP enrichment stale"
         static let freshSession = "Fresh Session"
         static let notProven = "Not proven"
         static let notActive = "Not active"
@@ -84,11 +86,16 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
     }
 
     public var provenReachableHandoffBaseURL: URL? {
+        provenReachableHandoffBaseURL(now: Date())
+    }
+
+    public func provenReachableHandoffBaseURL(now: Date) -> URL? {
         guard hasLiveRouteProof,
               let provenRealtimeEndpoint,
               !MobileRouteURLPolicy.isLoopbackURL(provenRealtimeEndpoint),
               health?.ok == true,
-              health?.requiresAuthentication == true
+              health?.requiresAuthentication == true,
+              isHTTPHealthFresh(now: now)
         else {
             return nil
         }
@@ -99,6 +106,10 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
     public var mobileStatusTitle: String {
         guard hasLiveRouteProof else {
             return pendingProofStatusTitle
+        }
+
+        if hasStaleHTTPHealth {
+            return Titles.freshSessionHTTPStale
         }
 
         return supportsNativeHandoff ? Titles.freshHandoffRoute : Titles.freshSession
@@ -146,6 +157,9 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             Defaults.minimumElapsedSeconds,
             Int(now.timeIntervalSince(healthRecordedAt))
         )
+        guard isHTTPHealthFresh(now: now) else {
+            return "HTTP enrichment: stale \(elapsedSeconds)s old, not Session proof"
+        }
         return "HTTP enrichment: \(elapsedSeconds)s old, not Session proof"
     }
 
@@ -222,6 +236,22 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         return staleRealtimeEndpoint == nil
             ? Titles.localWaitingForSessionProof
             : Titles.cachedWaitingForSessionProof
+    }
+
+    private var hasStaleHTTPHealth: Bool {
+        guard health != nil else {
+            return false
+        }
+        return !isHTTPHealthFresh(now: Date())
+    }
+
+    private func isHTTPHealthFresh(now: Date) -> Bool {
+        guard health != nil,
+              let healthRecordedAt
+        else {
+            return false
+        }
+        return now.timeIntervalSince(healthRecordedAt) <= Defaults.healthFreshnessWindow
     }
 
     private func acceptsReadyEndpoint(_ endpointURL: URL) -> Bool {
