@@ -54,6 +54,7 @@ message Command {
     DeleteCompletionCheckRequest delete_completion_check = 19;
     SetSessionNotificationsRequest set_session_notifications = 20;
     SetSessionCompletionCheckRequest set_session_completion_check = 21;
+    SetAssistantSurfaceRequest set_assistant_surface = 22;
   }
 }
 
@@ -123,6 +124,11 @@ message SetScopeRequest {
 
 message SetGlobalPresetRequest {
   string preset = 1;
+  string client_mutation_id = 2;
+}
+
+message SetAssistantSurfaceRequest {
+  string assistant_surface = 1;
   string client_mutation_id = 2;
 }
 

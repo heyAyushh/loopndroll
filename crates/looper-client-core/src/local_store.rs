@@ -338,6 +338,27 @@ impl LooperClientCoreLocalStore {
         })
     }
 
+    pub(crate) fn enqueue_set_assistant_surface_command(
+        &self,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
+        require_present(&assistant_surface, ClientCoreError::InvalidAssistantSurface)?;
+        self.enqueue(ClientPendingCommand {
+            kind: ClientPendingCommandKind::SetAssistantSurface,
+            client_mutation_id,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            assistant_surface,
+            prompt_intent: String::new(),
+            prompt: String::new(),
+            notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            attempt_count: 0,
+        })
+    }
+
     pub(crate) fn enqueue_set_siri_default_session_command(
         &self,
         thread_id: String,
@@ -518,13 +539,6 @@ impl LooperClientCoreLocalStore {
 }
 
 impl StoredState {
-    fn drop_legacy_assistant_surface_commands(&mut self) -> bool {
-        let original_len = self.pending_commands.len();
-        self.pending_commands
-            .retain(|command| command.kind != ClientPendingCommandKind::SetAssistantSurface);
-        self.pending_commands.len() != original_len
-    }
-
     fn repair_legacy_control_payload_cursor(&mut self) -> bool {
         if self.sessions.is_empty() || !has_legacy_control_payload(&self.sessions) {
             return false;
@@ -697,13 +711,11 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
 fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     match load(file_path) {
         Ok(mut state) => {
-            let dropped_legacy_surface_commands = state.drop_legacy_assistant_surface_commands();
             let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
             let coalesced_pending_commands = state.coalesce_latest_pending_commands();
             let normalized_local_minis = state.normalize_local_minis();
             let repaired_last_seq_by_node = state.repair_last_seq_by_node();
-            if dropped_legacy_surface_commands
-                || repaired_legacy_cursor
+            if repaired_legacy_cursor
                 || coalesced_pending_commands
                 || normalized_local_minis
                 || repaired_last_seq_by_node
@@ -779,6 +791,7 @@ fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> boo
         kind,
         ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
 }
@@ -845,6 +858,7 @@ fn latest_pending_command_wins(kind: ClientPendingCommandKind) -> bool {
         ClientPendingCommandKind::SetSessionMode
             | ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SaveDefaultPrompt
             | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
@@ -864,6 +878,7 @@ fn pending_command_latest_wins_globally(kind: ClientPendingCommandKind) -> bool 
         kind,
         ClientPendingCommandKind::SetSiriCurrentSession
             | ClientPendingCommandKind::SetSiriDefaultSession
+            | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SaveDefaultPrompt
             | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
@@ -1105,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    fn local_store_drops_stale_assistant_surface_switches_on_load() {
+    fn local_store_keeps_latest_assistant_surface_switch_on_load() {
         let path = temp_store_path("assistant-surface-load-repair");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
@@ -1136,17 +1151,26 @@ mod tests {
         let store =
             LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
         let snapshot = store.snapshot().expect("snapshot");
-        assert!(snapshot.pending_commands.is_empty());
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetAssistantSurface
+        );
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-devin"
+        );
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
 
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
                 .expect("repaired json");
-        assert!(
-            persisted["pendingCommands"]
-                .as_array()
-                .expect("pending commands")
-                .is_empty()
-        );
+        let pending_commands = persisted["pendingCommands"]
+            .as_array()
+            .expect("pending commands");
+        assert_eq!(pending_commands.len(), 1);
+        assert_eq!(pending_commands[0]["clientMutationID"], "mutation-devin");
+        assert_eq!(pending_commands[0]["assistantSurface"], "devin");
     }
 
     #[test]

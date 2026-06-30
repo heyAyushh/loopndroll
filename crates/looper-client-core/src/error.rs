@@ -10,6 +10,8 @@ pub enum ClientCoreError {
     EmptyPrompt,
     #[error("prompt intent must be steer or queue")]
     InvalidPromptIntent,
+    #[error("assistant surface is required")]
+    InvalidAssistantSurface,
     #[error("notification id is required")]
     EmptyNotificationId,
     #[error("client mutation id is required")]

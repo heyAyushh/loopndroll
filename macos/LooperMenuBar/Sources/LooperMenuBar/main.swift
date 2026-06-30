@@ -357,20 +357,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     return openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: nil)
   }
 
-  private func shouldDeliverMacOSNotification(state: DesktopMobileStateResponse?) -> Bool {
-    (state?.defaultNotificationTargetIDs ?? [Layout.notificationTargetMacOS])
-      .contains(Layout.notificationTargetMacOS)
-  }
-
   private func shouldDeliverMacOSNotification(for session: MenuBarSessionMini) -> Bool {
     guard let notificationStatus = session.notificationStatus else {
-      return shouldDeliverMacOSNotification(state: mobileState)
+      return false
     }
     guard notificationStatus.enabled else {
       return false
-    }
-    if notificationStatus.usesDefault {
-      return shouldDeliverMacOSNotification(state: mobileState)
     }
     return notificationStatus.targetIds.contains(Layout.notificationTargetMacOS)
   }

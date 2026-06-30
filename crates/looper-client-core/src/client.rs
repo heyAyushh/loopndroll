@@ -313,6 +313,32 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
+    fn set_assistant_surface(
+        &self,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+        require_present(&assistant_surface, ClientCoreError::InvalidAssistantSurface)?;
+        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
+
+        let mut state = self.lock_state()?;
+        state.queue_command(OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetAssistantSurface,
+            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
+            preset: String::new(),
+            prompt: String::new(),
+            prompt_intent: String::new(),
+            assistant_surface,
+            notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            client_mutation_id,
+            after_seq: EMPTY_SEQUENCE,
+        });
+        Ok(state.snapshot())
+    }
+
     fn set_siri_current_session(
         &self,
         thread_id: String,
@@ -730,6 +756,21 @@ impl LooperClientCore {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
+        self.emit_local_state_update(self.snapshot()?);
+        local_store.mark_attempted(client_mutation_id.clone())?;
+        self.spawn_command_ack_flush(local_store, client_mutation_id);
+        Ok(())
+    }
+
+    pub(crate) fn accept_set_assistant_surface_durable(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+        assistant_surface: String,
+        client_mutation_id: String,
+    ) -> Result<(), ClientCoreError> {
+        self.set_assistant_surface(assistant_surface.clone(), client_mutation_id.clone())?;
+        local_store
+            .enqueue_set_assistant_surface_command(assistant_surface, client_mutation_id.clone())?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         self.spawn_command_ack_flush(local_store, client_mutation_id);
@@ -1531,31 +1572,6 @@ impl LooperClientCore {
                     String::new(),
                 )
             }
-            StateMiniStreamEvent::RecoveredSnapshot {
-                snapshot,
-                endpoint_url,
-                error_description,
-            } => {
-                require_valid_sequence(snapshot.latest_seq)?;
-                validate_state_minis(&snapshot.sessions)?;
-                if !endpoint_url.is_empty() {
-                    state.endpoint_url = endpoint_url;
-                }
-                let endpoint_url = state.endpoint_url.clone();
-                let did_change = state.replace_state_minis_from_source(
-                    snapshot,
-                    FRESHNESS_SOURCE_RECOVERY,
-                    endpoint_url.as_str(),
-                );
-                state.phase = ConnectionPhase::Ready;
-                state.last_error.clear();
-                (
-                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
-                    did_change,
-                    state.latest_seq,
-                    error_description,
-                )
-            }
             StateMiniStreamEvent::Reconnecting {
                 latest_seq,
                 error_description,
@@ -2301,7 +2317,10 @@ fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), Clien
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
         }
         ClientPendingCommandKind::SetAssistantSurface => {
-            return Err(ClientCoreError::UnexpectedOutboxMutations);
+            require_present(
+                &command.assistant_surface,
+                ClientCoreError::InvalidAssistantSurface,
+            )?;
         }
         ClientPendingCommandKind::SaveDefaultPrompt => {
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
@@ -2326,9 +2345,7 @@ fn restored_command_kind(
         ClientPendingCommandKind::SubmitNotificationReply => {
             Ok(ClientCommandKind::SubmitNotificationReply)
         }
-        ClientPendingCommandKind::SetAssistantSurface => {
-            Err(ClientCoreError::UnexpectedOutboxMutations)
-        }
+        ClientPendingCommandKind::SetAssistantSurface => Ok(ClientCommandKind::SetAssistantSurface),
         ClientPendingCommandKind::SetSiriCurrentSession => {
             Ok(ClientCommandKind::SetSiriCurrentSession)
         }
@@ -2347,10 +2364,8 @@ fn restored_command_kind(
 
 fn restored_thread_id(command: &ClientPendingCommand) -> Result<String, ClientCoreError> {
     match command.kind {
-        ClientPendingCommandKind::SetAssistantSurface => {
-            Err(ClientCoreError::UnexpectedOutboxMutations)
-        }
-        ClientPendingCommandKind::SaveDefaultPrompt
+        ClientPendingCommandKind::SetAssistantSurface
+        | ClientPendingCommandKind::SaveDefaultPrompt
         | ClientPendingCommandKind::SetDefaultNotificationTargets => {
             Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned())
         }
@@ -2496,6 +2511,7 @@ fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
         ClientCommandKind::SetSessionMode
             | ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
+            | ClientCommandKind::SetAssistantSurface
             | ClientCommandKind::SaveDefaultPrompt
             | ClientCommandKind::SetDefaultNotificationTargets
     )
@@ -2506,6 +2522,7 @@ fn latest_wins_outbox_command_is_global(command_kind: ClientCommandKind) -> bool
         command_kind,
         ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
+            | ClientCommandKind::SetAssistantSurface
             | ClientCommandKind::SaveDefaultPrompt
             | ClientCommandKind::SetDefaultNotificationTargets
     )
@@ -3592,6 +3609,59 @@ mod tests {
     }
 
     #[test]
+    fn durable_assistant_surface_command_is_latest_wins() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("durable-assistant-surface-latest");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+
+        core.accept_set_assistant_surface_durable(
+            store.clone(),
+            "codex".to_owned(),
+            "cmid-surface-codex".to_owned(),
+        )
+        .expect("local codex surface accepted");
+        core.accept_set_assistant_surface_durable(
+            store.clone(),
+            "zed".to_owned(),
+            "cmid-surface-zed".to_owned(),
+        )
+        .expect("local zed surface accepted");
+
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 1);
+        assert_eq!(snapshot.pending_mutations.len(), 1);
+        assert_eq!(
+            snapshot.pending_mutations[0].command_kind,
+            ClientCommandKind::SetAssistantSurface
+        );
+        assert_eq!(
+            snapshot.pending_mutations[0].client_mutation_id,
+            "cmid-surface-zed"
+        );
+        let outbox = core.take_outbox().expect("outbox");
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(
+            outbox[0].command_kind,
+            ClientCommandKind::SetAssistantSurface
+        );
+        assert_eq!(outbox[0].assistant_surface, "zed");
+
+        let local_snapshot = store.snapshot().expect("local snapshot");
+        assert_eq!(local_snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            local_snapshot.pending_commands[0].kind,
+            ClientPendingCommandKind::SetAssistantSurface
+        );
+        assert_eq!(
+            local_snapshot.pending_commands[0].client_mutation_id,
+            "cmid-surface-zed"
+        );
+        assert_eq!(local_snapshot.pending_commands[0].assistant_surface, "zed");
+        assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
+    }
+
+    #[test]
     fn durable_mode_command_emits_local_state_update_before_transport() {
         let core = LooperClientCore::new();
         let store_path = temp_store_path("durable-mode-local-update");
@@ -3885,140 +3955,6 @@ mod tests {
         assert!(!update.did_change);
         assert_eq!(update.snapshot.phase, ConnectionPhase::Reconnecting);
         assert_eq!(update.snapshot.last_error, "seq_gap");
-    }
-
-    #[test]
-    fn state_mini_stream_recovery_snapshot_replaces_state_in_rust_core() {
-        let core = LooperClientCore::new();
-        core.replace_state_minis(ClientStateMiniSnapshot {
-            latest_seq: 3,
-            sessions: vec![state_mini("thread-1", "codex", 3, "rev-3", "old")],
-            server_time: "2026-06-25T00:00:01Z".to_owned(),
-        })
-        .expect("seed state mini");
-
-        let update = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
-                snapshot: ClientStateMiniSnapshot {
-                    latest_seq: 9,
-                    sessions: vec![state_mini("thread-1", "codex", 9, "rev-9", "recovered")],
-                    server_time: SERVER_TIME.to_owned(),
-                },
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-                error_description: "seq_gap".to_owned(),
-            })
-            .expect("stream recovery snapshot");
-
-        assert_eq!(
-            update.reason,
-            ClientStateMiniStreamUpdateReason::RecoveryRequired
-        );
-        assert!(update.did_change);
-        assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
-        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
-        assert_eq!(update.snapshot.latest_seq, 9);
-        assert_eq!(update.snapshot.revision, "rev-9");
-        assert!(update.snapshot.last_error.is_empty());
-        assert_eq!(
-            payload_value(&update.snapshot.state_minis[0])["title"],
-            "recovered"
-        );
-    }
-
-    #[test]
-    fn recovered_snapshot_does_not_rewind_state() {
-        let core = LooperClientCore::new();
-        core.replace_state_minis(ClientStateMiniSnapshot {
-            latest_seq: 20,
-            sessions: vec![state_mini("thread-zed", "zed", 20, "rev-20", "zed")],
-            server_time: "2026-06-25T00:00:20Z".to_owned(),
-        })
-        .expect("seed realtime state mini");
-
-        let update = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
-                snapshot: ClientStateMiniSnapshot {
-                    latest_seq: 10,
-                    sessions: vec![state_mini("thread-codex", "codex", 10, "rev-10", "codex")],
-                    server_time: "2026-06-25T00:00:10Z".to_owned(),
-                },
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-                error_description: "seq_gap".to_owned(),
-            })
-            .expect("stale stream recovery snapshot");
-
-        assert_eq!(
-            update.reason,
-            ClientStateMiniStreamUpdateReason::RecoveryRequired
-        );
-        assert!(!update.did_change);
-        assert_eq!(update.snapshot.phase, ConnectionPhase::Ready);
-        assert_eq!(update.snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
-        assert_eq!(update.snapshot.latest_seq, 20);
-        assert_eq!(update.snapshot.state_minis.len(), 1);
-        assert_eq!(update.snapshot.state_minis[0].session_id, "thread-zed");
-        assert_eq!(update.snapshot.state_minis[0].assistant_surface, "zed");
-    }
-
-    #[test]
-    fn recovered_snapshot_preserves_newer_node_mini_when_global_seq_advances() {
-        let core = LooperClientCore::new();
-        core.replace_state_minis(ClientStateMiniSnapshot {
-            latest_seq: 20,
-            sessions: vec![
-                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stream a"),
-                node_state_mini("node-b", "thread-b", "zed", 12, "rev-b-12", "cached b"),
-            ],
-            server_time: "2026-06-25T00:00:20Z".to_owned(),
-        })
-        .expect("seed streamed node minis");
-
-        let update = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveredSnapshot {
-                snapshot: ClientStateMiniSnapshot {
-                    latest_seq: 21,
-                    sessions: vec![
-                        node_state_mini("node-a", "thread-a", "codex", 15, "rev-a-15", "stale a"),
-                        node_state_mini(
-                            "node-a",
-                            "thread-a-stale-extra",
-                            "codex",
-                            15,
-                            "rev-a-extra-15",
-                            "stale extra a",
-                        ),
-                        node_state_mini("node-b", "thread-b", "zed", 21, "rev-b-21", "fresh b"),
-                    ],
-                    server_time: SERVER_TIME.to_owned(),
-                },
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-                error_description: "seq_gap".to_owned(),
-            })
-            .expect("recovered snapshot");
-
-        assert!(update.did_change);
-        assert_eq!(update.snapshot.latest_seq, 21);
-        let thread_a = update
-            .snapshot
-            .state_minis
-            .iter()
-            .find(|session| session.session_id == "thread-a")
-            .expect("preserved newer node-a mini");
-        let thread_b = update
-            .snapshot
-            .state_minis
-            .iter()
-            .find(|session| session.session_id == "thread-b")
-            .expect("updated node-b mini");
-        assert!(thread_a.payload_json.contains("stream a"));
-        assert!(thread_b.payload_json.contains("fresh b"));
-        assert!(
-            update
-                .snapshot
-                .state_minis
-                .iter()
-                .all(|session| session.session_id != "thread-a-stale-extra")
-        );
     }
 
     #[test]

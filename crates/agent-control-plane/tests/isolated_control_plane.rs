@@ -14,7 +14,7 @@ use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
     ClientFrame, Command, DeleteSessionRequest, HealthRequest, MuteSessionRequest, Resume,
-    SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame,
+    SaveDefaultPromptRequest, SendSessionPromptRequest, ServerFrame, SetAssistantSurfaceRequest,
     SetDefaultNotificationTargetsRequest, SetGlobalCompletionCheckRequest, SetScopeRequest,
     SetSessionArchivedRequest, SetSessionCompletionCheckRequest, SetSessionModeRequest,
     SetSessionNotificationsRequest, SetSiriDefaultSessionRequest, SubmitNotificationReplyRequest,
@@ -3166,6 +3166,40 @@ async fn mobile_session_controls_are_owned_by_rust() {
         settings_snapshot["globalSettings"]["siriDefaultAssistantSurface"],
         serde_json::Value::Null
     );
+
+    let assistant_surface_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: "zed".to_owned(),
+            client_mutation_id: "mobile-controls-assistant-surface".to_owned(),
+        }),
+    )
+    .await;
+    assert!(assistant_surface_ack.accepted);
+    assert_eq!(assistant_surface_ack.entity_id, "mobile-settings");
+    let assistant_surface_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        assistant_surface_snapshot["globalSettings"]["assistantSurface"],
+        "zed"
+    );
+    let codex_surface_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetAssistantSurface(SetAssistantSurfaceRequest {
+            assistant_surface: "codex".to_owned(),
+            client_mutation_id: "mobile-controls-assistant-surface-codex".to_owned(),
+        }),
+    )
+    .await;
+    assert!(codex_surface_ack.accepted);
 
     control_plane
         .mobile_session_service()

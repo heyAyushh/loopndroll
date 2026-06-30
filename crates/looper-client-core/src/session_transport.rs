@@ -48,11 +48,6 @@ const SESSIONS_FIELD: &str = "sessions";
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
     Delta(ClientStateMiniDelta),
-    RecoveredSnapshot {
-        snapshot: ClientStateMiniSnapshot,
-        endpoint_url: String,
-        error_description: String,
-    },
     Heartbeat {
         latest_seq: i64,
         server_time: String,
@@ -206,36 +201,13 @@ pub(crate) async fn run_state_mini_stream(
                 error_description,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
-                match fetch_state_mini_snapshot(
-                    endpoints.clone(),
-                    bearer_token.clone(),
-                    mobile_session_header.clone(),
-                )
-                .await
-                {
-                    Ok(recovered) => {
-                        next_after_seq = next_after_seq.max(recovered.snapshot.latest_seq);
-                        mark_endpoint_last_good(&mut endpoints, &recovered.endpoint_url);
-                        let _ = events
-                            .send(StateMiniStreamEvent::RecoveredSnapshot {
-                                snapshot: recovered.snapshot,
-                                endpoint_url: recovered.endpoint_url,
-                                error_description,
-                            })
-                            .await;
-                    }
-                    Err(error) => {
-                        let _ = events
-                            .send(StateMiniStreamEvent::RecoveryRequired {
-                                latest_seq: next_after_seq,
-                                error_description: format!(
-                                    "{error_description}; snapshot recovery failed: {error}"
-                                ),
-                            })
-                            .await;
-                        tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
-                    }
-                }
+                let _ = events
+                    .send(StateMiniStreamEvent::RecoveryRequired {
+                        latest_seq: next_after_seq,
+                        error_description,
+                    })
+                    .await;
+                tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
             }
             Err(StateMiniTransportError::Transport {
                 latest_seq,
@@ -702,6 +674,12 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 },
             ))
         }
+        ClientCommandKind::SetAssistantSurface => Ok(proto::command::Command::SetAssistantSurface(
+            proto::SetAssistantSurfaceRequest {
+                assistant_surface: frame.assistant_surface,
+                client_mutation_id: frame.client_mutation_id,
+            },
+        )),
         ClientCommandKind::SetSiriCurrentSession => Ok(
             proto::command::Command::SetSiriCurrentSession(proto::SetSiriCurrentSessionRequest {
                 thread_id: frame.thread_id,
@@ -774,6 +752,7 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
             "accepted"
         }
         ClientCommandKind::SetSessionMode
+        | ClientCommandKind::SetAssistantSurface
         | ClientCommandKind::SetSiriCurrentSession
         | ClientCommandKind::SetSiriDefaultSession
         | ClientCommandKind::SaveDefaultPrompt
@@ -1063,6 +1042,33 @@ mod tests {
         );
         assert_eq!(snapshot.sessions[1].session_id, "thread-2");
         assert!(snapshot.sessions[1].assistant_surface.is_empty());
+    }
+
+    #[test]
+    fn command_encodes_assistant_surface_over_session_stream() {
+        let frame = OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetAssistantSurface,
+            thread_id: "mobile-settings".to_owned(),
+            preset: String::new(),
+            prompt: String::new(),
+            prompt_intent: String::new(),
+            assistant_surface: "zed".to_owned(),
+            notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            client_mutation_id: "cmid-surface-zed".to_owned(),
+            after_seq: 0,
+        };
+
+        let encoded = command(frame).expect("encoded command");
+        match encoded {
+            proto::command::Command::SetAssistantSurface(request) => {
+                assert_eq!(request.assistant_surface, "zed");
+                assert_eq!(request.client_mutation_id, "cmid-surface-zed");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 
     #[test]

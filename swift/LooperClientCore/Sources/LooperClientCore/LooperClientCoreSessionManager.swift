@@ -120,6 +120,13 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
     }
 
     @discardableResult
+    public func setAssistantSurface(
+        _ assistantSurface: String
+    ) async throws -> ClientSessionCommandIntentResult {
+        try await runtime.setAssistantSurface(assistantSurface: assistantSurface)
+    }
+
+    @discardableResult
     public func saveDefaultPrompt(
         _ prompt: String
     ) async throws -> ClientSessionCommandIntentResult {
