@@ -153,6 +153,8 @@ impl LooperClientCoreSessionRuntime {
             .client_core
             .recover_state_mini_snapshot(endpoints, bearer_token, mobile_session_header)
             .await?;
+        self.local_store
+            .mark_last_good_endpoint(recovered.endpoint_url.clone())?;
         self.local_store.replace_state_minis(recovered.snapshot)
     }
 
@@ -1156,22 +1158,22 @@ mod tests {
     }
 
     #[test]
-    fn runtime_recovery_does_not_replace_last_good_live_endpoint() {
+    fn runtime_recovery_persists_first_ready_fallback_endpoint_as_last_good() {
         let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
-        let path = temp_store_path("recovery-does-not-replace-live-endpoint");
+        let path = temp_store_path("recovery-persists-first-ready-fallback");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
-        let live_url = unused_local_url();
+        let stale_url = unused_local_url();
         runtime
             .local_store
-            .mark_last_good_endpoint(live_url.clone())
-            .expect("seed live endpoint");
+            .mark_last_good_endpoint(stale_url.clone())
+            .expect("seed stale endpoint");
         let (recovery_url, recovery_server) = spawn_snapshot_server(31, "thread-recovered");
 
         let local_snapshot = test_runtime
             .block_on(runtime.recover_state_mini_snapshot(
                 vec![
                     ClientEndpoint {
-                        url: live_url.clone(),
+                        url: stale_url.clone(),
                         last_good: false,
                     },
                     ClientEndpoint {
@@ -1186,7 +1188,7 @@ mod tests {
 
         assert_eq!(local_snapshot.latest_seq, 31);
         assert_eq!(local_snapshot.sessions[0].session_id, "thread-recovered");
-        assert_ne!(recovery_url.trim_end_matches('/'), live_url);
+        assert_ne!(recovery_url.trim_end_matches('/'), stale_url);
         drop(runtime);
         let _ = recovery_server.join();
 
@@ -1195,7 +1197,7 @@ mod tests {
             .local_store
             .endpoints_with_last_good(vec![
                 ClientEndpoint {
-                    url: live_url,
+                    url: stale_url,
                     last_good: false,
                 },
                 ClientEndpoint {
@@ -1205,8 +1207,8 @@ mod tests {
             ])
             .expect("stored endpoints");
 
-        assert!(endpoints[0].last_good);
-        assert!(!endpoints[1].last_good);
+        assert!(!endpoints[0].last_good);
+        assert!(endpoints[1].last_good);
     }
 
     #[test]
