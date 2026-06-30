@@ -538,15 +538,82 @@ private struct VisibleSnapshotFingerprint: Equatable {
     }
 
     init(snapshot: MobileSnapshot) {
-        if let data = try? JSONEncoder().encode(snapshot),
-           let json = String(data: data, encoding: .utf8) {
-            self.init(json: json)
-            return
+        var hasher = Hasher()
+        var byteCount = 0
+        Self.combine(snapshot.host, into: &hasher, byteCount: &byteCount)
+        Self.combine(snapshot.globalSettings, into: &hasher, byteCount: &byteCount)
+        Self.combine(snapshot.revision, into: &hasher, byteCount: &byteCount)
+        hasher.combine(snapshot.sessions.count)
+        byteCount += MemoryLayout<Int>.size
+        for session in snapshot.sessions {
+            hasher.combine(session)
+            byteCount += Self.approximateByteCount(session)
         }
 
-        let sessionIDs = snapshot.sessions.map(\.id).joined(separator: ",")
-        let revision = snapshot.revision ?? ""
-        self.init(json: "\(revision)#\(snapshot.sessions.count)#\(sessionIDs)")
+        self.byteCount = byteCount
+        contentHash = hasher.finalize()
+    }
+
+    private static func combine(
+        _ host: HostSummary,
+        into hasher: inout Hasher,
+        byteCount: inout Int
+    ) {
+        combine(host.id, into: &hasher, byteCount: &byteCount)
+        combine(host.name, into: &hasher, byteCount: &byteCount)
+        combine(host.address, into: &hasher, byteCount: &byteCount)
+        combine(host.grpcAddress, into: &hasher, byteCount: &byteCount)
+        hasher.combine(host.grpcAddresses)
+        byteCount += host.grpcAddresses.reduce(0) { count, address in
+            count + address.utf8.count
+        }
+        hasher.combine(host.isReachable)
+        byteCount += MemoryLayout<Bool>.size
+        combine(host.lastSyncedAt, into: &hasher, byteCount: &byteCount)
+    }
+
+    private static func combine(
+        _ settings: GlobalSettings,
+        into hasher: inout Hasher,
+        byteCount: inout Int
+    ) {
+        combine(settings.defaultPrompt, into: &hasher, byteCount: &byteCount)
+        combine(settings.globalMode?.rawValue, into: &hasher, byteCount: &byteCount)
+        combine(settings.scope, into: &hasher, byteCount: &byteCount)
+        combine(settings.notificationLabel, into: &hasher, byteCount: &byteCount)
+        combine(settings.completionCheckLabel, into: &hasher, byteCount: &byteCount)
+        hasher.combine(settings.completionCheckWaitForReply)
+        byteCount += MemoryLayout<Bool>.size
+        combine(settings.assistantSurface.rawValue, into: &hasher, byteCount: &byteCount)
+        combine(settings.siriDefaultSessionId, into: &hasher, byteCount: &byteCount)
+        combine(settings.siriDefaultAssistantSurface?.rawValue, into: &hasher, byteCount: &byteCount)
+        combine(settings.siriCurrentSessionId, into: &hasher, byteCount: &byteCount)
+        combine(settings.siriCurrentAssistantSurface?.rawValue, into: &hasher, byteCount: &byteCount)
+        hasher.combine(settings.siriCurrentUpdatedAtMs)
+        byteCount += MemoryLayout<Int64?>.size
+    }
+
+    private static func combine(
+        _ value: String?,
+        into hasher: inout Hasher,
+        byteCount: inout Int
+    ) {
+        hasher.combine(value)
+        byteCount += value?.utf8.count ?? 0
+    }
+
+    private static func approximateByteCount(_ session: SessionSummary) -> Int {
+        session.id.utf8.count +
+            session.ref.utf8.count +
+            session.title.utf8.count +
+            session.status.rawValue.utf8.count +
+            (session.effectiveMode?.rawValue.utf8.count ?? 0) +
+            session.lastUpdatedAt.utf8.count +
+            session.lastActivityAt.utf8.count +
+            (session.lastMessageAt?.utf8.count ?? 0) +
+            (session.assistantPreview?.utf8.count ?? 0) +
+            (session.promptDeliveryUnavailableReason?.utf8.count ?? 0) +
+            session.assistantClient.rawValue.utf8.count
     }
 }
 
