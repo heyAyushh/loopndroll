@@ -26,7 +26,6 @@ const MOBILE_SYNC_REASON_RECONNECTING: &str = "reconnecting";
 const MODE_MUTATION_PREFIX: &str = "mode";
 const PROMPT_MUTATION_PREFIX: &str = "prompt";
 const NOTIFICATION_REPLY_MUTATION_PREFIX: &str = "notification-reply";
-const ASSISTANT_SURFACE_MUTATION_PREFIX: &str = "assistant-surface";
 const SIRI_CURRENT_MUTATION_PREFIX: &str = "siri-current";
 const SIRI_DEFAULT_MUTATION_PREFIX: &str = "siri-default";
 const DEFAULT_PROMPT_MUTATION_PREFIX: &str = "default-prompt";
@@ -36,8 +35,6 @@ const DELETE_MUTATION_PREFIX: &str = "delete";
 const MUTE_MUTATION_PREFIX: &str = "mute";
 const LOCAL_ACCEPTED_DISPATCH_KIND: &str = "accepted";
 const EMPTY_LOCAL_REPLAY_SEQUENCE: i64 = 0;
-const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
-
 #[derive(Debug, uniffi::Object)]
 pub struct LooperClientCoreSessionRuntime {
     client_core: Arc<LooperClientCore>,
@@ -217,23 +214,6 @@ impl LooperClientCoreSessionRuntime {
             accepted: true,
             client_mutation_id,
             entity_id: thread_id,
-        })
-    }
-
-    pub async fn set_assistant_surface(
-        &self,
-        assistant_surface: String,
-    ) -> Result<ClientSessionCommandIntentResult, ClientCoreError> {
-        let client_mutation_id = generated_client_mutation_id(ASSISTANT_SURFACE_MUTATION_PREFIX);
-        self.client_core.accept_set_assistant_surface_durable(
-            self.local_store.clone(),
-            assistant_surface.clone(),
-            client_mutation_id.clone(),
-        )?;
-        Ok(ClientSessionCommandIntentResult {
-            accepted: true,
-            client_mutation_id,
-            entity_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
         })
     }
 

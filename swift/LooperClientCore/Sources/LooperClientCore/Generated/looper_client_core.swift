@@ -583,8 +583,6 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
 
-    func setAssistantSurface(assistantSurface: String) async throws  -> ClientSessionCommandIntentResult
-
     func setDefaultNotificationTargets(notificationTargetIds: [String]) async throws  -> ClientSessionCommandIntentResult
 
     func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
@@ -874,23 +872,6 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
             completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeClientSessionPromptIntentResult_lift,
-            errorHandler: FfiConverterTypeClientCoreError_lift
-        )
-}
-
-open func setAssistantSurface(assistantSurface: String)async throws  -> ClientSessionCommandIntentResult  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_set_assistant_surface(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(assistantSurface)
-                )
-            },
-            pollFunc: ffi_looper_client_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_looper_client_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_looper_client_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeClientSessionCommandIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
 }
@@ -3678,7 +3659,6 @@ public enum ClientCommandKind: Equatable, Hashable {
     case setSessionMode
     case sendSessionPrompt
     case submitNotificationReply
-    case setAssistantSurface
     case setSiriCurrentSession
     case setSiriDefaultSession
     case saveDefaultPrompt
@@ -3713,21 +3693,19 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
 
         case 3: return .submitNotificationReply
 
-        case 4: return .setAssistantSurface
+        case 4: return .setSiriCurrentSession
 
-        case 5: return .setSiriCurrentSession
+        case 5: return .setSiriDefaultSession
 
-        case 6: return .setSiriDefaultSession
+        case 6: return .saveDefaultPrompt
 
-        case 7: return .saveDefaultPrompt
+        case 7: return .setDefaultNotificationTargets
 
-        case 8: return .setDefaultNotificationTargets
+        case 8: return .setSessionArchived
 
-        case 9: return .setSessionArchived
+        case 9: return .deleteSession
 
-        case 10: return .deleteSession
-
-        case 11: return .muteSession
+        case 10: return .muteSession
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3749,36 +3727,32 @@ public struct FfiConverterTypeClientCommandKind: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .setAssistantSurface:
+        case .setSiriCurrentSession:
             writeInt(&buf, Int32(4))
 
 
-        case .setSiriCurrentSession:
+        case .setSiriDefaultSession:
             writeInt(&buf, Int32(5))
 
 
-        case .setSiriDefaultSession:
+        case .saveDefaultPrompt:
             writeInt(&buf, Int32(6))
 
 
-        case .saveDefaultPrompt:
+        case .setDefaultNotificationTargets:
             writeInt(&buf, Int32(7))
 
 
-        case .setDefaultNotificationTargets:
+        case .setSessionArchived:
             writeInt(&buf, Int32(8))
 
 
-        case .setSessionArchived:
+        case .deleteSession:
             writeInt(&buf, Int32(9))
 
 
-        case .deleteSession:
-            writeInt(&buf, Int32(10))
-
-
         case .muteSession:
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -3821,6 +3795,7 @@ public enum ClientCoreError: Swift.Error, Equatable, Hashable, Foundation.Locali
     case StateMiniSessionIdMismatch
     case InvalidConnectionState
     case UnexpectedOutboxMutations
+    case UnsupportedCommand
     case MissingCommandAcknowledgement
     case NoPendingNotificationReply
     case SessionCommandTransportFailed
@@ -3879,19 +3854,20 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
         case 14: return .StateMiniSessionIdMismatch
         case 15: return .InvalidConnectionState
         case 16: return .UnexpectedOutboxMutations
-        case 17: return .MissingCommandAcknowledgement
-        case 18: return .NoPendingNotificationReply
-        case 19: return .SessionCommandTransportFailed
-        case 20: return .SessionCommandAckTimedOut
-        case 21: return .StateMiniSnapshotTransportFailed
-        case 22: return .StateMiniSnapshotTimedOut
-        case 23: return .StateMiniStreamNotRunning
-        case 24: return .StateMiniStreamTransportFailed
-        case 25: return .StateMiniStreamRecoveryRequired
-        case 26: return .LocalStorePathRequired
-        case 27: return .LocalStoreReadFailed
-        case 28: return .LocalStoreWriteFailed
-        case 29: return .StateLockPoisoned
+        case 17: return .UnsupportedCommand
+        case 18: return .MissingCommandAcknowledgement
+        case 19: return .NoPendingNotificationReply
+        case 20: return .SessionCommandTransportFailed
+        case 21: return .SessionCommandAckTimedOut
+        case 22: return .StateMiniSnapshotTransportFailed
+        case 23: return .StateMiniSnapshotTimedOut
+        case 24: return .StateMiniStreamNotRunning
+        case 25: return .StateMiniStreamTransportFailed
+        case 26: return .StateMiniStreamRecoveryRequired
+        case 27: return .LocalStorePathRequired
+        case 28: return .LocalStoreReadFailed
+        case 29: return .LocalStoreWriteFailed
+        case 30: return .StateLockPoisoned
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3968,56 +3944,60 @@ public struct FfiConverterTypeClientCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(16))
 
 
-        case .MissingCommandAcknowledgement:
+        case .UnsupportedCommand:
             writeInt(&buf, Int32(17))
 
 
-        case .NoPendingNotificationReply:
+        case .MissingCommandAcknowledgement:
             writeInt(&buf, Int32(18))
 
 
-        case .SessionCommandTransportFailed:
+        case .NoPendingNotificationReply:
             writeInt(&buf, Int32(19))
 
 
-        case .SessionCommandAckTimedOut:
+        case .SessionCommandTransportFailed:
             writeInt(&buf, Int32(20))
 
 
-        case .StateMiniSnapshotTransportFailed:
+        case .SessionCommandAckTimedOut:
             writeInt(&buf, Int32(21))
 
 
-        case .StateMiniSnapshotTimedOut:
+        case .StateMiniSnapshotTransportFailed:
             writeInt(&buf, Int32(22))
 
 
-        case .StateMiniStreamNotRunning:
+        case .StateMiniSnapshotTimedOut:
             writeInt(&buf, Int32(23))
 
 
-        case .StateMiniStreamTransportFailed:
+        case .StateMiniStreamNotRunning:
             writeInt(&buf, Int32(24))
 
 
-        case .StateMiniStreamRecoveryRequired:
+        case .StateMiniStreamTransportFailed:
             writeInt(&buf, Int32(25))
 
 
-        case .LocalStorePathRequired:
+        case .StateMiniStreamRecoveryRequired:
             writeInt(&buf, Int32(26))
 
 
-        case .LocalStoreReadFailed:
+        case .LocalStorePathRequired:
             writeInt(&buf, Int32(27))
 
 
-        case .LocalStoreWriteFailed:
+        case .LocalStoreReadFailed:
             writeInt(&buf, Int32(28))
 
 
-        case .StateLockPoisoned:
+        case .LocalStoreWriteFailed:
             writeInt(&buf, Int32(29))
+
+
+        case .StateLockPoisoned:
+            writeInt(&buf, Int32(30))
 
         }
     }
@@ -4887,9 +4867,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33854) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_assistant_surface() != 59908) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_default_notification_targets() != 7475) {

@@ -32,6 +32,8 @@ pub enum ClientCoreError {
     InvalidConnectionState,
     #[error("outbox client mutation IDs did not match the expected order")]
     UnexpectedOutboxMutations,
+    #[error("command is no longer supported")]
+    UnsupportedCommand,
     #[error("expected command acknowledgement was missing")]
     MissingCommandAcknowledgement,
     #[error("no pending notification reply command")]

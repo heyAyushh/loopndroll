@@ -674,12 +674,6 @@ fn command(frame: OutboundSessionFrame) -> Result<proto::command::Command, Clien
                 },
             ))
         }
-        ClientCommandKind::SetAssistantSurface => Ok(proto::command::Command::SetAssistantSurface(
-            proto::SetAssistantSurfaceRequest {
-                assistant_surface: frame.assistant_surface,
-                client_mutation_id: frame.client_mutation_id,
-            },
-        )),
         ClientCommandKind::SetSiriCurrentSession => Ok(
             proto::command::Command::SetSiriCurrentSession(proto::SetSiriCurrentSessionRequest {
                 thread_id: frame.thread_id,
@@ -752,7 +746,6 @@ fn dispatch_kind(command_kind: ClientCommandKind) -> &'static str {
             "accepted"
         }
         ClientCommandKind::SetSessionMode
-        | ClientCommandKind::SetAssistantSurface
         | ClientCommandKind::SetSiriCurrentSession
         | ClientCommandKind::SetSiriDefaultSession
         | ClientCommandKind::SaveDefaultPrompt
@@ -1042,33 +1035,6 @@ mod tests {
         );
         assert_eq!(snapshot.sessions[1].session_id, "thread-2");
         assert!(snapshot.sessions[1].assistant_surface.is_empty());
-    }
-
-    #[test]
-    fn command_encodes_assistant_surface_over_session_stream() {
-        let frame = OutboundSessionFrame {
-            frame_kind: OutboundSessionFrameKind::Command,
-            command_kind: ClientCommandKind::SetAssistantSurface,
-            thread_id: "mobile-settings".to_owned(),
-            preset: String::new(),
-            prompt: String::new(),
-            prompt_intent: String::new(),
-            assistant_surface: "zed".to_owned(),
-            notification_id: String::new(),
-            notification_target_ids: Vec::new(),
-            archived: false,
-            client_mutation_id: "cmid-surface-zed".to_owned(),
-            after_seq: 0,
-        };
-
-        let encoded = command(frame).expect("encoded command");
-        match encoded {
-            proto::command::Command::SetAssistantSurface(request) => {
-                assert_eq!(request.assistant_surface, "zed");
-                assert_eq!(request.client_mutation_id, "cmid-surface-zed");
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
     }
 
     #[test]

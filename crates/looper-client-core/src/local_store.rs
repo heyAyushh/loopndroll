@@ -338,27 +338,6 @@ impl LooperClientCoreLocalStore {
         })
     }
 
-    pub(crate) fn enqueue_set_assistant_surface_command(
-        &self,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
-        require_present(&assistant_surface, ClientCoreError::InvalidAssistantSurface)?;
-        self.enqueue(ClientPendingCommand {
-            kind: ClientPendingCommandKind::SetAssistantSurface,
-            client_mutation_id,
-            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
-            preset: String::new(),
-            assistant_surface,
-            prompt_intent: String::new(),
-            prompt: String::new(),
-            notification_id: String::new(),
-            notification_target_ids: Vec::new(),
-            archived: false,
-            attempt_count: 0,
-        })
-    }
-
     pub(crate) fn enqueue_set_siri_default_session_command(
         &self,
         thread_id: String,

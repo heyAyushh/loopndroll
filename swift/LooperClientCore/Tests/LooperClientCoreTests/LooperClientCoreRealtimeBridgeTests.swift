@@ -51,27 +51,6 @@ struct LooperClientCoreSessionManagerTests {
     }
 
     @Test
-    func durableAssistantSurfaceCommandPersistsLatestBeforeTransport() async throws {
-        let manager = try LooperClientCoreSessionManager(
-            filePath: localStorePath(named: "durable-assistant-surface")
-        )
-
-        let firstResult = try await manager.setAssistantSurface("codex")
-        let secondResult = try await manager.setAssistantSurface("zed")
-        #expect(firstResult.accepted)
-        #expect(secondResult.accepted)
-        #expect(secondResult.entityId == "mobile-settings")
-
-        let snapshot = try manager.localSnapshot()
-        #expect(snapshot.pendingCommands.count == 1)
-        #expect(snapshot.pendingCommands.first?.kind == .setAssistantSurface)
-        #expect(snapshot.pendingCommands.first?.clientMutationId.hasPrefix("assistant-surface-") == true)
-        #expect(snapshot.pendingCommands.first?.assistantSurface == "zed")
-        #expect(snapshot.pendingCommands.first?.attemptCount == 1)
-        #expect(try manager.outboxDepth() == 1)
-    }
-
-    @Test
     func durableNotificationReplyRetryDedupesCommand() async throws {
         let manager = try LooperClientCoreSessionManager(
             filePath: localStorePath(named: "durable-notification-retry")

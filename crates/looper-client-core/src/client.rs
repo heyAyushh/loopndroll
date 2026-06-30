@@ -313,32 +313,6 @@ impl LooperClientCore {
         Ok(state.snapshot())
     }
 
-    fn set_assistant_surface(
-        &self,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        require_present(&assistant_surface, ClientCoreError::InvalidAssistantSurface)?;
-        require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
-
-        let mut state = self.lock_state()?;
-        state.queue_command(OutboundSessionFrame {
-            frame_kind: OutboundSessionFrameKind::Command,
-            command_kind: ClientCommandKind::SetAssistantSurface,
-            thread_id: MOBILE_SETTINGS_ENTITY_ID.to_owned(),
-            preset: String::new(),
-            prompt: String::new(),
-            prompt_intent: String::new(),
-            assistant_surface,
-            notification_id: String::new(),
-            notification_target_ids: Vec::new(),
-            archived: false,
-            client_mutation_id,
-            after_seq: EMPTY_SEQUENCE,
-        });
-        Ok(state.snapshot())
-    }
-
     fn set_siri_current_session(
         &self,
         thread_id: String,
@@ -756,21 +730,6 @@ impl LooperClientCore {
             assistant_surface,
             client_mutation_id.clone(),
         )?;
-        self.emit_local_state_update(self.snapshot()?);
-        local_store.mark_attempted(client_mutation_id.clone())?;
-        self.spawn_command_ack_flush(local_store, client_mutation_id);
-        Ok(())
-    }
-
-    pub(crate) fn accept_set_assistant_surface_durable(
-        self: &Arc<Self>,
-        local_store: Arc<LooperClientCoreLocalStore>,
-        assistant_surface: String,
-        client_mutation_id: String,
-    ) -> Result<(), ClientCoreError> {
-        self.set_assistant_surface(assistant_surface.clone(), client_mutation_id.clone())?;
-        local_store
-            .enqueue_set_assistant_surface_command(assistant_surface, client_mutation_id.clone())?;
         self.emit_local_state_update(self.snapshot()?);
         local_store.mark_attempted(client_mutation_id.clone())?;
         self.spawn_command_ack_flush(local_store, client_mutation_id);
@@ -2310,10 +2269,7 @@ fn validate_restored_command(command: &ClientPendingCommand) -> Result<(), Clien
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
         }
         ClientPendingCommandKind::SetAssistantSurface => {
-            require_present(
-                &command.assistant_surface,
-                ClientCoreError::InvalidAssistantSurface,
-            )?;
+            return Err(ClientCoreError::UnsupportedCommand);
         }
         ClientPendingCommandKind::SaveDefaultPrompt => {
             require_present(&command.prompt, ClientCoreError::EmptyPrompt)?;
@@ -2338,7 +2294,7 @@ fn restored_command_kind(
         ClientPendingCommandKind::SubmitNotificationReply => {
             Ok(ClientCommandKind::SubmitNotificationReply)
         }
-        ClientPendingCommandKind::SetAssistantSurface => Ok(ClientCommandKind::SetAssistantSurface),
+        ClientPendingCommandKind::SetAssistantSurface => Err(ClientCoreError::UnsupportedCommand),
         ClientPendingCommandKind::SetSiriCurrentSession => {
             Ok(ClientCommandKind::SetSiriCurrentSession)
         }
@@ -2357,8 +2313,8 @@ fn restored_command_kind(
 
 fn restored_thread_id(command: &ClientPendingCommand) -> Result<String, ClientCoreError> {
     match command.kind {
-        ClientPendingCommandKind::SetAssistantSurface
-        | ClientPendingCommandKind::SaveDefaultPrompt
+        ClientPendingCommandKind::SetAssistantSurface => Err(ClientCoreError::UnsupportedCommand),
+        ClientPendingCommandKind::SaveDefaultPrompt
         | ClientPendingCommandKind::SetDefaultNotificationTargets => {
             Ok(MOBILE_SETTINGS_ENTITY_ID.to_owned())
         }
@@ -2504,7 +2460,6 @@ fn is_latest_wins_outbox_command(command_kind: ClientCommandKind) -> bool {
         ClientCommandKind::SetSessionMode
             | ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
-            | ClientCommandKind::SetAssistantSurface
             | ClientCommandKind::SaveDefaultPrompt
             | ClientCommandKind::SetDefaultNotificationTargets
     )
@@ -2515,7 +2470,6 @@ fn latest_wins_outbox_command_is_global(command_kind: ClientCommandKind) -> bool
         command_kind,
         ClientCommandKind::SetSiriCurrentSession
             | ClientCommandKind::SetSiriDefaultSession
-            | ClientCommandKind::SetAssistantSurface
             | ClientCommandKind::SaveDefaultPrompt
             | ClientCommandKind::SetDefaultNotificationTargets
     )
@@ -3598,59 +3552,6 @@ mod tests {
         );
         let local_snapshot = store.snapshot().expect("store snapshot");
         assert_eq!(local_snapshot.pending_commands.len(), 1);
-        assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
-    }
-
-    #[test]
-    fn durable_assistant_surface_command_is_latest_wins() {
-        let core = LooperClientCore::new();
-        let store_path = temp_store_path("durable-assistant-surface-latest");
-        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
-            .expect("store");
-
-        core.accept_set_assistant_surface_durable(
-            store.clone(),
-            "codex".to_owned(),
-            "cmid-surface-codex".to_owned(),
-        )
-        .expect("local codex surface accepted");
-        core.accept_set_assistant_surface_durable(
-            store.clone(),
-            "zed".to_owned(),
-            "cmid-surface-zed".to_owned(),
-        )
-        .expect("local zed surface accepted");
-
-        let snapshot = core.snapshot().expect("snapshot");
-        assert_eq!(snapshot.outbox_depth, 1);
-        assert_eq!(snapshot.pending_mutations.len(), 1);
-        assert_eq!(
-            snapshot.pending_mutations[0].command_kind,
-            ClientCommandKind::SetAssistantSurface
-        );
-        assert_eq!(
-            snapshot.pending_mutations[0].client_mutation_id,
-            "cmid-surface-zed"
-        );
-        let outbox = core.take_outbox().expect("outbox");
-        assert_eq!(outbox.len(), 1);
-        assert_eq!(
-            outbox[0].command_kind,
-            ClientCommandKind::SetAssistantSurface
-        );
-        assert_eq!(outbox[0].assistant_surface, "zed");
-
-        let local_snapshot = store.snapshot().expect("local snapshot");
-        assert_eq!(local_snapshot.pending_commands.len(), 1);
-        assert_eq!(
-            local_snapshot.pending_commands[0].kind,
-            ClientPendingCommandKind::SetAssistantSurface
-        );
-        assert_eq!(
-            local_snapshot.pending_commands[0].client_mutation_id,
-            "cmid-surface-zed"
-        );
-        assert_eq!(local_snapshot.pending_commands[0].assistant_surface, "zed");
         assert_eq!(local_snapshot.pending_commands[0].attempt_count, 1);
     }
 
