@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -13,10 +13,10 @@ use crate::{
         ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
     },
     state_mini::{
-        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_node_ids,
+        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_covered_node_ids,
         last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
         sort_state_minis, state_mini_key, state_mini_snapshot_is_stale_for_all_nodes,
-        validate_state_minis,
+        state_mini_snapshot_last_seq_by_node, validate_state_minis,
     },
 };
 
@@ -123,14 +123,18 @@ impl LooperClientCoreLocalStore {
         ) {
             return Ok(state.snapshot());
         }
-        let fresh_node_ids = fresh_state_mini_snapshot_node_ids(
+        let fresh_node_ids = fresh_state_mini_snapshot_covered_node_ids(
             state.latest_seq,
             &state.last_seq_by_node,
             &state.sessions,
+            snapshot.latest_seq,
             &sessions,
         );
-        state.merge_snapshot_minis_preserving_newer(sessions, &fresh_node_ids);
+        let fresh_last_seq_by_node =
+            state_mini_snapshot_last_seq_by_node(snapshot.latest_seq, &sessions, &fresh_node_ids);
+        state.merge_snapshot_minis_preserving_newer(sessions, &fresh_last_seq_by_node);
         state.merge_last_seq_by_node_from_minis();
+        state.merge_last_seq_by_node(&fresh_last_seq_by_node);
         if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
             state
                 .last_seq_by_node
@@ -577,9 +581,25 @@ impl StoredState {
     fn merge_snapshot_minis_preserving_newer(
         &mut self,
         sessions: Vec<ClientStateMini>,
-        fresh_node_ids: &BTreeSet<String>,
+        fresh_last_seq_by_node: &BTreeMap<String, i64>,
     ) -> bool {
         let before = self.sessions.clone();
+        let incoming_keys = sessions
+            .iter()
+            .filter_map(|session| {
+                let key = state_mini_key(session);
+                fresh_last_seq_by_node
+                    .contains_key(key.node_id())
+                    .then_some(key)
+            })
+            .collect::<HashSet<_>>();
+        self.sessions.retain(|current| {
+            let key = state_mini_key(current);
+            match fresh_last_seq_by_node.get(key.node_id()) {
+                Some(fresh_seq) => incoming_keys.contains(&key) || current.seq > *fresh_seq,
+                None => true,
+            }
+        });
         let mut index_by_key: HashMap<StateMiniKey, usize> =
             HashMap::with_capacity(self.sessions.len());
         for (index, current) in self.sessions.iter().enumerate() {
@@ -588,7 +608,7 @@ impl StoredState {
         let mut changed = false;
         for incoming in sessions {
             let key = state_mini_key(&incoming);
-            if !fresh_node_ids.contains(key.node_id()) {
+            if !fresh_last_seq_by_node.contains_key(key.node_id()) {
                 continue;
             }
             if let Some(index) = index_by_key.get(&key).copied() {
@@ -610,6 +630,13 @@ impl StoredState {
         for (node_id, seq) in last_seq_by_node_from_minis(&self.sessions) {
             let entry = self.last_seq_by_node.entry(node_id).or_default();
             *entry = (*entry).max(seq);
+        }
+    }
+
+    fn merge_last_seq_by_node(&mut self, cursors: &BTreeMap<String, i64>) {
+        for (node_id, seq) in cursors {
+            let entry = self.last_seq_by_node.entry(node_id.clone()).or_default();
+            *entry = (*entry).max(*seq);
         }
     }
 
@@ -1032,6 +1059,35 @@ mod tests {
     }
 
     #[test]
+    fn local_store_empty_fresh_snapshot_clears_default_node_minis() {
+        let path = temp_store_path("empty-fresh-snapshot");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 5,
+                sessions: vec![state_mini("thread-old", "codex", 5, "rev-5", "Old")],
+                server_time: "2026-06-24T00:00:00Z".to_owned(),
+            })
+            .expect("seed minis");
+
+        let snapshot = store
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 6,
+                sessions: vec![],
+                server_time: "2026-06-24T00:00:01Z".to_owned(),
+            })
+            .expect("apply empty fresh snapshot");
+
+        assert_eq!(snapshot.latest_seq, 6);
+        assert!(snapshot.sessions.is_empty());
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+        assert_eq!(persisted["lastSeqByNode"][DEFAULT_NODE_ID], 6);
+    }
+
+    #[test]
     fn local_store_recovery_snapshot_preserves_pending_commands() {
         let path = temp_store_path("recovery-preserves-outbox");
         let store =
@@ -1081,7 +1137,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-old", "thread-recovered"]
+            vec!["thread-recovered"]
         );
         assert_eq!(snapshot.pending_commands.len(), 1);
         assert_eq!(
@@ -1100,7 +1156,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-old", "thread-recovered"]
+            vec!["thread-recovered"]
         );
         assert_eq!(
             reopened_snapshot.pending_commands[0].client_mutation_id,

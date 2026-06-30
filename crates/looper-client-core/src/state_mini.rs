@@ -359,6 +359,56 @@ pub(crate) fn fresh_state_mini_snapshot_node_ids(
         .collect()
 }
 
+pub(crate) fn fresh_state_mini_snapshot_covered_node_ids(
+    current_latest_seq: i64,
+    current_last_seq_by_node: &BTreeMap<String, i64>,
+    current_sessions: &[ClientStateMini],
+    incoming_latest_seq: i64,
+    incoming_sessions: &[ClientStateMini],
+) -> BTreeSet<String> {
+    let current_last_seq_by_node = merged_current_last_seq_by_node(
+        current_latest_seq,
+        current_last_seq_by_node,
+        current_sessions,
+    );
+    let fresh_node_ids = fresh_state_mini_snapshot_node_ids(
+        current_latest_seq,
+        &current_last_seq_by_node,
+        current_sessions,
+        incoming_sessions,
+    );
+    let current_default_seq = current_last_seq_by_node
+        .get(DEFAULT_NODE_ID)
+        .copied()
+        .unwrap_or(INITIAL_SEQUENCE);
+    if fresh_node_ids.is_empty()
+        && incoming_sessions.is_empty()
+        && incoming_latest_seq > current_default_seq
+    {
+        BTreeSet::from([DEFAULT_NODE_ID.to_owned()])
+    } else {
+        fresh_node_ids
+    }
+}
+
+pub(crate) fn state_mini_snapshot_last_seq_by_node(
+    snapshot_latest_seq: i64,
+    sessions: &[ClientStateMini],
+    node_ids: &BTreeSet<String>,
+) -> BTreeMap<String, i64> {
+    let incoming_last_seq_by_node = last_seq_by_node_from_minis(sessions);
+    node_ids
+        .iter()
+        .filter_map(|node_id| {
+            let seq = incoming_last_seq_by_node
+                .get(node_id)
+                .copied()
+                .unwrap_or(snapshot_latest_seq);
+            (seq > INITIAL_SEQUENCE).then(|| (node_id.clone(), seq))
+        })
+        .collect()
+}
+
 fn merged_current_last_seq_by_node(
     current_latest_seq: i64,
     current_last_seq_by_node: &BTreeMap<String, i64>,

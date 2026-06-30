@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc},
 };
 
@@ -32,10 +32,11 @@ use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
     DEFAULT_NODE_ID, FRESHNESS_SOURCE_LOCAL, FRESHNESS_SOURCE_RECOVERY, FRESHNESS_SOURCE_STREAM,
-    StateMiniKey, fresh_state_mini_snapshot_node_ids, last_seq_by_node_from_minis,
+    StateMiniKey, fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
     latest_state_mini_revision, normalize_state_mini_for_source, normalize_state_minis_for_source,
     require_valid_sequence, same_state_mini_key, sort_state_minis, state_mini_key,
-    state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes, validate_state_minis,
+    state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes,
+    state_mini_snapshot_last_seq_by_node, validate_state_minis,
 };
 #[cfg(test)]
 use crate::transport::validate_endpoint_url;
@@ -1983,7 +1984,7 @@ impl ClientCoreState {
             Some(FRESHNESS_SOURCE_STREAM),
             Some(replacement.route_endpoint.as_str()),
         );
-        self.merge_snapshot_minis_preserving_newer(replacement_sessions, &fresh_node_ids);
+        self.merge_snapshot_minis_preserving_newer(replacement_sessions, &fresh_last_seq_by_node);
         for (node_id, seq) in fresh_last_seq_by_node {
             self.advance_node_cursor(node_id, seq);
         }
@@ -2029,14 +2030,21 @@ impl ClientCoreState {
             self.last_error.clear();
             return false;
         }
-        let fresh_node_ids = fresh_state_mini_snapshot_node_ids(
+        let fresh_node_ids = fresh_state_mini_snapshot_covered_node_ids(
             self.latest_seq,
             &self.last_seq_by_node,
             &self.state_minis,
+            snapshot.latest_seq,
             &sessions,
         );
-        let did_change = self.merge_snapshot_minis_preserving_newer(sessions, &fresh_node_ids);
+        let fresh_last_seq_by_node =
+            state_mini_snapshot_last_seq_by_node(snapshot.latest_seq, &sessions, &fresh_node_ids);
+        let did_change =
+            self.merge_snapshot_minis_preserving_newer(sessions, &fresh_last_seq_by_node);
         self.merge_last_seq_by_node_from_minis(&self.state_minis.clone());
+        for (node_id, seq) in fresh_last_seq_by_node {
+            self.advance_node_cursor(node_id, seq);
+        }
         if self.last_seq_by_node.is_empty() && snapshot.latest_seq > EMPTY_SEQUENCE {
             self.advance_node_cursor(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
         }
@@ -2053,9 +2061,25 @@ impl ClientCoreState {
     fn merge_snapshot_minis_preserving_newer(
         &mut self,
         sessions: Vec<ClientStateMini>,
-        fresh_node_ids: &BTreeSet<String>,
+        fresh_last_seq_by_node: &BTreeMap<String, i64>,
     ) -> bool {
         let before = self.state_minis.clone();
+        let incoming_keys = sessions
+            .iter()
+            .filter_map(|session| {
+                let key = state_mini_key(session);
+                fresh_last_seq_by_node
+                    .contains_key(key.node_id())
+                    .then_some(key)
+            })
+            .collect::<HashSet<_>>();
+        self.state_minis.retain(|current| {
+            let key = state_mini_key(current);
+            match fresh_last_seq_by_node.get(key.node_id()) {
+                Some(fresh_seq) => incoming_keys.contains(&key) || current.seq > *fresh_seq,
+                None => true,
+            }
+        });
         let mut index_by_key: HashMap<StateMiniKey, usize> =
             HashMap::with_capacity(self.state_minis.len());
         for (index, current) in self.state_minis.iter().enumerate() {
@@ -2064,7 +2088,7 @@ impl ClientCoreState {
         let mut did_change = false;
         for incoming in sessions {
             let key = state_mini_key(&incoming);
-            if !fresh_node_ids.contains(key.node_id()) {
+            if !fresh_last_seq_by_node.contains_key(key.node_id()) {
                 continue;
             }
             if let Some(index) = index_by_key.get(&key).copied() {
@@ -4046,7 +4070,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-devin", "thread-codex"]
+            vec!["thread-codex"]
         );
 
         let codex = staged
@@ -4055,15 +4079,8 @@ mod tests {
             .iter()
             .find(|session| session.session_id == "thread-codex")
             .expect("updated codex mini");
-        let devin = staged
-            .snapshot
-            .state_minis
-            .iter()
-            .find(|session| session.session_id == "thread-devin")
-            .expect("preserved absent devin mini");
         assert_eq!(codex.assistant_surface, "codex");
         assert!(codex.payload_json.contains("new codex"));
-        assert!(devin.payload_json.contains("devin"));
     }
 
     #[test]
@@ -4127,7 +4144,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_delta_preserves_absent_sessions_for_covered_node() {
+    fn state_mini_replacement_delta_removes_absent_stale_sessions_for_covered_node() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 20,
@@ -4168,7 +4185,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-b", "thread-a", "thread-a-new"]
+            vec!["thread-b", "thread-a-new"]
         );
         assert!(
             finalized.snapshot.state_minis[0]
@@ -4177,11 +4194,6 @@ mod tests {
         );
         assert!(
             finalized.snapshot.state_minis[1]
-                .payload_json
-                .contains("old a")
-        );
-        assert!(
-            finalized.snapshot.state_minis[2]
                 .payload_json
                 .contains("new a")
         );
@@ -4297,7 +4309,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-old", "thread-1", "thread-2"]
+            vec!["thread-1", "thread-2"]
         );
     }
 
@@ -4365,7 +4377,7 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-old", "thread-1", "thread-2"]
+            vec!["thread-1", "thread-2"]
         );
         assert_eq!(second.snapshot.latest_seq, 12);
     }
@@ -4681,7 +4693,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_delta_without_sessions_does_not_clear_local_projection() {
+    fn state_mini_replacement_delta_without_sessions_clears_covered_default_node() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 5,
@@ -4706,8 +4718,7 @@ mod tests {
 
         assert!(result.did_change);
         assert_eq!(result.snapshot.latest_seq, 6);
-        assert_eq!(result.snapshot.state_minis.len(), 1);
-        assert_eq!(result.snapshot.state_minis[0].session_id, "thread-1");
+        assert!(result.snapshot.state_minis.is_empty());
         assert_eq!(result.snapshot.revision, "rev-6");
     }
 
