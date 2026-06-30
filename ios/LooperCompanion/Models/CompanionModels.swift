@@ -2127,17 +2127,6 @@ enum SessionDetailContentStatus: String, Codable, Sendable {
     var isDegraded: Bool {
         self != .full
     }
-
-    var gapDescription: String? {
-        switch self {
-        case .full:
-            return nil
-        case .localMiniOnly:
-            return "Showing local mini state. Full transcript content needs a bounded content slice when the Mac is reachable."
-        case .unavailable:
-            return "Session content is unavailable. Local session state may still be usable."
-        }
-    }
 }
 
 struct SessionDetail: Codable, Identifiable, Sendable {
@@ -2281,10 +2270,6 @@ struct SessionDetail: Codable, Identifiable, Sendable {
 extension SessionDetail {
     var isContentDegraded: Bool {
         contentStatus.isDegraded
-    }
-
-    var contentGapDescription: String? {
-        contentStatus.gapDescription
     }
 
     init(summary: SessionSummary, snapshot: MobileSnapshot) {

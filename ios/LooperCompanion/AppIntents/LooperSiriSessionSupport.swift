@@ -755,9 +755,6 @@ struct LooperFoundationSessionSummarizer: Sendable {
         let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedSource.isEmpty else {
-            if let contentGapDescription = detail.contentGapDescription {
-                return "\(detail.title) is \(detail.status.label.lowercased()) in \(detail.assistantClient.displayTitle). \(contentGapDescription)"
-            }
             return "\(detail.title) is \(detail.status.label.lowercased()) in \(detail.assistantClient.displayTitle)."
         }
 
@@ -917,7 +914,6 @@ struct LooperSessionContextEngine: Sendable {
             "Repository: \(detail.metadata.gitRepository?.repositoryName ?? "")",
             "Branch: \(detail.metadata.gitRepository?.branch ?? "")",
             "Goal: \(detail.goal?.title ?? "")",
-            "Content state: \(detail.contentGapDescription ?? "Full content available")",
             "Latest assistant message: \(detail.latestAssistantMessage ?? detail.assistantPreview ?? "")"
         ]
             .filter { !$0.hasSuffix(": ") }

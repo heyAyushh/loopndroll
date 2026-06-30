@@ -28,7 +28,17 @@ struct SessionDetailScreen: View {
     }
 
     private var currentMessage: String? {
-        detail?.latestAssistantMessage ?? session.assistantPreview
+        [
+            detail?.latestAssistantMessage,
+            detail?.assistantPreview,
+            session.assistantPreview,
+        ]
+            .lazy
+            .compactMap { value in
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .first
     }
 
     private var currentTitle: String {
@@ -84,7 +94,9 @@ struct SessionDetailScreen: View {
     var body: some View {
         List {
             summarySection
-            assistantReplySection
+            if currentMessage != nil {
+                assistantReplySection
+            }
             promptSection
             modeSection
             notificationsSection
@@ -283,19 +295,15 @@ struct SessionDetailScreen: View {
 
     private var assistantReplySection: some View {
         Section("Latest Assistant Reply") {
-            if let contentGapDescription = detail?.contentGapDescription {
-                Label(contentGapDescription, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("session-detail.content-gap")
-            }
-
-            if let currentMessage, !currentMessage.isEmpty {
+            if let currentMessage {
                 MarkdownMessageView(markdown: currentMessage)
                     .padding(.vertical, 4)
-            } else {
-                Text("No assistant reply has been captured yet.")
-                    .foregroundStyle(.secondary)
+                if let currentLastMessageAt {
+                    Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("session-detail.latest-reply-timestamp")
+                }
             }
         }
     }

@@ -832,7 +832,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testSiriDetailResolvesFromLocalMiniWhenHTTPUnavailableAndMarksContentGap() async throws {
+    func testSiriDetailResolvesFromLocalMiniWhenHTTPUnavailableAndMarksDegradedContent() async throws {
         var localSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Fresh Local Mini",
@@ -870,7 +870,6 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(detail.assistantPreview == "Local mini preview")
         #expect(detail.contentStatus == .localMiniOnly)
         #expect(detail.isContentDegraded)
-        #expect(detail.contentGapDescription?.localizedCaseInsensitiveContains("content slice") == true)
         #expect(service.loadSnapshotCallCount == 0)
     }
 
