@@ -592,6 +592,10 @@ final class CompanionAppModel {
             snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
         }
 
+        guard !snapshotState.hasSnapshot else {
+            CompanionDiagnostics.record("snapshot:reset-preserve-local-visible")
+            return
+        }
         snapshotState.reset()
     }
 
@@ -879,6 +883,9 @@ final class CompanionAppModel {
         _ error: Error,
         reason: CompanionLocalSessionReconcileReason
     ) {
+        restoreCachedSessionMiniSnapshotIfAvailable(
+            reason: "session-mini-recovery-failure-\(reason.rawValue)"
+        )
         applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
         CompanionDiagnostics.record(
             "session-mini:recovery-truth-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
@@ -1311,7 +1318,7 @@ final class CompanionAppModel {
 
     @discardableResult
     private func applyAcceptedModeProjection(_ preset: SessionMode?, sessionID: String) -> Bool {
-        guard let sourceSnapshot = snapshot else {
+        guard let sourceSnapshot = snapshotState.sourceSnapshot else {
             return false
         }
         do {
@@ -1328,9 +1335,9 @@ final class CompanionAppModel {
             else {
                 return false
             }
-            snapshotState.applySnapshot(
+            snapshotState.applyOptimisticVisibleSnapshot(
                 visibleSnapshot,
-                preferredSurface: snapshotState.selectedAssistantSurface
+                selectedSurface: snapshotState.selectedAssistantSurface
             )
             lastUpdatedAt = Date()
             return true
@@ -1993,7 +2000,9 @@ final class CompanionAppModel {
         reason: String,
         latestSeq: Int64
     ) -> Bool {
-        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason) else {
+        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason)
+                || hasBroaderStateMiniSnapshot(cachedSnapshot)
+        else {
             CompanionDiagnostics.record(
                 "session-mini:cache-skip reason=\(reason) latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
             )
@@ -2014,7 +2023,7 @@ final class CompanionAppModel {
             reachedBaseURL = nil
         }
         lastUpdatedAt = Date()
-        CompanionSnapshotCache.save(visibleSnapshot)
+        CompanionSnapshotCache.save(nextSnapshot)
         spotlightCoordinator.sync(with: snapshotState.allSessions)
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
@@ -2082,6 +2091,11 @@ final class CompanionAppModel {
             return true
         }
         return latestSeq > realtimeLatestSeq
+    }
+
+    private func hasBroaderStateMiniSnapshot(_ cachedSnapshot: MobileSnapshot) -> Bool {
+        let cachedSessionCount = SessionIndex(localSnapshot: cachedSnapshot).allSessions.count
+        return cachedSessionCount > snapshotState.allSessions.count
     }
 
     private func markCachedSnapshotReadyIfNeeded(reason: String) {

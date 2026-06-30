@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum DiffLineKind {
+enum DiffLineKind: Sendable {
     case file
     case hunk
     case addition
@@ -47,7 +47,7 @@ enum DiffLineKind {
     }
 }
 
-struct DiffLine: Identifiable {
+struct DiffLine: Identifiable, Sendable {
     let id: Int
     let kind: DiffLineKind
     let text: String
@@ -74,7 +74,7 @@ struct DiffLine: Identifiable {
     }
 }
 
-struct RenderedDiffBlock {
+struct RenderedDiffBlock: Sendable {
     let lines: [DiffLine]
     fileprivate let changeCount: DiffChangeCount
 }
@@ -154,7 +154,7 @@ struct DiffBlockView: View {
     }
 }
 
-fileprivate struct DiffChangeCount {
+fileprivate struct DiffChangeCount: Sendable {
     var additions: Int
     var removals: Int
 }

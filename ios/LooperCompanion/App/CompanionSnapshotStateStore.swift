@@ -22,6 +22,10 @@ final class CompanionSnapshotStateStore {
         visibleProjectionState.snapshot
     }
 
+    var sourceSnapshot: MobileSnapshot? {
+        sourceSnapshotForProjection()
+    }
+
     var selectedAssistantSurface: CompanionAssistantSurface {
         visibleProjectionState.selectedAssistantSurface
     }
@@ -112,28 +116,12 @@ final class CompanionSnapshotStateStore {
     ) -> CompanionSnapshotApplyResult {
         canonicalSnapshot = nextSnapshot
         refreshCanonicalProjectionCache(from: nextSnapshot)
-        let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
-            snapshot: nextSnapshot,
-            preferredSurface: preferredSurface,
-            hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
-            currentSelectedAssistantSurface: selectedAssistantSurface
-        )
-        guard let projection,
-              let surface = SnapshotProjectionCodec.assistantSurface(
-                from: projection.selectedAssistantSurface
-              ),
-              let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson)
-        else {
-            return applySnapshotWithoutProjection(nextSnapshot, preferredSurface: preferredSurface)
-        }
-
+        let surface = fallbackAssistantSurface(for: nextSnapshot, preferredSurface: preferredSurface)
+        let previousFingerprint = lastVisibleSnapshotFingerprint
+        let visibleSnapshot = applyVisibleSnapshot(nextSnapshot, surface: surface)
         return CompanionSnapshotApplyResult(
             visibleSnapshot: visibleSnapshot,
-            didChangeVisibleSnapshot: applyReducedVisibleSnapshot(
-                visibleSnapshot,
-                projection: projection,
-                selectedSurface: surface
-            )
+            didChangeVisibleSnapshot: previousFingerprint != lastVisibleSnapshotFingerprint
         )
     }
 
@@ -149,6 +137,18 @@ final class CompanionSnapshotStateStore {
         }
 
         return applyVisibleSnapshot(snapshot, surface: surface)
+    }
+
+    @discardableResult
+    func applyOptimisticVisibleSnapshot(
+        _ visibleSnapshot: MobileSnapshot,
+        selectedSurface: CompanionAssistantSurface
+    ) -> Bool {
+        applyVisibleProjection(
+            visibleSnapshot,
+            selectedSurface: selectedSurface,
+            sessionIndex: canonicalSessionIndex
+        )
     }
 
     @discardableResult
@@ -285,20 +285,18 @@ final class CompanionSnapshotStateStore {
         detail(for: sessionID) != nil
     }
 
-    private func applyReducedVisibleSnapshot(
+    @discardableResult
+    private func applyVisibleProjection(
         _ visibleSnapshot: MobileSnapshot,
-        projection: ClientSnapshotProjection,
-        selectedSurface: CompanionAssistantSurface
+        selectedSurface: CompanionAssistantSurface,
+        sessionIndex: SessionIndex
     ) -> Bool {
-        let nextFingerprint = VisibleSnapshotFingerprint(json: projection.visibleSnapshotJson)
+        let nextFingerprint = VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         guard nextFingerprint != lastVisibleSnapshotFingerprint else {
             return false
         }
 
-        let reducedSections = SessionSections(
-            projection: projection.sessionSections,
-            sessions: visibleSnapshot.sessions
-        )
+        let reducedSections = SessionSections(localProjectionSessions: visibleSnapshot.sessions)
         let reducedVisibleSessionIndex = VisibleSessionIndex(sessions: visibleSnapshot.sessions)
         visibleSurfaceProjections[selectedSurface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
@@ -306,16 +304,12 @@ final class CompanionSnapshotStateStore {
             sessionIndex: reducedVisibleSessionIndex,
             fingerprint: nextFingerprint
         )
-        if let canonicalSnapshot {
-            canonicalSessionIndex = SessionIndex(snapshot: canonicalSnapshot)
-            canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
-        }
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: reducedSections,
             visibleSessionIndex: reducedVisibleSessionIndex,
-            sessionIndex: canonicalSessionIndex
+            sessionIndex: sessionIndex
         )
         lastVisibleSnapshotFingerprint = nextFingerprint
         return true
@@ -339,35 +333,19 @@ final class CompanionSnapshotStateStore {
     }
 
     @discardableResult
-    private func applyFallbackVisibleSnapshot(
-        _ visibleSnapshot: MobileSnapshot,
-        selectedSurface: CompanionAssistantSurface
-    ) -> Bool {
-        visibleProjectionState = CompanionVisibleProjectionState(
-            snapshot: visibleSnapshot,
-            selectedAssistantSurface: selectedSurface,
-            sessionSections: SessionSections(sessions: visibleSnapshot.sessions),
-            visibleSessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
-            sessionIndex: canonicalSessionIndex == .empty
-                ? SessionIndex(snapshot: visibleSnapshot)
-                : canonicalSessionIndex
-        )
-        lastVisibleSnapshotFingerprint = nil
-        return true
-    }
-
-    @discardableResult
     private func applyVisibleSnapshot(
         _ sourceSnapshot: MobileSnapshot,
         surface: CompanionAssistantSurface
     ) -> MobileSnapshot {
         let visibleSnapshot = sourceSnapshot.visibleSnapshot(for: surface)
-        let visibleSections = SessionSections(sessions: visibleSnapshot.sessions)
+        let visibleSections = SessionSections(localProjectionSessions: visibleSnapshot.sessions)
+        let visibleSessionIndex = VisibleSessionIndex(sessions: visibleSnapshot.sessions)
+        let fingerprint = VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         visibleSurfaceProjections[surface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
             sessionSections: visibleSections,
-            sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
-            fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
+            sessionIndex: visibleSessionIndex,
+            fingerprint: fingerprint
         )
         let nextSessionIndex = sessionIndex == .empty
             ? canonicalSessionIndex(for: sourceSnapshot)
@@ -376,10 +354,10 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: surface,
             sessionSections: visibleSections,
-            visibleSessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
+            visibleSessionIndex: visibleSessionIndex,
             sessionIndex: nextSessionIndex
         )
-        lastVisibleSnapshotFingerprint = nil
+        lastVisibleSnapshotFingerprint = fingerprint
         return visibleSnapshot
     }
 
@@ -438,54 +416,10 @@ final class CompanionSnapshotStateStore {
         )
     }
 
-    private static func makeVisibleSurfaceProjections(
-        from sourceSnapshot: MobileSnapshot
-    ) -> [CompanionAssistantSurface: VisibleSurfaceProjection] {
-        Dictionary(
-            uniqueKeysWithValues: CompanionAssistantSurface.allCases.map { surface in
-                return (
-                    surface,
-                    makeVisibleSurfaceProjection(from: sourceSnapshot, surface: surface)
-                )
-            }
-        )
-    }
-
-    private static func makeVisibleSurfaceProjection(
-        from sourceSnapshot: MobileSnapshot,
-        surface: CompanionAssistantSurface
-    ) -> VisibleSurfaceProjection {
-        if let projection = SnapshotProjectionCodec.reduceSnapshotProjection(
-            snapshot: sourceSnapshot,
-            preferredSurface: surface,
-            hasUserSelectedAssistantSurface: true,
-            currentSelectedAssistantSurface: surface
-        ),
-            let visibleSnapshot = SnapshotProjectionCodec.decodeSnapshot(projection.visibleSnapshotJson) {
-            return VisibleSurfaceProjection(
-                visibleSnapshot: visibleSnapshot,
-                sessionSections: SessionSections(
-                    projection: projection.sessionSections,
-                    sessions: visibleSnapshot.sessions
-                ),
-                sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
-                fingerprint: VisibleSnapshotFingerprint(json: projection.visibleSnapshotJson)
-            )
-        }
-
-        let visibleSnapshot = sourceSnapshot.visibleSnapshot(for: surface)
-        return VisibleSurfaceProjection(
-            visibleSnapshot: visibleSnapshot,
-            sessionSections: SessionSections(sessions: visibleSnapshot.sessions),
-            sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
-            fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
-        )
-    }
-
     private func refreshCanonicalProjectionCache(from sourceSnapshot: MobileSnapshot) {
-        canonicalSessionIndex = SessionIndex(snapshot: sourceSnapshot)
-        canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
-        visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: sourceSnapshot)
+        canonicalSessionIndex = SessionIndex(localSnapshot: sourceSnapshot)
+        canonicalSessionSections = SessionSections(localProjectionSessions: canonicalSessionIndex.allSessions)
+        visibleSurfaceProjections = [:]
     }
 
     private func snapshotWithHostSyncTime(
@@ -513,31 +447,13 @@ final class CompanionSnapshotStateStore {
     private func canonicalSessionIndex(for sourceSnapshot: MobileSnapshot) -> SessionIndex {
         if canonicalSessionIndex == .empty {
             canonicalSessionIndex = SessionIndex(localSnapshot: sourceSnapshot)
-            canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
+            canonicalSessionSections = SessionSections(localProjectionSessions: canonicalSessionIndex.allSessions)
         }
         return canonicalSessionIndex
     }
 
     private static func millisecondsSinceEpoch(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970 * CompanionSnapshotSettingsTime.millisecondsPerSecond)
-    }
-
-    private func applySnapshotWithoutProjection(
-        _ nextSnapshot: MobileSnapshot,
-        preferredSurface: CompanionAssistantSurface?
-    ) -> CompanionSnapshotApplyResult {
-        let surface = fallbackAssistantSurface(
-            for: nextSnapshot,
-            preferredSurface: preferredSurface
-        )
-        let visibleSnapshot = nextSnapshot.visibleSnapshot(for: surface)
-        return CompanionSnapshotApplyResult(
-            visibleSnapshot: visibleSnapshot,
-            didChangeVisibleSnapshot: applyFallbackVisibleSnapshot(
-                visibleSnapshot,
-                selectedSurface: surface
-            )
-        )
     }
 
     private func fallbackAssistantSurface(
@@ -569,29 +485,6 @@ struct CompanionSnapshotApplyResult {
 }
 
 private enum SnapshotProjectionCodec {
-    static func reduceSnapshotProjection(
-        snapshot: MobileSnapshot,
-        preferredSurface: CompanionAssistantSurface?,
-        hasUserSelectedAssistantSurface: Bool,
-        currentSelectedAssistantSurface: CompanionAssistantSurface
-    ) -> ClientSnapshotProjection? {
-        guard let snapshotJSON = encode(snapshot) else {
-            return nil
-        }
-        do {
-            return try reduceMobileSnapshotProjection(
-                snapshotJson: snapshotJSON,
-                preferredAssistantSurface: preferredSurface?.rawValue ?? "",
-                hasUserSelectedAssistantSurface: hasUserSelectedAssistantSurface,
-                currentSelectedAssistantSurface: currentSelectedAssistantSurface.rawValue,
-                assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
-            )
-        } catch {
-            recordFailure("snapshot:projection-failed", error: error)
-            return nil
-        }
-    }
-
     static func projectAssistantSurfaceSelection(
         currentSelectedSurface: CompanionAssistantSurface,
         requestedSurface: CompanionAssistantSurface,
@@ -612,48 +505,11 @@ private enum SnapshotProjectionCodec {
 
         return surface
     }
-
-    static func decodeSnapshot(_ json: String) -> MobileSnapshot? {
-        decode(MobileSnapshot.self, from: json)
-    }
-
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            guard let json = String(data: data, encoding: .utf8) else {
-                CompanionDiagnostics.record("snapshot:projection-non-utf8")
-                return nil
-            }
-
-            return json
-        } catch {
-            recordFailure("snapshot:projection-encode-failed", error: error)
-            return nil
-        }
-    }
-
-    private static func decode<Value: Decodable>(_ type: Value.Type, from json: String) -> Value? {
-        do {
-            return try JSONDecoder().decode(type, from: Data(json.utf8))
-        } catch {
-            recordFailure("snapshot:projection-decode-failed", error: error)
-            return nil
-        }
-    }
-
-    private static func recordFailure(_ message: String, error: Error) {
-        CompanionDiagnostics.record("\(message) error=\(error.localizedDescription)")
-    }
 }
 
 private struct VisibleSnapshotFingerprint: Equatable {
     let byteCount: Int
     let contentHash: Int
-
-    init(json: String) {
-        byteCount = json.utf8.count
-        contentHash = json.hashValue
-    }
 
     init(snapshot: MobileSnapshot) {
         var hasher = Hasher()

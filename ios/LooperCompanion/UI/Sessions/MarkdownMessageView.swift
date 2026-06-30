@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum MessageRenderBlock: Identifiable {
+enum MessageRenderBlock: Identifiable, Sendable {
     case markdown(id: Int, text: AttributedString)
     case code(id: Int, language: String?, text: String, renderedDiff: RenderedDiffBlock?)
 
@@ -153,6 +153,14 @@ private final class MessageRenderBlockCache: @unchecked Sendable {
         return parsedBlocks
     }
 
+    func cachedBlocks(for markdown: String) -> [MessageRenderBlock]? {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return blocksByMarkdown[markdown]
+    }
+
     private func pruneIfNeeded() {
         while insertionOrder.count > maximumEntries {
             let evictedMarkdown = insertionOrder.removeFirst()
@@ -163,25 +171,62 @@ private final class MessageRenderBlockCache: @unchecked Sendable {
 
 struct MarkdownMessageView: View {
     let markdown: String
-    private let blocks: [MessageRenderBlock]
+    @State private var blocks: [MessageRenderBlock]?
 
     init(markdown: String) {
         self.markdown = markdown
-        blocks = MessageRenderBlockCache.shared.blocks(for: markdown)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(blocks) { block in
-                switch block {
-                case let .markdown(_, text):
-                    MarkdownTextBlock(text: text)
-                case let .code(_, language, text, renderedDiff):
-                    CodeBlockView(language: language, code: text, renderedDiff: renderedDiff)
+        Group {
+            if let blocks {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(blocks) { block in
+                        switch block {
+                        case let .markdown(_, text):
+                            MarkdownTextBlock(text: text)
+                        case let .code(_, language, text, renderedDiff):
+                            CodeBlockView(language: language, code: text, renderedDiff: renderedDiff)
+                        }
+                    }
                 }
+            } else {
+                Text(Self.placeholderText(from: markdown))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(8)
+                    .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: markdown) {
+            await loadBlocks(for: markdown)
+        }
+    }
+
+    @MainActor
+    private func loadBlocks(for markdown: String) async {
+        if let cachedBlocks = MessageRenderBlockCache.shared.cachedBlocks(for: markdown) {
+            blocks = cachedBlocks
+            return
+        }
+
+        let parsedBlocks = await Task.detached(priority: .utility) {
+            MessageRenderBlockCache.shared.blocks(for: markdown)
+        }.value
+        guard !Task.isCancelled, self.markdown == markdown else {
+            return
+        }
+        blocks = parsedBlocks
+    }
+
+    private static func placeholderText(from markdown: String) -> String {
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maximumVisibleCharacterCount = 600
+        guard trimmed.count > maximumVisibleCharacterCount else {
+            return trimmed
+        }
+        return String(trimmed.prefix(maximumVisibleCharacterCount))
     }
 }
 

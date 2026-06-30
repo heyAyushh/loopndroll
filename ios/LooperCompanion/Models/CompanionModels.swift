@@ -2513,13 +2513,20 @@ struct SessionIndex: Equatable, Sendable {
         indexedSessions: [(surface: CompanionAssistantSurface, session: SessionSummary)],
         identity: String
     ) {
-        let allSessions = indexedSessions.map(\.session)
-        let sessionsByID = Dictionary(
-            uniqueKeysWithValues: indexedSessions.map { ($0.session.id, $0.session) }
-        )
-        let surfaceBySessionID = Dictionary(
-            uniqueKeysWithValues: indexedSessions.map { ($0.session.id, $0.surface) }
-        )
+        var allSessions: [SessionSummary] = []
+        allSessions.reserveCapacity(indexedSessions.count)
+        var sessionsByID: [String: SessionSummary] = [:]
+        sessionsByID.reserveCapacity(indexedSessions.count)
+        var surfaceBySessionID: [String: CompanionAssistantSurface] = [:]
+        surfaceBySessionID.reserveCapacity(indexedSessions.count)
+        for indexedSession in indexedSessions {
+            let sessionID = indexedSession.session.id
+            if sessionsByID[sessionID] == nil {
+                allSessions.append(indexedSession.session)
+                surfaceBySessionID[sessionID] = indexedSession.surface
+            }
+            sessionsByID[sessionID] = indexedSession.session
+        }
         self.init(
             allSessions: allSessions,
             sessionsByID: sessionsByID,
@@ -2588,10 +2595,20 @@ struct SessionIndex: Equatable, Sendable {
 
     private static func fallbackIdentity(_ snapshot: MobileSnapshot) -> String {
         let revision = snapshot.revision ?? "none"
-        let ids = fallbackSessions(from: snapshot)
-            .map { "\($0.surface.rawValue):\($0.session.id)" }
-            .joined(separator: "|")
-        return "fallback:\(revision):\(ids)"
+        var hasher = Hasher()
+        var count = 0
+        for (surface, session) in fallbackSessions(from: snapshot) {
+            hasher.combine(surface.rawValue)
+            hasher.combine(session.id)
+            hasher.combine(session.lastUpdatedAt)
+            hasher.combine(session.lastActivityAt)
+            hasher.combine(session.lastMessageAt)
+            hasher.combine(session.status.rawValue)
+            hasher.combine(session.effectiveMode?.rawValue)
+            hasher.combine(session.assistantPreview)
+            count += 1
+        }
+        return "fallback:\(revision):\(count):\(hasher.finalize())"
     }
 }
 
@@ -2650,6 +2667,7 @@ struct SessionSections: Sendable {
     }
 
     init(localProjectionSessions sessions: [SessionSummary]) {
+        let sessions = sessions.sortedByLocalFreshness()
         var active: [SessionSummary] = []
         var running: [SessionSummary] = []
         var waiting: [SessionSummary] = []
@@ -2721,6 +2739,44 @@ struct SessionSections: Sendable {
         }
     }
 
+}
+
+private extension Sequence where Element == SessionSummary {
+    func sortedByLocalFreshness() -> [SessionSummary] {
+        sorted { lhs, rhs in
+            let lhsTime = lhs.localFreshnessTimeInterval
+            let rhsTime = rhs.localFreshnessTimeInterval
+            if lhsTime != rhsTime {
+                return lhsTime > rhsTime
+            }
+
+            if lhs.ref != rhs.ref {
+                return lhs.ref.localizedStandardCompare(rhs.ref) == .orderedAscending
+            }
+            return lhs.id < rhs.id
+        }
+    }
+}
+
+private extension SessionSummary {
+    var localFreshnessTimeInterval: TimeInterval {
+        if let lastActivityAtMs {
+            return TimeInterval(lastActivityAtMs)
+        }
+        if let lastMessageAtMs {
+            return TimeInterval(lastMessageAtMs)
+        }
+        if let latestMessageAtMs {
+            return TimeInterval(latestMessageAtMs)
+        }
+        if let updatedAtMs {
+            return TimeInterval(updatedAtMs)
+        }
+        if let date = displayFreshnessDate ?? lastUpdatedDate {
+            return date.timeIntervalSince1970 * 1_000
+        }
+        return 0
+    }
 }
 
 private enum SessionSectionsProjectionCodec {

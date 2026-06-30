@@ -13,6 +13,7 @@ struct SessionDetailScreen: View {
     @State private var isSendingPrompt = false
     @State private var showingDeleteConfirmation = false
     @State private var openedLifecycleSessionID: String?
+    @State private var openedLifecycleTask: Task<Void, Never>?
     @FocusState private var focusedInput: SessionDetailInput?
 
     private var detail: SessionDetail? {
@@ -130,6 +131,8 @@ struct SessionDetailScreen: View {
         .onChange(of: session.id) {
             resetDraftMode()
             openedLifecycleSessionID = nil
+            openedLifecycleTask?.cancel()
+            openedLifecycleTask = nil
         }
         .onChange(of: currentMode) {
             syncDraftModeFromCurrentModeIfNeeded()
@@ -160,7 +163,7 @@ struct SessionDetailScreen: View {
             }
         }
         .task(id: session.id) {
-            await runOpenedSessionLifecycleIfNeeded()
+            runOpenedSessionLifecycleIfNeeded()
         }
         .task(id: promptSuggestionContextKey) {
             await refreshPromptSuggestions()
@@ -190,6 +193,10 @@ struct SessionDetailScreen: View {
                 .accessibilityIdentifier("session-detail.delete-cancel")
         } message: {
             Text("This removes the session from the looper list on Mac and iPhone.")
+        }
+        .onDisappear {
+            openedLifecycleTask?.cancel()
+            openedLifecycleTask = nil
         }
     }
 
@@ -612,14 +619,26 @@ struct SessionDetailScreen: View {
         await model.markCurrentSiriSession(session)
     }
 
-    private func runOpenedSessionLifecycleIfNeeded() async {
+    private func runOpenedSessionLifecycleIfNeeded() {
         guard openedLifecycleSessionID != session.id else {
             return
         }
         openedLifecycleSessionID = session.id
         model.refreshSessionDetail(id: session.id)
-        await markCurrentSiriSessionIfNeeded()
-        await model.donateOpenedSiriSession(session)
+
+        openedLifecycleTask?.cancel()
+        let openedSession = session
+        openedLifecycleTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else {
+                return
+            }
+            await model.markCurrentSiriSession(openedSession)
+            guard !Task.isCancelled else {
+                return
+            }
+            await model.donateOpenedSiriSession(openedSession)
+        }
     }
 
 }
