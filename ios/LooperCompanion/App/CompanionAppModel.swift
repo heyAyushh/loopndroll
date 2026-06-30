@@ -58,19 +58,13 @@ private enum AssistantSurfaceETTraceMetric {
 private enum AssistantSurfaceSelectionLogEvent {
     static let requested = "Selection requested"
     static let applied = "Selection applied"
-    static let stale = "Selection stale"
     static let cancelled = "Selection cancelled"
     static let failed = "Selection failed"
 }
 
 private enum AssistantSurfaceSelectionFailureReason {
     static let noChange = "no-change"
-    static let duplicateInFlight = "duplicate-in-flight"
     static let projectionRejected = "projection-rejected"
-    static let selectedSurfaceMismatch = "selected-surface-mismatch"
-    static let missingRuntime = "missing-runtime"
-    static let runtimeRejected = "runtime-rejected"
-    static let staleSelection = "stale-selection"
 }
 
 enum StateMiniRecoveryResult: Equatable {
@@ -191,9 +185,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
-    @ObservationIgnored private var assistantSurfaceSelectionGeneration = 0
-    @ObservationIgnored private var assistantSurfaceSelectionTarget: CompanionAssistantSurface?
-    @ObservationIgnored private var assistantSurfaceSelectionTask: Task<Bool, Never>?
 
     init(
         environment: CompanionEnvironment,
@@ -1685,22 +1676,7 @@ final class CompanionAppModel {
     func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Task<Bool, Never>? {
         logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.requested, surface: surface)
 
-        if assistantSurfaceSelectionTarget == surface,
-           let assistantSurfaceSelectionTask {
-            logAssistantSurfaceSelection(
-                AssistantSurfaceSelectionLogEvent.cancelled,
-                surface: surface,
-                reason: AssistantSurfaceSelectionFailureReason.duplicateInFlight
-            )
-            CompanionDiagnostics.record("assistant-surface:ignored surface=\(surface.rawValue) reason=duplicate-in-flight")
-            return assistantSurfaceSelectionTask
-        }
-
         guard snapshotState.selectedAssistantSurface != surface else {
-            assistantSurfaceSelectionGeneration += 1
-            assistantSurfaceSelectionTask?.cancel()
-            assistantSurfaceSelectionTask = nil
-            assistantSurfaceSelectionTarget = nil
             logAssistantSurfaceSelection(
                 AssistantSurfaceSelectionLogEvent.cancelled,
                 surface: surface,
@@ -1710,10 +1686,6 @@ final class CompanionAppModel {
             return nil
         }
 
-        assistantSurfaceSelectionGeneration += 1
-        let selectionGeneration = assistantSurfaceSelectionGeneration
-        assistantSurfaceSelectionTarget = surface
-        assistantSurfaceSelectionTask?.cancel()
         AssistantSurfaceETTraceMetric.postStarted(for: surface)
         guard snapshotState.selectAssistantSurface(surface) else {
             logAssistantSurfaceSelection(
@@ -1721,7 +1693,6 @@ final class CompanionAppModel {
                 surface: surface,
                 reason: AssistantSurfaceSelectionFailureReason.projectionRejected
             )
-            clearAssistantSurfaceSelection(selectionGeneration)
             AssistantSurfaceETTraceMetric.postEnded(for: surface)
             return nil
         }
@@ -1731,92 +1702,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         AssistantSurfaceETTraceMetric.postEnded(for: surface)
 
-        let selectionTask = Task { @MainActor [weak self] in
-            guard let self else {
-                return false
-            }
-            guard self.isCurrentAssistantSurfaceSelection(selectionGeneration) else {
-                self.logStaleAssistantSurfaceSelection(surface)
-                return false
-            }
-            guard let targetRuntime = self.sessionMiniController.sessionRuntime else {
-                self.logAssistantSurfaceSelection(
-                    AssistantSurfaceSelectionLogEvent.failed,
-                    surface: surface,
-                    reason: AssistantSurfaceSelectionFailureReason.missingRuntime
-                )
-                self.applyConnectionFailure(
-                    HTTPCompanionServiceError.localStoreUnavailable,
-                    suppressErrorWhenSnapshotUsable: true
-                )
-                self.clearAssistantSurfaceSelection(selectionGeneration)
-                return false
-            }
-
-            let result: ClientSessionCommandIntentResult
-            do {
-                result = try await targetRuntime.setAssistantSurface(surface)
-            } catch {
-                self.logAssistantSurfaceSelection(
-                    AssistantSurfaceSelectionLogEvent.failed,
-                    surface: surface,
-                    reason: AssistantSurfaceSelectionFailureReason.runtimeRejected
-                )
-                self.applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-                self.clearAssistantSurfaceSelection(selectionGeneration)
-                return false
-            }
-
-            guard self.isCurrentAssistantSurfaceSelection(selectionGeneration) else {
-                self.logStaleAssistantSurfaceSelection(surface)
-                return false
-            }
-            CompanionDiagnostics.record(
-                "assistant-surface:accepted-local surface=\(surface.rawValue) mutationID=\(result.clientMutationId) entityID=\(result.entityId)"
-            )
-            self.snapshotState.applyAcceptedAssistantSurface(surface)
-
-            let selectedSurface = self.snapshotState.selectedAssistantSurface
-            guard selectedSurface == surface else {
-                self.logAssistantSurfaceSelection(
-                    AssistantSurfaceSelectionLogEvent.stale,
-                    surface: surface,
-                    selectedSurface: selectedSurface,
-                    reason: AssistantSurfaceSelectionFailureReason.selectedSurfaceMismatch
-                )
-                self.clearAssistantSurfaceSelection(selectionGeneration)
-                return false
-            }
-
-            self.errorMessage = nil
-            self.lastUpdatedAt = Date()
-            self.clearAssistantSurfaceSelection(selectionGeneration)
-            return true
-        }
-        assistantSurfaceSelectionTask = selectionTask
-        return selectionTask
-    }
-
-    private func isCurrentAssistantSurfaceSelection(_ generation: Int) -> Bool {
-        !Task.isCancelled && assistantSurfaceSelectionGeneration == generation
-    }
-
-    private func clearAssistantSurfaceSelection(_ generation: Int) {
-        guard assistantSurfaceSelectionGeneration == generation else {
-            return
-        }
-        assistantSurfaceSelectionTask = nil
-        assistantSurfaceSelectionTarget = nil
-    }
-
-    private func logStaleAssistantSurfaceSelection(_ surface: CompanionAssistantSurface) {
-        logAssistantSurfaceSelection(
-            AssistantSurfaceSelectionLogEvent.stale,
-            surface: surface,
-            selectedSurface: snapshotState.selectedAssistantSurface,
-            reason: AssistantSurfaceSelectionFailureReason.staleSelection
-        )
-        CompanionDiagnostics.record("assistant-surface:stale surface=\(surface.rawValue)")
+        return Task { true }
     }
 
     private func recordPromptAccepted(

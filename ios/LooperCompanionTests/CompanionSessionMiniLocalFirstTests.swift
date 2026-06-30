@@ -243,8 +243,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
-        let pendingSurfaceCommand = try Self.pendingCommand(in: runtime, kind: .setAssistantSurface)
-        #expect(pendingSurfaceCommand.assistantSurface == CompanionAssistantSurface.devin.rawValue)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
     }
 
@@ -300,8 +299,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.selectedAssistantSurface == .zed)
         #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
         #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
-        let pendingSurfaceCommand = try Self.pendingCommand(in: runtime, kind: .setAssistantSurface)
-        #expect(pendingSurfaceCommand.assistantSurface == CompanionAssistantSurface.zed.rawValue)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
     }
 
     @MainActor
@@ -375,8 +373,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.activeSessions.map(\.id) == ["devin-thread"])
         #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
         #expect(try #require(model.snapshot).sessionsAcrossSurfaces.map(\.id).sorted() == localMiniSourceIDs)
-        let pendingSurfaceCommand = try Self.pendingCommand(in: runtime, kind: .setAssistantSurface)
-        #expect(pendingSurfaceCommand.assistantSurface == CompanionAssistantSurface.devin.rawValue)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
         #expect(service.loadServerHealthCallCount == 0)
     }
@@ -436,19 +433,17 @@ struct CompanionSessionMiniLocalFirstTests {
         let claudeTask = try #require(model.selectAssistantSurface(.claudeCode))
         let devinTask = try #require(model.selectAssistantSurface(.devin))
 
-        #expect(!(await claudeTask.value))
+        #expect(await claudeTask.value)
         #expect(await devinTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
 
-        let pendingSurfaceCommands = Self.pendingCommands(in: runtime, kind: .setAssistantSurface)
-        #expect(pendingSurfaceCommands.count == 1)
-        #expect(pendingSurfaceCommands.first?.assistantSurface == CompanionAssistantSurface.devin.rawValue)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
     @Test
-    func testHundredAssistantSurfaceSwitchesKeepLatestDurableSelection() async throws {
+    func testHundredAssistantSurfaceSwitchesStayViewOnly() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -479,9 +474,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(await resolvedTask.value)
         #expect(model.viewState.selectedAssistantSurface == .zed)
 
-        let pendingSurfaceCommands = Self.pendingCommands(in: runtime, kind: .setAssistantSurface)
-        #expect(pendingSurfaceCommands.count == 1)
-        #expect(pendingSurfaceCommands.first?.assistantSurface == CompanionAssistantSurface.zed.rawValue)
+        #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
     }
 
@@ -524,7 +517,6 @@ struct CompanionSessionMiniLocalFirstTests {
                 .setSiriCurrentSession,
                 .setSiriDefaultSession,
                 .saveDefaultPrompt,
-                .setAssistantSurface,
             ]
         )
         #expect(service.loadSnapshotCallCount == 0)

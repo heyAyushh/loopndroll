@@ -433,19 +433,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     }
 
     @discardableResult
-    func setAssistantSurface(
-        _ assistantSurface: CompanionAssistantSurface
-    ) async throws -> ClientSessionCommandIntentResult {
-        let result = try await sessionManager.setAssistantSurface(assistantSurface.rawValue)
-        guard result.accepted else {
-            CompanionDiagnostics.record("assistant-surface:grpc-invalid surface=\(assistantSurface.rawValue)")
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        CompanionDiagnostics.record("assistant-surface:grpc-accepted surface=\(assistantSurface.rawValue)")
-        return result
-    }
-
-    @discardableResult
     func saveDefaultPrompt(
         _ prompt: String
     ) async throws -> ClientSessionCommandIntentResult {
