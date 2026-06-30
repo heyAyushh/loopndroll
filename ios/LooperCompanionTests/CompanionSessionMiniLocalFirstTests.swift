@@ -286,18 +286,21 @@ struct CompanionSessionMiniLocalFirstTests {
         )
 
         #expect(model.viewState.selectedAssistantSurface == .codex)
-        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread", "zed-thread"])
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
 
         let selectionTask = try #require(model.selectAssistantSurface(.zed))
 
         #expect(service.loadSnapshotCallCount == 0)
         #expect(model.viewState.selectedAssistantSurface == .zed)
-        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread", "zed-thread"])
+        #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
         #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
 
         #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .zed)
-        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread", "zed-thread"])
+        #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
         #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
     }
@@ -370,9 +373,10 @@ struct CompanionSessionMiniLocalFirstTests {
         let finalSelectionTask = try #require(model.selectAssistantSurface(.codex))
 
         #expect(model.viewState.selectedAssistantSurface == .codex)
-        #expect(model.viewState.activeSessions.map(\.id) == [
-            "codex-thread",
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == [
             "claude-thread",
+            "codex-thread",
             "devin-thread",
             "grok-thread",
         ])
@@ -444,11 +448,8 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
         #expect(try #require(model.snapshot).sessionsAcrossSurfaces.map(\.id).sorted() == localMiniSourceIDs)
         #expect(model.viewState.selectedAssistantSurface == .codex)
-        #expect(model.viewState.activeSessions.map(\.id) == [
-            "codex-thread",
-            "devin-thread",
-            "zed-thread",
-        ])
+        #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == localMiniSourceIDs)
 
         let selectionTask = try #require(model.selectAssistantSurface(.devin))
 
@@ -457,11 +458,8 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
-        #expect(model.viewState.activeSessions.map(\.id) == [
-            "codex-thread",
-            "devin-thread",
-            "zed-thread",
-        ])
+        #expect(model.viewState.activeSessions.map(\.id) == ["devin-thread"])
+        #expect(model.viewState.allSessions.map(\.id).sorted() == localMiniSourceIDs)
         #expect(try Self.localMiniSourceIDs(in: runtime) == localMiniSourceIDs)
         #expect(try #require(model.snapshot).sessionsAcrossSurfaces.map(\.id).sorted() == localMiniSourceIDs)
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)

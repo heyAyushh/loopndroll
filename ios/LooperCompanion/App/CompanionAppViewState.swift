@@ -15,31 +15,31 @@ struct CompanionAppViewState {
     }
 
     var activeSessions: [SessionSummary] {
-        snapshotState.allSessionSections.active
+        snapshotState.sessionSections.active
     }
 
     var runningSessions: [SessionSummary] {
-        snapshotState.allSessionSections.running
+        snapshotState.sessionSections.running
     }
 
     var waitingSessions: [SessionSummary] {
-        snapshotState.allSessionSections.waiting
+        snapshotState.sessionSections.waiting
     }
 
     var stoppedSessions: [SessionSummary] {
-        snapshotState.allSessionSections.stopped
+        snapshotState.sessionSections.stopped
     }
 
     var needsAttentionSessions: [SessionSummary] {
-        snapshotState.allSessionSections.needsAttention
+        snapshotState.sessionSections.needsAttention
     }
 
     var archivedSessions: [SessionSummary] {
-        snapshotState.allSessionSections.archived
+        snapshotState.sessionSections.archived
     }
 
     var sessionsBadgeCount: Int {
-        snapshotState.allSessionSections.needsAttentionCount
+        snapshotState.sessionSections.needsAttentionCount
     }
 
     var canSwitchAssistantSurface: Bool {
