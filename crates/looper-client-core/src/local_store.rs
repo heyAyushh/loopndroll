@@ -571,6 +571,13 @@ impl StoredState {
         changed
     }
 
+    fn drop_legacy_assistant_surface_commands(&mut self) -> bool {
+        let original_len = self.pending_commands.len();
+        self.pending_commands
+            .retain(|command| command.kind != ClientPendingCommandKind::SetAssistantSurface);
+        self.pending_commands.len() != original_len
+    }
+
     fn normalize_local_minis(&mut self) -> bool {
         let normalized = normalize_state_minis(self.sessions.clone());
         let changed = normalized != self.sessions;
@@ -713,10 +720,13 @@ fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
         Ok(mut state) => {
             let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
             let coalesced_pending_commands = state.coalesce_latest_pending_commands();
+            let dropped_legacy_assistant_surface_commands =
+                state.drop_legacy_assistant_surface_commands();
             let normalized_local_minis = state.normalize_local_minis();
             let repaired_last_seq_by_node = state.repair_last_seq_by_node();
             if repaired_legacy_cursor
                 || coalesced_pending_commands
+                || dropped_legacy_assistant_surface_commands
                 || normalized_local_minis
                 || repaired_last_seq_by_node
             {
@@ -1120,8 +1130,8 @@ mod tests {
     }
 
     #[test]
-    fn local_store_keeps_latest_assistant_surface_switch_on_load() {
-        let path = temp_store_path("assistant-surface-load-repair");
+    fn local_store_drops_legacy_assistant_surface_switches_on_load() {
+        let path = temp_store_path("assistant-surface-load-drop");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
             &path,
@@ -1141,6 +1151,13 @@ mod tests {
                         "threadID": "mobile-settings",
                         "assistantSurface": "devin",
                         "attemptCount": 0
+                    },
+                    {
+                        "kind": "SetSiriCurrentSession",
+                        "clientMutationID": "mutation-siri-current",
+                        "threadID": "thread-main",
+                        "assistantSurface": "codex",
+                        "attemptCount": 2
                     }
                 ]
             })
@@ -1154,13 +1171,13 @@ mod tests {
         assert_eq!(snapshot.pending_commands.len(), 1);
         assert_eq!(
             snapshot.pending_commands[0].kind,
-            ClientPendingCommandKind::SetAssistantSurface
+            ClientPendingCommandKind::SetSiriCurrentSession
         );
         assert_eq!(
             snapshot.pending_commands[0].client_mutation_id,
-            "mutation-devin"
+            "mutation-siri-current"
         );
-        assert_eq!(snapshot.pending_commands[0].assistant_surface, "devin");
+        assert_eq!(snapshot.pending_commands[0].assistant_surface, "codex");
 
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read repaired cache"))
@@ -1169,8 +1186,11 @@ mod tests {
             .as_array()
             .expect("pending commands");
         assert_eq!(pending_commands.len(), 1);
-        assert_eq!(pending_commands[0]["clientMutationID"], "mutation-devin");
-        assert_eq!(pending_commands[0]["assistantSurface"], "devin");
+        assert_eq!(
+            pending_commands[0]["clientMutationID"],
+            "mutation-siri-current"
+        );
+        assert_eq!(pending_commands[0]["kind"], "SetSiriCurrentSession");
     }
 
     #[test]

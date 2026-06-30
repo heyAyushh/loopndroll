@@ -142,9 +142,6 @@ fn apply_pending_commands(snapshot: &mut Value, commands: &[ClientPendingCommand
             ClientPendingCommandKind::SaveDefaultPrompt => {
                 apply_pending_default_prompt(snapshot, &command.prompt);
             }
-            ClientPendingCommandKind::SetAssistantSurface => {
-                apply_pending_assistant_surface(snapshot, &command.assistant_surface);
-            }
             ClientPendingCommandKind::SetSessionArchived => {
                 apply_pending_archive(snapshot, &command.thread_id, command.archived);
             }
@@ -153,6 +150,7 @@ fn apply_pending_commands(snapshot: &mut Value, commands: &[ClientPendingCommand
             }
             ClientPendingCommandKind::SendSessionPrompt
             | ClientPendingCommandKind::SubmitNotificationReply
+            | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SetDefaultNotificationTargets
             | ClientPendingCommandKind::MuteSession => {}
         }
@@ -209,20 +207,6 @@ fn apply_pending_default_prompt(snapshot: &mut Value, prompt: &str) {
         return;
     };
     settings.insert("defaultPrompt".to_owned(), Value::String(prompt));
-}
-
-fn apply_pending_assistant_surface(snapshot: &mut Value, assistant_surface: &str) {
-    let assistant_surface = normalized_pending_text(assistant_surface);
-    if !is_known_assistant_surface(&assistant_surface) {
-        return;
-    }
-    let Some(settings) = global_settings_mut(snapshot) else {
-        return;
-    };
-    settings.insert(
-        "assistantSurface".to_owned(),
-        Value::String(assistant_surface),
-    );
 }
 
 fn apply_pending_archive(snapshot: &mut Value, session_id: &str, archived: bool) {
@@ -885,7 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_snapshot_applies_pending_assistant_surface_before_refreshing_visible_sessions() {
+    fn mobile_snapshot_ignores_pending_assistant_surface_when_refreshing_visible_sessions() {
         let projection = reduce_state_minis_mobile_snapshot_with_pending_commands(
             32,
             vec![
@@ -909,8 +893,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(projection.has_snapshot);
-        assert_eq!(snapshot["globalSettings"]["assistantSurface"], "zed");
-        assert_eq!(visible_session_ids, vec!["thread-zed"]);
+        assert_eq!(snapshot["globalSettings"]["assistantSurface"], "codex");
+        assert_eq!(visible_session_ids, vec!["thread-codex"]);
     }
 
     #[test]
