@@ -623,6 +623,68 @@ struct SessionSummaryTimingTests {
     }
 
     @MainActor
+    @Test("Surface fallback filters global sessions by assistant client")
+    func surfaceFallbackFiltersGlobalSessionsByAssistantClient() throws {
+        let codexSession = try sessionSummary(
+            id: "codex-thread",
+            ref: "C1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            assistantClient: "codex"
+        )
+        let zedSession = try sessionSummary(
+            id: "zed-thread",
+            ref: "Z1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            assistantClient: "zed"
+        )
+        let claudeSession = try sessionSummary(
+            id: "claude-thread",
+            ref: "CL1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            assistantClient: "claude-code"
+        )
+        let snapshot = MobileSnapshot(
+            revision: "global-surface-fallback",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: Constants.hostSyncTime
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [codexSession, zedSession, claudeSession],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+
+        store.applySnapshot(snapshot)
+        #expect(store.selectedAssistantSurface == .codex)
+        #expect(store.sessionSections.active.map(\.id) == ["codex-thread"])
+        #expect(store.allSessions.map(\.id) == [
+            "codex-thread",
+            "claude-thread",
+            "zed-thread",
+        ])
+
+        #expect(store.selectAssistantSurface(.zed))
+        #expect(store.selectedAssistantSurface == .zed)
+        #expect(store.sessionSections.active.map(\.id) == ["zed-thread"])
+    }
+
+    @MainActor
     @Test("Cached assistant surface switch makes matching snapshot echo a no-op")
     func cachedAssistantSurfaceSwitchMakesMatchingSnapshotEchoNoOp() throws {
         let codexSession = try sessionSummary(
@@ -740,6 +802,7 @@ struct SessionSummaryTimingTests {
         activityMilliseconds: Int64,
         messageMilliseconds: Int64,
         isArchived: Bool = false,
+        assistantClient: String? = nil,
         goal: [String: Any]? = nil
     ) throws -> SessionSummary {
         let payload = sessionPayload(
@@ -749,6 +812,7 @@ struct SessionSummaryTimingTests {
             activityMilliseconds: activityMilliseconds,
             messageMilliseconds: messageMilliseconds,
             isArchived: isArchived,
+            assistantClient: assistantClient,
             goal: goal
         )
         let data = try JSONSerialization.data(withJSONObject: payload)
@@ -762,6 +826,7 @@ struct SessionSummaryTimingTests {
         activityMilliseconds: Int64,
         messageMilliseconds: Int64,
         isArchived: Bool = false,
+        assistantClient: String? = nil,
         goal: [String: Any]? = nil
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -788,6 +853,9 @@ struct SessionSummaryTimingTests {
                 ],
             ],
         ]
+        if let assistantClient {
+            payload["assistantClient"] = assistantClient
+        }
         if let goal {
             payload["goal"] = goal
         }

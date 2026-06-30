@@ -2449,6 +2449,15 @@ struct MobileSnapshot: Codable, Sendable {
             return sessions
         }
 
+        if sessions.contains(where: { $0.assistantClient != .unknown }) {
+            return sessions.filter { session in
+                CompanionSurfaceFiltering.matches(
+                    assistantClient: session.assistantClient.rawValue,
+                    surface: surface.rawValue
+                )
+            }
+        }
+
         guard globalSettings.assistantSurface == surface else {
             return []
         }

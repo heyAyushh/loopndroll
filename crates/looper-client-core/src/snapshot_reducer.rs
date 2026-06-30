@@ -7,6 +7,9 @@ use crate::error::ClientCoreError;
 use looper_session_core::ACTIVE_STATUS;
 
 const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
+const ASSISTANT_CLIENT_FIELD: &str = "assistantClient";
+const UNKNOWN_ASSISTANT_CLIENT: &str = "unknown";
+const CODEX_SURFACE_CLIENTS: &[&str] = &["codex", "cursor", "super-engineering", "openclaw"];
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientSnapshotProjection {
@@ -860,10 +863,50 @@ fn sessions_for_surface(
         return sessions.clone();
     }
 
+    if snapshot
+        .sessions
+        .iter()
+        .any(|session| matches!(assistant_client(session), Some(client) if client != UNKNOWN_ASSISTANT_CLIENT))
+    {
+        return snapshot
+            .sessions
+            .iter()
+            .filter(|session| session_matches_surface(session, selected_assistant_surface))
+            .cloned()
+            .collect();
+    }
+
     if snapshot.global_settings.assistant_surface == selected_assistant_surface {
         snapshot.sessions.clone()
     } else {
         Vec::new()
+    }
+}
+
+fn session_matches_surface(session: &SessionDocument, selected_assistant_surface: &str) -> bool {
+    let Some(client) = assistant_client(session) else {
+        return false;
+    };
+
+    assistant_client_matches_surface(client, selected_assistant_surface)
+}
+
+fn assistant_client(session: &SessionDocument) -> Option<&str> {
+    session
+        .extra
+        .get(ASSISTANT_CLIENT_FIELD)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|client| !client.is_empty())
+}
+
+fn assistant_client_matches_surface(client: &str, selected_assistant_surface: &str) -> bool {
+    match selected_assistant_surface {
+        "claude-code" | "claudeCode" => client == "claude-code",
+        "devin" => client == "devin",
+        "grok-build" | "grokBuild" => client == "grok-build",
+        "zed" => client == "zed",
+        _ => CODEX_SURFACE_CLIENTS.contains(&client),
     }
 }
 
@@ -1028,6 +1071,81 @@ mod tests {
         assert_eq!(visible_value["host"]["name"], "Looper");
         assert_eq!(visible_value["sessions"][0]["ref"], "D1");
         assert_eq!(visible_value["globalSettings"]["defaultPrompt"], "Continue");
+    }
+
+    #[test]
+    fn snapshot_projection_filters_global_sessions_by_assistant_client() {
+        let snapshot_json = r#"{
+            "revision":"global-client-fallback",
+            "globalSettings":{"assistantSurface":"codex"},
+            "sessions":[
+                {
+                    "id":"codex-thread",
+                    "ref":"C1",
+                    "status":"active",
+                    "assistantClient":"codex",
+                    "lastActivityAtMs":1781596920000,
+                    "isArchived":false
+                },
+                {
+                    "id":"zed-thread",
+                    "ref":"Z1",
+                    "status":"active",
+                    "assistantClient":"zed",
+                    "lastActivityAtMs":1781596920001,
+                    "isArchived":false
+                },
+                {
+                    "id":"claude-thread",
+                    "ref":"CL1",
+                    "status":"active",
+                    "assistantClient":"claude-code",
+                    "lastActivityAtMs":1781596920002,
+                    "isArchived":false
+                }
+            ],
+            "notifications":[],
+            "completionChecks":[]
+        }"#;
+        let surface_order = vec![CODEX.to_owned(), "claude-code".to_owned(), "zed".to_owned()];
+
+        let codex_projection = reduce_mobile_snapshot_projection(
+            snapshot_json.to_owned(),
+            CODEX.to_owned(),
+            true,
+            CODEX.to_owned(),
+            surface_order.clone(),
+        )
+        .expect("project codex snapshot");
+        let zed_projection = reduce_mobile_snapshot_projection(
+            snapshot_json.to_owned(),
+            "zed".to_owned(),
+            true,
+            CODEX.to_owned(),
+            surface_order,
+        )
+        .expect("project zed snapshot");
+
+        assert_eq!(codex_projection.visible_session_ids, vec!["codex-thread"]);
+        assert_eq!(zed_projection.visible_session_ids, vec!["zed-thread"]);
+        assert_eq!(
+            codex_projection
+                .session_index
+                .entries
+                .iter()
+                .map(|entry| (entry.surface.as_str(), entry.session_index))
+                .collect::<Vec<_>>(),
+            vec![("codex", 0)]
+        );
+        assert_eq!(
+            zed_projection
+                .session_index
+                .entries
+                .iter()
+                .map(|entry| (entry.surface.as_str(), entry.session_index))
+                .collect::<Vec<_>>(),
+            vec![("zed", 0)]
+        );
     }
 
     #[test]
