@@ -8,7 +8,8 @@ use crate::control_plane::session_fsm::{
 };
 use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
 use crate::mobile::api::{
-    session_mini_projection_inputs_with_mode, session_mini_records_contain_session,
+    session_mini_projection_inputs_with_mobile_state, session_mini_projection_inputs_with_mode,
+    session_mini_records_contain_session,
 };
 use crate::mobile::events::{MobileEventInput, MobileEventKind};
 use crate::mobile::prompt_delivery::{
@@ -1486,8 +1487,41 @@ fn emit_mobile_session_changed(
         detail: detail.map(str::to_owned),
     };
     match thread_id {
-        Some(thread_id) => control_plane.emit_mobile_session_event(input, thread_id),
+        Some(thread_id) => {
+            emit_mobile_session_event_with_fresh_cached_overlay(control_plane, input, thread_id)
+        }
         None => control_plane.emit_mobile_event(input),
+    }
+}
+
+fn emit_mobile_session_event_with_fresh_cached_overlay(
+    control_plane: &ControlPlane,
+    input: MobileEventInput,
+    thread_id: &str,
+) {
+    let minis = control_plane
+        .store()
+        .mobile_session_minis_for_session(thread_id)
+        .ok()
+        .and_then(|records| {
+            control_plane
+                .mobile_session_service()
+                .state()
+                .ok()
+                .map(|session_state| {
+                    session_mini_projection_inputs_with_mobile_state(
+                        &records,
+                        thread_id,
+                        &session_state,
+                    )
+                })
+        })
+        .unwrap_or_default();
+    if minis.is_empty() {
+        control_plane.emit_mobile_session_event_without_projection(input);
+        control_plane.spawn_mobile_session_mini_projection_reconcile_if_due();
+    } else {
+        control_plane.emit_mobile_session_event_with_cached_minis(input, minis);
     }
 }
 

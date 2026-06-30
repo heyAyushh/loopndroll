@@ -2473,6 +2473,73 @@ async fn session_mini_projection_default_notification_targets_ignore_stale_cache
 }
 
 #[tokio::test]
+async fn session_mini_projection_replays_session_notification_mutation_without_stale_cache() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .mobile_session_service()
+        .upsert_notification_route(
+            agent_control_plane::mobile::session::UpsertMobileNotificationRoute {
+                id: Some("route-telegram".to_owned()),
+                label: Some("Telegram DM".to_owned()),
+                channel: "telegram".to_owned(),
+                bot_token: Some("bot-token".to_owned()),
+                chat_id: Some("chat-1".to_owned()),
+                ..agent_control_plane::mobile::session::UpsertMobileNotificationRoute::default()
+            },
+        )
+        .expect("upsert notification");
+    prime_state_mini_cache(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let initial = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
+    let initial_session = session_mini_snapshot_session(&initial, "thread-main");
+    assert_eq!(
+        initial_session["notificationStatus"]["usesDefault"],
+        serde_json::json!(true)
+    );
+
+    let ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSessionNotifications(SetSessionNotificationsRequest {
+            thread_id: "thread-main".to_owned(),
+            notification_ids: vec!["route-telegram".to_owned()],
+            client_mutation_id: "session-notifications-fresh-overlay-test".to_owned(),
+        }),
+    )
+    .await;
+    assert!(ack.accepted, "Session notification command accepted");
+
+    let replayed = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={initial_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+    let session = session_mini_snapshot_session(&replayed, "thread-main");
+    assert_eq!(session["notificationStatus"]["enabled"], true);
+    assert_eq!(
+        session["notificationStatus"]["targetIds"],
+        serde_json::json!(["route-telegram"])
+    );
+    assert_eq!(session["notificationStatus"]["usesDefault"], false);
+}
+
+#[tokio::test]
 async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

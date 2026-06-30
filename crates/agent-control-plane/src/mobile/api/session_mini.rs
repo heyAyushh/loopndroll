@@ -223,6 +223,72 @@ pub fn session_mini_projection_inputs_with_mode(
         .collect()
 }
 
+pub fn session_mini_projection_inputs_with_mobile_state(
+    records: &[MobileSessionMiniRecord],
+    session_id: &str,
+    session_state: &MobileSessionState,
+) -> Vec<MobileSessionMiniProjectionInput> {
+    let override_state = session_state.sessions.get(session_id);
+    if override_state
+        .map(|state| state.deleted || state.archived.unwrap_or(false))
+        .unwrap_or(false)
+    {
+        return Vec::new();
+    }
+
+    records
+        .iter()
+        .filter(|record| record.session_id == session_id)
+        .filter_map(|record| {
+            let mut body = serde_json::from_str::<Value>(&record.body_json).ok()?;
+            refresh_cached_mobile_state_overlay(&mut body, session_id, session_state)?;
+            Some(MobileSessionMiniProjectionInput {
+                session_id: record.session_id.clone(),
+                assistant_surface: record.assistant_surface.clone(),
+                body_json: body,
+            })
+        })
+        .collect()
+}
+
+fn refresh_cached_mobile_state_overlay(
+    body: &mut Value,
+    session_id: &str,
+    session_state: &MobileSessionState,
+) -> Option<()> {
+    let body_object = body.as_object_mut()?;
+    let override_state = session_state.sessions.get(session_id);
+
+    if let Some(archived) = override_state.and_then(|state| state.archived) {
+        body_object.insert("isArchived".to_owned(), json!(archived));
+    }
+    if let Some(lifecycle) = session_state.lifecycle.get(session_id) {
+        body_object.insert("lifecycle".to_owned(), json!(lifecycle.status));
+        body_object.insert("status".to_owned(), json!(lifecycle.status));
+    }
+
+    let uses_default_notification_targets = override_state
+        .map(|state| state.notification_ids.is_empty())
+        .unwrap_or(true);
+    let notification_target_ids = if uses_default_notification_targets {
+        session_state.default_notification_target_ids.clone()
+    } else {
+        override_state
+            .map(|state| state.notification_ids.clone())
+            .unwrap_or_default()
+    };
+    body_object.insert(
+        "notificationStatus".to_owned(),
+        json!({
+            "enabled": !notification_target_ids.is_empty(),
+            "targetIds": notification_target_ids,
+            "usesDefault": uses_default_notification_targets,
+        }),
+    );
+
+    Some(())
+}
+
 pub fn latest_session_mini_revision(records: &[MobileSessionMiniRecord]) -> Option<String> {
     records
         .iter()

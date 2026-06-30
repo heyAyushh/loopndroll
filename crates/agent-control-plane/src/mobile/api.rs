@@ -21,9 +21,9 @@ pub use self::prompt_delivery::{
 pub use self::session_mini::{
     compact_mobile_session_mini_record, latest_session_mini_revision, mobile_session_mini_delta,
     mobile_session_mini_snapshot, mobile_session_minis, session_mini_projection_inputs,
-    session_mini_projection_inputs_from_records, session_mini_projection_inputs_with_mode,
-    session_mini_records_allow_prompt, session_mini_records_allow_reply_mode_prompt,
-    session_mini_records_contain_session,
+    session_mini_projection_inputs_from_records, session_mini_projection_inputs_with_mobile_state,
+    session_mini_projection_inputs_with_mode, session_mini_records_allow_prompt,
+    session_mini_records_allow_reply_mode_prompt, session_mini_records_contain_session,
 };
 pub use self::snapshot::mobile_snapshot;
 
