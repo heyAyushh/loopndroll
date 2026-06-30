@@ -146,6 +146,30 @@ final class CompanionSessionMiniController {
         }
     }
 
+    func hasLocalStateMiniEvidence(reason: String) -> Bool {
+        guard let sessionRuntime else {
+            return false
+        }
+
+        do {
+            let snapshot = try sessionRuntime.currentStateMiniSnapshot()
+            let hasEvidence = snapshot.latestSeq > 0
+                || !snapshot.sessions.isEmpty
+                || !snapshot.pendingCommands.isEmpty
+            if hasEvidence {
+                CompanionDiagnostics.record(
+                    "session-mini:local-evidence reason=\(reason) seq=\(snapshot.latestSeq) sessions=\(snapshot.sessions.count)"
+                )
+            }
+            return hasEvidence
+        } catch {
+            CompanionDiagnostics.record(
+                "session-mini:local-evidence-failed reason=\(reason) error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
     func cachedSnapshot() throws -> MobileSnapshot? {
         guard let sessionRuntime else {
             throw HTTPCompanionServiceError.localStoreUnavailable

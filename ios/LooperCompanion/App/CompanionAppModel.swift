@@ -654,6 +654,11 @@ final class CompanionAppModel {
                 )
                 return
             }
+            if sessionMiniController.hasLocalStateMiniEvidence(reason: "network-snapshot-local-session-mini-store") {
+                markCachedSnapshotReadyIfNeeded(reason: "network-snapshot-local-session-mini-store")
+                CompanionDiagnostics.record("snapshot:load-session-mini-store-skip")
+                return
+            }
             let nextSnapshot = try await service.loadSnapshot()
             guard loadRevision == connectionRevision else {
                 CompanionDiagnostics.record("snapshot:load-stale-skip")
@@ -1913,6 +1918,13 @@ final class CompanionAppModel {
         if hasKnownSessionMiniCursor() {
             CompanionDiagnostics.record(
                 "snapshot:cache-restore-session-cursor-skip reason=\(reason) realtimeSeq=\(realtimeLatestSeq)"
+            )
+            return false
+        }
+
+        if sessionMiniController.hasLocalStateMiniEvidence(reason: reason) {
+            CompanionDiagnostics.record(
+                "snapshot:cache-restore-session-mini-store-skip reason=\(reason)"
             )
             return false
         }

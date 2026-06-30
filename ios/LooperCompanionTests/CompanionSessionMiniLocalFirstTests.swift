@@ -1433,7 +1433,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testMalformedMiniCacheFallsBackAndOutboxKeepsOfflinePrompt() async throws {
+    func testMalformedMiniCacheDoesNotApplyLegacySnapshotFallback() async throws {
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let storeFileURL = try Self.temporaryStoreFileURL()
         try Self.seedMalformedMiniCache(at: storeFileURL)
@@ -1446,15 +1446,9 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.snapshot == nil)
 
         await model.loadSnapshot()
-        #expect(model.snapshot?.session(withID: Constants.fallbackThreadID)?.title == "Network Fallback")
-
-        let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
-
-        #expect(didSend)
-        let pendingCommand = try Self.pendingCommand(in: runtime, kind: .sendSessionPrompt)
-        #expect(pendingCommand.threadID == Constants.fallbackThreadID)
-        #expect(pendingCommand.prompt == "continue")
-        #expect(pendingCommand.attemptCount == 1)
+        #expect(model.snapshot == nil)
+        #expect(model.snapshot?.session(withID: Constants.fallbackThreadID) == nil)
+        #expect(service.loadSnapshotCallCount == 0)
     }
 
     @MainActor
