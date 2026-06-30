@@ -1,8 +1,9 @@
 // allow: SIZE_OK — legacy control-plane facade kept as the public coordinator while new ACP responsibilities live in control_plane/acp_hosts/.
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ use crate::claude_code::{
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    inspect_control_plane, read_snapshot_state_with_thread_limit, read_state,
+    discover_sources, inspect_control_plane, read_snapshot_state_with_thread_limit, read_state,
     read_thread_revision_state,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
@@ -216,6 +217,14 @@ struct SessionMiniProjectionReconciler {
 struct SessionMiniProjectionReconcileState {
     in_flight: bool,
     last_started_at: Option<Instant>,
+    last_source_signature: Option<SessionMiniProjectionSourceSignature>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionMiniProjectionSourceSignature {
+    state_db_path: PathBuf,
+    modified_at_ms: i64,
+    len: u64,
 }
 
 struct SessionMiniProjectionReconcilePermit {
@@ -249,6 +258,37 @@ impl SessionMiniProjectionReconciler {
         Some(SessionMiniProjectionReconcilePermit {
             reconciler: self.clone(),
         })
+    }
+
+    fn try_acquire_for_source_change(
+        self: &Arc<Self>,
+        now: Instant,
+        min_interval: Duration,
+        source_signature: &SessionMiniProjectionSourceSignature,
+    ) -> Option<SessionMiniProjectionReconcilePermit> {
+        let mut state = self.state.lock().expect("session mini reconciler lock");
+        if state.in_flight {
+            return None;
+        }
+        if state.last_source_signature.as_ref() == Some(source_signature) {
+            return None;
+        }
+        if state
+            .last_started_at
+            .is_some_and(|last_started_at| now.duration_since(last_started_at) < min_interval)
+        {
+            return None;
+        }
+        state.in_flight = true;
+        state.last_started_at = Some(now);
+        Some(SessionMiniProjectionReconcilePermit {
+            reconciler: self.clone(),
+        })
+    }
+
+    fn mark_source_signature(&self, source_signature: SessionMiniProjectionSourceSignature) {
+        let mut state = self.state.lock().expect("session mini reconciler lock");
+        state.last_source_signature = Some(source_signature);
     }
 
     fn finish(&self) {
@@ -711,6 +751,47 @@ impl ControlPlane {
                 eprintln!("mobile session mini reconcile failed: {error}");
             }
         });
+    }
+
+    pub fn spawn_mobile_session_mini_projection_reconcile_if_source_changed(&self) {
+        let Some(source_signature) = self.mobile_session_mini_projection_source_signature() else {
+            return;
+        };
+        let Some(permit) = self.session_mini_reconciler.try_acquire_for_source_change(
+            Instant::now(),
+            SESSION_MINI_PROJECTION_RECONCILE_INTERVAL,
+            &source_signature,
+        ) else {
+            return;
+        };
+        let control_plane = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            match control_plane.reconcile_mobile_session_mini_projection() {
+                Ok(_) => control_plane
+                    .session_mini_reconciler
+                    .mark_source_signature(source_signature),
+                Err(error) => eprintln!("mobile session mini reconcile failed: {error}"),
+            }
+        });
+    }
+
+    fn mobile_session_mini_projection_source_signature(
+        &self,
+    ) -> Option<SessionMiniProjectionSourceSignature> {
+        let state_db_path = discover_sources(&self.config.codex_home).state_db?;
+        let metadata = fs::metadata(&state_db_path).ok()?;
+        let modified_at_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or_default();
+        Some(SessionMiniProjectionSourceSignature {
+            state_db_path,
+            modified_at_ms,
+            len: metadata.len(),
+        })
     }
 
     fn persist_and_publish_mobile_event(
@@ -2889,6 +2970,58 @@ mod tests {
         assert_eq!(refresh_count, 1);
         assert_eq!(first, "first");
         assert_eq!(second, "first");
+    }
+
+    #[test]
+    fn session_mini_reconciler_waits_for_source_change_after_success() {
+        let reconciler = Arc::new(SessionMiniProjectionReconciler::new());
+        let signature = SessionMiniProjectionSourceSignature {
+            state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
+            modified_at_ms: 1,
+            len: 10,
+        };
+        let changed_signature = SessionMiniProjectionSourceSignature {
+            len: 11,
+            ..signature.clone()
+        };
+
+        let permit = reconciler
+            .try_acquire_for_source_change(Instant::now(), Duration::ZERO, &signature)
+            .expect("first source change acquire");
+        drop(permit);
+        reconciler.mark_source_signature(signature.clone());
+
+        assert!(
+            reconciler
+                .try_acquire_for_source_change(Instant::now(), Duration::ZERO, &signature)
+                .is_none()
+        );
+        assert!(
+            reconciler
+                .try_acquire_for_source_change(Instant::now(), Duration::ZERO, &changed_signature)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn session_mini_reconciler_retries_source_until_marked_successful() {
+        let reconciler = Arc::new(SessionMiniProjectionReconciler::new());
+        let signature = SessionMiniProjectionSourceSignature {
+            state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
+            modified_at_ms: 1,
+            len: 10,
+        };
+
+        let permit = reconciler
+            .try_acquire_for_source_change(Instant::now(), Duration::ZERO, &signature)
+            .expect("first source change acquire");
+        drop(permit);
+
+        assert!(
+            reconciler
+                .try_acquire_for_source_change(Instant::now(), Duration::ZERO, &signature)
+                .is_some()
+        );
     }
 
     #[test]

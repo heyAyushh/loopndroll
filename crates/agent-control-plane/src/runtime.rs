@@ -27,7 +27,7 @@ const LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_LISTEN";
 const STORE_ENV: &str = "AGENT_CONTROL_PLANE_STORE";
 const AUTOMATION_TICK_SECONDS: u64 = 30;
 const TELEGRAM_BRIDGE_TICK_SECONDS: u64 = 5;
-const SESSION_MINI_RECONCILE_TICK_SECONDS: u64 = 30;
+const SESSION_MINI_RECONCILE_TICK_SECONDS: u64 = 1;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SERVER_EXECUTABLE_NAME: &str = "looper-server";
 const DEFAULT_SERVER_SCHEME: &str = "http";
@@ -82,7 +82,7 @@ fn spawn_session_mini_projection_reconciler(control_plane: ControlPlane) {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            control_plane.spawn_mobile_session_mini_projection_reconcile_if_due();
+            control_plane.spawn_mobile_session_mini_projection_reconcile_if_source_changed();
         }
     });
 }
