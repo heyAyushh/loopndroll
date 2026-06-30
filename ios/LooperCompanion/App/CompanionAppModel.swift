@@ -133,6 +133,21 @@ enum CompanionLocalSessionReconcileReason: String {
             return false
         }
     }
+
+    var shouldRecoverStateMiniSnapshotBeforeCachedReplay: Bool {
+        switch self {
+        case .sessionsPullRefresh,
+             .searchPullRefresh,
+             .manualRefresh:
+            return true
+        case .activeScene,
+             .fallbackTimer,
+             .continuationWithoutSession,
+             .sessionOpen,
+             .unlockRecovery:
+            return false
+        }
+    }
 }
 
 @MainActor
@@ -682,6 +697,20 @@ final class CompanionAppModel {
 
     func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
         startSessionRuntimeSyncIfNeeded()
+
+        if reason.shouldRecoverStateMiniSnapshotBeforeCachedReplay {
+            let recoveryResult = await recoverStateMiniSnapshotIfNeeded(reason: reason)
+            if recoveryResult.didApplySnapshot {
+                return
+            }
+            if snapshotState.hasSnapshot {
+                markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
+                CompanionDiagnostics.record(
+                    "session-mini:local-reconcile-existing-after-recovery reason=\(reason.rawValue) result=\(recoveryResult)"
+                )
+                return
+            }
+        }
 
         if snapshotState.hasSnapshot, !reason.shouldReplayCachedSnapshotWhenLoaded {
             markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
