@@ -2412,6 +2412,67 @@ async fn session_mini_projection_replays_default_notification_target_mutation() 
 }
 
 #[tokio::test]
+async fn session_mini_projection_default_notification_targets_ignore_stale_cache() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .mobile_session_service()
+        .upsert_notification_route(
+            agent_control_plane::mobile::session::UpsertMobileNotificationRoute {
+                id: Some("route-telegram".to_owned()),
+                label: Some("Telegram DM".to_owned()),
+                channel: "telegram".to_owned(),
+                bot_token: Some("bot-token".to_owned()),
+                chat_id: Some("chat-1".to_owned()),
+                ..agent_control_plane::mobile::session::UpsertMobileNotificationRoute::default()
+            },
+        )
+        .expect("upsert notification");
+    prime_state_mini_cache(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let initial = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let initial_seq = initial["latestSeq"].as_i64().expect("initial latest seq");
+    fixture.append_newer_than_devin_state_threads(1);
+
+    let ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetDefaultNotificationTargets(SetDefaultNotificationTargetsRequest {
+            notification_target_ids: vec!["iphone".to_owned(), "route-telegram".to_owned()],
+            client_mutation_id: "default-notification-targets-fresh-projection-test".to_owned(),
+        }),
+    )
+    .await;
+    assert!(ack.accepted, "Session default target command accepted");
+
+    let replayed = request_json_with_options(
+        &router,
+        Method::GET,
+        &format!("/api/mobile/session-minis?after_seq={initial_seq}&limit=10"),
+        &auth_headers,
+        None,
+    )
+    .await;
+
+    assert_eq!(replayed["replace"], true);
+    assert!(
+        session_mini_snapshot_has_session(&replayed, "thread-extra-00"),
+        "default notification target mutation must publish a fresh replacement projection, not stale cached minis"
+    );
+}
+
+#[tokio::test]
 async fn session_mini_projection_removes_deleted_and_hidden_sessions_from_replay() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

@@ -614,21 +614,19 @@ impl ControlPlane {
         self.spawn_mobile_session_mini_projection_reconcile_if_due();
     }
 
-    pub fn emit_mobile_all_sessions_replacement_event_with_cached_minis(
-        &self,
-        input: MobileEventInput,
-        minis: Vec<MobileSessionMiniProjectionInput>,
-    ) -> Result<()> {
-        let mut event = build_mobile_event(input);
-        event.revision = self.latest_cached_mobile_revision();
-        let record = self
-            .store
-            .record_mobile_event_replacing_session_minis(&event, minis)?;
-        self.mobile_events.publish_persisted(record);
-        Ok(())
+    pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
+        self.reconcile_mobile_session_mini_projection_with_options(false, None)
     }
 
-    pub fn reconcile_mobile_session_mini_projection(&self) -> Result<bool> {
+    pub fn force_reconcile_mobile_session_mini_projection(&self, detail: &str) -> Result<bool> {
+        self.reconcile_mobile_session_mini_projection_with_options(true, Some(detail))
+    }
+
+    fn reconcile_mobile_session_mini_projection_with_options(
+        &self,
+        force: bool,
+        detail: Option<&str>,
+    ) -> Result<bool> {
         let snapshot = self.desktop_snapshot_with_limits(
             None,
             DESKTOP_MENU_COMPACTION_LIMIT,
@@ -644,7 +642,7 @@ impl ControlPlane {
             .latest_mobile_session_mini_revision()
             .ok()
             .flatten();
-        if stored_revision.as_deref() == Some(revision.as_str()) {
+        if !force && stored_revision.as_deref() == Some(revision.as_str()) {
             return Ok(false);
         }
 
@@ -659,7 +657,17 @@ impl ControlPlane {
             latest_seq,
             &revision,
         );
-        let event = snapshot_revision_changed_event(revision);
+        let event = match detail {
+            Some(detail) => MobileEvent {
+                event_type: MobileEventKind::SessionChanged,
+                thread_id: None,
+                prompt_id: None,
+                detail: Some(detail.to_owned()),
+                server_time: crate::mobile::events::mobile_event_now(),
+                revision: Some(revision),
+            },
+            None => snapshot_revision_changed_event(revision),
+        };
         let record = self
             .store
             .record_mobile_event_replacing_session_minis(&event, minis)?;
