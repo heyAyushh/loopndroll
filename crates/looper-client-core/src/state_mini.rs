@@ -40,6 +40,7 @@ const ROUTE_ENDPOINT_FIELD: &str = "routeEndpoint";
 pub(crate) struct StateMiniKey {
     account_id: String,
     node_id: String,
+    assistant_surface: String,
     session_id: String,
 }
 
@@ -182,6 +183,7 @@ fn normalize_state_mini_for_source_with_key(
     let key = StateMiniKey {
         account_id: account_id.clone(),
         node_id: node_id.clone(),
+        assistant_surface: assistant_surface.clone(),
         session_id: session.session_id.clone(),
     };
 
@@ -272,6 +274,9 @@ pub(crate) fn state_mini_key(session: &ClientStateMini) -> StateMiniKey {
             &[NODE_ID_FIELD, NODE_ID_ALIAS_FIELD, NODE_ID_SNAKE_FIELD],
         )
         .unwrap_or_else(|| DEFAULT_NODE_ID.to_owned()),
+        assistant_surface: nonblank_string(&session.assistant_surface)
+            .or_else(|| first_nonblank_string(&payload, &[ASSISTANT_SURFACE_FIELD]))
+            .unwrap_or_default(),
         session_id: session.session_id.clone(),
     }
 }
@@ -282,7 +287,7 @@ fn state_mini_sort_key(session: &ClientStateMini) -> StateMiniSortKey {
         seq: session.seq,
         account_id: key.account_id,
         node_id: key.node_id,
-        assistant_surface: session.assistant_surface.clone(),
+        assistant_surface: key.assistant_surface,
         session_id: key.session_id,
     }
 }

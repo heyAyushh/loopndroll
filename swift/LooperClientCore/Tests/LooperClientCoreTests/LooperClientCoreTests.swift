@@ -123,6 +123,47 @@ struct LooperClientCoreTests {
     }
 
     @Test
+    func siriProjectionKeepsDuplicateSessionIDsAcrossSurfaces() throws {
+        let projection = try reduceStateMinisMobileSnapshot(
+            latestSeq: 14,
+            sessions: [
+                stateMini(
+                    sessionID: "thread-main",
+                    surface: "codex",
+                    seq: 8,
+                    revision: "rev-codex",
+                    title: "codex"
+                ),
+                stateMini(
+                    sessionID: "thread-main",
+                    surface: "devin",
+                    seq: 14,
+                    revision: "rev-devin",
+                    title: "devin"
+                ),
+                stateMini(
+                    sessionID: "grok-thread",
+                    surface: "grok-build",
+                    seq: 10,
+                    revision: "rev-grok",
+                    title: "grok"
+                ),
+            ],
+            serverTime: serverTime
+        )
+
+        let siriProjection = try reduceSiriSessionEntities(
+            snapshotJson: projection.snapshotJson,
+            assistantSurfaceOrder: ["codex", "devin", "grok-build"]
+        )
+
+        #expect(
+            siriProjection.entries.map { "\($0.surface):\($0.sessionIndex)" }
+                == ["devin:0", "grok-build:0", "codex:0"]
+        )
+    }
+
+    @Test
     func cachedSnapshotFailureDoesNotReportConnected() throws {
         let projection = try reduceSnapshotLoadFailure(
             mappedErrorState: "offline",

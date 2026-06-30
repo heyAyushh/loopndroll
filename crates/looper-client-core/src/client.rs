@@ -4634,6 +4634,32 @@ mod tests {
     }
 
     #[test]
+    fn state_mini_snapshot_preserves_surface_qualified_sessions() {
+        let core = LooperClientCore::new();
+
+        let snapshot = core
+            .replace_state_minis(ClientStateMiniSnapshot {
+                latest_seq: 14,
+                sessions: vec![
+                    state_mini("thread-main", "codex", 8, "rev-codex", "codex"),
+                    state_mini("thread-main", "devin", 14, "rev-devin", "devin"),
+                ],
+                server_time: SERVER_TIME.to_owned(),
+            })
+            .expect("replace minis");
+
+        assert_eq!(snapshot.state_minis.len(), 2);
+        assert_eq!(
+            snapshot
+                .state_minis
+                .iter()
+                .map(|session| { format!("{}:{}", session.assistant_surface, session.session_id) })
+                .collect::<Vec<_>>(),
+            vec!["codex:thread-main", "devin:thread-main"]
+        );
+    }
+
+    #[test]
     fn state_mini_delta_upserts_and_ignores_stale_sequences() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {

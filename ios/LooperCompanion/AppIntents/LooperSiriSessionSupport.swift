@@ -608,17 +608,45 @@ struct LooperSiriSessionClient: Sendable {
         snapshot: MobileSnapshot,
         surfaces: [CompanionAssistantSurface]
     ) -> [LooperSessionEntity] {
+        let localEntities = localSurfaceEntities(snapshot: snapshot, surfaces: surfaces)
         if let projection {
-            return projection.entries.compactMap { entry in
+            let projectedEntities = projection.entries.compactMap { entry in
                 projectedEntity(from: entry, snapshot: snapshot)
+            }
+            return mergedProjectedEntities(projectedEntities, localEntities)
+        }
+
+        return localEntities
+    }
+
+    private func localSurfaceEntities(
+        snapshot: MobileSnapshot,
+        surfaces: [CompanionAssistantSurface]
+    ) -> [LooperSessionEntity] {
+        return surfaces.flatMap { surface in
+            snapshot.sessions(for: surface).compactMap { session in
+                guard !session.isArchived, session.status != .archived else {
+                    return nil
+                }
+                return LooperSessionEntity(session: session, assistantSurface: surface)
+            }
+        }
+    }
+
+    private func mergedProjectedEntities(
+        _ projectedEntities: [LooperSessionEntity],
+        _ localEntities: [LooperSessionEntity]
+    ) -> [LooperSessionEntity] {
+        var seenEntityIDs = Set<String>()
+        var mergedEntities: [LooperSessionEntity] = []
+
+        for entity in projectedEntities + localEntities {
+            if seenEntityIDs.insert(entity.id).inserted {
+                mergedEntities.append(entity)
             }
         }
 
-        return surfaces.flatMap { surface in
-            snapshot.sessions(for: surface).map { session in
-                LooperSessionEntity(session: session, assistantSurface: surface)
-            }
-        }
+        return mergedEntities
     }
 
     private func storedSiriSessionEntity(
