@@ -34,8 +34,8 @@ use crate::claude_code::{
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    discover_sources, inspect_control_plane, read_snapshot_state_with_thread_limit, read_state,
-    read_thread_revision_state,
+    discover_sources, inspect_control_plane, inspect_hooks, read_snapshot_state_with_thread_limit,
+    read_state, read_thread_revision_state, source_status,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::content_slices::{
@@ -1147,6 +1147,19 @@ impl ControlPlane {
         inspect_control_plane(&self.config.codex_home)
     }
 
+    fn snapshot_status(&self, inspection_mode: SnapshotInspectionMode) -> ControlPlaneStatus {
+        if inspection_mode.includes_diagnostic_details() {
+            return self.status();
+        }
+
+        ControlPlaneStatus {
+            hooks: inspect_hooks(&self.config.codex_home),
+            app_server: None,
+            codex_servers: Vec::new(),
+            source: source_status(&self.config.codex_home),
+        }
+    }
+
     fn cached_devin_desktop_status(&self) -> DevinDesktopStatus {
         self.response_cache
             .devin_desktop_status
@@ -1622,11 +1635,7 @@ impl ControlPlane {
     ) -> Result<DesktopSnapshot> {
         let include_diagnostic_details = inspection_mode.includes_diagnostic_details();
         let prune_diagnostic_details = !include_diagnostic_details;
-        let control_plane_status = if prune_diagnostic_details {
-            bounded_control_plane_status(self.status())
-        } else {
-            self.status()
-        };
+        let control_plane_status = self.snapshot_status(inspection_mode);
         let state = read_snapshot_state_with_thread_limit(&self.config.codex_home, thread_limit)?;
         let all_threads = state.threads.clone();
         let snapshot_codex_threads = codex_threads_for_snapshot(&all_threads, thread_limit);
@@ -2438,15 +2447,6 @@ fn known_thread_ids(threads: &[ThreadRecord]) -> BTreeSet<String> {
         .collect()
 }
 
-fn bounded_control_plane_status(mut status: ControlPlaneStatus) -> ControlPlaneStatus {
-    status.app_server = None;
-    for server in &mut status.codex_servers {
-        server.command.clear();
-        server.parent_processes.clear();
-    }
-    status
-}
-
 fn thin_desktop_threads_for_bounded_snapshot(threads: &mut [DesktopThread]) {
     for thread in threads {
         thread.capabilities.tools.clear();
@@ -2825,6 +2825,26 @@ mod tests {
             bounded.last().map(|thread| thread.thread_id.as_str()),
             Some("thread-001")
         );
+    }
+
+    #[test]
+    fn bounded_snapshot_status_skips_live_process_inventory() {
+        let fixture_dir = tempfile::tempdir().expect("tempdir");
+        let control_plane = ControlPlane::new(ControlPlaneConfig {
+            codex_home: fixture_dir.path().join(".codex"),
+            codex_executable: None,
+            grok_home: fixture_dir.path().join(".grok"),
+            store_path: fixture_dir.path().join("store.sqlite"),
+            hook_command: None,
+            home_path: fixture_dir.path().to_path_buf(),
+            zed_process_commands: Some(Vec::new()),
+        });
+
+        let status = control_plane.snapshot_status(SnapshotInspectionMode::Mobile);
+
+        assert!(status.app_server.is_none());
+        assert!(status.codex_servers.is_empty());
+        assert_eq!(status.source.health, "degraded");
     }
 
     #[test]
