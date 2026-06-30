@@ -750,6 +750,81 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testPendingSiriOpenDoesNotPublishMissingSessionWithoutLocalTruth() async throws {
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(
+                    session: Self.sessionSummary(
+                        id: Constants.cachedThreadID,
+                        title: "Cached Mini",
+                        ref: "C1",
+                        status: .active
+                    ),
+                    assistantSurface: .codex,
+                    seq: 14,
+                    revision: "cached-open-revision-14"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let missingThreadID = "missing-thread"
+        try LooperSiriOpenSessionRequestStore.save(
+            LooperSiriOpenSessionRequest(
+                sessionID: missingThreadID,
+                assistantSurfaceRawValue: CompanionAssistantSurface.codex.rawValue
+            )
+        )
+        defer {
+            _ = LooperSiriOpenSessionRequestStore.drain()
+        }
+
+        await model.continueFromPendingSiriOpenSessionRequest()
+
+        #expect(model.pendingOpenSessionID == nil)
+        #expect(model.viewState.detail(for: missingThreadID) == nil)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testQuickActionOpenDoesNotPublishMissingSessionWithoutLocalTruth() async throws {
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 16,
+            records: [
+                Self.miniRecord(
+                    session: Self.sessionSummary(
+                        id: Constants.cachedThreadID,
+                        title: "Cached Mini",
+                        ref: "C1",
+                        status: .active
+                    ),
+                    assistantSurface: .codex,
+                    seq: 16,
+                    revision: "cached-quick-action-revision-16"
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let missingThreadID = "missing-quick-action-thread"
+
+        await model.performQuickAction(.openSession, sessionID: missingThreadID)
+
+        #expect(model.pendingOpenSessionID == nil)
+        #expect(model.viewState.detail(for: missingThreadID) == nil)
+        #expect(service.loadSnapshotCallCount == 0)
+    }
+
+    @MainActor
+    @Test
     func testCachedSnapshotAppliesPendingDetailAndListCommands() async throws {
         let archivedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

@@ -1027,8 +1027,7 @@ final class CompanionAppModel {
         ) == nil {
             _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
         }
-        pendingOpenSessionID = sessionID
-        refreshSessionDetail(id: sessionID)
+        _ = openSessionFromLocalTruth(sessionID, diagnosticPrefix: "siri-open")
     }
 
     func consumePendingSettingsTarget() -> SettingsSearchTarget? {
@@ -1063,12 +1062,11 @@ final class CompanionAppModel {
     }
 
     private func continueFromMacSession(id sessionID: String) async {
-        pendingOpenSessionID = sessionID
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
             await reconcileLocalSessionState(reason: .sessionOpen)
         }
         _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
-        refreshSessionDetail(id: sessionID)
+        _ = openSessionFromLocalTruth(sessionID, diagnosticPrefix: "continuation")
     }
 
     private func requestedAssistantSurfaceIfAvailable(
@@ -1145,11 +1143,27 @@ final class CompanionAppModel {
         startSessionRuntimeSyncIfNeeded()
     }
 
-    func refreshSessionDetail(id: String) {
-        _ = sessionDetailCoordinator.refresh(
+    @discardableResult
+    func refreshSessionDetail(id: String) -> Bool {
+        sessionDetailCoordinator.refresh(
             id: id,
             snapshotState: snapshotState
         )
+    }
+
+    @discardableResult
+    private func openSessionFromLocalTruth(
+        _ sessionID: String,
+        diagnosticPrefix: String
+    ) -> Bool {
+        guard refreshSessionDetail(id: sessionID) else {
+            pendingOpenSessionID = nil
+            CompanionDiagnostics.record("\(diagnosticPrefix):local-detail-missing id=\(sessionID)")
+            return false
+        }
+
+        pendingOpenSessionID = sessionID
+        return true
     }
 
     func applyMode(_ preset: SessionMode?, to sessionID: String) async {
@@ -1592,8 +1606,7 @@ final class CompanionAppModel {
                 await reconcileLocalSessionState(reason: .sessionOpen)
             }
             _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
-            pendingOpenSessionID = sessionID
-            refreshSessionDetail(id: sessionID)
+            _ = openSessionFromLocalTruth(sessionID, diagnosticPrefix: "quick-action-open")
         case .continueChat:
             if snapshot == nil {
                 await reconcileLocalSessionState(reason: .sessionOpen)
