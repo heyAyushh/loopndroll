@@ -603,6 +603,7 @@ struct SessionSummaryTimingTests {
         #expect(store.selectAssistantSurface(.zed))
         #expect(store.selectedAssistantSurface == .zed)
         #expect(store.sessionSections.active.map(\.id) == ["zed-thread"])
+        #expect(store.detail(for: "zed-thread")?.ref == "Z1")
         #expect(store.sessionIndexIdentity == sessionIndexIdentity)
         #expect(store.snapshot?.host.lastSyncedAt == Constants.refreshedHostSyncTime)
 
@@ -619,6 +620,10 @@ struct SessionSummaryTimingTests {
         #expect(store.selectAssistantSurface(.codex))
         #expect(store.selectedAssistantSurface == .codex)
         #expect(store.sessionSections.active.count == Constants.largeSurfaceSessionCount)
+        #expect(
+            store.detail(for: "codex-thread-\(Constants.largeSurfaceSessionCount - 1)")?.ref
+                == "C\(Constants.largeSurfaceSessionCount - 1)"
+        )
         #expect(store.sessionIndexIdentity == sessionIndexIdentity)
     }
 

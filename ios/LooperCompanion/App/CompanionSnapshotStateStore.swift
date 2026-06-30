@@ -38,6 +38,10 @@ final class CompanionSnapshotStateStore {
         visibleProjectionState.sessionIndex
     }
 
+    private var visibleSessionIndex: VisibleSessionIndex {
+        visibleProjectionState.visibleSessionIndex
+    }
+
     @ObservationIgnored private var canonicalSnapshot: MobileSnapshot?
     @ObservationIgnored private var canonicalSessionIndex: SessionIndex = .empty
     @ObservationIgnored private var canonicalSessionSections: SessionSections = .empty
@@ -269,7 +273,7 @@ final class CompanionSnapshotStateStore {
         guard let sourceSnapshot = sourceSnapshotForProjection(),
               let session = visibleSession(withID: sessionID)
                 ?? sessionIndex.session(withID: sessionID)
-                ?? sourceSnapshot.session(withID: sessionID)
+                ?? canonicalSessionIndex(for: sourceSnapshot).session(withID: sessionID)
         else {
             return nil
         }
@@ -295,22 +299,22 @@ final class CompanionSnapshotStateStore {
             projection: projection.sessionSections,
             sessions: visibleSnapshot.sessions
         )
+        let reducedVisibleSessionIndex = VisibleSessionIndex(sessions: visibleSnapshot.sessions)
         visibleSurfaceProjections[selectedSurface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
             sessionSections: reducedSections,
+            sessionIndex: reducedVisibleSessionIndex,
             fingerprint: nextFingerprint
         )
         if let canonicalSnapshot {
-            canonicalSessionIndex = SessionIndex(
-                projection: projection.sessionIndex,
-                snapshot: canonicalSnapshot
-            )
+            canonicalSessionIndex = SessionIndex(snapshot: canonicalSnapshot)
             canonicalSessionSections = SessionSections(sessions: canonicalSessionIndex.allSessions)
         }
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: reducedSections,
+            visibleSessionIndex: reducedVisibleSessionIndex,
             sessionIndex: canonicalSessionIndex
         )
         lastVisibleSnapshotFingerprint = nextFingerprint
@@ -327,6 +331,7 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: projection.sessionSections,
+            visibleSessionIndex: projection.sessionIndex,
             sessionIndex: canonicalSessionIndex
         )
         lastVisibleSnapshotFingerprint = projection.fingerprint
@@ -342,6 +347,7 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: selectedSurface,
             sessionSections: SessionSections(sessions: visibleSnapshot.sessions),
+            visibleSessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
             sessionIndex: canonicalSessionIndex == .empty
                 ? SessionIndex(snapshot: visibleSnapshot)
                 : canonicalSessionIndex
@@ -360,6 +366,7 @@ final class CompanionSnapshotStateStore {
         visibleSurfaceProjections[surface] = VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
             sessionSections: visibleSections,
+            sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
             fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         )
         let nextSessionIndex = sessionIndex == .empty
@@ -369,6 +376,7 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: surface,
             sessionSections: visibleSections,
+            visibleSessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
             sessionIndex: nextSessionIndex
         )
         lastVisibleSnapshotFingerprint = nil
@@ -385,6 +393,7 @@ final class CompanionSnapshotStateStore {
             snapshot: visibleSnapshot,
             selectedAssistantSurface: surface,
             sessionSections: sessionSections,
+            visibleSessionIndex: visibleSessionIndex,
             sessionIndex: sessionIndex
         )
         lastVisibleSnapshotFingerprint = VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
@@ -459,6 +468,7 @@ final class CompanionSnapshotStateStore {
                     projection: projection.sessionSections,
                     sessions: visibleSnapshot.sessions
                 ),
+                sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
                 fingerprint: VisibleSnapshotFingerprint(json: projection.visibleSnapshotJson)
             )
         }
@@ -467,6 +477,7 @@ final class CompanionSnapshotStateStore {
         return VisibleSurfaceProjection(
             visibleSnapshot: visibleSnapshot,
             sessionSections: SessionSections(sessions: visibleSnapshot.sessions),
+            sessionIndex: VisibleSessionIndex(sessions: visibleSnapshot.sessions),
             fingerprint: VisibleSnapshotFingerprint(snapshot: visibleSnapshot)
         )
     }
@@ -547,9 +558,7 @@ final class CompanionSnapshotStateStore {
     }
 
     private func visibleSession(withID sessionID: String) -> SessionSummary? {
-        snapshot?.sessions.first { session in
-            session.id == sessionID
-        }
+        visibleSessionIndex.session(withID: sessionID)
     }
 
 }
@@ -729,13 +738,29 @@ private struct VisibleSnapshotFingerprint: Equatable {
 private struct VisibleSurfaceProjection {
     let visibleSnapshot: MobileSnapshot
     let sessionSections: SessionSections
+    let sessionIndex: VisibleSessionIndex
     let fingerprint: VisibleSnapshotFingerprint
+}
+
+private struct VisibleSessionIndex {
+    static let empty = VisibleSessionIndex(sessions: [])
+
+    private let sessionsByID: [String: SessionSummary]
+
+    init(sessions: [SessionSummary]) {
+        sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+    }
+
+    func session(withID sessionID: String) -> SessionSummary? {
+        sessionsByID[sessionID]
+    }
 }
 
 private struct CompanionVisibleProjectionState {
     let snapshot: MobileSnapshot?
     let selectedAssistantSurface: CompanionAssistantSurface
     let sessionSections: SessionSections
+    let visibleSessionIndex: VisibleSessionIndex
     let sessionIndex: SessionIndex
 
     static func empty(
@@ -745,6 +770,7 @@ private struct CompanionVisibleProjectionState {
             snapshot: nil,
             selectedAssistantSurface: selectedSurface,
             sessionSections: .empty,
+            visibleSessionIndex: .empty,
             sessionIndex: .empty
         )
     }
