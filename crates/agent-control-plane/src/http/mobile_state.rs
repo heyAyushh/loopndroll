@@ -33,6 +33,12 @@ enum DesktopMobileStateError {
     Internal(String),
 }
 
+struct CachedMobileSessionMiniProjection {
+    latest_seq: i64,
+    revision: Option<String>,
+    records: Vec<MobileSessionMiniRecord>,
+}
+
 fn fresh_desktop_mobile_state(
     control_plane: &ControlPlane,
 ) -> Result<Value, DesktopMobileStateError> {
@@ -171,16 +177,22 @@ pub(super) fn mobile_snapshot_response(
 
 pub(super) fn mobile_session_minis_snapshot_response(control_plane: &ControlPlane) -> Response {
     match cached_mobile_session_mini_projection(control_plane) {
-        Ok(Some((latest_seq, records))) => {
-            let revision = session_mini_recovery_revision(control_plane, latest_seq, &records);
+        Ok(Some(projection)) => {
+            let revision = projection.revision.unwrap_or_else(|| {
+                session_mini_recovery_revision(
+                    control_plane,
+                    projection.latest_seq,
+                    &projection.records,
+                )
+            });
             let server_time = current_mobile_time();
             return (
                 StatusCode::OK,
                 Json(mobile_session_mini_snapshot(
-                    latest_seq,
+                    projection.latest_seq,
                     &revision,
                     &server_time,
-                    &records,
+                    &projection.records,
                 )),
             )
                 .into_response();
@@ -233,23 +245,24 @@ pub(super) fn mobile_session_minis_delta_response(
             return internal_mobile_error_response(error.to_string());
         }
     };
-    let (latest_projection_seq, all_records) =
-        match cached_mobile_session_mini_projection(control_plane) {
-            Ok(Some(projection)) => projection,
-            Ok(None) => return mobile_session_minis_recovery_required_response(control_plane),
-            Err(error) => return internal_mobile_error_response(error),
-        };
+    let projection = match cached_mobile_session_mini_projection(control_plane) {
+        Ok(Some(projection)) => projection,
+        Ok(None) => return mobile_session_minis_recovery_required_response(control_plane),
+        Err(error) => return internal_mobile_error_response(error),
+    };
     match control_plane.store().latest_mobile_state_event_seq() {
         Ok(latest_event_seq) => {
-            let latest_seq = latest_projection_seq.min(latest_event_seq);
-            let revision = session_mini_recovery_revision(control_plane, latest_seq, &all_records);
+            let latest_seq = projection.latest_seq.min(latest_event_seq);
+            let revision = projection.revision.unwrap_or_else(|| {
+                session_mini_recovery_revision(control_plane, latest_seq, &projection.records)
+            });
             let server_time = current_mobile_time();
             let has_changes = latest_seq > after_seq;
             let delta_contains_complete_projection = has_changes
-                && records.len() == all_records.len()
+                && records.len() == projection.records.len()
                 && records.iter().all(|record| record.seq > after_seq);
             let (payload_records, replace) = if has_changes && !delta_contains_complete_projection {
-                (all_records.as_slice(), true)
+                (projection.records.as_slice(), true)
             } else {
                 (records.as_slice(), delta_contains_complete_projection)
             };
@@ -271,29 +284,40 @@ pub(super) fn mobile_session_minis_delta_response(
 
 fn cached_mobile_session_mini_projection(
     control_plane: &ControlPlane,
-) -> Result<Option<(i64, Vec<crate::events::MobileSessionMiniRecord>)>, String> {
+) -> Result<Option<CachedMobileSessionMiniProjection>, String> {
     let records = control_plane
         .store()
         .mobile_session_minis()
         .map_err(|error| error.to_string())?;
-    if records.is_empty() {
-        return Ok(None);
-    }
-
     let latest_event_seq = control_plane
         .store()
         .latest_mobile_state_event_seq()
         .map_err(|error| error.to_string())?;
-    let latest_projection_seq = latest_session_mini_projection_seq(&records);
-    let has_produced_replacement_baseline = control_plane
+    let latest_replacement_seq = control_plane
         .store()
         .latest_mobile_session_mini_replacement_event_seq_after(-1)
         .map_err(|error| error.to_string())?;
-    if has_produced_replacement_baseline.is_none() {
+    let Some(latest_replacement_seq) = latest_replacement_seq else {
         return Ok(None);
+    };
+    let revision = control_plane
+        .store()
+        .mobile_session_mini_replacement_revision_at_seq(latest_replacement_seq)
+        .map_err(|error| error.to_string())?;
+    if records.is_empty() {
+        return Ok(Some(CachedMobileSessionMiniProjection {
+            latest_seq: latest_replacement_seq.min(latest_event_seq),
+            revision,
+            records,
+        }));
     }
 
-    Ok(Some((latest_projection_seq.min(latest_event_seq), records)))
+    let latest_projection_seq = latest_session_mini_projection_seq(&records);
+    Ok(Some(CachedMobileSessionMiniProjection {
+        latest_seq: latest_projection_seq.min(latest_event_seq),
+        revision,
+        records,
+    }))
 }
 
 fn mobile_session_minis_recovery_required_response(control_plane: &ControlPlane) -> Response {

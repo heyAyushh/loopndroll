@@ -485,6 +485,15 @@ create index if not exists mobile_state_event_log_entity_seq
         latest_mobile_session_mini_replacement_event_seq_after(&connection, after_seq)
     }
 
+    pub fn mobile_session_mini_replacement_revision_at_seq(
+        &self,
+        seq: i64,
+    ) -> Result<Option<String>> {
+        self.initialize()?;
+        let connection = Connection::open(&self.path)?;
+        mobile_session_mini_replacement_revision_at_seq(&connection, seq)
+    }
+
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
         self.initialize()?;
         let connection = Connection::open(&self.path)?;
@@ -1355,6 +1364,27 @@ fn latest_mobile_session_mini_replacement_event_seq_after(
             params![after_seq],
             |row| row.get(0),
         )
+        .map_err(Into::into)
+}
+
+fn mobile_session_mini_replacement_revision_at_seq(
+    connection: &Connection,
+    seq: i64,
+) -> Result<Option<String>> {
+    connection
+        .query_row(
+            "select replacements.revision
+             from mobile_session_mini_replacements replacements
+             where replacements.seq = ?1
+               and exists (
+                 select 1
+                 from mobile_state_event_log events
+                 where events.seq = replacements.seq
+               )",
+            params![seq],
+            |row| row.get(0),
+        )
+        .optional()
         .map_err(Into::into)
 }
 

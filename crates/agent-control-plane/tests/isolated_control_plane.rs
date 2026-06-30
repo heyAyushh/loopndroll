@@ -2327,6 +2327,61 @@ async fn session_mini_snapshot_requires_produced_projection() {
 }
 
 #[tokio::test]
+async fn session_mini_snapshot_accepts_empty_produced_projection() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    control_plane
+        .store()
+        .record_mobile_event_replacing_session_minis(
+            &snapshot_revision_changed_event("empty-session-mini-projection".to_owned()),
+            Vec::<MobileSessionMiniProjectionInput>::new(),
+        )
+        .expect("empty replacement projection");
+    let projection_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("projection seq");
+    let router = build_router(control_plane);
+    let authorization = issue_mobile_authorization_header(&router).await;
+
+    let response = request_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &[(axum::http::header::AUTHORIZATION, authorization.as_str())],
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("snapshot body")
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&body).expect("snapshot json");
+    assert_eq!(snapshot["latestSeq"], projection_seq);
+    assert_eq!(snapshot["latestSeq"], snapshot["latest_seq"]);
+    assert_eq!(snapshot["revision"], "empty-session-mini-projection");
+    assert_eq!(snapshot["replace"], true);
+    assert_eq!(
+        snapshot["sessions"]
+            .as_array()
+            .expect("snapshot sessions")
+            .len(),
+        0
+    );
+    assert_eq!(
+        snapshot["freshness"]["source"],
+        "mobile-session-mini-projection"
+    );
+    assert_eq!(snapshot["freshness"]["latestSeq"], snapshot["latestSeq"]);
+    assert_eq!(snapshot["freshness"]["revision"], snapshot["revision"]);
+}
+
+#[tokio::test]
 async fn session_mini_snapshot_requires_recovery_for_partial_cache_without_replacement_marker() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
