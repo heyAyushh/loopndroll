@@ -62,4 +62,3 @@ Unrelated tracked edits were present and intentionally left untouched:
 
 - `ios/LooperCompanion/App/CompanionAppModel.swift`
 - `ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift`
-
