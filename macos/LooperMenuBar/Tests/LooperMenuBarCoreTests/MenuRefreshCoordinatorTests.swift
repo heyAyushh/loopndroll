@@ -198,8 +198,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.hasLiveRouteProof)
         #expect(readiness.supportsNativeHandoff)
         #expect(readiness.mobileStatusTitle == "Fresh handoff route")
-        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
-        #expect(readiness.tailscaleStatusTitle == "Fresh Session: 100.119.200.69")
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
+        #expect(readiness.tailscaleStatusTitle == "Session-proven: 100.119.200.69")
         #expect(readiness.provenReachableHandoffBaseURL?.absoluteString == "http://100.119.200.69:8765")
 
         _ = readiness.invalidateForRouteSwitch()
@@ -223,8 +223,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.hasLiveRouteProof)
         #expect(!readiness.supportsNativeHandoff)
         #expect(readiness.provenReachableHandoffBaseURL == nil)
-        #expect(readiness.mobileStatusTitle == "Fresh Session")
-        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
+        #expect(readiness.mobileStatusTitle == "Session-proven")
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
     }
 
     @Test("stale HTTP health cannot prove iPhone handoff readiness")
@@ -248,8 +248,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(!readiness.supportsNativeHandoff)
         #expect(readiness.provenReachableHandoffBaseURL(now: recordedAt) != nil)
         #expect(readiness.provenReachableHandoffBaseURL == nil)
-        #expect(readiness.mobileStatusTitle == "Fresh Session; HTTP enrichment stale")
-        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
+        #expect(readiness.mobileStatusTitle == "Session-proven; HTTP enrichment stale")
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
         #expect(
             readiness.httpEnrichmentStatusTitle(now: recordedAt.addingTimeInterval(staleHealthAge))?
                 .contains("stale 60s old") == true
@@ -309,7 +309,7 @@ struct MenuRefreshCoordinatorTests {
             syncReason: .heartbeat
         )
         #expect(readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Fresh Session: Tailscale: 100.119.200.69")
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
 
         let nextSwitchGeneration = readiness.invalidateForRouteSwitch()
         readiness.applySessionState(
@@ -319,7 +319,29 @@ struct MenuRefreshCoordinatorTests {
             syncReason: .delta
         )
         #expect(readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Fresh Session: LAN: 192.168.1.33")
+        #expect(readiness.routeStatusTitle == "Session-proven: LAN: 192.168.1.33")
+    }
+
+    @Test("route preference ordering matches visible setting")
+    func routePreferenceOrderingMatchesVisibleSetting() throws {
+        let remote = try #require(URL(string: "https://looper.example.com"))
+        let tailscale = try #require(URL(string: "http://100.119.200.69:8766"))
+        let lan = try #require(URL(string: "http://192.168.1.33:8766"))
+        let loopback = try #require(URL(string: "http://127.0.0.1:8766"))
+        let urls = [loopback, lan, tailscale, remote]
+
+        #expect(
+            MobileRouteURLPolicy.sortedUniqueURLs(urls, preference: .remote)
+                == [remote, tailscale, lan, loopback]
+        )
+        #expect(
+            MobileRouteURLPolicy.sortedUniqueURLs(urls, preference: .tailscale)
+                == [tailscale, lan, remote, loopback]
+        )
+        #expect(
+            MobileRouteURLPolicy.sortedUniqueURLs(urls, preference: .lan)
+                == [lan, tailscale, remote, loopback]
+        )
     }
 
     @Test("ACP host failure keeps successful snapshot")

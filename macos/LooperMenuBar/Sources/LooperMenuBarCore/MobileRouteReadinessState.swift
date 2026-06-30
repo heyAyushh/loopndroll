@@ -43,8 +43,8 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         static let cachedWaitingForSessionProof = "Cached route: waiting for Session proof"
         static let sessionProofSuffix = "waiting for Session proof"
         static let freshHandoffRoute = "Fresh handoff route"
-        static let freshSessionHTTPStale = "Fresh Session; HTTP enrichment stale"
-        static let freshSession = "Fresh Session"
+        static let sessionProven = "Session-proven"
+        static let sessionProvenHTTPStale = "Session-proven; HTTP enrichment stale"
         static let notProven = "Not proven"
         static let notActive = "Not active"
     }
@@ -109,10 +109,10 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         }
 
         if hasStaleHTTPHealth {
-            return Titles.freshSessionHTTPStale
+            return Titles.sessionProvenHTTPStale
         }
 
-        return supportsNativeHandoff ? Titles.freshHandoffRoute : Titles.freshSession
+        return supportsNativeHandoff ? Titles.freshHandoffRoute : Titles.sessionProven
     }
 
     public var routeStatusTitle: String {
@@ -123,7 +123,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             return "Cached route: \(routeSummaryTitle(for: staleRealtimeEndpoint)); \(Titles.sessionProofSuffix)"
         }
 
-        return "Fresh Session: \(routeSummaryTitle(for: provenRealtimeEndpoint))"
+        return "\(Titles.sessionProven): \(routeSummaryTitle(for: provenRealtimeEndpoint))"
     }
 
     public var tailscaleStatusTitle: String {
@@ -142,7 +142,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             return Titles.notActive
         }
 
-        return "Fresh Session: \(hostTitle(for: provenRealtimeEndpoint))"
+        return "\(Titles.sessionProven): \(hostTitle(for: provenRealtimeEndpoint))"
     }
 
     public func httpEnrichmentStatusTitle(now: Date = Date()) -> String? {

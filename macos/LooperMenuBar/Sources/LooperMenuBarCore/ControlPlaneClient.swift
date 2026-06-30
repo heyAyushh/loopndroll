@@ -2043,7 +2043,7 @@ extension URL {
   fileprivate func routePriority(preference: MobileRoutePreference) -> Int {
     switch preference {
     case .remote:
-      tailscalePriority
+      remotePriority
     case .tailscale:
       tailscalePriority
     case .lan:
@@ -2128,6 +2128,19 @@ extension URL {
     case .tailscale:
       RoutePriority.second
     case .remote:
+      RoutePriority.third
+    case .loopback:
+      RoutePriority.fourth
+    }
+  }
+
+  private var remotePriority: Int {
+    switch mobileRoute {
+    case .remote:
+      RoutePriority.first
+    case .tailscale:
+      RoutePriority.second
+    case .lan:
       RoutePriority.third
     case .loopback:
       RoutePriority.fourth
