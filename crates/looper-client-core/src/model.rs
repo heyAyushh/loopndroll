@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) const STATE_MINI_REPLACEMENT_KIND: &str = "state_mini_replacement";
+pub(crate) const STATE_MINI_REPLACEMENT_COMPLETE_KIND: &str = "state_mini_replacement_complete";
+pub(crate) const STATE_MINI_BATCH_COMPLETE_KIND: &str = "session_mini_batch_complete";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum ConnectionPhase {

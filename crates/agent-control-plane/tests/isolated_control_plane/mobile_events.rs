@@ -918,6 +918,8 @@ async fn grpc_session_stream_replays_empty_projection_as_replacement() {
     let payload: serde_json::Value =
         serde_json::from_str(&delta.payload_json).expect("replacement payload json");
     assert_eq!(payload["replace"], true);
+    assert_eq!(payload["replacementComplete"], true);
+    assert_eq!(payload["replacement_complete"], true);
     assert_eq!(payload["latestSeq"], clear_seq);
     assert_eq!(payload["sessions"], serde_json::json!([]));
 }
@@ -1030,6 +1032,7 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
 
     let mut chunk_count = 0usize;
     let mut replayed_session_count = 0usize;
+    let mut saw_completion = false;
     while replayed_session_count < LARGE_SESSION_MINI_REPLACEMENT_COUNT {
         let delta = next_session_state_delta(&mut stream, "large replacement state delta").await;
         assert_eq!(delta.seq, replacement_seq);
@@ -1047,6 +1050,11 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
             .as_array()
             .expect("replacement sessions");
         assert!(!sessions.is_empty());
+        let completes_replacement =
+            replayed_session_count + sessions.len() == LARGE_SESSION_MINI_REPLACEMENT_COUNT;
+        assert_eq!(payload["replacementComplete"], completes_replacement);
+        assert_eq!(payload["replacement_complete"], completes_replacement);
+        saw_completion |= completes_replacement;
         replayed_session_count += sessions.len();
         chunk_count += 1;
     }
@@ -1055,6 +1063,10 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
         "large replacement should be split into bounded chunks"
     );
     assert_eq!(replayed_session_count, LARGE_SESSION_MINI_REPLACEMENT_COUNT);
+    assert!(
+        saw_completion,
+        "final replacement chunk must mark completion"
+    );
 }
 
 #[tokio::test]

@@ -856,25 +856,27 @@ fn replacement_state_delta_frames(
 
     let mut frames = Vec::new();
     let mut chunk = Vec::new();
-    let mut chunk_bytes = replacement_state_delta_payload_overhead(record.seq, true);
+    let mut chunk_bytes = replacement_state_delta_payload_overhead(record.seq, true, false);
     let mut chunk_replaces = true;
 
     for payload in payloads {
         let candidate_bytes = chunk_bytes + payload.len() + usize::from(!chunk.is_empty());
         if candidate_bytes > SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES && !chunk.is_empty() {
             let payload_json =
-                replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
+                replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces, false);
             frames.push(state_delta_frame(record, payload_json)?);
             chunk.clear();
             chunk_replaces = false;
-            chunk_bytes = replacement_state_delta_payload_overhead(record.seq, chunk_replaces);
+            chunk_bytes =
+                replacement_state_delta_payload_overhead(record.seq, chunk_replaces, false);
         }
         chunk_bytes += payload.len() + usize::from(!chunk.is_empty());
         chunk.push(payload);
     }
 
     if frames.is_empty() || !chunk.is_empty() {
-        let payload_json = replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces);
+        let payload_json =
+            replacement_state_delta_payload_json(record.seq, &chunk, chunk_replaces, true);
         frames.push(state_delta_frame(record, payload_json)?);
     }
 
@@ -882,8 +884,9 @@ fn replacement_state_delta_frames(
 }
 
 fn replacement_has_oversized_single_mini(latest_seq: i64, payloads: &[String]) -> bool {
-    let max_single_payload_bytes = SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES
-        .saturating_sub(replacement_state_delta_payload_overhead(latest_seq, true));
+    let max_single_payload_bytes = SESSION_STATE_DELTA_REPLACEMENT_CHUNK_MAX_BYTES.saturating_sub(
+        replacement_state_delta_payload_overhead(latest_seq, true, false),
+    );
     payloads
         .iter()
         .any(|payload| payload.len() > max_single_payload_bytes)
@@ -893,17 +896,22 @@ fn replacement_state_delta_payload_json(
     latest_seq: i64,
     sessions: &[String],
     replace: bool,
+    replacement_complete: bool,
 ) -> String {
     let mut payload = format!(
-        "{{\"latest_seq\":{latest_seq},\"latestSeq\":{latest_seq},\"replace\":{replace},\"sessions\":["
+        "{{\"latest_seq\":{latest_seq},\"latestSeq\":{latest_seq},\"replace\":{replace},\"replacement_complete\":{replacement_complete},\"replacementComplete\":{replacement_complete},\"sessions\":["
     );
     payload.push_str(&sessions.join(","));
     payload.push_str("]}");
     payload
 }
 
-fn replacement_state_delta_payload_overhead(latest_seq: i64, replace: bool) -> usize {
-    replacement_state_delta_payload_json(latest_seq, &[], replace).len()
+fn replacement_state_delta_payload_overhead(
+    latest_seq: i64,
+    replace: bool,
+    replacement_complete: bool,
+) -> usize {
+    replacement_state_delta_payload_json(latest_seq, &[], replace, replacement_complete).len()
 }
 
 fn state_delta_control_payload_json(record: &MobileStateEventRecord, reason: &str) -> String {

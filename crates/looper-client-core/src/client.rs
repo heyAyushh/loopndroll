@@ -22,7 +22,9 @@ use crate::model::{
     ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
     ClientPendingMutation, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
     ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind, STATE_MINI_REPLACEMENT_KIND,
+    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    STATE_MINI_BATCH_COMPLETE_KIND, STATE_MINI_REPLACEMENT_COMPLETE_KIND,
+    STATE_MINI_REPLACEMENT_KIND,
 };
 use crate::session_transport::{RecoveredStateMiniSnapshot, fetch_state_mini_snapshot};
 use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
@@ -1517,7 +1519,7 @@ impl LooperClientCore {
                 endpoint_url,
             } => {
                 state.phase = ConnectionPhase::Ready;
-                let did_change = state.finalize_pending_replacement(latest_seq);
+                let did_change = false;
                 update_server_time_if_newer(&mut state.server_time, server_time);
                 if !endpoint_url.is_empty() {
                     state.endpoint_url = endpoint_url;
@@ -1882,9 +1884,14 @@ impl ClientCoreState {
     fn apply_state_mini_delta(&mut self, delta: ClientStateMiniDelta) -> bool {
         let is_replacement = is_state_mini_replacement_delta(&delta);
         let is_same_seq_continuation = is_state_mini_bulk_delta(&delta) && !is_replacement;
+        let is_replacement_complete = is_state_mini_replacement_complete_delta(&delta);
         if !is_replacement && self.append_pending_replacement_continuation(&delta) {
             self.last_error.clear();
-            return false;
+            return if is_replacement_complete {
+                self.finalize_pending_replacement(delta.latest_seq.max(delta.seq))
+            } else {
+                false
+            };
         }
 
         if self.delta_is_stale_for_all_nodes(&delta) && !is_same_seq_continuation {
@@ -1892,9 +1899,14 @@ impl ClientCoreState {
         }
 
         if is_replacement {
+            let finality_seq = delta.latest_seq.max(delta.seq);
             self.stage_state_mini_replacement(delta);
             self.last_error.clear();
-            return false;
+            return if is_replacement_complete {
+                self.finalize_pending_replacement(finality_seq)
+            } else {
+                false
+            };
         }
 
         if self
@@ -2181,7 +2193,19 @@ impl ClientCoreState {
 }
 
 fn is_state_mini_replacement_delta(delta: &ClientStateMiniDelta) -> bool {
-    !delta.has_session && delta.kind == STATE_MINI_REPLACEMENT_KIND
+    !delta.has_session
+        && matches!(
+            delta.kind.as_str(),
+            STATE_MINI_REPLACEMENT_KIND | STATE_MINI_REPLACEMENT_COMPLETE_KIND
+        )
+}
+
+fn is_state_mini_replacement_complete_delta(delta: &ClientStateMiniDelta) -> bool {
+    !delta.has_session
+        && matches!(
+            delta.kind.as_str(),
+            STATE_MINI_REPLACEMENT_COMPLETE_KIND | STATE_MINI_BATCH_COMPLETE_KIND
+        )
 }
 
 fn is_state_mini_bulk_delta(delta: &ClientStateMiniDelta) -> bool {
@@ -4151,7 +4175,69 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_batch_waits_for_heartbeat_finality() {
+    fn state_mini_replacement_batch_publishes_on_completion_marker() {
+        let core = LooperClientCore::new();
+        core.replace_state_minis(ClientStateMiniSnapshot {
+            latest_seq: 10,
+            sessions: vec![
+                state_mini("thread-codex", "codex", 8, "rev-8", "old codex"),
+                state_mini("thread-devin", "devin", 9, "rev-9", "devin"),
+            ],
+            server_time: SERVER_TIME.to_owned(),
+        })
+        .expect("seed minis");
+
+        let staged = core
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 11,
+                latest_seq: 11,
+                entity_id: "mobile".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_COMPLETE_KIND.to_owned(),
+                revision: "rev-11".to_owned(),
+                server_time: SERVER_TIME.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![state_mini(
+                    "thread-codex",
+                    "codex",
+                    11,
+                    "rev-11",
+                    "new codex",
+                )],
+            })
+            .expect("apply complete replacement chunk");
+
+        assert!(staged.did_change);
+        assert_eq!(staged.snapshot.latest_seq, 11);
+        assert_eq!(
+            staged
+                .snapshot
+                .state_minis
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-devin", "thread-codex"]
+        );
+
+        let codex = staged
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-codex")
+            .expect("updated codex mini");
+        let devin = staged
+            .snapshot
+            .state_minis
+            .iter()
+            .find(|session| session.session_id == "thread-devin")
+            .expect("preserved absent devin mini");
+        assert_eq!(codex.assistant_surface, "codex");
+        assert!(codex.payload_json.contains("new codex"));
+        assert!(devin.payload_json.contains("devin"));
+    }
+
+    #[test]
+    fn state_mini_replacement_batch_ignores_heartbeat_without_completion_marker() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -4181,12 +4267,26 @@ mod tests {
                     "new codex",
                 )],
             })
-            .expect("stage replacement chunk");
+            .expect("stage incomplete replacement chunk");
 
         assert!(!staged.did_change);
-        assert_eq!(staged.snapshot.latest_seq, 10);
+
+        let heartbeat = core
+            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 11,
+                server_time: SERVER_TIME.to_owned(),
+                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            })
+            .expect("heartbeat without replacement completion");
+
         assert_eq!(
-            staged
+            heartbeat.reason,
+            ClientStateMiniStreamUpdateReason::Heartbeat
+        );
+        assert!(!heartbeat.did_change);
+        assert_eq!(heartbeat.snapshot.latest_seq, 10);
+        assert_eq!(
+            heartbeat
                 .snapshot
                 .state_minis
                 .iter()
@@ -4194,44 +4294,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["thread-codex", "thread-devin"]
         );
-
-        let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
-                latest_seq: 11,
-                server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-            })
-            .expect("replacement finality heartbeat");
-
-        assert_eq!(
-            finalized.reason,
-            ClientStateMiniStreamUpdateReason::Heartbeat
-        );
-        assert!(finalized.did_change);
-        assert_eq!(
-            finalized
-                .snapshot
-                .state_minis
-                .iter()
-                .map(|session| session.session_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["thread-devin", "thread-codex"]
-        );
-        let codex = finalized
-            .snapshot
-            .state_minis
-            .iter()
-            .find(|session| session.session_id == "thread-codex")
-            .expect("updated codex mini");
-        let devin = finalized
-            .snapshot
-            .state_minis
-            .iter()
-            .find(|session| session.session_id == "thread-devin")
-            .expect("preserved absent devin mini");
-        assert_eq!(codex.assistant_surface, "codex");
-        assert!(codex.payload_json.contains("new codex"));
-        assert!(devin.payload_json.contains("devin"));
     }
 
     #[test]
@@ -4247,33 +4309,26 @@ mod tests {
         })
         .expect("seed minis");
 
-        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
-            seq: 21,
-            latest_seq: 21,
-            entity_id: "node-a".to_owned(),
-            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
-            revision: "rev-a-21".to_owned(),
-            server_time: SERVER_TIME.to_owned(),
-            has_session: false,
-            session: state_mini("", "", 0, "", ""),
-            sessions: vec![node_state_mini(
-                "node-a",
-                "thread-a-new",
-                "codex",
-                21,
-                "rev-a-21",
-                "new a",
-            )],
-        })
-        .expect("stage replacement");
-
         let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 21,
                 latest_seq: 21,
+                entity_id: "node-a".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_COMPLETE_KIND.to_owned(),
+                revision: "rev-a-21".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![node_state_mini(
+                    "node-a",
+                    "thread-a-new",
+                    "codex",
+                    21,
+                    "rev-a-21",
+                    "new a",
+                )],
             })
-            .expect("replacement finality heartbeat");
+            .expect("apply complete replacement");
 
         assert!(finalized.did_change);
         assert_eq!(
@@ -4315,29 +4370,22 @@ mod tests {
         })
         .expect("seed node minis");
 
-        core.apply_state_mini_delta_with_result(ClientStateMiniDelta {
-            seq: 31,
-            latest_seq: 31,
-            entity_id: "mobile".to_owned(),
-            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
-            revision: "rev-mixed-31".to_owned(),
-            server_time: SERVER_TIME.to_owned(),
-            has_session: false,
-            session: state_mini("", "", 0, "", ""),
-            sessions: vec![
-                node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stale a"),
-                node_state_mini("node-b", "thread-b-new", "zed", 31, "rev-b-31", "fresh b"),
-            ],
-        })
-        .expect("stage mixed replacement");
-
         let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+            .apply_state_mini_delta_with_result(ClientStateMiniDelta {
+                seq: 31,
                 latest_seq: 31,
+                entity_id: "mobile".to_owned(),
+                kind: STATE_MINI_REPLACEMENT_COMPLETE_KIND.to_owned(),
+                revision: "rev-mixed-31".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                has_session: false,
+                session: state_mini("", "", 0, "", ""),
+                sessions: vec![
+                    node_state_mini("node-a", "thread-a", "codex", 20, "rev-a-20", "stale a"),
+                    node_state_mini("node-b", "thread-b-new", "zed", 31, "rev-b-31", "fresh b"),
+                ],
             })
-            .expect("mixed replacement finality heartbeat");
+            .expect("apply complete mixed replacement");
 
         assert!(finalized.did_change);
         assert_eq!(finalized.snapshot.latest_seq, 31);
@@ -4362,7 +4410,7 @@ mod tests {
     }
 
     #[test]
-    fn state_mini_replacement_continuation_chunks_publish_together_at_finality() {
+    fn state_mini_replacement_continuation_chunks_publish_on_completion_marker() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 10,
@@ -4401,39 +4449,19 @@ mod tests {
                 seq: 11,
                 latest_seq: 11,
                 entity_id: "mobile".to_owned(),
-                kind: "session_mini_batch".to_owned(),
+                kind: STATE_MINI_BATCH_COMPLETE_KIND.to_owned(),
                 revision: "rev-11".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
                 has_session: false,
                 session: state_mini("", "", 0, "", ""),
                 sessions: vec![state_mini("thread-2", "zed", 11, "rev-11", "two")],
             })
-            .expect("apply continuation chunk");
+            .expect("apply complete continuation chunk");
 
-        assert!(!second.did_change);
-        assert_eq!(second.snapshot.latest_seq, 10);
+        assert!(second.did_change);
+        assert_eq!(second.snapshot.latest_seq, 11);
         assert_eq!(
             second
-                .snapshot
-                .state_minis
-                .iter()
-                .map(|session| session.session_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["thread-old"]
-        );
-
-        let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
-                latest_seq: 11,
-                server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-            })
-            .expect("replacement finality heartbeat");
-
-        assert!(finalized.did_change);
-        assert_eq!(finalized.snapshot.latest_seq, 11);
-        assert_eq!(
-            finalized
                 .snapshot
                 .state_minis
                 .iter()
@@ -4491,15 +4519,15 @@ mod tests {
                 seq: 11,
                 latest_seq: 11,
                 entity_id: "mobile".to_owned(),
-                kind: "session_mini_batch".to_owned(),
+                kind: STATE_MINI_BATCH_COMPLETE_KIND.to_owned(),
                 revision: "rev-11".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
                 has_session: false,
                 session: state_mini("", "", 0, "", ""),
                 sessions: vec![state_mini("thread-2", "zed", 11, "rev-11", "two")],
             })
-            .expect("stage continuation after ack");
-        assert!(!second.did_change);
+            .expect("complete continuation after ack");
+        assert!(second.did_change);
         assert_eq!(
             second
                 .snapshot
@@ -4507,28 +4535,9 @@ mod tests {
                 .iter()
                 .map(|session| session.session_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["thread-old"]
-        );
-
-        let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
-                latest_seq: 11,
-                server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-            })
-            .expect("replacement finality heartbeat");
-
-        assert!(finalized.did_change);
-        assert_eq!(finalized.snapshot.latest_seq, 12);
-        assert_eq!(
-            finalized
-                .snapshot
-                .state_minis
-                .iter()
-                .map(|session| session.session_id.as_str())
-                .collect::<Vec<_>>(),
             vec!["thread-old", "thread-1", "thread-2"]
         );
+        assert_eq!(second.snapshot.latest_seq, 12);
     }
 
     #[test]
@@ -4856,33 +4865,20 @@ mod tests {
                 seq: 6,
                 latest_seq: 6,
                 entity_id: "mobile".to_owned(),
-                kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+                kind: STATE_MINI_REPLACEMENT_COMPLETE_KIND.to_owned(),
                 revision: "rev-6".to_owned(),
                 server_time: SERVER_TIME.to_owned(),
                 has_session: false,
                 session: state_mini("", "", 0, "", ""),
                 sessions: vec![],
             })
-            .expect("stage replacement");
+            .expect("apply complete empty replacement");
 
-        assert!(!result.did_change);
-        assert_eq!(result.snapshot.latest_seq, 5);
+        assert!(result.did_change);
+        assert_eq!(result.snapshot.latest_seq, 6);
         assert_eq!(result.snapshot.state_minis.len(), 1);
-        assert_eq!(result.snapshot.revision, "rev-5");
-
-        let finalized = core
-            .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
-                latest_seq: 6,
-                server_time: SERVER_TIME.to_owned(),
-                endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
-            })
-            .expect("replacement finality heartbeat");
-
-        assert!(finalized.did_change);
-        assert_eq!(finalized.snapshot.latest_seq, 6);
-        assert_eq!(finalized.snapshot.state_minis.len(), 1);
-        assert_eq!(finalized.snapshot.state_minis[0].session_id, "thread-1");
-        assert_eq!(finalized.snapshot.revision, "rev-6");
+        assert_eq!(result.snapshot.state_minis[0].session_id, "thread-1");
+        assert_eq!(result.snapshot.revision, "rev-6");
     }
 
     #[test]

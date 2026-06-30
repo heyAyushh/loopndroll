@@ -14,7 +14,8 @@ use crate::{
     model::{
         ClientCommandAck, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
         ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, OutboundSessionFrame,
-        OutboundSessionFrameKind, STATE_MINI_REPLACEMENT_KIND,
+        OutboundSessionFrameKind, STATE_MINI_BATCH_COMPLETE_KIND,
+        STATE_MINI_REPLACEMENT_COMPLETE_KIND, STATE_MINI_REPLACEMENT_KIND,
     },
 };
 
@@ -40,6 +41,8 @@ const ASSISTANT_SURFACE_FIELD: &str = "assistantSurface";
 const LATEST_SEQ_FIELD: &str = "latestSeq";
 const LATEST_SEQ_ALIAS_FIELD: &str = "latest_seq";
 const REPLACE_FIELD: &str = "replace";
+const REPLACEMENT_COMPLETE_FIELD: &str = "replacementComplete";
+const REPLACEMENT_COMPLETE_ALIAS_FIELD: &str = "replacement_complete";
 const SESSIONS_FIELD: &str = "sessions";
 
 #[derive(Debug)]
@@ -518,7 +521,7 @@ fn state_mini_data_cursor_after_ack(current_seq: i64, ack_seq: i64) -> i64 {
 }
 
 fn state_mini_data_cursor_after_delta(current_seq: i64, delta: &ClientStateMiniDelta) -> i64 {
-    if is_state_mini_bulk_delta(delta) {
+    if is_state_mini_bulk_delta(delta) && !is_state_mini_replacement_complete_delta(delta) {
         current_seq
     } else {
         current_seq.max(delta.seq)
@@ -531,6 +534,14 @@ fn state_mini_data_cursor_after_heartbeat(current_seq: i64, heartbeat_seq: i64) 
 
 fn is_state_mini_bulk_delta(delta: &ClientStateMiniDelta) -> bool {
     !delta.has_session && (delta.kind == STATE_MINI_REPLACEMENT_KIND || !delta.sessions.is_empty())
+}
+
+fn is_state_mini_replacement_complete_delta(delta: &ClientStateMiniDelta) -> bool {
+    !delta.has_session
+        && matches!(
+            delta.kind.as_str(),
+            STATE_MINI_REPLACEMENT_COMPLETE_KIND | STATE_MINI_BATCH_COMPLETE_KIND
+        )
 }
 
 fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
@@ -857,13 +868,23 @@ fn client_state_mini_delta(
         .get(REPLACE_FIELD)
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let replacement_complete = payload
+        .get(REPLACEMENT_COMPLETE_FIELD)
+        .or_else(|| payload.get(REPLACEMENT_COMPLETE_ALIAS_FIELD))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if replace_sessions {
         let sessions = state_mini_payload_sessions(&payload);
         return Ok(ClientStateMiniDelta {
             seq: delta.seq,
             latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
             entity_id: delta.entity_id,
-            kind: STATE_MINI_REPLACEMENT_KIND.to_owned(),
+            kind: if replacement_complete {
+                STATE_MINI_REPLACEMENT_COMPLETE_KIND
+            } else {
+                STATE_MINI_REPLACEMENT_KIND
+            }
+            .to_owned(),
             revision: delta.revision,
             server_time: delta.server_time,
             has_session: false,
@@ -883,7 +904,11 @@ fn client_state_mini_delta(
             seq: delta.seq,
             latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
             entity_id: delta.entity_id,
-            kind: delta.kind,
+            kind: if replacement_complete {
+                STATE_MINI_BATCH_COMPLETE_KIND.to_owned()
+            } else {
+                delta.kind
+            },
             revision: delta.revision,
             server_time: delta.server_time,
             has_session: false,
@@ -1514,7 +1539,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_replacement_chunk_reconnect_waits_for_heartbeat_finality() {
+    fn partial_replacement_chunk_reconnect_waits_for_completion_marker() {
         let current_seq = 10;
         let replacement = client_state_mini_delta(proto::StateMiniDelta {
             seq: 11,
@@ -1525,6 +1550,7 @@ mod tests {
             payload_json: json!({
                 "latestSeq": 11,
                 "replace": true,
+                "replacementComplete": false,
                 "sessions": [
                     {
                         "sessionId": "thread-1",
@@ -1547,6 +1573,7 @@ mod tests {
             payload_json: json!({
                 "latestSeq": 11,
                 "replace": false,
+                "replacementComplete": true,
                 "sessions": [
                     {
                         "sessionId": "thread-zed",
@@ -1567,9 +1594,8 @@ mod tests {
         );
         assert_eq!(
             state_mini_data_cursor_after_delta(current_seq, &continuation),
-            current_seq
+            11
         );
-        assert_eq!(state_mini_data_cursor_after_heartbeat(current_seq, 11), 11);
     }
 
     #[test]
