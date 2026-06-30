@@ -677,6 +677,7 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testAcceptedSettingsCommandsProjectWithoutSourceSnapshot() async throws {
+        CompanionSnapshotCache.clear()
         let runtime = try Self.temporarySessionRuntime()
         let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
         let model = CompanionAppModel(
