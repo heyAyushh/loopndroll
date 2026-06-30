@@ -81,7 +81,7 @@ struct SessionDetailScreen: View {
     }
 
     var body: some View {
-        Form {
+        List {
             summarySection
             assistantReplySection
             promptSection
@@ -90,6 +90,10 @@ struct SessionDetailScreen: View {
             completionCheckSection
             manageSection
         }
+        .listStyle(.insetGrouped)
+        .contentMargins(.top, 0, for: .scrollContent)
+        .safeAreaPadding(.bottom, CompanionMetrics.rowSpacing)
+        .companionListSurface()
         .navigationTitle(session.ref)
         .navigationBarTitleDisplayMode(.inline)
         .userActivity(LooperContinuationActivity.activityType, isActive: true) { activity in
@@ -310,6 +314,7 @@ struct SessionDetailScreen: View {
 
             TextEditor(text: $draftPrompt)
                 .frame(minHeight: CompanionMetrics.editorMinHeight)
+                .scrollDisabled(focusedInput != .prompt)
                 .focused($focusedInput, equals: .prompt)
                 .accessibilityIdentifier("session-detail.prompt-editor")
 
