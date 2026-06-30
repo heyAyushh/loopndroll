@@ -1005,20 +1005,13 @@ impl LooperClientCore {
     fn adopt_recovered_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
-        endpoint_url: String,
+        _endpoint_url: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_valid_sequence(snapshot.latest_seq)?;
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        state.replace_state_minis_from_source(
-            snapshot,
-            FRESHNESS_SOURCE_RECOVERY,
-            endpoint_url.as_str(),
-        );
-        if !endpoint_url.trim().is_empty() {
-            state.endpoint_url = endpoint_url;
-        }
+        state.replace_state_minis_from_source(snapshot, FRESHNESS_SOURCE_RECOVERY, "");
         state.last_error.clear();
         Ok(state.snapshot())
     }
@@ -3770,7 +3763,7 @@ mod tests {
     }
 
     #[test]
-    fn recovered_snapshot_adopts_endpoint_without_rewinding_cached_minis() {
+    fn recovered_snapshot_preserves_live_endpoint_without_rewinding_cached_minis() {
         let core = LooperClientCore::new();
         core.replace_state_minis(ClientStateMiniSnapshot {
             latest_seq: 20,
@@ -3797,7 +3790,7 @@ mod tests {
             .expect("adopt recovered endpoint");
 
         assert_eq!(snapshot.phase, ConnectionPhase::Reconnecting);
-        assert_eq!(snapshot.endpoint_url, ENDPOINT_LAST_GOOD);
+        assert_eq!(snapshot.endpoint_url, ENDPOINT_PRIMARY);
         assert_eq!(snapshot.latest_seq, 20);
         assert_eq!(snapshot.state_minis.len(), 1);
         assert_eq!(snapshot.state_minis[0].session_id, "thread-zed");

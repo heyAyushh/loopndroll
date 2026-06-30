@@ -157,8 +157,6 @@ impl LooperClientCoreSessionRuntime {
             bearer_token,
             mobile_session_header,
         )?;
-        self.local_store
-            .mark_last_good_endpoint(recovered.endpoint_url)?;
         self.local_store.replace_state_minis(recovered.snapshot)
     }
 
@@ -699,7 +697,12 @@ mod tests {
     use super::*;
     use crate::model::{ClientEndpoint, ClientPendingCommandKind, ClientStateMini};
     use crate::session_transport::proto;
-    use std::{net::TcpListener, time::Duration};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+        time::Duration,
+    };
     use tokio::sync::mpsc;
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -1121,6 +1124,60 @@ mod tests {
     }
 
     #[test]
+    fn runtime_recovery_does_not_replace_last_good_live_endpoint() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let path = temp_store_path("recovery-does-not-replace-live-endpoint");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+        let live_url = unused_local_url();
+        runtime
+            .local_store
+            .mark_last_good_endpoint(live_url.clone())
+            .expect("seed live endpoint");
+        let (recovery_url, recovery_server) = spawn_snapshot_server(31, "thread-recovered");
+
+        let local_snapshot = test_runtime
+            .block_on(runtime.recover_state_mini_snapshot(
+                vec![
+                    ClientEndpoint {
+                        url: live_url.clone(),
+                        last_good: false,
+                    },
+                    ClientEndpoint {
+                        url: recovery_url.clone(),
+                        last_good: false,
+                    },
+                ],
+                String::new(),
+                String::new(),
+            ))
+            .expect("recover snapshot");
+
+        assert_eq!(local_snapshot.latest_seq, 31);
+        assert_eq!(local_snapshot.sessions[0].session_id, "thread-recovered");
+        assert_ne!(recovery_url.trim_end_matches('/'), live_url);
+        drop(runtime);
+        let _ = recovery_server.join();
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let endpoints = reopened
+            .local_store
+            .endpoints_with_last_good(vec![
+                ClientEndpoint {
+                    url: live_url,
+                    last_good: false,
+                },
+                ClientEndpoint {
+                    url: recovery_url,
+                    last_good: false,
+                },
+            ])
+            .expect("stored endpoints");
+
+        assert!(endpoints[0].last_good);
+        assert!(!endpoints[1].last_good);
+    }
+
+    #[test]
     fn runtime_does_not_seed_empty_durable_state_as_replay_cursor() {
         let path = temp_store_path("empty-state-mini-cursor");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
@@ -1399,6 +1456,32 @@ mod tests {
         let address = listener.local_addr().expect("unused addr");
         drop(listener);
         format!("http://{address}")
+    }
+
+    fn spawn_snapshot_server(
+        latest_seq: i64,
+        session_id: &'static str,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind snapshot server");
+        let url = format!("http://{}", listener.local_addr().expect("server addr"));
+        let handle = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let body = format!(
+                r#"{{"latestSeq":{latest_seq},"serverTime":"2026-06-28T00:00:00Z","sessions":[{{"sessionId":"{session_id}","assistantSurface":"codex","seq":{latest_seq},"revision":"rev-{latest_seq}","title":"{session_id}"}}]}}"#
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (url, handle)
     }
 
     async fn spawn_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {
