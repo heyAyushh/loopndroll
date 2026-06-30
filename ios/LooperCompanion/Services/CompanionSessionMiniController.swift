@@ -23,6 +23,7 @@ final class CompanionSessionMiniController {
     let sessionRuntime: CompanionSessionRuntime?
 
     private var syncTask: Task<Void, Never>?
+    private var syncTaskID: UUID?
     private var notificationReplyOutboxDrainTask: Task<Bool, Never>?
 
     var isSyncing: Bool {
@@ -42,9 +43,17 @@ final class CompanionSessionMiniController {
             return
         }
 
-        syncTask = Task { @MainActor [weak self] in
+        let taskID = UUID()
+        syncTaskID = taskID
+        syncTask = Task.detached { [weak self, sessionRuntime] in
             defer {
-                self?.syncTask = nil
+                Task { @MainActor [weak self] in
+                    guard self?.syncTaskID == taskID else {
+                        return
+                    }
+                    self?.syncTask = nil
+                    self?.syncTaskID = nil
+                }
             }
             while !Task.isCancelled {
                 await sessionRuntime.prepareSessionRuntime()
@@ -64,14 +73,14 @@ final class CompanionSessionMiniController {
                     return
                 }
 
-                onLiveness(Self.restartLivenessUpdate(), connectionRevision)
+                await onLiveness(Self.restartLivenessUpdate(), connectionRevision)
                 CompanionDiagnostics.record("session-mini:sync-restarting")
                 try? await Task.sleep(for: CompanionSessionMiniControllerRetry.delay)
             }
         }
     }
 
-    static func restartLivenessUpdate() -> CompanionSessionMiniLivenessUpdate {
+    nonisolated static func restartLivenessUpdate() -> CompanionSessionMiniLivenessUpdate {
         CompanionSessionMiniLivenessUpdate(
             reason: CompanionSessionMiniControllerRetry.restartReason,
             latestSeq: CompanionSessionMiniControllerRetry.restartLatestSeq,
@@ -84,6 +93,7 @@ final class CompanionSessionMiniController {
     func stopSync() {
         let task = syncTask
         syncTask = nil
+        syncTaskID = nil
         task?.cancel()
         sessionRuntime?.stopStateMiniStream()
     }
@@ -91,6 +101,7 @@ final class CompanionSessionMiniController {
     func stopSyncAndWait() async {
         let task = syncTask
         syncTask = nil
+        syncTaskID = nil
         task?.cancel()
         sessionRuntime?.stopStateMiniStream()
         await task?.value
