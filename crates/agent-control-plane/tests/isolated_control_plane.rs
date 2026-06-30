@@ -1,5 +1,5 @@
 // allow: SIZE_OK — integration-test harness root owns shared fixtures while scenario groups are split under tests/isolated_control_plane/.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
@@ -2175,6 +2175,85 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
             .as_i64()
             .expect("latest last activity at ms")
             > initial_last_activity_at_ms
+    );
+}
+
+#[tokio::test]
+async fn session_mini_reconcile_replaces_stale_cache_shape_for_same_revision() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    prime_state_mini_cache(&control_plane);
+
+    let current_records = control_plane
+        .store()
+        .mobile_session_minis()
+        .expect("current mini records");
+    let current_revision =
+        latest_session_mini_revision(&current_records).expect("current mini revision");
+    let current_keys = current_records
+        .iter()
+        .map(|record| (record.session_id.clone(), record.assistant_surface.clone()))
+        .collect::<BTreeSet<_>>();
+
+    let mut stale_minis = current_records
+        .iter()
+        .map(|record| MobileSessionMiniProjectionInput {
+            session_id: record.session_id.clone(),
+            assistant_surface: record.assistant_surface.clone(),
+            body_json: serde_json::from_str(&record.body_json).expect("mini body json"),
+        })
+        .collect::<Vec<_>>();
+    let mut stale_extra_body = stale_minis
+        .first()
+        .expect("at least one mini")
+        .body_json
+        .clone();
+    stale_extra_body["id"] = serde_json::json!("thread-stale-extra");
+    stale_extra_body["sessionId"] = serde_json::json!("thread-stale-extra");
+    stale_extra_body["ref"] = serde_json::json!("SX");
+    stale_extra_body["title"] = serde_json::json!("Stale extra mini");
+    stale_minis.push(MobileSessionMiniProjectionInput {
+        session_id: "thread-stale-extra".to_owned(),
+        assistant_surface: "codex".to_owned(),
+        body_json: stale_extra_body,
+    });
+    let stale_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile seq")
+        + 1;
+    control_plane
+        .store()
+        .replace_mobile_session_minis(stale_minis, stale_seq, &current_revision)
+        .expect("write stale same-revision minis");
+
+    assert!(
+        control_plane
+            .reconcile_mobile_session_mini_projection()
+            .expect("reconcile stale shape"),
+        "same revision must still replace a stale persisted mini keyset"
+    );
+    let repaired_records = control_plane
+        .store()
+        .mobile_session_minis()
+        .expect("repaired mini records");
+    let repaired_keys = repaired_records
+        .iter()
+        .map(|record| (record.session_id.clone(), record.assistant_surface.clone()))
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(repaired_keys, current_keys);
+    assert!(
+        !repaired_records
+            .iter()
+            .any(|record| record.session_id == "thread-stale-extra")
+    );
+    assert!(
+        !control_plane
+            .reconcile_mobile_session_mini_projection()
+            .expect("second reconcile"),
+        "matching current projection should return to no-op"
     );
 }
 

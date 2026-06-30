@@ -637,15 +637,6 @@ impl ControlPlane {
         if revision.trim().is_empty() {
             return Ok(false);
         }
-        let stored_revision = self
-            .store
-            .latest_mobile_session_mini_revision()
-            .ok()
-            .flatten();
-        if !force && stored_revision.as_deref() == Some(revision.as_str()) {
-            return Ok(false);
-        }
-
         let session_state = self.mobile_session_service().state()?;
         prime_delivery_action_cache(self, &snapshot, &session_state);
         let queued_prompt_counts = self.mobile_session_service().queued_prompt_counts()?;
@@ -657,6 +648,17 @@ impl ControlPlane {
             latest_seq,
             &revision,
         );
+        let stored_revision = self
+            .store
+            .latest_mobile_session_mini_revision()
+            .ok()
+            .flatten();
+        if !force
+            && stored_revision.as_deref() == Some(revision.as_str())
+            && self.stored_mobile_session_mini_projection_matches(&minis)?
+        {
+            return Ok(false);
+        }
         let event = match detail {
             Some(detail) => MobileEvent {
                 event_type: MobileEventKind::SessionChanged,
@@ -673,6 +675,26 @@ impl ControlPlane {
             .record_mobile_event_replacing_session_minis(&event, minis)?;
         self.mobile_events.publish_persisted(record);
         Ok(true)
+    }
+
+    fn stored_mobile_session_mini_projection_matches(
+        &self,
+        minis: &[MobileSessionMiniProjectionInput],
+    ) -> Result<bool> {
+        let stored = self.store.mobile_session_minis()?;
+        if stored.len() != minis.len() {
+            return Ok(false);
+        }
+
+        let expected_keys = minis
+            .iter()
+            .map(|mini| (mini.session_id.as_str(), mini.assistant_surface.as_str()))
+            .collect::<BTreeSet<_>>();
+        let stored_keys = stored
+            .iter()
+            .map(|mini| (mini.session_id.as_str(), mini.assistant_surface.as_str()))
+            .collect::<BTreeSet<_>>();
+        Ok(stored_keys == expected_keys)
     }
 
     pub fn spawn_mobile_session_mini_projection_reconcile_if_due(&self) {
