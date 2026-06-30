@@ -679,8 +679,11 @@ mod tests {
     use crate::model::{ClientEndpoint, ClientPendingCommandKind, ClientStateMini};
     use crate::session_transport::proto;
     use std::{
+        future::Future,
         io::{Read, Write},
         net::TcpListener,
+        sync::Arc,
+        task::{Context, Poll, Wake},
         thread,
         time::Duration,
     };
@@ -1212,6 +1215,27 @@ mod tests {
     }
 
     #[test]
+    fn runtime_recovery_uses_owned_reactor_when_called_without_tokio_context() {
+        let path = temp_store_path("recovery-without-caller-reactor");
+        let runtime = LooperClientCoreSessionRuntime::new(path).expect("runtime");
+        let (recovery_url, recovery_server) = spawn_snapshot_server(37, "thread-no-reactor");
+
+        let local_snapshot = block_on_without_tokio(runtime.recover_state_mini_snapshot(
+            vec![ClientEndpoint {
+                url: recovery_url.clone(),
+                last_good: false,
+            }],
+            String::new(),
+            String::new(),
+        ))
+        .expect("recover snapshot without caller reactor");
+
+        assert_eq!(local_snapshot.latest_seq, 37);
+        assert_eq!(local_snapshot.sessions[0].session_id, "thread-no-reactor");
+        let _ = recovery_server.join();
+    }
+
+    #[test]
     fn runtime_does_not_seed_empty_durable_state_as_replay_cursor() {
         let path = temp_store_path("empty-state-mini-cursor");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
@@ -1516,6 +1540,30 @@ mod tests {
             let _ = stream.write_all(response.as_bytes());
         });
         (url, handle)
+    }
+
+    struct ThreadWaker(thread::Thread);
+
+    impl Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on_without_tokio<F: Future>(future: F) -> F::Output {
+        let waker = std::task::Waker::from(Arc::new(ThreadWaker(thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => thread::park_timeout(Duration::from_millis(10)),
+            }
+        }
     }
 
     async fn spawn_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {

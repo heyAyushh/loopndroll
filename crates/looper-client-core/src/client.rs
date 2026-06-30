@@ -944,8 +944,16 @@ impl LooperClientCore {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<RecoveredStateMiniSnapshot, ClientCoreError> {
-        let recovered =
-            fetch_state_mini_snapshot(endpoints, bearer_token, mobile_session_header).await?;
+        let recovered = self
+            .runtime
+            .handle()
+            .spawn(fetch_state_mini_snapshot(
+                endpoints,
+                bearer_token,
+                mobile_session_header,
+            ))
+            .await
+            .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
         let state_snapshot =
             self.adopt_recovered_state_minis(recovered.snapshot, recovered.endpoint_url.clone())?;
         self.emit_local_state_update(state_snapshot.clone());
