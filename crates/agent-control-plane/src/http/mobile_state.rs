@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::control_plane::ControlPlane;
 use crate::events::{MobileSessionMiniRecord, MobileStateEventGap};
@@ -21,10 +21,118 @@ const SESSION_MINI_FRESHNESS_SOURCE: &str = "mobile-session-mini-projection";
 const MOBILE_STATE_REVISION_PREFIX: &str = "mobile-state:seq-";
 
 pub(super) fn desktop_mobile_state_response(control_plane: &ControlPlane) -> Response {
-    match control_plane.mobile_session_service().state() {
+    match fresh_desktop_mobile_state(control_plane) {
         Ok(state) => (StatusCode::OK, Json(state)).into_response(),
-        Err(error) => mobile_session_error_response(error),
+        Err(DesktopMobileStateError::Session(error)) => mobile_session_error_response(error),
+        Err(DesktopMobileStateError::Internal(error)) => internal_mobile_error_response(error),
     }
+}
+
+enum DesktopMobileStateError {
+    Session(crate::mobile::session::MobileSessionError),
+    Internal(String),
+}
+
+fn fresh_desktop_mobile_state(
+    control_plane: &ControlPlane,
+) -> Result<Value, DesktopMobileStateError> {
+    let snapshot = control_plane
+        .desktop_mobile_snapshot()
+        .map_err(|error| DesktopMobileStateError::Internal(error.to_string()))?;
+    let session_state = control_plane
+        .mobile_session_service()
+        .state()
+        .map_err(DesktopMobileStateError::Session)?;
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .map_err(|error| DesktopMobileStateError::Internal(error.to_string()))?;
+    let server_time = current_mobile_time();
+    let mobile_snapshot =
+        mobile_snapshot(&snapshot, &session_state, "", &[], latest_seq, &server_time);
+    let mut state = serde_json::to_value(&session_state)
+        .map_err(|error| DesktopMobileStateError::Internal(error.to_string()))?;
+    let Some(state_object) = state.as_object_mut() else {
+        return Err(DesktopMobileStateError::Internal(
+            "mobile state serialization did not produce an object".to_owned(),
+        ));
+    };
+    let Some(snapshot_object) = mobile_snapshot.as_object() else {
+        return Err(DesktopMobileStateError::Internal(
+            "mobile snapshot serialization did not produce an object".to_owned(),
+        ));
+    };
+
+    if let Some(session_overrides) = state_object.remove("sessions") {
+        state_object.insert("sessionOverrides".to_owned(), session_overrides);
+    }
+    if let Some(stored_lifecycle) = state_object.remove("lifecycle") {
+        state_object.insert("storedLifecycle".to_owned(), stored_lifecycle);
+    }
+
+    for key in [
+        "revision",
+        "latest_seq",
+        "latestSeq",
+        "server_time",
+        "serverTime",
+        "freshness",
+        "host",
+        "globalSettings",
+        "sessions",
+        "surfaceSessions",
+        "workStatus",
+        "devinDesktop",
+        "grokBuild",
+    ] {
+        if let Some(value) = snapshot_object.get(key) {
+            state_object.insert(key.to_owned(), value.clone());
+        }
+    }
+    state_object.insert(
+        "lifecycle".to_owned(),
+        fresh_mobile_lifecycle(snapshot_object, &server_time),
+    );
+    state_object.insert("threadCount".to_owned(), json!(snapshot.thread_count));
+    state_object.insert(
+        "visibleThreadCount".to_owned(),
+        json!(snapshot.threads.len()),
+    );
+    Ok(state)
+}
+
+fn fresh_mobile_lifecycle(snapshot_object: &Map<String, Value>, server_time: &str) -> Value {
+    let mut lifecycle = Map::new();
+    let Some(surface_sessions) = snapshot_object
+        .get("surfaceSessions")
+        .and_then(Value::as_object)
+    else {
+        return Value::Object(lifecycle);
+    };
+    for sessions in surface_sessions.values().filter_map(Value::as_array) {
+        for session in sessions {
+            let Some(session_id) = session.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let status = session
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let updated_at = session
+                .get("lastUpdatedAt")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(server_time);
+            lifecycle.insert(
+                session_id.to_owned(),
+                json!({
+                    "status": status,
+                    "updatedAt": updated_at,
+                }),
+            );
+        }
+    }
+    Value::Object(lifecycle)
 }
 
 pub(super) fn mobile_snapshot_response(

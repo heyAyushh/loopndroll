@@ -3535,6 +3535,37 @@ async fn mobile_snapshot_carries_non_default_surface_sessions_without_server_swi
 }
 
 #[tokio::test]
+async fn desktop_mobile_state_uses_fresh_snapshot_session_projection() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let grok_transcript = std::path::PathBuf::from("/Users/test/.grok/sessions/grok-thread.jsonl");
+    fixture.attach_transcript_path("thread-main", &grok_transcript);
+    let router = build_router(fixture.control_plane());
+
+    let mobile_state = request_json(&router, "/desktop/mobile-state").await;
+
+    assert!(
+        mobile_state["sessions"]
+            .as_array()
+            .expect("visible sessions")
+            .iter()
+            .all(|session| session["id"] != "thread-main")
+    );
+    let grok_session = mobile_surface_session(&mobile_state, "grok-build", "thread-main");
+    assert_eq!(grok_session["assistantClient"], "grok-build");
+    assert_eq!(
+        mobile_state["lifecycle"]["thread-main"]["status"],
+        grok_session["status"]
+    );
+    assert!(mobile_state["sessionOverrides"].is_object());
+    assert!(mobile_state["storedLifecycle"].is_object());
+    assert_eq!(
+        mobile_state["freshness"]["source"],
+        serde_json::json!("desktop-mobile-snapshot")
+    );
+}
+
+#[tokio::test]
 async fn mobile_snapshot_includes_every_assistant_surface() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
