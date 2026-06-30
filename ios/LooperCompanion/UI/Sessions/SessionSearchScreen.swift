@@ -6,11 +6,13 @@ struct SessionSearchScreen: View {
     let authenticator: CompanionAppAuthenticator
     @Binding var searchText: String
     @Binding var selectedScope: SessionSearchScope
+    let searchFocusRequestID: Int
     @ObservedObject var searchService: SpotlightSearchService
 
     @Environment(\.openURL) private var openURL
     @Environment(\.dismissSearch) private var dismissSearch
     @AppStorage(CompanionSearchStorage.recentQueriesKey) private var recentSearchesStorage = ""
+    @FocusState private var isSearchFocused: Bool
     @State private var searchPath = NavigationPath()
     @State private var isDeviceHubPresented = false
     @State private var renderedResults = SessionSearchResults.empty
@@ -63,6 +65,7 @@ struct SessionSearchScreen: View {
                 placement: .automatic,
                 prompt: Text("Sessions, settings, actions")
             )
+            .searchFocused($isSearchFocused)
             .searchScopes($selectedScope, activation: .onTextEntry) {
                 ForEach(SessionSearchScope.allCases) { scope in
                     Label(scope.title, systemImage: scope.systemImage)
@@ -74,9 +77,26 @@ struct SessionSearchScreen: View {
                 SessionSearchEngine.persistRecentQuery(searchText)
             }
         }
+        .onAppear {
+            focusSearchIfRequested(searchFocusRequestID)
+        }
+        .onChange(of: searchFocusRequestID) { _, requestID in
+            focusSearchIfRequested(requestID)
+        }
         .sheet(isPresented: $isDeviceHubPresented) {
             SessionsDeviceHubSheet(model: model)
                 .deviceHubSheetPresentation()
+        }
+    }
+
+    private func focusSearchIfRequested(_ requestID: Int) {
+        guard requestID > 0 else {
+            return
+        }
+
+        Task { @MainActor in
+            await Task.yield()
+            isSearchFocused = true
         }
     }
 

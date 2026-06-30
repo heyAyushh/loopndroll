@@ -18,6 +18,7 @@ struct LooperApp: App {
     @UIApplicationDelegateAdaptor(LooperAppDelegate.self) private var appDelegate
     @AppStorage("appearanceMode") private var appearanceModeRawValue = CompanionAppearanceMode.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var rootCommandCenter = LooperRootCommandCenter()
     @State private var authenticator: CompanionAppAuthenticator
     @State private var model: CompanionAppModel
 
@@ -61,7 +62,11 @@ struct LooperApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView(model: model, authenticator: authenticator)
+            RootTabView(
+                model: model,
+                authenticator: authenticator,
+                commandCenter: rootCommandCenter
+            )
                 .preferredColorScheme(appearanceMode.colorScheme)
                 .onContinueUserActivity(LooperContinuationActivity.activityType) { activity in
                     handleContinuationActivity(activity)
@@ -92,6 +97,9 @@ struct LooperApp: App {
 
                     drainPendingOpenRequests()
                 }
+        }
+        .commands {
+            LooperSearchCommands(commandCenter: rootCommandCenter)
         }
     }
 
@@ -188,5 +196,21 @@ struct LooperApp: App {
         }
 
         model.startSessionRuntimeSyncIfNeeded()
+    }
+}
+
+private struct LooperSearchCommands: Commands {
+    let commandCenter: LooperRootCommandCenter
+
+    var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("Search") {
+                commandCenter.requestSearch()
+            }
+            .keyboardShortcut(
+                LooperKeyboardShortcut.searchKey,
+                modifiers: LooperKeyboardShortcut.searchModifiers
+            )
+        }
     }
 }

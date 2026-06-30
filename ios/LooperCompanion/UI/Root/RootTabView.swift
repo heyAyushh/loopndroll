@@ -7,6 +7,20 @@ private enum RootLaunchArgument {
     static let searchQueryPrefix = "--search-query="
 }
 
+enum LooperKeyboardShortcut {
+    static let searchKey: KeyEquivalent = "l"
+    static let searchModifiers: EventModifiers = .command
+}
+
+@MainActor
+final class LooperRootCommandCenter: ObservableObject {
+    @Published private(set) var searchRequestID = 0
+
+    func requestSearch() {
+        searchRequestID += 1
+    }
+}
+
 private enum RootTab: Hashable {
     case sessions
     case settings
@@ -26,6 +40,7 @@ struct RootTabView: View {
 
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
+    @ObservedObject var commandCenter: LooperRootCommandCenter
 
     @AppStorage(OnboardingState.completionStorageKey) private var hasCompletedOnboarding = false
     @AppStorage(PinballSettingsKeys.isGameEnabled) private var isPinballGameEnabled = false
@@ -36,6 +51,7 @@ struct RootTabView: View {
     @State private var pinballSurfaces: [PinballSurface] = []
     @State private var searchText = ""
     @State private var searchScope: SessionSearchScope = .all
+    @State private var searchFocusRequestID = 0
     @State private var settingsTarget: SettingsSearchTarget?
     @State private var settingsTargetRevision = 0
     @StateObject private var spotlightSearchService = SpotlightSearchService()
@@ -108,6 +124,9 @@ struct RootTabView: View {
                 authenticator.lockIfNeeded()
             }
         }
+        .onChange(of: commandCenter.searchRequestID) { _, _ in
+            openSearchFromKeyboard()
+        }
         .onAppear {
             guard !hasCheckedLaunchOrbScanner else {
                 return
@@ -123,7 +142,7 @@ struct RootTabView: View {
             #endif
 
             if shouldOpenSearchOnLaunch {
-                selectedTab = .search
+                openSearchFromKeyboard()
             }
 
             applyLaunchSearchQueryIfNeeded()
@@ -162,6 +181,7 @@ struct RootTabView: View {
                     authenticator: authenticator,
                     searchText: $searchText,
                     selectedScope: $searchScope,
+                    searchFocusRequestID: searchFocusRequestID,
                     searchService: spotlightSearchService
                 )
                 .pinballSurfaceCollectionEnabled(shouldCollectPinballSurfaces(for: .search))
@@ -177,6 +197,15 @@ struct RootTabView: View {
             return
         }
         selectedTab = tab
+    }
+
+    private func openSearchFromKeyboard() {
+        guard !shouldShowOnboarding, authenticator.isUnlocked else {
+            return
+        }
+
+        selectedTab = .search
+        searchFocusRequestID += 1
     }
 
     private func openPendingSettingsTarget(_ target: SettingsSearchTarget?) {
@@ -361,6 +390,7 @@ private struct TabViewSearchActivationWhenAvailable: ViewModifier {
         model: CompanionAppModel(
             environment: CompanionEnvironment(service: MockCompanionService())
         ),
-        authenticator: CompanionAppAuthenticator()
+        authenticator: CompanionAppAuthenticator(),
+        commandCenter: LooperRootCommandCenter()
     )
 }

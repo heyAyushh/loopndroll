@@ -368,6 +368,18 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         XCTAssertTrue(waitForText("Search"))
     }
 
+    func testCommandLOpensSearch() throws {
+        launchApp()
+
+        XCTAssertTrue(waitForText("Sessions"))
+        app.typeKey("l", modifierFlags: .command)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 4))
+        app.typeText("latency")
+        XCTAssertTrue(searchFieldContains("latency"))
+    }
+
     func testLaunchVerificationAlertReachesSimulatorNotifications() throws {
         launchApp(extraArguments: [ControlFlowLaunchArgument.sendTestAlertOnLaunch])
         handleNotificationPromptIfNeeded()
