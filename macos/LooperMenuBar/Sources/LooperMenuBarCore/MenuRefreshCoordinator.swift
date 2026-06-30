@@ -152,12 +152,7 @@ public actor MenuRefreshCoordinator {
     }
 
     private func shouldReuse(cachedRefresh: CachedRefresh, at now: ContinuousClock.Instant) -> Bool {
-        if cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration {
-            return true
-        }
-
-        return cachedRefresh.result.sessionMiniSnapshot != nil
-            && Self.fetchSessionMiniSnapshot(sessionRuntime) != nil
+        cachedRefresh.recordedAt.duration(to: now) <= freshReuseDuration
     }
 
     private func performRefresh(bypassingCache: Bool) async -> MenuRefreshResult {

@@ -510,6 +510,40 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.healthCalls == 1)
     }
 
+    @Test("stale cached SessionMini refreshes cheap mobile enrichment only")
+    func staleCachedSessionMiniRefreshesCheapMobileEnrichmentOnly() async throws {
+        let runtime = try seededRuntime(
+            latestSeq: 309,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        let client = MenuRefreshRecordingClient(snapshotDelay: .seconds(5))
+        let coordinator = MenuRefreshCoordinator(
+            client: client,
+            sessionRuntime: runtime,
+            freshReuseDuration: .milliseconds(1)
+        )
+
+        let initial = await coordinator.refresh()
+        try await Task.sleep(for: .milliseconds(5))
+        let refreshed = await coordinator.refresh()
+
+        #expect(initial.sessionMiniSnapshot?.latestSeq == 309)
+        #expect(refreshed.succeeded)
+        #expect(refreshed.didFetchHTTP)
+        #expect(refreshed.sessionMiniSnapshot?.latestSeq == 309)
+        #expect(refreshed.snapshot == nil)
+        #expect(refreshed.mobileState != nil)
+        #expect(refreshed.pushDevices != nil)
+        #expect(refreshed.mobileHealth != nil)
+        #expect(client.snapshotCalls == 0)
+        #expect(client.connectionCalls == 0)
+        #expect(client.acpHostCalls == 0)
+        #expect(client.mobileStateCalls == 2)
+        #expect(client.pushDeviceCalls == 2)
+        #expect(client.healthCalls == 2)
+    }
+
     @Test("cached refresh preserves SessionMini when local reread is unavailable")
     func cachedRefreshPreservesSessionMiniWhenLocalRereadUnavailable() async throws {
         let snapshot = try seededRuntime(

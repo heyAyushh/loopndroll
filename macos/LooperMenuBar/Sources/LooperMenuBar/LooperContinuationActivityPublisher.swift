@@ -86,6 +86,12 @@ final class LooperContinuationActivityPublisher {
 
     @discardableResult
     func requestFocusAssistedActivation() -> Bool {
+        guard isHandoffSupported else {
+            deactivateFocusAssist()
+            refreshCurrentActivity(allowsIdleActivation: false)
+            return false
+        }
+
         activateFocusAssist(reason: "hotkey")
         return republishCurrentActivity(presentation: .activateApplication)
     }
