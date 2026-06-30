@@ -155,6 +155,12 @@ final class CompanionSnapshotStateStore {
         }
         nextSnapshot.globalSettings.assistantSurface = surface
         canonicalSnapshot = nextSnapshot
+
+        guard selectedAssistantSurface != surface else {
+            snapshot?.globalSettings.assistantSurface = surface
+            return true
+        }
+
         visibleSurfaceProjections = Self.makeVisibleSurfaceProjections(from: nextSnapshot)
         applyVisibleAssistantSurface(surface)
         return true

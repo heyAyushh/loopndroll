@@ -219,7 +219,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
-    func testAssistantSurfaceSwitchPaintsAfterRuntimeAcceptWithoutSnapshotLoad() async throws {
+    func testAssistantSurfaceSwitchPaintsBeforeRuntimeAcceptWithoutSnapshotLoad() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
             title: "Cached Mini",
@@ -240,6 +240,7 @@ struct CompanionSessionMiniLocalFirstTests {
 
         let selectionTask = try #require(model.selectAssistantSurface(.devin))
 
+        #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
         let pendingSurfaceCommand = try Self.pendingCommand(in: runtime, kind: .setAssistantSurface)
@@ -291,6 +292,9 @@ struct CompanionSessionMiniLocalFirstTests {
         let selectionTask = try #require(model.selectAssistantSurface(.zed))
 
         #expect(service.loadSnapshotCallCount == 0)
+        #expect(model.viewState.selectedAssistantSurface == .zed)
+        #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
+        #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
 
         #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .zed)

@@ -1690,10 +1690,23 @@ final class CompanionAppModel {
         assistantSurfaceSelectionTarget = surface
         assistantSurfaceSelectionTask?.cancel()
         AssistantSurfaceETTraceMetric.postStarted(for: surface)
+        guard snapshotState.selectAssistantSurface(surface) else {
+            logAssistantSurfaceSelection(
+                AssistantSurfaceSelectionLogEvent.failed,
+                surface: surface,
+                reason: AssistantSurfaceSelectionFailureReason.projectionRejected
+            )
+            clearAssistantSurfaceSelection(selectionGeneration)
+            AssistantSurfaceETTraceMetric.postEnded(for: surface)
+            return nil
+        }
+        logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.applied, surface: surface)
+        CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
+        errorMessage = nil
+        lastUpdatedAt = Date()
+        AssistantSurfaceETTraceMetric.postEnded(for: surface)
+
         let selectionTask = Task { @MainActor [weak self] in
-            defer {
-                AssistantSurfaceETTraceMetric.postEnded(for: surface)
-            }
             guard let self else {
                 return false
             }
@@ -1736,15 +1749,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record(
                 "assistant-surface:accepted-local surface=\(surface.rawValue) mutationID=\(result.clientMutationId) entityID=\(result.entityId)"
             )
-            guard self.snapshotState.applyAcceptedAssistantSurface(surface) else {
-                self.logAssistantSurfaceSelection(
-                    AssistantSurfaceSelectionLogEvent.failed,
-                    surface: surface,
-                    reason: AssistantSurfaceSelectionFailureReason.projectionRejected
-                )
-                self.clearAssistantSurfaceSelection(selectionGeneration)
-                return false
-            }
+            self.snapshotState.applyAcceptedAssistantSurface(surface)
 
             let selectedSurface = self.snapshotState.selectedAssistantSurface
             guard selectedSurface == surface else {
@@ -1758,8 +1763,6 @@ final class CompanionAppModel {
                 return false
             }
 
-            self.logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.applied, surface: surface)
-            CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
             self.errorMessage = nil
             self.lastUpdatedAt = Date()
             self.clearAssistantSurfaceSelection(selectionGeneration)
