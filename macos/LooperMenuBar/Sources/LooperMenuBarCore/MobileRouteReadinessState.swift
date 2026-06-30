@@ -262,7 +262,7 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             return true
         }
 
-        return observedSessionTransitionGeneration == generation
+        return false
     }
 
     private func routeSummaryTitle(for url: URL) -> String {

@@ -256,8 +256,8 @@ struct MenuRefreshCoordinatorTests {
         )
     }
 
-    @Test("route switch marks previous endpoint stale until Session reconnects")
-    func routeSwitchMarksPreviousEndpointStaleUntilSessionReconnects() throws {
+    @Test("route switch marks previous endpoint stale until different Session endpoint proves live")
+    func routeSwitchMarksPreviousEndpointStaleUntilDifferentSessionEndpointProvesLive() throws {
         var readiness = MobileRouteReadinessState(
             health: MenuRefreshRecordingClient.mobileHealth()
         )
@@ -308,14 +308,13 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: switchGeneration,
             syncReason: .heartbeat
         )
-        #expect(readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
 
-        let nextSwitchGeneration = readiness.invalidateForRouteSwitch()
         readiness.applySessionState(
             phase: .ready,
             endpointURL: nextEndpoint,
-            refreshGeneration: nextSwitchGeneration,
+            refreshGeneration: switchGeneration,
             syncReason: .delta
         )
         #expect(readiness.hasLiveRouteProof)
