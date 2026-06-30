@@ -1930,7 +1930,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
 
     mobileRoutePreference = preference
-    mobileRouteReadiness.invalidateForRouteSwitch()
+    mobileRouteReadiness.invalidateForRouteSwitch(preference: preference)
     continuationPublisher.isHandoffSupported = false
     replaceMenu(snapshot: nil, sessionMiniSnapshot: currentSessionMiniSnapshot(), error: nil)
     Task {

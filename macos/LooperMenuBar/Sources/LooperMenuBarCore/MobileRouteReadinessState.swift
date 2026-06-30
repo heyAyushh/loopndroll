@@ -49,6 +49,12 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         static let notActive = "Not active"
     }
 
+    private enum RouteTitles {
+        static let remote = "Remote"
+        static let tailscale = "Tailscale"
+        static let lan = "LAN"
+    }
+
     public private(set) var health: MobileHealthResponse?
     public private(set) var healthRecordedAt: Date?
     public private(set) var generation: UInt64
@@ -131,14 +137,14 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
             guard let staleRealtimeEndpoint, requiresLiveProof else {
                 return requiresLiveProof ? Titles.localWaitingForSessionProof : Titles.notProven
             }
-            guard MobileRouteURLPolicy.routeTitle(for: staleRealtimeEndpoint) == "Tailscale" else {
+            guard MobileRouteURLPolicy.routeTitle(for: staleRealtimeEndpoint) == RouteTitles.tailscale else {
                 return Titles.localWaitingForSessionProof
             }
             return "Cached route: \(hostTitle(for: staleRealtimeEndpoint)); \(Titles.sessionProofSuffix)"
         }
 
         let routeTitle = MobileRouteURLPolicy.routeTitle(for: provenRealtimeEndpoint)
-        guard routeTitle == "Tailscale" else {
+        guard routeTitle == RouteTitles.tailscale else {
             return Titles.notActive
         }
 
@@ -164,11 +170,17 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
     }
 
     @discardableResult
-    public mutating func invalidateForRouteSwitch() -> UInt64 {
+    public mutating func invalidateForRouteSwitch(
+        preference: MobileRoutePreference? = nil
+    ) -> UInt64 {
         generation += 1
         health = nil
         healthRecordedAt = nil
-        staleRealtimeEndpoint = provenRealtimeEndpoint ?? staleRealtimeEndpoint
+        let nextStaleEndpoint = provenRealtimeEndpoint ?? staleRealtimeEndpoint
+        staleRealtimeEndpoint = shouldKeepStaleEndpoint(
+            nextStaleEndpoint,
+            for: preference
+        ) ? nextStaleEndpoint : nil
         provenRealtimeEndpoint = nil
         pendingLiveProofGeneration = generation
         observedSessionTransitionGeneration = nil
@@ -263,6 +275,34 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         }
 
         return false
+    }
+
+    private func shouldKeepStaleEndpoint(
+        _ endpointURL: URL?,
+        for preference: MobileRoutePreference?
+    ) -> Bool {
+        guard let endpointURL else {
+            return false
+        }
+        guard let preference else {
+            return true
+        }
+
+        return !routeEndpoint(endpointURL, matches: preference)
+    }
+
+    private func routeEndpoint(
+        _ endpointURL: URL,
+        matches preference: MobileRoutePreference
+    ) -> Bool {
+        switch preference {
+        case .remote:
+            return MobileRouteURLPolicy.routeTitle(for: endpointURL) == RouteTitles.remote
+        case .tailscale:
+            return MobileRouteURLPolicy.routeTitle(for: endpointURL) == RouteTitles.tailscale
+        case .lan:
+            return MobileRouteURLPolicy.routeTitle(for: endpointURL) == RouteTitles.lan
+        }
     }
 
     private func routeSummaryTitle(for url: URL) -> String {

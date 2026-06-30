@@ -321,6 +321,54 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.routeStatusTitle == "Session-proven: LAN: 192.168.1.33")
     }
 
+    @Test("Tailscale recovers after LAN route switch fails")
+    func tailscaleRecoversAfterLANRouteSwitchFails() throws {
+        var readiness = MobileRouteReadinessState(
+            health: MenuRefreshRecordingClient.mobileHealth()
+        )
+        let tailscaleEndpoint = try #require(URL(string: "http://100.119.200.69:8766"))
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: tailscaleEndpoint,
+            refreshGeneration: readiness.generation,
+            syncReason: .heartbeat
+        )
+        #expect(readiness.hasLiveRouteProof)
+
+        let lanGeneration = readiness.invalidateForRouteSwitch(preference: .lan)
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: tailscaleEndpoint,
+            refreshGeneration: lanGeneration,
+            syncReason: .heartbeat
+        )
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .reconnecting,
+            endpointURL: nil,
+            refreshGeneration: lanGeneration,
+            syncReason: .reconnecting
+        )
+        #expect(!readiness.hasLiveRouteProof)
+
+        let tailscaleGeneration = readiness.invalidateForRouteSwitch(preference: .tailscale)
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
+
+        readiness.applySessionState(
+            phase: .ready,
+            endpointURL: tailscaleEndpoint,
+            refreshGeneration: tailscaleGeneration,
+            syncReason: .heartbeat
+        )
+
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
+    }
+
     @Test("route preference ordering matches visible setting")
     func routePreferenceOrderingMatchesVisibleSetting() throws {
         let remote = try #require(URL(string: "https://looper.example.com"))
