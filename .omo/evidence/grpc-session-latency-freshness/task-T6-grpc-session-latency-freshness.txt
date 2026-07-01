@@ -1,0 +1,35 @@
+Task: T6 - prove server Session stream stays drain-only under projection work
+Date: 2026-07-01
+Scope: crates/agent-control-plane only
+
+Changed files:
+- crates/agent-control-plane/tests/isolated_control_plane/mobile_events.rs
+- .omo/evidence/grpc-session-latency-freshness/task-T6-grpc-session-latency-freshness.txt
+
+Proof added:
+- grpc_session_hot_loop_rejects_projection_rebuild_calls
+  - Static guard over src/grpc/service.rs rejects direct service references to desktop_snapshot, desktop_mobile_snapshot, reconcile_mobile_session_mini_projection, spawn_mobile_session_mini_projection, read_snapshot_state, transcript_preview, discover_sources, discover_grok_sessions, and inspect_devin_desktop.
+  - Also requires the hot path to retain inbound.message(), event_receiver.recv(), heartbeat.tick(), and drain_state_delta_frames.
+- grpc_session_hot_loop_drains_compact_frames_while_projection_reconcile_runs
+  - Opens a real tonic Session stream with the existing isolated gRPC server/client helper.
+  - Starts producer/background force_reconcile_mobile_session_mini_projection work on a blocking task.
+  - Publishes three persisted cached-mini SessionChanged events while the stream is live.
+  - Requires the stream to emit compact StateMiniDelta payloads for the unique titles.
+  - Rejects stale/control/recovery fallbacks by asserting no controlOnly or recovery payload appears for those compact deltas.
+  - Joins the background reconcile task under a 5s timeout.
+
+Adversarial probes:
+- stale_state: the runtime proof matches each delta by a unique per-iteration title emitted after the stream is already open, so older cached/reconcile frames do not satisfy the assertion.
+- misleading_success_output: first run failed on the new assertion because StateMiniDelta.kind uses wire name session.changed rather than enum label SessionChanged; the expectation was corrected and the same focused filter was rerun green.
+- hung_command: stream waits use the existing 5s frame timeout, and background reconcile is joined through a 5s timeout.
+- dirty_worktree: observed unrelated dirty files before commit, including .omo/boulder.json, client-core files, existing T1 evidence, .omo/drafts, and the plan file. I did not edit .omo/boulder.json or client-core/iOS/macOS files.
+
+Verification:
+- cargo fmt --manifest-path crates/agent-control-plane/Cargo.toml: pass
+- cargo test --manifest-path crates/agent-control-plane/Cargo.toml --test isolated_control_plane grpc_session_hot_loop -- --nocapture: pass
+  - 2 passed; 0 failed; 111 filtered out; finished in 2.03s after compile
+- git diff --check: pass
+
+Out of scope:
+- No client-core, iOS, macOS, or frame-limit production changes.
+- No broad agent-control-plane gate.
