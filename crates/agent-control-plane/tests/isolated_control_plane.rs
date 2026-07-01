@@ -62,6 +62,8 @@ mod hooks_routes;
 mod mobile_classification;
 #[path = "isolated_control_plane/mobile_events.rs"]
 mod mobile_events;
+#[path = "isolated_control_plane/mobile_finality_commands.rs"]
+mod mobile_finality_commands;
 
 #[tokio::test]
 async fn isolated_status_capabilities_and_automation_flow() {
