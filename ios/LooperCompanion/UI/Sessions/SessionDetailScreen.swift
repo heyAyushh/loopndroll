@@ -306,10 +306,10 @@ struct SessionDetailScreen: View {
         return Section {
             Picker("Mode", selection: modeSelection) {
                 ForEach(SessionMode.allCases, id: \.rawValue) { mode in
-                    Text(mode.label)
+                    Label(mode.label, systemImage: mode.symbolName)
                         .tag(mode as SessionMode?)
                 }
-                Text("Use Global Default")
+                Label("Use Global Default", systemImage: "dial.low")
                     .tag(nil as SessionMode?)
             }
             .pickerStyle(.wheel)
