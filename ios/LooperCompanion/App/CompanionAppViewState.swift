@@ -427,12 +427,21 @@ struct SessionDetailPresentation {
     }
 
     var latestAssistantReply: String? {
-        guard let reply = detail?.latestAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !reply.isEmpty
-        else {
-            return nil
+        let candidates = [
+            detail?.latestAssistantMessage,
+            detail?.assistantPreview,
+            summary?.assistantPreview
+        ]
+
+        for candidate in candidates {
+            guard let reply = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !reply.isEmpty
+            else {
+                continue
+            }
+            return reply
         }
-        return reply
+        return nil
     }
 
     var title: String {

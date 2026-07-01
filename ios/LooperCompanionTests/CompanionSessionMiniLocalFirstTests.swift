@@ -1512,6 +1512,46 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testDetailPresentationShowsCachedAssistantPreviewUntilLiveReplyProjectionArrives() async throws {
+        var cachedSession = Self.sessionSummary(
+            id: "preview-thread",
+            title: "Preview-backed Detail",
+            ref: "P1",
+            status: .active
+        )
+        cachedSession.assistantPreview = "Cached assistant reply from mini"
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 4,
+            records: [
+                Self.miniRecord(
+                    session: cachedSession,
+                    seq: 4,
+                    revision: "preview-revision-4"
+                ),
+            ]
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(
+                service: SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+            ),
+            sessionRuntime: runtime
+        )
+        let route = SessionDetailRoute(
+            sessionID: cachedSession.id,
+            assistantSurface: .codex
+        )
+
+        model.snapshot = Self.mobileSnapshot(
+            revision: "preview-snapshot",
+            sessions: [cachedSession],
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [cachedSession]]
+        )
+
+        #expect(model.viewState.detailPresentation(for: route).latestAssistantReply == "Cached assistant reply from mini")
+    }
+
+    @MainActor
+    @Test
     func testOlderStateMiniCacheCannotReplayAfterVisibleSnapshotReset() async throws {
         let staleSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

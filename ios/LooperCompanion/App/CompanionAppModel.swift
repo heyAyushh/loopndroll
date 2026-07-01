@@ -383,6 +383,13 @@ final class CompanionAppModel {
                 isLive: true,
                 endpointURL: update.endpointURL
             )
+            if update.reason == "text_chunk" {
+                lastUpdatedAt = Date()
+                CompanionDiagnostics.record(
+                    "session-detail:text-chunk-invalidated seq=\(update.latestSeq)"
+                )
+                return
+            }
             CompanionDiagnostics.record(
                 "session-mini:sync-snapshot-skip reason=\(update.reason) seq=\(update.latestSeq)"
             )
