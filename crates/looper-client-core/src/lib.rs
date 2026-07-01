@@ -36,9 +36,10 @@ pub use model::{
     ClientBaseUrlRaceCandidate, ClientCommandKind, ClientEndpoint, ClientLocalStateSnapshot,
     ClientMobileSnapshotStreamUpdate, ClientNotificationReplyIntentResult,
     ClientNotificationReplyPersistResult, ClientPendingCommand, ClientPendingCommandKind,
-    ClientPendingMutation, ClientSessionModeIntentResult, ClientSessionPromptIntentResult,
-    ClientStateDelta, ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
-    ClientStateMiniSnapshot, ClientStateSnapshot, ConnectionPhase,
+    ClientPendingMutation, ClientSessionDetailProjection, ClientSessionLatestReply,
+    ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateDelta,
+    ClientStateMini, ClientStateMiniDelta, ClientStateMiniDeltaApplyResult,
+    ClientStateMiniSnapshot, ClientStateSnapshot, ClientTextChunk, ConnectionPhase,
 };
 pub use race_plan::{
     default_base_url_race_fallback_delay_nanoseconds, plan_base_url_race_candidates,

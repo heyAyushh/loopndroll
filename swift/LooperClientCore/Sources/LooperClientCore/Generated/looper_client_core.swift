@@ -583,6 +583,8 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func sendPrompt(threadId: String, prompt: String, assistantSurface: String, promptIntent: String) async throws  -> ClientSessionPromptIntentResult
 
+    func sessionDetail(sessionId: String) throws  -> ClientSessionDetailProjection
+
     func setDefaultNotificationTargets(notificationTargetIds: [String]) async throws  -> ClientSessionCommandIntentResult
 
     func setMode(threadId: String, preset: String) async throws  -> ClientSessionModeIntentResult
@@ -874,6 +876,15 @@ open func sendPrompt(threadId: String, prompt: String, assistantSurface: String,
             liftFunc: FfiConverterTypeClientSessionPromptIntentResult_lift,
             errorHandler: FfiConverterTypeClientCoreError_lift
         )
+}
+
+open func sessionDetail(sessionId: String)throws  -> ClientSessionDetailProjection  {
+    return try  FfiConverterTypeClientSessionDetailProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_session_detail(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sessionId),$0
+    )
+})
 }
 
 open func setDefaultNotificationTargets(notificationTargetIds: [String])async throws  -> ClientSessionCommandIntentResult  {
@@ -1473,14 +1484,18 @@ public struct ClientLocalStateStreamUpdate: Equatable, Hashable {
     public var snapshot: ClientLocalStateSnapshot
     public var didChange: Bool
     public var errorDescription: String
+    public var hasTextChunk: Bool
+    public var textChunk: ClientTextChunk
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientLocalStateSnapshot, didChange: Bool, errorDescription: String) {
+    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientLocalStateSnapshot, didChange: Bool, errorDescription: String, hasTextChunk: Bool, textChunk: ClientTextChunk) {
         self.reason = reason
         self.snapshot = snapshot
         self.didChange = didChange
         self.errorDescription = errorDescription
+        self.hasTextChunk = hasTextChunk
+        self.textChunk = textChunk
     }
 
 
@@ -1502,7 +1517,9 @@ public struct FfiConverterTypeClientLocalStateStreamUpdate: FfiConverterRustBuff
                 reason: FfiConverterTypeClientStateMiniStreamUpdateReason.read(from: &buf),
                 snapshot: FfiConverterTypeClientLocalStateSnapshot.read(from: &buf),
                 didChange: FfiConverterBool.read(from: &buf),
-                errorDescription: FfiConverterString.read(from: &buf)
+                errorDescription: FfiConverterString.read(from: &buf),
+                hasTextChunk: FfiConverterBool.read(from: &buf),
+                textChunk: FfiConverterTypeClientTextChunk.read(from: &buf)
         )
     }
 
@@ -1511,6 +1528,8 @@ public struct FfiConverterTypeClientLocalStateStreamUpdate: FfiConverterRustBuff
         FfiConverterTypeClientLocalStateSnapshot.write(value.snapshot, into: &buf)
         FfiConverterBool.write(value.didChange, into: &buf)
         FfiConverterString.write(value.errorDescription, into: &buf)
+        FfiConverterBool.write(value.hasTextChunk, into: &buf)
+        FfiConverterTypeClientTextChunk.write(value.textChunk, into: &buf)
     }
 }
 
@@ -2155,10 +2174,12 @@ public struct ClientMobileSnapshotStreamUpdate: Equatable, Hashable {
     public var serverTime: String
     public var errorDescription: String
     public var debugMessage: String
+    public var hasTextChunk: Bool
+    public var textChunk: ClientTextChunk
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(hasSnapshot: Bool, snapshotJson: String, syncReason: String, shouldStop: Bool, latestSeq: Int64, serverTime: String, errorDescription: String, debugMessage: String) {
+    public init(hasSnapshot: Bool, snapshotJson: String, syncReason: String, shouldStop: Bool, latestSeq: Int64, serverTime: String, errorDescription: String, debugMessage: String, hasTextChunk: Bool, textChunk: ClientTextChunk) {
         self.hasSnapshot = hasSnapshot
         self.snapshotJson = snapshotJson
         self.syncReason = syncReason
@@ -2167,6 +2188,8 @@ public struct ClientMobileSnapshotStreamUpdate: Equatable, Hashable {
         self.serverTime = serverTime
         self.errorDescription = errorDescription
         self.debugMessage = debugMessage
+        self.hasTextChunk = hasTextChunk
+        self.textChunk = textChunk
     }
 
 
@@ -2192,7 +2215,9 @@ public struct FfiConverterTypeClientMobileSnapshotStreamUpdate: FfiConverterRust
                 latestSeq: FfiConverterInt64.read(from: &buf),
                 serverTime: FfiConverterString.read(from: &buf),
                 errorDescription: FfiConverterString.read(from: &buf),
-                debugMessage: FfiConverterString.read(from: &buf)
+                debugMessage: FfiConverterString.read(from: &buf),
+                hasTextChunk: FfiConverterBool.read(from: &buf),
+                textChunk: FfiConverterTypeClientTextChunk.read(from: &buf)
         )
     }
 
@@ -2205,6 +2230,8 @@ public struct FfiConverterTypeClientMobileSnapshotStreamUpdate: FfiConverterRust
         FfiConverterString.write(value.serverTime, into: &buf)
         FfiConverterString.write(value.errorDescription, into: &buf)
         FfiConverterString.write(value.debugMessage, into: &buf)
+        FfiConverterBool.write(value.hasTextChunk, into: &buf)
+        FfiConverterTypeClientTextChunk.write(value.textChunk, into: &buf)
     }
 }
 
@@ -2636,6 +2663,64 @@ public func FfiConverterTypeClientSessionCommandIntentResult_lower(_ value: Clie
 }
 
 
+public struct ClientSessionDetailProjection: Equatable, Hashable {
+    public var sessionId: String
+    public var hasLatestReply: Bool
+    public var latestReply: ClientSessionLatestReply
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, hasLatestReply: Bool, latestReply: ClientSessionLatestReply) {
+        self.sessionId = sessionId
+        self.hasLatestReply = hasLatestReply
+        self.latestReply = latestReply
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionDetailProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionDetailProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionDetailProjection {
+        return
+            try ClientSessionDetailProjection(
+                sessionId: FfiConverterString.read(from: &buf),
+                hasLatestReply: FfiConverterBool.read(from: &buf),
+                latestReply: FfiConverterTypeClientSessionLatestReply.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionDetailProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterBool.write(value.hasLatestReply, into: &buf)
+        FfiConverterTypeClientSessionLatestReply.write(value.latestReply, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionDetailProjection_lift(_ buf: RustBuffer) throws -> ClientSessionDetailProjection {
+    return try FfiConverterTypeClientSessionDetailProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionDetailProjection_lower(_ value: ClientSessionDetailProjection) -> RustBuffer {
+    return FfiConverterTypeClientSessionDetailProjection.lower(value)
+}
+
+
 public struct ClientSessionFreshnessOrderProjection: Equatable, Hashable {
     public var indexes: [UInt32]
 
@@ -2791,6 +2876,80 @@ public func FfiConverterTypeClientSessionIndexProjection_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeClientSessionIndexProjection_lower(_ value: ClientSessionIndexProjection) -> RustBuffer {
     return FfiConverterTypeClientSessionIndexProjection.lower(value)
+}
+
+
+public struct ClientSessionLatestReply: Equatable, Hashable {
+    public var sessionId: String
+    public var messageId: String
+    public var text: String
+    public var latestSeq: Int64
+    public var isFinal: Bool
+    public var isTruncated: Bool
+    public var serverTime: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, messageId: String, text: String, latestSeq: Int64, isFinal: Bool, isTruncated: Bool, serverTime: String) {
+        self.sessionId = sessionId
+        self.messageId = messageId
+        self.text = text
+        self.latestSeq = latestSeq
+        self.isFinal = isFinal
+        self.isTruncated = isTruncated
+        self.serverTime = serverTime
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientSessionLatestReply: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientSessionLatestReply: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientSessionLatestReply {
+        return
+            try ClientSessionLatestReply(
+                sessionId: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                latestSeq: FfiConverterInt64.read(from: &buf),
+                isFinal: FfiConverterBool.read(from: &buf),
+                isTruncated: FfiConverterBool.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientSessionLatestReply, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.messageId, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterInt64.write(value.latestSeq, into: &buf)
+        FfiConverterBool.write(value.isFinal, into: &buf)
+        FfiConverterBool.write(value.isTruncated, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionLatestReply_lift(_ buf: RustBuffer) throws -> ClientSessionLatestReply {
+    return try FfiConverterTypeClientSessionLatestReply.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientSessionLatestReply_lower(_ value: ClientSessionLatestReply) -> RustBuffer {
+    return FfiConverterTypeClientSessionLatestReply.lower(value)
 }
 
 
@@ -3510,15 +3669,19 @@ public struct ClientStateMiniStreamUpdate: Equatable, Hashable {
     public var didChange: Bool
     public var latestSeq: Int64
     public var errorDescription: String
+    public var hasTextChunk: Bool
+    public var textChunk: ClientTextChunk
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientStateSnapshot, didChange: Bool, latestSeq: Int64, errorDescription: String) {
+    public init(reason: ClientStateMiniStreamUpdateReason, snapshot: ClientStateSnapshot, didChange: Bool, latestSeq: Int64, errorDescription: String, hasTextChunk: Bool, textChunk: ClientTextChunk) {
         self.reason = reason
         self.snapshot = snapshot
         self.didChange = didChange
         self.latestSeq = latestSeq
         self.errorDescription = errorDescription
+        self.hasTextChunk = hasTextChunk
+        self.textChunk = textChunk
     }
 
 
@@ -3541,7 +3704,9 @@ public struct FfiConverterTypeClientStateMiniStreamUpdate: FfiConverterRustBuffe
                 snapshot: FfiConverterTypeClientStateSnapshot.read(from: &buf),
                 didChange: FfiConverterBool.read(from: &buf),
                 latestSeq: FfiConverterInt64.read(from: &buf),
-                errorDescription: FfiConverterString.read(from: &buf)
+                errorDescription: FfiConverterString.read(from: &buf),
+                hasTextChunk: FfiConverterBool.read(from: &buf),
+                textChunk: FfiConverterTypeClientTextChunk.read(from: &buf)
         )
     }
 
@@ -3551,6 +3716,8 @@ public struct FfiConverterTypeClientStateMiniStreamUpdate: FfiConverterRustBuffe
         FfiConverterBool.write(value.didChange, into: &buf)
         FfiConverterInt64.write(value.latestSeq, into: &buf)
         FfiConverterString.write(value.errorDescription, into: &buf)
+        FfiConverterBool.write(value.hasTextChunk, into: &buf)
+        FfiConverterTypeClientTextChunk.write(value.textChunk, into: &buf)
     }
 }
 
@@ -3649,6 +3816,76 @@ public func FfiConverterTypeClientStateSnapshot_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeClientStateSnapshot_lower(_ value: ClientStateSnapshot) -> RustBuffer {
     return FfiConverterTypeClientStateSnapshot.lower(value)
+}
+
+
+public struct ClientTextChunk: Equatable, Hashable {
+    public var seq: Int64
+    public var threadId: String
+    public var messageId: String
+    public var content: String
+    public var isFinal: Bool
+    public var serverTime: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(seq: Int64, threadId: String, messageId: String, content: String, isFinal: Bool, serverTime: String) {
+        self.seq = seq
+        self.threadId = threadId
+        self.messageId = messageId
+        self.content = content
+        self.isFinal = isFinal
+        self.serverTime = serverTime
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientTextChunk: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientTextChunk: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientTextChunk {
+        return
+            try ClientTextChunk(
+                seq: FfiConverterInt64.read(from: &buf),
+                threadId: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf),
+                content: FfiConverterString.read(from: &buf),
+                isFinal: FfiConverterBool.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientTextChunk, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.seq, into: &buf)
+        FfiConverterString.write(value.threadId, into: &buf)
+        FfiConverterString.write(value.messageId, into: &buf)
+        FfiConverterString.write(value.content, into: &buf)
+        FfiConverterBool.write(value.isFinal, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientTextChunk_lift(_ buf: RustBuffer) throws -> ClientTextChunk {
+    return try FfiConverterTypeClientTextChunk.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientTextChunk_lower(_ value: ClientTextChunk) -> RustBuffer {
+    return FfiConverterTypeClientTextChunk.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -4154,6 +4391,7 @@ public func FfiConverterTypeClientPendingCommandKind_lower(_ value: ClientPendin
 public enum ClientStateMiniStreamUpdateReason: Equatable, Hashable {
 
     case delta
+    case textChunk
     case heartbeat
     case reconnecting
     case recoveryRequired
@@ -4181,13 +4419,15 @@ public struct FfiConverterTypeClientStateMiniStreamUpdateReason: FfiConverterRus
 
         case 1: return .delta
 
-        case 2: return .heartbeat
+        case 2: return .textChunk
 
-        case 3: return .reconnecting
+        case 3: return .heartbeat
 
-        case 4: return .recoveryRequired
+        case 4: return .reconnecting
 
-        case 5: return .stopped
+        case 5: return .recoveryRequired
+
+        case 6: return .stopped
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4201,20 +4441,24 @@ public struct FfiConverterTypeClientStateMiniStreamUpdateReason: FfiConverterRus
             writeInt(&buf, Int32(1))
 
 
-        case .heartbeat:
+        case .textChunk:
             writeInt(&buf, Int32(2))
 
 
-        case .reconnecting:
+        case .heartbeat:
             writeInt(&buf, Int32(3))
 
 
-        case .recoveryRequired:
+        case .reconnecting:
             writeInt(&buf, Int32(4))
 
 
-        case .stopped:
+        case .recoveryRequired:
             writeInt(&buf, Int32(5))
+
+
+        case .stopped:
+            writeInt(&buf, Int32(6))
 
         }
     }
@@ -4867,6 +5111,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_send_prompt() != 33854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_session_detail() != 56937) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_set_default_notification_targets() != 7475) {

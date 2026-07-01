@@ -54,6 +54,10 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         try runtime.localSnapshot()
     }
 
+    public func sessionDetail(sessionID: String) throws -> ClientSessionDetailProjection {
+        try runtime.sessionDetail(sessionId: sessionID)
+    }
+
     @discardableResult
     public func recoverStateMiniSnapshot(
         endpoints: [ClientEndpoint],

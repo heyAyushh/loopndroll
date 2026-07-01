@@ -13,8 +13,8 @@ use crate::{
     error::ClientCoreError,
     model::{
         ClientCommandAck, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
-        ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, OutboundSessionFrame,
-        OutboundSessionFrameKind, STATE_MINI_BATCH_COMPLETE_KIND,
+        ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientTextChunk,
+        OutboundSessionFrame, OutboundSessionFrameKind, STATE_MINI_BATCH_COMPLETE_KIND,
         STATE_MINI_REPLACEMENT_COMPLETE_KIND, STATE_MINI_REPLACEMENT_KIND,
     },
 };
@@ -55,6 +55,7 @@ const DEFAULT_RECOVERY_REQUIRED_REASON: &str = "state-mini snapshot recovery req
 #[derive(Debug)]
 pub(crate) enum StateMiniStreamEvent {
     Delta(ClientStateMiniDelta),
+    TextChunk(ClientTextChunk),
     Heartbeat {
         latest_seq: i64,
         server_time: String,
@@ -472,6 +473,20 @@ async fn drive_state_mini_stream_session(
                                 error_description: error.to_string(),
                             })?;
                     }
+                    Some(proto::server_frame::Frame::TextChunk(text_chunk)) => {
+                        let text_chunk = client_text_chunk(text_chunk);
+                        latest_seq = state_mini_data_cursor_after_text_chunk(
+                            latest_seq,
+                            text_chunk.seq,
+                        );
+                        events
+                            .send(StateMiniStreamEvent::TextChunk(text_chunk))
+                            .await
+                            .map_err(|error| StateMiniTransportError::Transport {
+                                latest_seq,
+                                error_description: error.to_string(),
+                            })?;
+                    }
                     Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
                         latest_seq =
                             state_mini_data_cursor_after_heartbeat(latest_seq, heartbeat.latest_seq);
@@ -504,6 +519,10 @@ fn state_mini_data_cursor_after_delta(current_seq: i64, delta: &ClientStateMiniD
     } else {
         current_seq.max(delta.seq)
     }
+}
+
+fn state_mini_data_cursor_after_text_chunk(current_seq: i64, text_chunk_seq: i64) -> i64 {
+    current_seq.max(text_chunk_seq)
 }
 
 fn state_mini_data_cursor_after_heartbeat(current_seq: i64, heartbeat_seq: i64) -> i64 {
@@ -832,6 +851,17 @@ fn client_command_ack(ack: proto::CommandAck) -> ClientCommandAck {
         error_code: ack.error_code,
         reject_reason: ack.reject_reason,
         current_state: ack.current_state,
+    }
+}
+
+fn client_text_chunk(text_chunk: proto::TextChunk) -> ClientTextChunk {
+    ClientTextChunk {
+        seq: text_chunk.seq,
+        thread_id: text_chunk.thread_id,
+        message_id: text_chunk.message_id,
+        content: text_chunk.content,
+        is_final: text_chunk.is_final,
+        server_time: text_chunk.server_time,
     }
 }
 

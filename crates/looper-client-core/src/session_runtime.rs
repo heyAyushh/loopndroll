@@ -13,13 +13,14 @@ use crate::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
         ClientNotificationReplyIntentResult, ClientNotificationReplyPersistResult,
-        ClientSessionCommandIntentResult, ClientSessionModeIntentResult,
-        ClientSessionPromptIntentResult, ClientStateMiniSnapshot, ClientStateMiniStreamUpdate,
-        ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
+        ClientSessionCommandIntentResult, ClientSessionDetailProjection,
+        ClientSessionModeIntentResult, ClientSessionPromptIntentResult, ClientStateMiniSnapshot,
+        ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
     },
 };
 
 const MOBILE_SYNC_REASON_DELTA: &str = "delta";
+const MOBILE_SYNC_REASON_TEXT_CHUNK: &str = "text_chunk";
 const MOBILE_SYNC_REASON_HEARTBEAT: &str = "heartbeat";
 const MOBILE_SYNC_REASON_RECOVERY: &str = "recovery";
 const MOBILE_SYNC_REASON_RECONNECTING: &str = "reconnecting";
@@ -79,7 +80,11 @@ impl LooperClientCoreSessionRuntime {
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let update = self.client_core.observe().await?;
         self.persist_last_good_endpoint(&update.snapshot)?;
-        if update.did_change {
+        if update.has_text_chunk {
+            self.local_store
+                .apply_text_chunk(update.text_chunk.clone())?;
+        }
+        if update.did_change && !update.has_text_chunk {
             self.persist_core_snapshot(&update.snapshot)?;
         }
         Ok(update)
@@ -112,6 +117,9 @@ impl LooperClientCoreSessionRuntime {
                 ClientStateMiniStreamUpdateReason::Stopped => {
                     return self.local_state_stream_update(update);
                 }
+                ClientStateMiniStreamUpdateReason::TextChunk => {
+                    return self.local_state_stream_update(update);
+                }
                 ClientStateMiniStreamUpdateReason::Delta
                 | ClientStateMiniStreamUpdateReason::Reconnecting
                 | ClientStateMiniStreamUpdateReason::Heartbeat
@@ -140,6 +148,13 @@ impl LooperClientCoreSessionRuntime {
 
     pub fn local_snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         self.local_store.snapshot()
+    }
+
+    pub fn session_detail(
+        &self,
+        session_id: String,
+    ) -> Result<ClientSessionDetailProjection, ClientCoreError> {
+        self.local_store.session_detail(session_id)
     }
 
     pub async fn recover_state_mini_snapshot(
@@ -491,6 +506,8 @@ impl LooperClientCoreSessionRuntime {
             },
             did_change: update.did_change,
             error_description: update.error_description,
+            has_text_chunk: update.has_text_chunk,
+            text_chunk: update.text_chunk,
         })
     }
 
@@ -504,7 +521,7 @@ impl LooperClientCoreSessionRuntime {
         let should_stop = update.reason == ClientStateMiniStreamUpdateReason::Stopped;
         let debug_message = recovery_wait_debug_message(&update);
 
-        if !update.did_change {
+        if update.has_text_chunk || !update.did_change {
             return Ok(ClientMobileSnapshotStreamUpdate {
                 has_snapshot: false,
                 snapshot_json: String::new(),
@@ -514,6 +531,8 @@ impl LooperClientCoreSessionRuntime {
                 server_time,
                 error_description: update.error_description,
                 debug_message,
+                has_text_chunk: update.has_text_chunk,
+                text_chunk: update.text_chunk,
             });
         }
 
@@ -533,6 +552,8 @@ impl LooperClientCoreSessionRuntime {
             server_time,
             error_description: update.error_description,
             debug_message,
+            has_text_chunk: update.has_text_chunk,
+            text_chunk: update.text_chunk,
         })
     }
 
@@ -544,7 +565,7 @@ impl LooperClientCoreSessionRuntime {
         let should_stop = update.reason == ClientStateMiniStreamUpdateReason::Stopped;
         let debug_message = recovery_wait_debug_message(&update);
 
-        if !update.did_change {
+        if update.has_text_chunk || !update.did_change {
             return Ok(ClientMenuSnapshotStreamUpdate {
                 has_snapshot: false,
                 snapshot: empty_menu_snapshot(),
@@ -595,6 +616,7 @@ fn notification_reply_client_mutation_id(notification_id: &str) -> String {
 fn sync_reason(reason: ClientStateMiniStreamUpdateReason) -> String {
     match reason {
         ClientStateMiniStreamUpdateReason::RecoveryRequired => MOBILE_SYNC_REASON_RECOVERY,
+        ClientStateMiniStreamUpdateReason::TextChunk => MOBILE_SYNC_REASON_TEXT_CHUNK,
         ClientStateMiniStreamUpdateReason::Heartbeat => MOBILE_SYNC_REASON_HEARTBEAT,
         ClientStateMiniStreamUpdateReason::Reconnecting => MOBILE_SYNC_REASON_RECONNECTING,
         ClientStateMiniStreamUpdateReason::Delta | ClientStateMiniStreamUpdateReason::Stopped => {
@@ -623,6 +645,7 @@ fn recovery_wait_debug_message(update: &ClientLocalStateStreamUpdate) -> String 
             )
         }
         ClientStateMiniStreamUpdateReason::Delta
+        | ClientStateMiniStreamUpdateReason::TextChunk
         | ClientStateMiniStreamUpdateReason::Heartbeat
         | ClientStateMiniStreamUpdateReason::Stopped => String::new(),
     }
@@ -676,7 +699,9 @@ impl From<ClientStateSnapshot> for ClientStateMiniSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ClientEndpoint, ClientPendingCommandKind, ClientStateMini};
+    use crate::model::{
+        ClientEndpoint, ClientPendingCommandKind, ClientStateMini, ClientTextChunk,
+    };
     use crate::session_transport::proto;
     use std::{
         future::Future,
@@ -1236,6 +1261,60 @@ mod tests {
     }
 
     #[test]
+    fn runtime_text_chunk_persists_detail_projection_from_session_stream() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let path = temp_store_path("text-chunk-session-stream");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+
+        test_runtime.block_on(async {
+            let (stream_url, server) = spawn_text_chunk_realtime_session_server().await;
+            runtime
+                .start(
+                    vec![ClientEndpoint {
+                        url: stream_url,
+                        last_good: false,
+                    }],
+                    String::new(),
+                    String::new(),
+                )
+                .expect("start runtime");
+
+            let update = tokio::time::timeout(
+                Duration::from_secs(1),
+                runtime.observe_mobile_snapshot_change(),
+            )
+            .await
+            .expect("observe text chunk update")
+            .expect("text chunk update");
+            assert!(!update.has_snapshot);
+            assert_eq!(update.sync_reason, MOBILE_SYNC_REASON_TEXT_CHUNK);
+            assert!(update.has_text_chunk);
+            assert_eq!(update.text_chunk.thread_id, "thread-live");
+            assert_eq!(update.text_chunk.content, "Hello live");
+
+            let detail = runtime
+                .session_detail("thread-live".to_owned())
+                .expect("detail projection");
+            assert!(detail.has_latest_reply);
+            assert_eq!(detail.latest_reply.message_id, "message-live");
+            assert_eq!(detail.latest_reply.text, "Hello live");
+            assert_eq!(detail.latest_reply.latest_seq, 44);
+            assert!(!detail.latest_reply.is_final);
+
+            server.abort();
+            let _ = server.await;
+        });
+        drop(runtime);
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let detail = reopened
+            .session_detail("thread-live".to_owned())
+            .expect("reopened detail projection");
+        assert_eq!(detail.latest_reply.text, "Hello live");
+        assert_eq!(detail.latest_reply.latest_seq, 44);
+    }
+
+    #[test]
     fn runtime_does_not_seed_empty_durable_state_as_replay_cursor() {
         let path = temp_store_path("empty-state-mini-cursor");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
@@ -1285,6 +1364,8 @@ mod tests {
                 },
                 did_change: true,
                 error_description: String::new(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("mobile projection");
 
@@ -1312,6 +1393,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: "seq_gap".to_owned(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("mobile recovery update");
 
@@ -1339,6 +1422,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: "transport unavailable".to_owned(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("mobile reconnecting update");
 
@@ -1366,6 +1451,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: String::new(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("mobile heartbeat update");
 
@@ -1391,6 +1478,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: String::new(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("mobile stopped update");
 
@@ -1419,6 +1508,8 @@ mod tests {
                 },
                 did_change: true,
                 error_description: String::new(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("menu projection");
 
@@ -1445,6 +1536,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: "seq_gap".to_owned(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("menu recovery update");
 
@@ -1471,6 +1564,8 @@ mod tests {
                 },
                 did_change: false,
                 error_description: "transport unavailable".to_owned(),
+                has_text_chunk: false,
+                text_chunk: ClientTextChunk::empty(),
             })
             .expect("menu reconnecting update");
 
@@ -1583,7 +1678,26 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    async fn spawn_text_chunk_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind text chunk server port");
+        let address = listener.local_addr().expect("text chunk server addr");
+        drop(listener);
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(
+                TextChunkRealtimeSessionService,
+            );
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), handle)
+    }
+
     struct TestRealtimeSessionService;
+
+    struct TextChunkRealtimeSessionService;
 
     #[tonic::async_trait]
     impl proto::looper_realtime_server::LooperRealtime for TestRealtimeSessionService {
@@ -1605,6 +1719,42 @@ mod tests {
             _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
         ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
             let (_sender, receiver) = mpsc::channel(1);
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
+    }
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for TextChunkRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let (sender, receiver) = mpsc::channel(1);
+            let _ = sender
+                .send(Ok(proto::ServerFrame {
+                    frame: Some(proto::server_frame::Frame::TextChunk(proto::TextChunk {
+                        seq: 44,
+                        thread_id: "thread-live".to_owned(),
+                        message_id: "message-live".to_owned(),
+                        content: "Hello live".to_owned(),
+                        is_final: false,
+                        server_time: "2026-06-30T00:00:44Z".to_owned(),
+                    })),
+                }))
+                .await;
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
     }
