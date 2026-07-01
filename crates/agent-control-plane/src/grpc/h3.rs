@@ -97,18 +97,23 @@ pub async fn spawn_h3_server(
     let server_config = h3_server_config(&certificate)?;
     let endpoint = Endpoint::server(server_config, listen_address).context("bind H3 endpoint")?;
     let local_address = endpoint.local_addr().context("H3 endpoint local address")?;
-    let endpoint_for_shutdown = endpoint.clone();
+    let endpoint_for_shutdown_signal = endpoint.clone();
+    let endpoint_for_idle = endpoint.clone();
     let acceptor = H3QuinnAcceptor::new(endpoint);
     let service_peer_addr = SocketAddr::new(local_address.ip(), local_address.port());
     let routes = tonic::service::Routes::new(LooperRealtimeServer::new(
         LooperRealtimeService::with_peer_addr_override(control_plane, service_peer_addr),
     ));
     let server_task = tokio::spawn(async move {
+        let shutdown = async move {
+            shutdown.await;
+            endpoint_for_shutdown_signal.close(VarInt::from_u32(0), b"shutdown");
+        };
         let result = tonic_h3::server::H3Router::new(routes)
             .serve_with_shutdown(acceptor, shutdown)
             .await;
-        endpoint_for_shutdown.close(VarInt::from_u32(0), b"shutdown");
-        endpoint_for_shutdown.wait_idle().await;
+        endpoint_for_idle.close(VarInt::from_u32(0), b"shutdown");
+        endpoint_for_idle.wait_idle().await;
         result
     });
 

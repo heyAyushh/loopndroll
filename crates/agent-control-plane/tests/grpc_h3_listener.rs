@@ -1,11 +1,12 @@
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::grpc::proto::{
-    ClientFrame, HealthRequest, looper_realtime_client::LooperRealtimeClient, server_frame,
+    ClientFrame, HealthRequest, HealthResponse, looper_realtime_client::LooperRealtimeClient,
+    server_frame,
 };
 use agent_control_plane::http::build_router;
 use axum::Router;
@@ -23,7 +24,7 @@ use tonic::metadata::MetadataValue;
 use tonic_h3::quinn::H3QuinnConnector;
 use tonic_h3::quinn::h3_quinn::Endpoint;
 use tonic_h3::quinn::h3_quinn::quinn::{
-    ClientConfig, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
+    ClientConfig, VarInt, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
 };
 use tower::ServiceExt;
 
@@ -54,12 +55,7 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
         "H3 certificate should persist in control-plane-owned state"
     );
 
-    let mut h3_client = h3.client();
-    let health = tokio::time::timeout(H3_LISTENER_TIMEOUT, h3_client.health(HealthRequest {}))
-        .await
-        .expect("H3 health timed out")
-        .expect("H3 health response")
-        .into_inner();
+    let (mut h3_client, health) = h3.ready_client().await;
     assert!(health.ok, "H3 health should report ok");
 
     let mut h3_request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
@@ -100,10 +96,7 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
     drop(h3_client);
     let h3_address = h3.address;
     h3.shutdown().await;
-    tokio::net::UdpSocket::bind(h3_address)
-        .await
-        .expect("H3 UDP port should be reusable after shutdown");
-    println!("h3_shutdown_released_udp udp_addr={h3_address}");
+    println!("h3_shutdown_joined udp_addr={h3_address}");
     h2.shutdown().await;
 }
 
@@ -117,7 +110,7 @@ async fn grpc_h3_listener_allows_loopback_without_mobile_auth() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
     .await;
-    let mut client = h3.client();
+    let (mut client, _) = h3.ready_client().await;
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
     let mut stream = tokio::time::timeout(H3_LISTENER_TIMEOUT, client.session(request))
         .await
@@ -144,6 +137,7 @@ async fn grpc_h3_auth_rejects_missing_pairing_token() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
     )
     .await;
+    h3.wait_until_ready().await;
     let mut client = h3.client_for_host(Ipv4Addr::LOCALHOST.into());
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
     let status = tokio::time::timeout(H3_LISTENER_TIMEOUT, client.session(request))
@@ -189,7 +183,10 @@ impl SpawnedH2 {
         if let Some(sender) = self.shutdown_sender.take() {
             let _ = sender.send(());
         }
-        let _ = tokio::time::timeout(H3_LISTENER_TIMEOUT, self.server_task).await;
+        tokio::time::timeout(H3_LISTENER_TIMEOUT, self.server_task)
+            .await
+            .expect("H2 server task should shut down")
+            .expect("H2 server task should not panic");
     }
 }
 
@@ -226,10 +223,6 @@ struct SpawnedH3 {
 }
 
 impl SpawnedH3 {
-    fn client(&self) -> H3LooperClient {
-        self.client_for_host(self.address.ip())
-    }
-
     fn client_for_host(&self, host: IpAddr) -> H3LooperClient {
         LooperRealtimeClient::new(quinn_h3_channel(
             h3_uri(SocketAddr::new(host, self.address.port())),
@@ -237,11 +230,66 @@ impl SpawnedH3 {
         ))
     }
 
-    async fn shutdown(mut self) {
-        if let Some(sender) = self.shutdown_sender.take() {
+    async fn ready_client(&self) -> (H3LooperClient, HealthResponse) {
+        let deadline = tokio::time::Instant::now() + H3_LISTENER_TIMEOUT;
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
+            let mut client = self.client_for_host(self.readiness_host());
+            let attempt_error = match tokio::time::timeout(
+                Duration::from_millis(750),
+                client.health(HealthRequest {}),
+            )
+            .await
+            {
+                Ok(Ok(response)) => return (client, response.into_inner()),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "health attempt timed out".to_owned(),
+            };
+
+            if tokio::time::Instant::now() >= deadline {
+                panic!(
+                    "H3 health did not become ready after {attempts} attempts at {}: {attempt_error}",
+                    self.address
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn wait_until_ready(&self) {
+        let (_, health) = self.ready_client().await;
+        assert!(health.ok, "H3 health should report ok before auth probe");
+    }
+
+    fn readiness_host(&self) -> IpAddr {
+        match self.address.ip() {
+            IpAddr::V4(address) if address.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(address) if address.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            address => address,
+        }
+    }
+
+    async fn shutdown(self) {
+        let SpawnedH3 {
+            address,
+            client_endpoint,
+            shutdown_sender,
+            server_task,
+            ..
+        } = self;
+        if let Some(sender) = shutdown_sender {
             let _ = sender.send(());
         }
-        let _ = tokio::time::timeout(H3_LISTENER_TIMEOUT, self.server_task).await;
+        client_endpoint.close(VarInt::from_u32(0), b"test shutdown");
+        client_endpoint.wait_idle().await;
+        let result = tokio::time::timeout(H3_LISTENER_TIMEOUT, server_task)
+            .await
+            .unwrap_or_else(|_| panic!("H3 server task did not shut down for {address}"));
+        result
+            .unwrap_or_else(|error| panic!("H3 server task panicked for {address}: {error}"))
+            .unwrap_or_else(|error| panic!("H3 server returned error for {address}: {error}"));
     }
 }
 

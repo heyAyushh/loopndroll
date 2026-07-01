@@ -6,7 +6,7 @@ use std::time::Duration;
 use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
 use agent_control_plane::grpc::LooperRealtimeService;
 use agent_control_plane::grpc::proto::{
-    ClientFrame, HealthRequest, looper_realtime_client::LooperRealtimeClient,
+    ClientFrame, HealthRequest, HealthResponse, looper_realtime_client::LooperRealtimeClient,
     looper_realtime_server::LooperRealtimeServer, server_frame,
 };
 use agent_control_plane::http::build_router;
@@ -25,7 +25,7 @@ use tonic::codegen::http::Uri;
 use tonic::metadata::MetadataValue;
 use tonic_h3::quinn::H3QuinnConnector;
 use tonic_h3::quinn::h3_quinn::Endpoint;
-use tonic_h3::quinn::h3_quinn::quinn::{ClientConfig, ServerConfig};
+use tonic_h3::quinn::h3_quinn::quinn::{ClientConfig, ServerConfig, VarInt};
 use tower::ServiceExt;
 
 const H3_SMOKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -40,13 +40,8 @@ async fn grpc_h3_quinn_smoke_health_and_session() {
     let authorization =
         issue_mobile_authorization_header(&build_router(control_plane.clone())).await;
     let h3 = spawn_h3_realtime(control_plane).await;
-    let mut client = h3.client();
+    let (mut client, health) = h3.ready_client().await;
 
-    let health = tokio::time::timeout(H3_SMOKE_TIMEOUT, client.health(HealthRequest {}))
-        .await
-        .expect("H3 health timed out")
-        .expect("H3 health response")
-        .into_inner();
     assert!(health.ok, "H3 health should report ok");
     assert_eq!(health.service, "looper-realtime");
     println!(
@@ -124,11 +119,54 @@ impl SpawnedH3Realtime {
         ))
     }
 
-    async fn shutdown(mut self) {
-        if let Some(sender) = self.shutdown_sender.take() {
+    async fn ready_client(&self) -> (H3LooperClient, HealthResponse) {
+        let deadline = tokio::time::Instant::now() + H3_SMOKE_TIMEOUT;
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
+            let mut client = self.client();
+            let attempt_error = match tokio::time::timeout(
+                Duration::from_millis(750),
+                client.health(HealthRequest {}),
+            )
+            .await
+            {
+                Ok(Ok(response)) => return (client, response.into_inner()),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "health attempt timed out".to_owned(),
+            };
+
+            if tokio::time::Instant::now() >= deadline {
+                panic!(
+                    "H3 health did not become ready after {attempts} attempts at {}: {attempt_error}",
+                    self.address
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn shutdown(self) {
+        let SpawnedH3Realtime {
+            address,
+            client_endpoint,
+            shutdown_sender,
+            server_task,
+        } = self;
+        if let Some(sender) = shutdown_sender {
             let _ = sender.send(());
         }
-        let _ = tokio::time::timeout(H3_SMOKE_TIMEOUT, self.server_task).await;
+        client_endpoint.close(VarInt::from_u32(0), b"test shutdown");
+        client_endpoint.wait_idle().await;
+        let result = tokio::time::timeout(H3_SMOKE_TIMEOUT, server_task)
+            .await
+            .unwrap_or_else(|_| panic!("H3 smoke server task did not shut down for {address}"));
+        result
+            .unwrap_or_else(|error| panic!("H3 smoke server task panicked for {address}: {error}"))
+            .unwrap_or_else(|error| {
+                panic!("H3 smoke server returned error for {address}: {error}")
+            });
     }
 }
 
@@ -143,6 +181,8 @@ async fn spawn_h3_realtime(control_plane: ControlPlane) -> SpawnedH3Realtime {
     )
     .expect("H3 server endpoint");
     let address = server_endpoint.local_addr().expect("H3 server local addr");
+    let endpoint_for_shutdown_signal = server_endpoint.clone();
+    let endpoint_for_idle = server_endpoint.clone();
     let client_endpoint = configured_client_endpoint(&cert).await;
     let acceptor = tonic_h3::quinn::H3QuinnAcceptor::new(server_endpoint);
     let routes = tonic::service::Routes::new(LooperRealtimeServer::new(
@@ -150,11 +190,16 @@ async fn spawn_h3_realtime(control_plane: ControlPlane) -> SpawnedH3Realtime {
     ));
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let server_task = tokio::spawn(async move {
+        let shutdown = async move {
+            let _ = shutdown_receiver.await;
+            endpoint_for_shutdown_signal.close(VarInt::from_u32(0), b"test shutdown");
+        };
         tonic_h3::server::H3Router::new(routes)
-            .serve_with_shutdown(acceptor, async {
-                let _ = shutdown_receiver.await;
-            })
-            .await
+            .serve_with_shutdown(acceptor, shutdown)
+            .await?;
+        endpoint_for_idle.close(VarInt::from_u32(0), b"test shutdown");
+        endpoint_for_idle.wait_idle().await;
+        Ok(())
     });
     SpawnedH3Realtime {
         address,
