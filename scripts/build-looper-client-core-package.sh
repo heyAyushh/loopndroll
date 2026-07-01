@@ -20,6 +20,29 @@ strip_generated_whitespace() {
     -exec perl -0pi -e 's/[ \t]+$//mg' {} +
 }
 
+normalize_xcframework_info_plist() {
+  local plist_path="$1"
+
+  python3 - "$plist_path" <<'PY'
+import plistlib
+import sys
+
+plist_path = sys.argv[1]
+with open(plist_path, "rb") as handle:
+    data = plistlib.load(handle)
+
+libraries = data.get("AvailableLibraries")
+if isinstance(libraries, list):
+    data["AvailableLibraries"] = sorted(
+        libraries,
+        key=lambda item: item.get("LibraryIdentifier", ""),
+    )
+
+with open(plist_path, "wb") as handle:
+    plistlib.dump(data, handle, sort_keys=False)
+PY
+}
+
 IOS_TARGETS=(
   aarch64-apple-ios
   aarch64-apple-ios-sim
@@ -200,5 +223,6 @@ xcodebuild -create-xcframework \
   -framework "$FRAMEWORK_BUILD_DIR/aarch64-apple-ios-sim/$FFI_FRAMEWORK_NAME" \
   -framework "$FRAMEWORK_BUILD_DIR/macos-universal/$FFI_FRAMEWORK_NAME" \
   -output "$XCFRAMEWORK_DIR"
+normalize_xcframework_info_plist "$XCFRAMEWORK_DIR/Info.plist"
 
 echo "Created $XCFRAMEWORK_DIR"

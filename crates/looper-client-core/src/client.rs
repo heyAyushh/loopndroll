@@ -19,11 +19,11 @@ use crate::model::ClientStateDelta;
 use crate::model::ClientStateMiniDeltaApplyResult;
 use crate::model::{
     ClientCommandAck, ClientCommandAckEnvelope, ClientCommandBatchResponse, ClientCommandKind,
-    ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
-    ClientPendingMutation, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
-    ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
-    ClientTextChunk, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
-    STATE_MINI_BATCH_COMPLETE_KIND, STATE_MINI_REPLACEMENT_COMPLETE_KIND,
+    ClientEndpoint, ClientEndpointTransport, ClientLocalStateSnapshot, ClientPendingCommand,
+    ClientPendingCommandKind, ClientPendingMutation, ClientStateMini, ClientStateMiniDelta,
+    ClientStateMiniSnapshot, ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason,
+    ClientStateSnapshot, ClientTextChunk, ConnectionPhase, OutboundSessionFrame,
+    OutboundSessionFrameKind, STATE_MINI_BATCH_COMPLETE_KIND, STATE_MINI_REPLACEMENT_COMPLETE_KIND,
     STATE_MINI_REPLACEMENT_KIND,
 };
 use crate::session_transport::{RecoveredStateMiniSnapshot, fetch_state_mini_snapshot};
@@ -48,6 +48,7 @@ const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
 const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
+const RECENT_COMMAND_ACK_LIMIT: usize = 16;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const COMMAND_ACK_BACKLOG_OVERFLOW_ERROR: &str =
     "command ack backlog overflowed; oldest unmatched ack was dropped";
@@ -56,6 +57,8 @@ const COMMAND_ACK_BACKLOG_OVERFLOW_ERROR: &str =
 struct ClientCoreState {
     phase: ConnectionPhase,
     endpoint_url: String,
+    endpoint_transport: ClientEndpointTransport,
+    transport_fallback_reason: String,
     latest_seq: i64,
     last_seq_by_node: BTreeMap<String, i64>,
     revision: String,
@@ -65,6 +68,7 @@ struct ClientCoreState {
     mode_rollbacks: Vec<ClientModeRollback>,
     outbox: Vec<OutboundSessionFrame>,
     command_ack_backlog: Vec<ClientCommandAck>,
+    recent_command_acks: Vec<ClientCommandAck>,
     pending_replacement: Option<PendingStateMiniReplacement>,
     last_error: String,
 }
@@ -1049,6 +1053,7 @@ impl LooperClientCore {
             snapshot: ClientStateMiniSnapshot::from(state_snapshot.snapshot),
             endpoint_url: recovered.endpoint_url,
             did_change: state_snapshot.did_change,
+            endpoint_transport: recovered.endpoint_transport,
         })
     }
 
@@ -1641,6 +1646,8 @@ impl LooperClientCore {
                     latest_seq,
                     server_time,
                     endpoint_url,
+                    endpoint_transport,
+                    fallback_reason,
                 } => {
                     state.phase = ConnectionPhase::Ready;
                     let did_change = false;
@@ -1648,6 +1655,8 @@ impl LooperClientCore {
                     if !endpoint_url.is_empty() {
                         state.endpoint_url = endpoint_url;
                     }
+                    state.endpoint_transport = endpoint_transport;
+                    state.transport_fallback_reason = fallback_reason;
                     (
                         ClientStateMiniStreamUpdateReason::Heartbeat,
                         did_change,
@@ -1660,9 +1669,13 @@ impl LooperClientCore {
                 StateMiniStreamEvent::Reconnecting {
                     latest_seq,
                     error_description,
+                    endpoint_transport,
+                    fallback_reason,
                 } => {
                     state.phase = ConnectionPhase::Reconnecting;
                     state.last_error = error_description.clone();
+                    state.endpoint_transport = endpoint_transport;
+                    state.transport_fallback_reason = fallback_reason;
                     (
                         ClientStateMiniStreamUpdateReason::Reconnecting,
                         false,
@@ -1675,9 +1688,13 @@ impl LooperClientCore {
                 StateMiniStreamEvent::RecoveryRequired {
                     latest_seq,
                     error_description,
+                    endpoint_transport,
+                    fallback_reason,
                 } => {
                     state.phase = ConnectionPhase::Reconnecting;
                     state.last_error = error_description.clone();
+                    state.endpoint_transport = endpoint_transport;
+                    state.transport_fallback_reason = fallback_reason;
                     (
                         ClientStateMiniStreamUpdateReason::RecoveryRequired,
                         false,
@@ -1705,11 +1722,14 @@ impl ClientCoreState {
         ClientStateSnapshot {
             phase: self.phase,
             endpoint_url: self.endpoint_url.clone(),
+            endpoint_transport: self.endpoint_transport,
+            transport_fallback_reason: self.transport_fallback_reason.clone(),
             latest_seq: self.latest_seq,
             revision: self.revision.clone(),
             server_time: self.server_time.clone(),
             state_minis: self.state_minis.clone(),
             pending_mutations: self.pending_mutations.clone(),
+            recent_command_acks: self.recent_command_acks.clone(),
             outbox_depth: self.outbox.len() as u32,
             last_error: self.last_error.clone(),
         }
@@ -1846,6 +1866,7 @@ impl ClientCoreState {
         update_server_time_if_newer(&mut self.server_time, ack.server_time.clone());
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
+        self.remember_recent_command_ack(ack.clone());
         if command_kind == Some(ClientCommandKind::SetSessionMode) && !ack.accepted {
             self.restore_mode_rollback(&ack.client_mutation_id);
         } else {
@@ -1857,6 +1878,20 @@ impl ClientCoreState {
             self.last_error.clear();
         } else {
             self.last_error = reject_message;
+        }
+    }
+
+    fn remember_recent_command_ack(&mut self, ack: ClientCommandAck) {
+        if let Some(existing_index) = self
+            .recent_command_acks
+            .iter()
+            .position(|seen| seen.client_mutation_id == ack.client_mutation_id)
+        {
+            self.recent_command_acks.remove(existing_index);
+        }
+        self.recent_command_acks.push(ack);
+        if self.recent_command_acks.len() > RECENT_COMMAND_ACK_LIMIT {
+            self.recent_command_acks.remove(0);
         }
     }
 
@@ -2665,7 +2700,11 @@ mod tests {
         mpsc::Sender<ClientCommandAck>,
     ) {
         let endpoints = [ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: false,
         }];
         let identity =
@@ -2689,7 +2728,11 @@ mod tests {
 
     fn install_finished_test_session_stream(core: &Arc<LooperClientCore>) {
         let endpoints = [ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: false,
         }];
         let identity = ClientCoreStreamIdentity::new(&endpoints, "token", "mobile-session");
@@ -2740,11 +2783,19 @@ mod tests {
         let snapshot = core
             .connect(vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: ENDPOINT_PRIMARY.to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: ENDPOINT_LAST_GOOD.to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: true,
                 },
             ])
@@ -2768,7 +2819,11 @@ mod tests {
         let snapshot = core
             .start_state_mini_stream(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: ENDPOINT_PRIMARY.to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: true,
                 }],
                 "token".to_owned(),
@@ -2813,7 +2868,11 @@ mod tests {
             state.endpoint_url = ENDPOINT_PRIMARY.to_owned();
         }
         let endpoints = vec![ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: true,
         }];
 
@@ -2854,7 +2913,11 @@ mod tests {
         let snapshot = core
             .start(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: ENDPOINT_PRIMARY.to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 }],
                 "token".to_owned(),
@@ -2879,7 +2942,11 @@ mod tests {
         let snapshot = core
             .start_state_mini_stream(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: ENDPOINT_PRIMARY.to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 }],
                 "token".to_owned(),
@@ -2902,7 +2969,11 @@ mod tests {
     fn heartbeat_updates_displayed_endpoint_to_live_session_route() {
         let core = LooperClientCore::new();
         core.connect(vec![ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: true,
         }])
         .expect("connect primary");
@@ -2912,6 +2983,8 @@ mod tests {
                 latest_seq: 12,
                 server_time: SERVER_TIME.to_owned(),
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
             })
             .expect("heartbeat");
 
@@ -2926,7 +2999,11 @@ mod tests {
     fn heartbeat_latest_seq_does_not_skip_replay_delta() {
         let core = LooperClientCore::new();
         core.connect(vec![ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: true,
         }])
         .expect("connect primary");
@@ -2935,6 +3012,8 @@ mod tests {
             latest_seq: 12,
             server_time: SERVER_TIME.to_owned(),
             endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+            endpoint_transport: ClientEndpointTransport::H2,
+            fallback_reason: String::new(),
         })
         .expect("heartbeat");
 
@@ -3493,6 +3572,8 @@ mod tests {
                 latest_seq: 43,
                 server_time: "2026-06-25T00:00:43Z".to_owned(),
                 endpoint_url: ENDPOINT_PRIMARY.to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
             })
             .expect("finalize replacement");
         assert_eq!(
@@ -4017,6 +4098,8 @@ mod tests {
             .apply_state_mini_stream_event(StateMiniStreamEvent::RecoveryRequired {
                 latest_seq: 9,
                 error_description: "seq_gap".to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
             })
             .expect("stream update");
 
@@ -4074,7 +4157,11 @@ mod tests {
     fn heartbeat_liveness_does_not_rewrite_mini_freshness() {
         let core = LooperClientCore::new();
         core.connect(vec![ClientEndpoint {
+            transport: crate::model::ClientEndpointTransport::H2,
             url: ENDPOINT_PRIMARY.to_owned(),
+            recovery_base_url: String::new(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
             last_good: true,
         }])
         .expect("connect primary");
@@ -4097,6 +4184,8 @@ mod tests {
                 latest_seq: 99,
                 server_time: "2026-06-25T00:00:99Z".to_owned(),
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
             })
             .expect("heartbeat");
 
@@ -4277,6 +4366,8 @@ mod tests {
                 latest_seq: 11,
                 server_time: SERVER_TIME.to_owned(),
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
             })
             .expect("heartbeat without replacement completion");
 

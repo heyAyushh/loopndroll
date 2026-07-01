@@ -9,9 +9,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::{
     error::ClientCoreError,
     model::{
-        ClientEndpoint, ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan,
-        ClientPendingCommand, ClientPendingCommandKind, ClientSessionDetailProjection,
-        ClientSessionLatestReply, ClientStateMini, ClientStateMiniSnapshot, ClientTextChunk,
+        ClientEndpoint, ClientEndpointTransport, ClientLocalStateSnapshot,
+        ClientNotificationReplyRetryPlan, ClientPendingCommand, ClientPendingCommandKind,
+        ClientSessionDetailProjection, ClientSessionLatestReply, ClientStateMini,
+        ClientStateMiniSnapshot, ClientTextChunk,
     },
     state_mini::{
         DEFAULT_NODE_ID, fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
@@ -51,15 +52,24 @@ struct StoredState {
         rename = "lastGoodEndpointURL",
         alias = "lastGoodEndpointUrl",
         alias = "last_good_endpoint_url",
-        default
+        default,
+        skip_serializing
     )]
     last_good_endpoint_url: Option<String>,
+    #[serde(rename = "lastGoodEndpoint", default)]
+    last_good_endpoint: Option<StoredLastGoodEndpoint>,
     #[serde(
         rename = "latestReplies",
         default,
         deserialize_with = "deserialize_latest_replies"
     )]
     latest_replies: HashMap<String, ClientSessionLatestReply>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct StoredLastGoodEndpoint {
+    url: String,
+    transport: ClientEndpointTransport,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -279,20 +289,26 @@ impl LooperClientCoreLocalStore {
         let state = self.lock_state()?;
         Ok(endpoints_with_last_good(
             endpoints,
-            state.last_good_endpoint_url.as_deref(),
+            state.last_good_endpoint(),
         ))
     }
 
     pub(crate) fn mark_last_good_endpoint(
         &self,
         endpoint_url: String,
+        transport: ClientEndpointTransport,
     ) -> Result<(), ClientCoreError> {
         let endpoint_url = normalized_endpoint_url(&endpoint_url)?;
         let mut state = self.lock_state()?;
-        if state.last_good_endpoint_url.as_deref() == Some(endpoint_url.as_str()) {
+        let next = StoredLastGoodEndpoint {
+            url: endpoint_url,
+            transport,
+        };
+        if state.last_good_endpoint.as_ref() == Some(&next) {
             return Ok(());
         }
-        state.last_good_endpoint_url = Some(endpoint_url);
+        state.last_good_endpoint = Some(next);
+        state.last_good_endpoint_url = None;
         self.persist_locked(&state)
     }
 }
@@ -623,6 +639,18 @@ impl LooperClientCoreLocalStore {
 }
 
 impl StoredState {
+    fn last_good_endpoint(&self) -> Option<StoredLastGoodEndpoint> {
+        self.last_good_endpoint.clone().or_else(|| {
+            self.last_good_endpoint_url
+                .as_deref()
+                .and_then(|url| normalized_endpoint_url(url).ok())
+                .map(|url| StoredLastGoodEndpoint {
+                    url,
+                    transport: ClientEndpointTransport::H2,
+                })
+        })
+    }
+
     fn coalesce_latest_pending_commands(&mut self) -> bool {
         let original_pending_commands = self.pending_commands.clone();
         let mut pending_commands = Vec::with_capacity(self.pending_commands.len());
@@ -967,29 +995,33 @@ fn newer_optional_time(current: String, candidate: String) -> String {
 
 fn endpoints_with_last_good(
     mut endpoints: Vec<ClientEndpoint>,
-    last_good_endpoint_url: Option<&str>,
+    last_good_endpoint: Option<StoredLastGoodEndpoint>,
 ) -> Vec<ClientEndpoint> {
-    let Some(last_good_endpoint_url) =
-        last_good_endpoint_url.and_then(|url| normalized_endpoint_url(url).ok())
-    else {
+    let Some(last_good_endpoint) = last_good_endpoint else {
         return endpoints;
     };
     if !endpoints
         .iter()
-        .any(|endpoint| endpoint_matches_url(endpoint, &last_good_endpoint_url))
+        .any(|endpoint| endpoint_matches_last_good(endpoint, &last_good_endpoint))
     {
         return endpoints;
     }
 
     for endpoint in &mut endpoints {
-        endpoint.last_good = endpoint_matches_url(endpoint, &last_good_endpoint_url);
+        endpoint.last_good = endpoint_matches_last_good(endpoint, &last_good_endpoint);
     }
     endpoints
 }
 
-fn endpoint_matches_url(endpoint: &ClientEndpoint, normalized_url: &str) -> bool {
+fn endpoint_matches_last_good(
+    endpoint: &ClientEndpoint,
+    last_good_endpoint: &StoredLastGoodEndpoint,
+) -> bool {
+    if endpoint.transport != last_good_endpoint.transport {
+        return false;
+    }
     normalized_endpoint_url(&endpoint.url)
-        .map(|url| url == normalized_url)
+        .map(|url| url == last_good_endpoint.url)
         .unwrap_or(false)
 }
 
@@ -1576,7 +1608,10 @@ mod tests {
             LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
 
         store
-            .mark_last_good_endpoint(" http://100.64.0.2:8766/ ".to_owned())
+            .mark_last_good_endpoint(
+                " http://100.64.0.2:8766/ ".to_owned(),
+                ClientEndpointTransport::H2,
+            )
             .expect("mark endpoint");
         drop(store);
 
@@ -1585,11 +1620,19 @@ mod tests {
         let endpoints = reopened
             .endpoints_with_last_good(vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: "http://127.0.0.1:8766".to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: true,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: "http://100.64.0.2:8766".to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
             ])
@@ -1597,6 +1640,115 @@ mod tests {
 
         assert!(!endpoints[0].last_good);
         assert!(endpoints[1].last_good);
+    }
+
+    #[test]
+    fn local_store_migrates_legacy_last_good_url_and_persists_transport_tuple() {
+        let path = temp_store_path("last-good-endpoint-transport-migration");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "lastGoodEndpointURL": " http://100.64.0.2:8766/ ",
+                "sessions": []
+            })
+            .to_string(),
+        )
+        .expect("legacy store");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let endpoints = store
+            .endpoints_with_last_good(vec![
+                ClientEndpoint {
+                    transport: ClientEndpointTransport::H3,
+                    url: "https://100.64.0.2:8766".to_owned(),
+                    recovery_base_url: "http://100.64.0.2:8765".to_owned(),
+                    h3_certificate_sha256: "sha256:01".to_owned(),
+                    h3_certificate_spki_sha256: String::new(),
+                    last_good: false,
+                },
+                ClientEndpoint {
+                    transport: ClientEndpointTransport::H2,
+                    url: "http://100.64.0.2:8766".to_owned(),
+                    recovery_base_url: "http://100.64.0.2:8765".to_owned(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
+                    last_good: false,
+                },
+            ])
+            .expect("endpoints");
+        assert!(!endpoints[0].last_good);
+        assert!(
+            endpoints[1].last_good,
+            "legacy URL migrates as H2 last-good"
+        );
+
+        store
+            .mark_last_good_endpoint(
+                " https://100.64.0.2:8766/ ".to_owned(),
+                ClientEndpointTransport::H3,
+            )
+            .expect("mark h3 endpoint");
+        drop(store);
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read store"))
+                .expect("persisted json");
+        assert_eq!(
+            persisted["lastGoodEndpoint"]["url"],
+            "https://100.64.0.2:8766"
+        );
+        assert_eq!(persisted["lastGoodEndpoint"]["transport"], "h3");
+        assert!(
+            persisted.get("lastGoodEndpointURL").is_none(),
+            "legacy URL-only field should not be written after migration"
+        );
+    }
+
+    #[test]
+    fn local_store_rejects_invalid_last_good_endpoint_transport() {
+        let path = temp_store_path("invalid-last-good-endpoint-transport");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "lastGoodEndpoint": {
+                    "url": "https://100.64.0.2:8766",
+                    "transport": "websocket"
+                },
+                "sessions": []
+            })
+            .to_string(),
+        )
+        .expect("invalid transport store");
+
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("invalid transport should not silently default to H2");
+
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+    }
+
+    #[test]
+    fn local_store_rejects_missing_last_good_endpoint_transport_tuple() {
+        let path = temp_store_path("missing-last-good-endpoint-transport");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "lastGoodEndpoint": {
+                    "url": "https://100.64.0.2:8766"
+                },
+                "sessions": []
+            })
+            .to_string(),
+        )
+        .expect("missing transport store");
+
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("missing tuple transport should not silently default to H2");
+
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
     }
 
     #[test]

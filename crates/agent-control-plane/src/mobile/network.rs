@@ -60,6 +60,10 @@ const MOBILE_GRPC_BASE_URL_ENV_KEYS: &[&str] = &[
     "AGENT_CONTROL_PLANE_MOBILE_GRPC_BASE_URLS",
     "AGENT_CONTROL_PLANE_MOBILE_GRPC_BASE_URL",
 ];
+const MOBILE_GRPC_H3_BASE_URL_ENV_KEYS: &[&str] = &[
+    "AGENT_CONTROL_PLANE_MOBILE_GRPC_H3_BASE_URLS",
+    "AGENT_CONTROL_PLANE_MOBILE_GRPC_H3_BASE_URL",
+];
 
 pub fn advertised_mobile_base_urls(preferred_base_url: Option<&str>) -> Vec<String> {
     let local_addresses = if configured_listener_accepts_remote_connections() {
@@ -93,6 +97,14 @@ pub fn configured_grpc_control_plane_port() -> u16 {
         .unwrap_or(DEFAULT_GRPC_CONTROL_PLANE_PORT)
 }
 
+pub fn configured_grpc_h3_control_plane_port() -> u16 {
+    std::env::var(crate::grpc::GRPC_H3_LISTEN_ENV)
+        .ok()
+        .and_then(|listen| listen.parse::<SocketAddr>().ok())
+        .map(|address| address.port())
+        .unwrap_or_else(configured_grpc_control_plane_port)
+}
+
 pub fn default_grpc_listen_address(http_listen_address: SocketAddr) -> Result<SocketAddr> {
     if let Ok(listen_address) = std::env::var(GRPC_LISTEN_ENV) {
         return Ok(listen_address.parse::<SocketAddr>()?);
@@ -111,10 +123,19 @@ pub fn advertised_mobile_grpc_base_urls(http_base_urls: &[String]) -> Vec<String
     )
 }
 
+pub fn advertised_mobile_grpc_h3_base_urls(http_base_urls: &[String]) -> Vec<String> {
+    advertised_mobile_grpc_h3_base_urls_from_sources(
+        http_base_urls,
+        configured_grpc_h3_control_plane_port(),
+        explicit_mobile_grpc_h3_base_urls(),
+    )
+}
+
 pub async fn advertised_mobile_pairing_base_urls(preferred_base_url: Option<&str>) -> Vec<String> {
     let base_urls = advertised_mobile_base_urls(preferred_base_url);
     let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
-    let tailscale = mobile_tailscale_status(&base_urls, &grpc_base_urls).await;
+    let grpc_h3_base_urls = advertised_mobile_grpc_h3_base_urls(&base_urls);
+    let tailscale = mobile_tailscale_status(&base_urls, &grpc_base_urls, &grpc_h3_base_urls).await;
     advertised_mobile_pairing_base_urls_from_sources(base_urls, tailscale.base_url)
 }
 
@@ -144,6 +165,8 @@ pub struct MobileTailscaleStatus {
     pub base_url: Option<String>,
     #[serde(rename = "grpcBaseURL", skip_serializing_if = "Option::is_none")]
     pub grpc_base_url: Option<String>,
+    #[serde(rename = "grpcH3BaseURL", skip_serializing_if = "Option::is_none")]
+    pub grpc_h3_base_url: Option<String>,
     pub health: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -168,14 +191,17 @@ struct TailscaleDiscovery {
 struct TailscaleAdvertisedRoute {
     base_url: String,
     grpc_base_url: Option<String>,
+    grpc_h3_base_url: Option<String>,
     ip_address: Option<String>,
 }
 
 pub async fn mobile_tailscale_status(
     http_base_urls: &[String],
     grpc_base_urls: &[String],
+    grpc_h3_base_urls: &[String],
 ) -> MobileTailscaleStatus {
-    let advertised_route = advertised_tailscale_route(http_base_urls, grpc_base_urls);
+    let advertised_route =
+        advertised_tailscale_route(http_base_urls, grpc_base_urls, grpc_h3_base_urls);
     let discovery_result = discover_tailscale_status().await;
     mobile_tailscale_status_from_sources(
         discovery_result,
@@ -200,6 +226,9 @@ fn mobile_tailscale_status_from_sources(
     let route_grpc_base_url = advertised_route
         .as_ref()
         .and_then(|route| route.grpc_base_url.clone());
+    let route_grpc_h3_base_url = advertised_route
+        .as_ref()
+        .and_then(|route| route.grpc_h3_base_url.clone());
 
     let (discovery, discovery_error) = match discovery_result {
         Ok(discovery) => (Some(discovery), None),
@@ -232,6 +261,7 @@ fn mobile_tailscale_status_from_sources(
                 .or_else(|| base_url_for_tailscale_addresses(&ip_addresses, grpc_port))
         })
         .flatten();
+    let grpc_h3_base_url = running.then(|| route_grpc_h3_base_url).flatten();
     let source = discovery
         .as_ref()
         .map(|status| status.source.clone())
@@ -264,6 +294,7 @@ fn mobile_tailscale_status_from_sources(
         ip_addresses,
         base_url,
         grpc_base_url,
+        grpc_h3_base_url,
         health: discovery
             .as_ref()
             .map(|status| status.health.clone())
@@ -465,6 +496,7 @@ fn tailscale_discovery_from_cli_status(status: TailscaleCliStatus) -> TailscaleD
 fn advertised_tailscale_route(
     http_base_urls: &[String],
     grpc_base_urls: &[String],
+    grpc_h3_base_urls: &[String],
 ) -> Option<TailscaleAdvertisedRoute> {
     let base_url = http_base_urls
         .iter()
@@ -480,10 +512,21 @@ fn advertised_tailscale_route(
             })
             .cloned()
     });
+    let grpc_h3_base_url = base_host.as_ref().and_then(|base_host| {
+        grpc_h3_base_urls
+            .iter()
+            .find(|grpc_h3_base_url| {
+                base_url_host(grpc_h3_base_url)
+                    .as_ref()
+                    .is_some_and(|grpc_h3_host| same_tailscale_host(base_host, grpc_h3_host))
+            })
+            .cloned()
+    });
 
     Some(TailscaleAdvertisedRoute {
         base_url: base_url.clone(),
         grpc_base_url,
+        grpc_h3_base_url,
         ip_address: base_host.filter(|host| is_tailscale_ip_address(host)),
     })
 }
@@ -679,6 +722,21 @@ fn advertised_mobile_grpc_base_urls_from_sources(
     unique_values(derived_urls.chain(explicit_first_class_urls).collect())
 }
 
+fn advertised_mobile_grpc_h3_base_urls_from_sources(
+    http_base_urls: &[String],
+    grpc_h3_port: u16,
+    explicit_urls: Vec<String>,
+) -> Vec<String> {
+    let derived_urls = http_base_urls
+        .iter()
+        .filter_map(|base_url| grpc_h3_base_url_for_http_base_url(base_url, grpc_h3_port));
+    let explicit_first_class_urls = explicit_urls.into_iter().filter_map(|base_url| {
+        let normalized = normalize_grpc_h3_base_url(&base_url)?;
+        is_first_class_mobile_base_url(&normalized).then_some(normalized)
+    });
+    unique_values(derived_urls.chain(explicit_first_class_urls).collect())
+}
+
 fn explicit_mobile_base_urls() -> Vec<String> {
     MOBILE_BASE_URL_ENV_KEYS
         .iter()
@@ -694,6 +752,15 @@ fn explicit_mobile_grpc_base_urls() -> Vec<String> {
         .filter_map(|key| std::env::var(key).ok())
         .flat_map(|value| split_base_url_values(&value))
         .filter_map(|value| normalize_base_url(&value))
+        .collect()
+}
+
+fn explicit_mobile_grpc_h3_base_urls() -> Vec<String> {
+    MOBILE_GRPC_H3_BASE_URL_ENV_KEYS
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .flat_map(|value| split_base_url_values(&value))
+        .filter_map(|value| normalize_grpc_h3_base_url(&value))
         .collect()
 }
 
@@ -798,6 +865,20 @@ fn grpc_base_url_for_http_base_url(base_url: &str, grpc_port: u16) -> Option<Str
     Some(format!("{scheme}://{host}:{grpc_port}"))
 }
 
+fn grpc_h3_base_url_for_http_base_url(base_url: &str, grpc_h3_port: u16) -> Option<String> {
+    let normalized_base_url = normalize_base_url(base_url)?;
+    let (_, without_scheme) = normalized_base_url.split_once("://")?;
+    let authority = without_scheme.split('/').next()?.trim();
+    let host = base_url_authority_host(authority)?;
+    Some(format!("https://{}:{grpc_h3_port}", bracketed_host(&host)))
+}
+
+fn normalize_grpc_h3_base_url(value: &str) -> Option<String> {
+    let normalized_base_url = normalize_base_url(value)?;
+    let (_, without_scheme) = normalized_base_url.split_once("://")?;
+    Some(format!("https://{}", without_scheme.trim_end_matches('/')))
+}
+
 fn base_url_authority_host(authority: &str) -> Option<String> {
     if authority.starts_with('[') {
         return authority
@@ -806,6 +887,13 @@ fn base_url_authority_host(authority: &str) -> Option<String> {
     }
 
     Some(authority.split(':').next()?.to_owned())
+}
+
+fn bracketed_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        return format!("[{host}]");
+    }
+    host.to_owned()
 }
 
 fn derived_grpc_port(http_port: u16) -> Option<u16> {
@@ -885,6 +973,7 @@ mod tests {
 
     const TEST_PORT: u16 = 8765;
     const TEST_GRPC_PORT: u16 = 8766;
+    const TEST_GRPC_H3_PORT: u16 = 8767;
     const TEST_LAN_BASE_URL: &str = "http://192.168.1.4:8765";
     const TEST_LOOPBACK_BASE_URL: &str = "http://127.0.0.1:8765";
     const TEST_TAILSCALE_BASE_URL: &str = "http://100.119.200.69:8765";
@@ -1052,6 +1141,42 @@ mod tests {
     }
 
     #[test]
+    fn grpc_h3_advertised_urls_reuse_mobile_hosts_with_h3_port_and_https() {
+        let urls = vec![
+            "http://192.168.1.4:8765".to_owned(),
+            "http://127.0.0.1:8765".to_owned(),
+        ];
+
+        assert_eq!(
+            advertised_mobile_grpc_h3_base_urls_from_sources(&urls, TEST_GRPC_H3_PORT, Vec::new()),
+            vec![
+                "https://192.168.1.4:8767".to_owned(),
+                "https://127.0.0.1:8767".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn grpc_h3_advertised_urls_filter_explicit_remote_routes() {
+        let http_urls = vec![TEST_LAN_BASE_URL.to_owned()];
+
+        assert_eq!(
+            advertised_mobile_grpc_h3_base_urls_from_sources(
+                &http_urls,
+                TEST_GRPC_H3_PORT,
+                vec![
+                    "https://looper.example.test:8767".to_owned(),
+                    "http://100.119.200.69:8767".to_owned(),
+                ],
+            ),
+            vec![
+                "https://192.168.1.4:8767".to_owned(),
+                "https://100.119.200.69:8767".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn grpc_listen_address_uses_control_plane_port_offset() {
         let http_address: SocketAddr = "127.0.0.1:8765".parse().expect("http address");
 
@@ -1109,6 +1234,10 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
                     "http://172.20.10.2:8766".to_owned(),
                     "http://100.119.200.69:8766".to_owned(),
                 ],
+                &[
+                    "https://172.20.10.2:8767".to_owned(),
+                    "https://100.119.200.69:8767".to_owned(),
+                ],
             ),
             TEST_PORT,
             TEST_GRPC_PORT,
@@ -1124,6 +1253,10 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
         assert_eq!(
             status.grpc_base_url.as_deref(),
             Some("http://100.119.200.69:8766")
+        );
+        assert_eq!(
+            status.grpc_h3_base_url.as_deref(),
+            Some("https://100.119.200.69:8767")
         );
         assert_eq!(
             status.magic_dns_suffix.as_deref(),
@@ -1192,6 +1325,7 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
             advertised_tailscale_route(
                 &["http://100.119.200.69:8765".to_owned()],
                 &["http://100.119.200.69:8766".to_owned()],
+                &["https://100.119.200.69:8767".to_owned()],
             ),
             TEST_PORT,
             TEST_GRPC_PORT,
@@ -1202,6 +1336,7 @@ awdl0: flags=8943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1484
         assert_eq!(status.backend_state.as_deref(), Some("Stopped"));
         assert_eq!(status.base_url, None);
         assert_eq!(status.grpc_base_url, None);
+        assert_eq!(status.grpc_h3_base_url, None);
         assert_eq!(status.health, vec!["Tailscale is stopped.".to_owned()]);
     }
 

@@ -1,9 +1,16 @@
-use anyhow::{Context, Result, anyhow, bail};
-use tokio_stream::iter;
-use tonic::transport::Endpoint;
+use anyhow::{Context, Result, bail};
 
 use crate::grpc::proto;
-use crate::mobile::network::DEFAULT_GRPC_PORT_OFFSET;
+
+mod transport;
+
+#[cfg(test)]
+mod tests;
+
+use transport::{
+    local_h3_certificate_sha256, local_session_transport_endpoints,
+    open_local_session_command_stream,
+};
 
 const COMMAND_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -12,21 +19,74 @@ pub(crate) async fn submit_local_session_command(
     command: proto::Command,
     client_mutation_id: &str,
 ) -> Result<proto::CommandAck> {
-    let endpoint = local_grpc_endpoint(http_base_url)?;
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
-        .await
-        .context("connect local Session stream")?;
+    let LocalSessionCommandResult {
+        ack,
+        transport: _transport,
+        endpoint_url: _endpoint_url,
+        fallback_reason: _fallback_reason,
+    } = submit_local_session_command_observed(http_base_url, command, client_mutation_id).await?;
+    Ok(ack)
+}
+
+async fn submit_local_session_command_observed(
+    http_base_url: &str,
+    command: proto::Command,
+    client_mutation_id: &str,
+) -> Result<LocalSessionCommandResult> {
+    submit_local_session_command_with_h3_certificate_sha256(
+        http_base_url,
+        command,
+        client_mutation_id,
+        local_h3_certificate_sha256(),
+    )
+    .await
+}
+
+async fn submit_local_session_command_with_h3_certificate_sha256(
+    http_base_url: &str,
+    command: proto::Command,
+    client_mutation_id: &str,
+    h3_certificate_sha256: Option<String>,
+) -> Result<LocalSessionCommandResult> {
     let frame = proto::ClientFrame {
         frame: Some(proto::client_frame::Frame::Command(command)),
     };
-    let request = tonic::Request::new(iter([frame]));
-    let response = client
-        .session(request)
-        .await
-        .context("submit local Session command")?;
-    let mut stream = response.into_inner();
+    let OpenLocalSessionCommandStream {
+        stream,
+        transport,
+        endpoint_url,
+        fallback_reason,
+        request_sender: _request_sender,
+        client: _client,
+    } = open_local_session_command_stream(
+        local_session_transport_endpoints(http_base_url, h3_certificate_sha256)?,
+        frame,
+    )
+    .await?;
 
-    let ack = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
+    let ack = wait_for_local_command_ack(stream, client_mutation_id).await?;
+
+    if !ack.accepted {
+        let reason = if ack.reject_reason.is_empty() {
+            "command rejected"
+        } else {
+            ack.reject_reason.as_str()
+        };
+        bail!("{reason}");
+    }
+    Ok(LocalSessionCommandResult {
+        ack,
+        transport,
+        endpoint_url,
+        fallback_reason,
+    })
+}
+
+async fn wait_for_local_command_ack(
+    mut stream: tonic::Streaming<proto::ServerFrame>,
+    client_mutation_id: &str,
+) -> Result<proto::CommandAck> {
+    tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
         while let Some(frame) = stream.message().await? {
             let Some(proto::server_frame::Frame::Ack(ack)) = frame.frame else {
                 continue;
@@ -40,31 +100,46 @@ pub(crate) async fn submit_local_session_command(
         ))
     })
     .await
-    .context("local Session command ACK timed out")??;
-
-    if !ack.accepted {
-        let reason = if ack.reject_reason.is_empty() {
-            "command rejected"
-        } else {
-            ack.reject_reason.as_str()
-        };
-        bail!("{reason}");
-    }
-    Ok(ack)
+    .context("local Session command ACK timed out")?
+    .context("local Session command ACK failed")
 }
 
-fn local_grpc_endpoint(http_base_url: &str) -> Result<Endpoint> {
-    let mut url = reqwest::Url::parse(http_base_url).context("parse control-plane base URL")?;
-    let port = url
-        .port_or_known_default()
-        .ok_or_else(|| anyhow!("control-plane base URL has no port"))?;
-    let grpc_port = port
-        .checked_add(DEFAULT_GRPC_PORT_OFFSET)
-        .ok_or_else(|| anyhow!("control-plane port is too high to derive gRPC port"))?;
-    url.set_port(Some(grpc_port))
-        .map_err(|_| anyhow!("invalid derived gRPC port"))?;
-    url.set_path("");
-    url.set_query(None);
-    url.set_fragment(None);
-    Endpoint::from_shared(url.to_string()).context("build local gRPC endpoint")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LocalSessionTransport {
+    H3,
+    H2,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct LocalSessionEndpoint {
+    pub(super) transport: LocalSessionTransport,
+    pub(super) url: String,
+    pub(super) h3_certificate_sha256: Option<String>,
+}
+
+pub(super) struct OpenLocalSessionCommandStream {
+    pub(super) stream: tonic::Streaming<proto::ServerFrame>,
+    pub(super) request_sender: tokio::sync::mpsc::Sender<proto::ClientFrame>,
+    pub(super) client: OpenLocalSessionClient,
+    pub(super) transport: LocalSessionTransport,
+    pub(super) endpoint_url: String,
+    pub(super) fallback_reason: String,
+}
+
+#[allow(dead_code)]
+pub(super) enum OpenLocalSessionClient {
+    H2(proto::looper_realtime_client::LooperRealtimeClient<tonic::transport::Channel>),
+    H3(
+        proto::looper_realtime_client::LooperRealtimeClient<
+            tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector>,
+        >,
+    ),
+}
+
+#[derive(Debug)]
+struct LocalSessionCommandResult {
+    ack: proto::CommandAck,
+    transport: LocalSessionTransport,
+    endpoint_url: String,
+    fallback_reason: String,
 }

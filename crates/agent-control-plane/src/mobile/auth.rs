@@ -51,6 +51,16 @@ pub struct MobileConnectionCode {
     pub base_url: String,
     #[serde(rename = "baseURLs")]
     pub base_urls: Vec<String>,
+    #[serde(rename = "grpcBaseURL")]
+    pub grpc_base_url: String,
+    #[serde(rename = "grpcBaseURLs")]
+    pub grpc_base_urls: Vec<String>,
+    #[serde(rename = "grpcH3BaseURL")]
+    pub grpc_h3_base_url: String,
+    #[serde(rename = "grpcH3BaseURLs")]
+    pub grpc_h3_base_urls: Vec<String>,
+    #[serde(rename = "grpcH3CertificateSha256")]
+    pub grpc_h3_certificate_sha256: String,
     pub pairing_token_id: String,
     pub pairing_token: String,
     pub code: String,
@@ -72,6 +82,16 @@ struct MobileConnectionCodePayload {
     base_url: String,
     #[serde(rename = "baseURLs")]
     base_urls: Vec<String>,
+    #[serde(rename = "grpcBaseURL", default)]
+    grpc_base_url: String,
+    #[serde(rename = "grpcBaseURLs", default)]
+    grpc_base_urls: Vec<String>,
+    #[serde(rename = "grpcH3BaseURL", default)]
+    grpc_h3_base_url: String,
+    #[serde(rename = "grpcH3BaseURLs", default)]
+    grpc_h3_base_urls: Vec<String>,
+    #[serde(rename = "grpcH3CertificateSha256", default)]
+    grpc_h3_certificate_sha256: String,
     pairing_token_id: String,
     pairing_token: String,
 }
@@ -344,15 +364,25 @@ create index if not exists mobile_passkey_sessions_lookup_idx
     pub fn issue_connection_code(
         &self,
         base_urls: Vec<String>,
+        grpc_base_urls: Vec<String>,
+        grpc_h3_base_urls: Vec<String>,
+        grpc_h3_certificate_sha256: String,
     ) -> MobileAuthResult<MobileConnectionCode> {
         self.prune_stale_connection_orbs()?;
         let issued_token = self.issue_pairing_token()?;
         let base_url = base_urls.first().cloned().unwrap_or_default();
+        let grpc_base_url = grpc_base_urls.first().cloned().unwrap_or_default();
+        let grpc_h3_base_url = grpc_h3_base_urls.first().cloned().unwrap_or_default();
         let pairing_token_id = issued_token.id.clone();
         let pairing_token = issued_token.token.clone();
         let payload = serde_json::json!({
             "baseURL": &base_url,
             "baseURLs": &base_urls,
+            "grpcBaseURL": &grpc_base_url,
+            "grpcBaseURLs": &grpc_base_urls,
+            "grpcH3BaseURL": &grpc_h3_base_url,
+            "grpcH3BaseURLs": &grpc_h3_base_urls,
+            "grpcH3CertificateSha256": &grpc_h3_certificate_sha256,
             "pairingTokenId": &pairing_token_id,
             "pairingToken": &pairing_token,
         });
@@ -368,6 +398,11 @@ create index if not exists mobile_passkey_sessions_lookup_idx
         Ok(MobileConnectionCode {
             base_url,
             base_urls,
+            grpc_base_url,
+            grpc_base_urls,
+            grpc_h3_base_url,
+            grpc_h3_base_urls,
+            grpc_h3_certificate_sha256,
             pairing_token_id,
             pairing_token,
             code,
@@ -379,8 +414,16 @@ create index if not exists mobile_passkey_sessions_lookup_idx
     pub fn issue_connection_orb_image(
         &self,
         base_urls: Vec<String>,
+        grpc_base_urls: Vec<String>,
+        grpc_h3_base_urls: Vec<String>,
+        grpc_h3_certificate_sha256: String,
     ) -> MobileAuthResult<MobileConnectionOrbImage> {
-        let connection_code = self.issue_connection_code(base_urls)?;
+        let connection_code = self.issue_connection_code(
+            base_urls,
+            grpc_base_urls,
+            grpc_h3_base_urls,
+            grpc_h3_certificate_sha256,
+        )?;
         let orb_id = OrbId::parse(&connection_code.orb_id)?;
         let request = GenerateOrbRequest::new(orb_id).with_image_size(CONNECTION_ORB_IMAGE_SIZE)?;
         let png_data = generate_orb_image(&request)?.to_png_bytes()?;
@@ -1033,6 +1076,11 @@ fn mobile_connection_code_from_encoded_payload(
     Ok(MobileConnectionCode {
         base_url: payload.base_url,
         base_urls: payload.base_urls,
+        grpc_base_url: payload.grpc_base_url,
+        grpc_base_urls: payload.grpc_base_urls,
+        grpc_h3_base_url: payload.grpc_h3_base_url,
+        grpc_h3_base_urls: payload.grpc_h3_base_urls,
+        grpc_h3_certificate_sha256: payload.grpc_h3_certificate_sha256,
         pairing_token_id: payload.pairing_token_id,
         pairing_token: payload.pairing_token,
         code: code.to_owned(),

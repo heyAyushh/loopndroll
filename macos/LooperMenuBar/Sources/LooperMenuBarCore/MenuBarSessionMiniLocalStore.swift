@@ -1,5 +1,6 @@
 import Foundation
 import LooperClientCore
+import os
 
 public struct MenuBarSessionMiniLocalSnapshot: Equatable, Sendable {
     public let latestSeq: Int64
@@ -260,19 +261,20 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     public func startIfNeeded(
         bearerToken: String = "",
         mobileSessionHeader: String = "",
-        preferredRealtimeEndpointURLs: @MainActor () async throws -> [URL]
+        preferredRealtimeEndpoints: @MainActor () async throws -> [ClientEndpoint]
     ) async throws -> ClientStateSnapshot? {
-        let endpoints = try await preferredRealtimeEndpointURLs().map {
-            ClientEndpoint(url: $0.absoluteString, lastGood: false)
-        }
+        let endpoints = try await preferredRealtimeEndpoints()
         guard !endpoints.isEmpty else {
             throw MenuBarSessionRuntimeError.noRealtimeEndpoint
         }
-        return try start(
+        Self.recordEndpointCandidates(endpoints, reason: "start")
+        let snapshot = try start(
             endpoints: endpoints,
             bearerToken: bearerToken,
             mobileSessionHeader: mobileSessionHeader
         )
+        Self.recordRuntimeDiagnostics(snapshot, reason: "start")
+        return snapshot
     }
 
     @discardableResult
@@ -321,6 +323,10 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         -> MenuBarClientCoreMenuSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMenuSnapshotChange()
+        Self.recordRuntimeDiagnostics(
+            try? sessionManager.stateSnapshot(),
+            reason: streamUpdate.syncReason
+        )
         guard streamUpdate.hasSnapshot else {
             return MenuBarClientCoreMenuSnapshotStreamResult(
                 snapshot: nil,
@@ -364,10 +370,13 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         threadID: String,
         preset: String
     ) async throws -> ClientSessionModeIntentResult {
-        try await sessionManager.setMode(
+        let result = try await sessionManager.setMode(
             threadID: threadID,
             preset: preset
         )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "mode-accepted")
+        Self.record("mode:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)")
+        return result
     }
 
     @discardableResult
@@ -376,12 +385,17 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         prompt: String,
         assistantSurface: String
     ) async throws -> ClientSessionPromptIntentResult {
-        try await sessionManager.sendPrompt(
+        let result = try await sessionManager.sendPrompt(
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface,
             promptIntent: "steer"
         )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "prompt-accepted")
+        Self.record(
+            "prompt:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        return result
     }
 
     public func persistNotificationReply(
@@ -407,20 +421,36 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         clientMutationID: String?
     ) async throws -> ClientNotificationReplyIntentResult {
         if let clientMutationID {
-            return try await sessionManager.submitNotificationReply(
+            let result = try await sessionManager.submitNotificationReply(
                 notificationID: notificationID,
                 threadID: threadID,
                 prompt: prompt,
                 assistantSurface: assistantSurface,
                 clientMutationID: clientMutationID
             )
+            Self.recordRuntimeDiagnostics(
+                try? sessionManager.stateSnapshot(),
+                reason: "notification-reply-accepted"
+            )
+            Self.record(
+                "notification-reply:grpc-accepted id=\(threadID) notificationID=\(notificationID) clientMutationID=\(result.clientMutationId) ackSeq=\(result.ackSeq)"
+            )
+            return result
         }
-        return try await sessionManager.submitNotificationReplyWithGeneratedMutation(
+        let result = try await sessionManager.submitNotificationReplyWithGeneratedMutation(
             notificationID: notificationID,
             threadID: threadID,
             prompt: prompt,
             assistantSurface: assistantSurface
         )
+        Self.recordRuntimeDiagnostics(
+            try? sessionManager.stateSnapshot(),
+            reason: "notification-reply-accepted"
+        )
+        Self.record(
+            "notification-reply:grpc-accepted id=\(threadID) notificationID=\(notificationID) clientMutationID=\(result.clientMutationId) ackSeq=\(result.ackSeq)"
+        )
+        return result
     }
 
     private func drainStateMiniSync(
@@ -439,6 +469,72 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
                 return
             }
         }
+    }
+
+    private static func recordEndpointCandidates(_ endpoints: [ClientEndpoint], reason: String) {
+        let summary = endpoints.enumerated().map { index, endpoint in
+            "index=\(index) transport=\(transportName(endpoint.transport)) url=\(endpoint.url) recoveryBaseURL=\(endpoint.recoveryBaseUrl) h3CertSha256=\(nonEmpty(endpoint.h3CertificateSha256) ?? "none") h3SpkiSha256=\(nonEmpty(endpoint.h3CertificateSpkiSha256) ?? "none") lastGood=\(endpoint.lastGood)"
+        }.joined(separator: " | ")
+        record("session-runtime:endpoint-candidates reason=\(reason) \(summary)")
+    }
+
+    private static func recordRuntimeDiagnostics(_ snapshot: ClientStateSnapshot?, reason: String) {
+        guard let snapshot else {
+            record("session-runtime:state-unavailable reason=\(reason)")
+            return
+        }
+        let pending = snapshot.pendingMutations.map {
+            "\($0.clientMutationId):\(commandKindName($0.commandKind)):\($0.threadId)"
+        }.joined(separator: ",")
+        let recentAcks = snapshot.recentCommandAcks.map {
+            "\($0.clientMutationId):accepted=\($0.accepted):ackSeq=\($0.ackSeq):entity=\($0.entityId):revision=\($0.revision)"
+        }.joined(separator: ",")
+        record(
+            "session-runtime:state reason=\(reason) phase=\(snapshot.phase) selectedTransport=\(transportName(snapshot.endpointTransport)) endpointURL=\(snapshot.endpointUrl) fallbackReason=\(nonEmpty(snapshot.transportFallbackReason) ?? "none") latestSeq=\(snapshot.latestSeq) outboxDepth=\(snapshot.outboxDepth) pendingMutations=[\(pending)] recentCommandAcks=[\(recentAcks)] lastError=\(nonEmpty(snapshot.lastError) ?? "none")"
+        )
+    }
+
+    private static func record(_ message: String) {
+        os_log(.debug, log: .default, "%{public}@", message)
+    }
+
+    private static func transportName(_ transport: ClientEndpointTransport) -> String {
+        switch transport {
+        case .h2:
+            "h2"
+        case .h3:
+            "h3"
+        }
+    }
+
+    private static func commandKindName(_ kind: ClientCommandKind) -> String {
+        switch kind {
+        case .setSessionMode:
+            "SetSessionMode"
+        case .sendSessionPrompt:
+            "SendSessionPrompt"
+        case .submitNotificationReply:
+            "SubmitNotificationReply"
+        case .setSiriCurrentSession:
+            "SetSiriCurrentSession"
+        case .setSiriDefaultSession:
+            "SetSiriDefaultSession"
+        case .saveDefaultPrompt:
+            "SaveDefaultPrompt"
+        case .setDefaultNotificationTargets:
+            "SetDefaultNotificationTargets"
+        case .setSessionArchived:
+            "SetSessionArchived"
+        case .deleteSession:
+            "DeleteSession"
+        case .muteSession:
+            "MuteSession"
+        }
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

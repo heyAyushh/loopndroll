@@ -254,7 +254,9 @@ struct MenuBarSessionMiniLocalFirstTests {
             preference: .tailscale
         )
 
-        #expect(endpoints.map(\.absoluteString) == ["http://127.0.0.1:8766"])
+        #expect(endpoints.map(\.transport) == [.h2])
+        #expect(endpoints.map(\.url) == ["http://127.0.0.1:8766"])
+        #expect(endpoints.map(\.recoveryBaseUrl) == ["http://127.0.0.1:8765"])
     }
 
     @Test("realtime endpoint resolver ranks health routes and local fallback")
@@ -275,11 +277,75 @@ struct MenuBarSessionMiniLocalFirstTests {
             preference: .lan
         )
 
-        #expect(endpoints.map(\.absoluteString) == [
+        #expect(endpoints.map(\.transport) == [.h2, .h2, .h2])
+        #expect(endpoints.map(\.url) == [
             "http://192.168.1.33:8766",
             "http://100.95.2.4:8766",
             "http://127.0.0.1:8766",
         ])
+    }
+
+    @Test("realtime endpoint resolver passes H3 health metadata before H2 fallback")
+    func testRealtimeEndpointResolverPassesH3HealthMetadataBeforeH2Fallback() throws {
+        let endpoints = MenuBarRealtimeEndpointResolver.endpoints(
+            controlPlaneBaseURL: try #require(URL(string: "http://127.0.0.1:8765")),
+            health: MobileHealthResponse(
+                ok: true,
+                baseURL: "http://100.95.2.4:8765",
+                baseURLs: ["http://100.95.2.4:8765", "http://192.168.1.33:8765"],
+                grpcBaseURL: "http://100.95.2.4:8766",
+                grpcBaseURLs: ["http://192.168.1.33:8766"],
+                grpcH3BaseURL: "https://100.95.2.4:8766",
+                grpcH3BaseURLs: ["https://192.168.1.33:8766"],
+                grpcH3CertificateSha256: "sha256:pin",
+                requiresAuthentication: true
+            ),
+            preference: .lan
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h3, .h2, .h2, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://192.168.1.33:8766",
+            "https://100.95.2.4:8766",
+            "http://192.168.1.33:8766",
+            "http://100.95.2.4:8766",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints[0].recoveryBaseUrl == "http://192.168.1.33:8765")
+        #expect(endpoints[1].recoveryBaseUrl == "http://100.95.2.4:8765")
+        #expect(endpoints[0].h3CertificateSha256 == "sha256:pin")
+        #expect(endpoints[0].h3CertificateSpkiSha256.isEmpty)
+    }
+
+    @Test("dead H3 route keeps live H2 fallback candidate for Rust")
+    func testDeadH3LiveH2FallbackFixtureLeavesRustEnoughRouteData() throws {
+        let endpoints = MenuBarRealtimeEndpointResolver.endpoints(
+            controlPlaneBaseURL: try #require(URL(string: "http://127.0.0.1:8765")),
+            health: MobileHealthResponse(
+                ok: true,
+                baseURL: "http://127.0.0.1:8765",
+                baseURLs: ["http://127.0.0.1:8765"],
+                grpcBaseURL: "http://127.0.0.1:8766",
+                grpcBaseURLs: [],
+                grpcH3BaseURL: "https://127.0.0.1:9",
+                grpcH3BaseURLs: [],
+                grpcH3CertificateSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                requiresAuthentication: true
+            ),
+            preference: .tailscale
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://127.0.0.1:9",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints.map(\.recoveryBaseUrl) == [
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765",
+        ])
+        #expect(endpoints[0].h3CertificateSha256.hasPrefix("sha256:"))
+        #expect(endpoints[1].h3CertificateSha256.isEmpty)
     }
 
     @Test("offline notification reply stays durable and dedupes retry")

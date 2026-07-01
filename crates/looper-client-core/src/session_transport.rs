@@ -1,21 +1,28 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request as TonicRequest, metadata::MetadataValue, transport::Endpoint};
+use tonic_h3::quinn::H3QuinnConnector;
+use tonic_h3::quinn::h3_quinn::quinn::{
+    ClientConfig, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
+};
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::{
     error::ClientCoreError,
     model::{
         ClientCommandAck, ClientCommandKind, ClientCommandMetadata, ClientEndpoint,
-        ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot, ClientTextChunk,
-        OutboundSessionFrame, OutboundSessionFrameKind, STATE_MINI_BATCH_COMPLETE_KIND,
-        STATE_MINI_REPLACEMENT_COMPLETE_KIND, STATE_MINI_REPLACEMENT_KIND,
+        ClientEndpointTransport, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
+        ClientTextChunk, OutboundSessionFrame, OutboundSessionFrameKind,
+        STATE_MINI_BATCH_COMPLETE_KIND, STATE_MINI_REPLACEMENT_COMPLETE_KIND,
+        STATE_MINI_REPLACEMENT_KIND,
     },
 };
 
@@ -62,14 +69,20 @@ pub(crate) enum StateMiniStreamEvent {
         latest_seq: i64,
         server_time: String,
         endpoint_url: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
     Reconnecting {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
     RecoveryRequired {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
 }
 
@@ -78,6 +91,7 @@ pub(crate) struct RecoveredStateMiniSnapshot {
     pub(crate) snapshot: ClientStateMiniSnapshot,
     pub(crate) endpoint_url: String,
     pub(crate) did_change: bool,
+    pub(crate) endpoint_transport: ClientEndpointTransport,
 }
 
 pub(crate) async fn fetch_state_mini_snapshot(
@@ -107,6 +121,7 @@ pub(crate) async fn fetch_state_mini_snapshot(
                 snapshot,
                 endpoint_url: normalized_endpoint_url(&endpoint.url),
                 did_change: true,
+                endpoint_transport: endpoint.transport,
             });
             let _ = result_sender.send(result).await;
         }));
@@ -135,7 +150,8 @@ async fn fetch_state_mini_snapshot_from_endpoint(
     bearer_token: &str,
     mobile_session_header: &str,
 ) -> Result<ClientStateMiniSnapshot, ClientCoreError> {
-    let uri = state_mini_snapshot_uri(&endpoint.url)?;
+    let uri = state_mini_snapshot_uri(endpoint)?;
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let connector = HttpsConnectorBuilder::new()
         .with_webpki_roots()
         .https_or_http()
@@ -212,6 +228,8 @@ pub(crate) async fn run_state_mini_stream(
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
                 if let Some(recovered) = recover_state_mini_snapshot_for_stream(
@@ -234,6 +252,8 @@ pub(crate) async fn run_state_mini_stream(
                     .send(StateMiniStreamEvent::RecoveryRequired {
                         latest_seq: next_after_seq,
                         error_description,
+                        endpoint_transport,
+                        fallback_reason,
                     })
                     .await;
                 tokio::time::sleep(reconnect_backoff.next_delay()).await;
@@ -241,12 +261,16 @@ pub(crate) async fn run_state_mini_stream(
             Err(StateMiniTransportError::Transport {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
                 let _ = events
                     .send(StateMiniStreamEvent::Reconnecting {
                         latest_seq: next_after_seq,
                         error_description,
+                        endpoint_transport,
+                        fallback_reason,
                     })
                     .await;
                 tokio::time::sleep(reconnect_backoff.next_delay()).await;
@@ -335,17 +359,75 @@ enum StateMiniTransportError {
     Transport {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
     RecoveryRequired {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
+}
+
+fn state_mini_transport_error(
+    latest_seq: i64,
+    error_description: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::Transport {
+        latest_seq,
+        error_description,
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason: String::new(),
+    }
+}
+
+fn state_mini_transport_error_with_endpoint(
+    latest_seq: i64,
+    error_description: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::Transport {
+        latest_seq,
+        error_description,
+        endpoint_transport,
+        fallback_reason,
+    }
+}
+
+fn state_mini_recovery_required_error(
+    latest_seq: i64,
+    error_description: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::RecoveryRequired {
+        latest_seq,
+        error_description,
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason: String::new(),
+    }
+}
+
+fn state_mini_recovery_required_error_with_endpoint(
+    latest_seq: i64,
+    error_description: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::RecoveryRequired {
+        latest_seq,
+        error_description,
+        endpoint_transport,
+        fallback_reason,
+    }
 }
 
 struct OpenStateMiniSession {
     stream: tonic::Streaming<proto::ServerFrame>,
     request_sender: mpsc::Sender<proto::ClientFrame>,
     endpoint_url: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
 }
 
 async fn run_state_mini_stream_session(
@@ -357,20 +439,90 @@ async fn run_state_mini_stream_session(
     events: mpsc::Sender<StateMiniStreamEvent>,
     command_acks: mpsc::Sender<ClientCommandAck>,
 ) -> Result<i64, StateMiniTransportError> {
-    let candidates = session_transport_endpoints(endpoints).map_err(|error| {
-        StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        }
-    })?;
+    let candidates = session_transport_endpoints(endpoints)
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
-    let mut pending_recovery_required: Option<(i64, String)> = None;
+    let mut h3_fallback_reason = String::new();
+    for tier in session_transport_tiers(candidates) {
+        let is_h3_tier = tier
+            .first()
+            .map(|endpoint| endpoint.transport == ClientEndpointTransport::H3)
+            .unwrap_or(false);
+        match open_state_mini_stream_tier(
+            tier,
+            bearer_token,
+            mobile_session_header,
+            after_seq,
+            h3_fallback_reason.clone(),
+        )
+        .await
+        {
+            Ok(opened) => {
+                let OpenStateMiniSession {
+                    stream,
+                    request_sender,
+                    endpoint_url,
+                    endpoint_transport,
+                    fallback_reason,
+                } = opened;
+                mark_endpoint_last_good(endpoints, &endpoint_url, endpoint_transport);
+                return drive_state_mini_stream_session(
+                    stream,
+                    request_sender,
+                    commands,
+                    events,
+                    command_acks,
+                    after_seq,
+                    endpoint_url,
+                    endpoint_transport,
+                    fallback_reason,
+                )
+                .await;
+            }
+            Err(StateMiniTransportError::RecoveryRequired {
+                latest_seq,
+                error_description,
+                endpoint_transport,
+                fallback_reason,
+            }) => {
+                return Err(StateMiniTransportError::RecoveryRequired {
+                    latest_seq,
+                    error_description,
+                    endpoint_transport,
+                    fallback_reason,
+                });
+            }
+            Err(StateMiniTransportError::Transport {
+                error_description, ..
+            }) => {
+                if is_h3_tier {
+                    h3_fallback_reason = format!("h3 pre-stream failure: {error_description}");
+                }
+                last_transport_error = error_description;
+            }
+        }
+    }
+
+    Err(state_mini_transport_error(after_seq, last_transport_error))
+}
+
+async fn open_state_mini_stream_tier(
+    candidates: Vec<ClientEndpoint>,
+    bearer_token: &str,
+    mobile_session_header: &str,
+    after_seq: i64,
+    fallback_reason: String,
+) -> Result<OpenStateMiniSession, StateMiniTransportError> {
+    let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
+    let mut pending_recovery_required: Option<(i64, String, ClientEndpointTransport, String)> =
+        None;
     let (result_sender, mut result_receiver) = mpsc::channel(candidates.len());
     let mut handles = Vec::with_capacity(candidates.len());
     for (index, endpoint) in candidates.into_iter().enumerate() {
         let result_sender = result_sender.clone();
         let bearer_token = bearer_token.to_owned();
         let mobile_session_header = mobile_session_header.to_owned();
+        let fallback_reason = fallback_reason.clone();
         handles.push(tokio::spawn(async move {
             if index > 0 {
                 tokio::time::sleep(STATE_MINI_STREAM_FALLBACK_RACE_DELAY).await;
@@ -380,6 +532,7 @@ async fn run_state_mini_stream_session(
                 bearer_token,
                 mobile_session_header,
                 after_seq,
+                fallback_reason,
             )
             .await;
             let _ = result_sender.send(result).await;
@@ -397,28 +550,20 @@ async fn run_state_mini_stream_session(
                 for handle in handles {
                     handle.abort();
                 }
-                let OpenStateMiniSession {
-                    stream,
-                    request_sender,
-                    endpoint_url,
-                } = opened;
-                mark_endpoint_last_good(endpoints, &endpoint_url);
-                return drive_state_mini_stream_session(
-                    stream,
-                    request_sender,
-                    commands,
-                    events,
-                    command_acks,
-                    after_seq,
-                    endpoint_url,
-                )
-                .await;
+                return Ok(opened);
             }
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
-                pending_recovery_required = Some((latest_seq, error_description));
+                pending_recovery_required = Some((
+                    latest_seq,
+                    error_description,
+                    endpoint_transport,
+                    fallback_reason,
+                ));
             }
             Err(StateMiniTransportError::Transport {
                 error_description, ..
@@ -428,17 +573,18 @@ async fn run_state_mini_stream_session(
         }
     }
 
-    if let Some((latest_seq, error_description)) = pending_recovery_required {
+    if let Some((latest_seq, error_description, endpoint_transport, fallback_reason)) =
+        pending_recovery_required
+    {
         return Err(StateMiniTransportError::RecoveryRequired {
             latest_seq,
             error_description,
+            endpoint_transport,
+            fallback_reason,
         });
     }
 
-    Err(StateMiniTransportError::Transport {
-        latest_seq: after_seq,
-        error_description: last_transport_error,
-    })
+    Err(state_mini_transport_error(after_seq, last_transport_error))
 }
 
 async fn open_state_mini_stream_candidate(
@@ -446,47 +592,62 @@ async fn open_state_mini_stream_candidate(
     bearer_token: String,
     mobile_session_header: String,
     after_seq: i64,
+    fallback_reason: String,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let endpoint_url = normalized_endpoint_url(&endpoint.url);
-    let endpoint = Endpoint::from_shared(endpoint.url)
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?
+    match endpoint.transport {
+        ClientEndpointTransport::H2 => {
+            open_h2_state_mini_stream_candidate(
+                endpoint,
+                endpoint_url,
+                bearer_token,
+                mobile_session_header,
+                after_seq,
+                fallback_reason,
+            )
+            .await
+        }
+        ClientEndpointTransport::H3 => {
+            open_h3_state_mini_stream_candidate(
+                endpoint,
+                endpoint_url,
+                bearer_token,
+                mobile_session_header,
+                after_seq,
+            )
+            .await
+        }
+    }
+}
+
+async fn open_h2_state_mini_stream_candidate(
+    endpoint: ClientEndpoint,
+    endpoint_url: String,
+    bearer_token: String,
+    mobile_session_header: String,
+    after_seq: i64,
+    fallback_reason: String,
+) -> Result<OpenStateMiniSession, StateMiniTransportError> {
+    let channel_endpoint = Endpoint::from_shared(endpoint.url)
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?
         .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(endpoint)
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(channel_endpoint)
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let (request_sender, request_receiver) = mpsc::channel(64);
     request_sender
         .send(resume_client_frame(after_seq))
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
-        |error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        },
-    )?;
+    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
 
     let response = client.session(request).await.map_err(|status| {
         if status.code() == tonic::Code::OutOfRange {
-            StateMiniTransportError::RecoveryRequired {
-                latest_seq: after_seq,
-                error_description: status.message().to_owned(),
-            }
+            state_mini_recovery_required_error(after_seq, status.message().to_owned())
         } else {
-            StateMiniTransportError::Transport {
-                latest_seq: after_seq,
-                error_description: status.to_string(),
-            }
+            state_mini_transport_error(after_seq, status.to_string())
         }
     })?;
 
@@ -494,6 +655,95 @@ async fn open_state_mini_stream_candidate(
         stream: response.into_inner(),
         request_sender,
         endpoint_url,
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason,
+    })
+}
+
+async fn open_h3_state_mini_stream_candidate(
+    endpoint: ClientEndpoint,
+    endpoint_url: String,
+    bearer_token: String,
+    mobile_session_header: String,
+    after_seq: i64,
+) -> Result<OpenStateMiniSession, StateMiniTransportError> {
+    let uri = endpoint_url.parse::<Uri>().map_err(|_| {
+        state_mini_transport_error_with_endpoint(
+            after_seq,
+            ClientCoreError::InvalidEndpoint.to_string(),
+            ClientEndpointTransport::H3,
+            String::new(),
+        )
+    })?;
+    let client_endpoint = h3_client_endpoint(&endpoint).map_err(|error| {
+        state_mini_transport_error_with_endpoint(
+            after_seq,
+            error.to_string(),
+            ClientEndpointTransport::H3,
+            String::new(),
+        )
+    })?;
+    let connector = H3QuinnConnector::new(uri.clone(), "localhost".to_owned(), client_endpoint);
+    let channel = tonic_h3::H3Channel::new(connector, uri);
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
+    let (request_sender, request_receiver) = mpsc::channel(64);
+    request_sender
+        .send(resume_client_frame(after_seq))
+        .await
+        .map_err(|error| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                error.to_string(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
+        })?;
+    let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
+    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
+        |error| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                error.to_string(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
+        },
+    )?;
+
+    let response = tokio::time::timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT, client.session(request))
+        .await
+        .map_err(|_| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                "H3 Session open timed out".to_owned(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
+        })?
+        .map_err(|status| {
+            if status.code() == tonic::Code::OutOfRange {
+                state_mini_recovery_required_error_with_endpoint(
+                    after_seq,
+                    status.message().to_owned(),
+                    ClientEndpointTransport::H3,
+                    String::new(),
+                )
+            } else {
+                state_mini_transport_error_with_endpoint(
+                    after_seq,
+                    status.to_string(),
+                    ClientEndpointTransport::H3,
+                    String::new(),
+                )
+            }
+        })?;
+
+    Ok(OpenStateMiniSession {
+        stream: response.into_inner(),
+        request_sender,
+        endpoint_url,
+        endpoint_transport: ClientEndpointTransport::H3,
+        fallback_reason: String::new(),
     })
 }
 
@@ -505,6 +755,8 @@ async fn drive_state_mini_stream_session(
     command_acks: mpsc::Sender<ClientCommandAck>,
     after_seq: i64,
     endpoint_url: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
 ) -> Result<i64, StateMiniTransportError> {
     let mut latest_seq = after_seq;
     events
@@ -512,11 +764,17 @@ async fn drive_state_mini_stream_session(
             latest_seq,
             server_time: String::new(),
             endpoint_url: endpoint_url.clone(),
+            endpoint_transport,
+            fallback_reason: fallback_reason.clone(),
         })
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq,
-            error_description: error.to_string(),
+        .map_err(|error| {
+            state_mini_transport_error_with_endpoint(
+                latest_seq,
+                error.to_string(),
+                endpoint_transport,
+                fallback_reason.clone(),
+            )
         })?;
     loop {
         tokio::select! {
@@ -524,30 +782,42 @@ async fn drive_state_mini_stream_session(
                 let Some(command) = command else {
                     return Ok(latest_seq);
                 };
-                let frame = client_frame(command).map_err(|error| StateMiniTransportError::Transport {
-                    latest_seq,
-                    error_description: error.to_string(),
+                let frame = client_frame(command).map_err(|error| {
+                    state_mini_transport_error_with_endpoint(
+                        latest_seq,
+                        error.to_string(),
+                        endpoint_transport,
+                        fallback_reason.clone(),
+                    )
                 })?;
                 request_sender
                     .send(frame)
                     .await
-                    .map_err(|error| StateMiniTransportError::Transport {
-                        latest_seq,
-                        error_description: error.to_string(),
+                    .map_err(|error| {
+                        state_mini_transport_error_with_endpoint(
+                            latest_seq,
+                            error.to_string(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     })?;
             }
             frame = stream.message() => {
                 let Some(frame) = frame.map_err(|status| {
                     if status.code() == tonic::Code::OutOfRange {
-                        StateMiniTransportError::RecoveryRequired {
+                        state_mini_recovery_required_error_with_endpoint(
                             latest_seq,
-                            error_description: status.message().to_owned(),
-                        }
+                            status.message().to_owned(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     } else {
-                        StateMiniTransportError::Transport {
+                        state_mini_transport_error_with_endpoint(
                             latest_seq,
-                            error_description: status.to_string(),
-                        }
+                            status.to_string(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     }
                 })? else {
                     return Ok(latest_seq);
@@ -560,9 +830,13 @@ async fn drive_state_mini_stream_session(
                         command_acks
                             .send(ack)
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::StateDelta(delta)) => {
@@ -571,9 +845,13 @@ async fn drive_state_mini_stream_session(
                         events
                             .send(StateMiniStreamEvent::Delta(delta))
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::TextChunk(text_chunk)) => {
@@ -585,9 +863,13 @@ async fn drive_state_mini_stream_session(
                         events
                             .send(StateMiniStreamEvent::TextChunk(text_chunk))
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
@@ -598,11 +880,17 @@ async fn drive_state_mini_stream_session(
                                 latest_seq: heartbeat.latest_seq,
                                 server_time: heartbeat.server_time,
                                 endpoint_url: endpoint_url.clone(),
+                                endpoint_transport,
+                                fallback_reason: fallback_reason.clone(),
                             })
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     _ => {}
@@ -648,6 +936,8 @@ fn state_mini_stream_ended_event(latest_seq: i64) -> StateMiniStreamEvent {
     StateMiniStreamEvent::Reconnecting {
         latest_seq,
         error_description: STATE_MINI_STREAM_ENDED.to_owned(),
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason: String::new(),
     }
 }
 
@@ -670,15 +960,19 @@ fn ordered_client_endpoints(
         return Err(ClientCoreError::NoEndpoint);
     }
 
-    let mut seen_urls = HashSet::new();
+    let mut seen_endpoints = HashSet::new();
     let mut ordered = Vec::with_capacity(endpoints.len());
-    for prefer_last_good in [true, false] {
-        for endpoint in endpoints
-            .iter()
-            .filter(|endpoint| endpoint.last_good == prefer_last_good)
-        {
+    for (prefer_transport, prefer_last_good) in [
+        (ClientEndpointTransport::H3, true),
+        (ClientEndpointTransport::H3, false),
+        (ClientEndpointTransport::H2, true),
+        (ClientEndpointTransport::H2, false),
+    ] {
+        for endpoint in endpoints.iter().filter(|endpoint| {
+            endpoint.transport == prefer_transport && endpoint.last_good == prefer_last_good
+        }) {
             let normalized_url = endpoint.url.trim().trim_end_matches('/').to_owned();
-            if seen_urls.insert(normalized_url) {
+            if seen_endpoints.insert((endpoint.transport, normalized_url)) {
                 ordered.push(endpoint.clone());
             }
         }
@@ -687,10 +981,31 @@ fn ordered_client_endpoints(
     Ok(ordered)
 }
 
-fn mark_endpoint_last_good(endpoints: &mut [ClientEndpoint], endpoint_url: &str) {
+fn session_transport_tiers(candidates: Vec<ClientEndpoint>) -> Vec<Vec<ClientEndpoint>> {
+    let h3 = candidates
+        .iter()
+        .filter(|endpoint| endpoint.transport == ClientEndpointTransport::H3)
+        .cloned()
+        .collect::<Vec<_>>();
+    let h2 = candidates
+        .into_iter()
+        .filter(|endpoint| endpoint.transport == ClientEndpointTransport::H2)
+        .collect::<Vec<_>>();
+    [h3, h2]
+        .into_iter()
+        .filter(|tier| !tier.is_empty())
+        .collect()
+}
+
+fn mark_endpoint_last_good(
+    endpoints: &mut [ClientEndpoint],
+    endpoint_url: &str,
+    transport: ClientEndpointTransport,
+) {
     let endpoint_url = normalized_endpoint_url(endpoint_url);
     for endpoint in endpoints {
-        endpoint.last_good = normalized_endpoint_url(&endpoint.url) == endpoint_url;
+        endpoint.last_good = endpoint.transport == transport
+            && normalized_endpoint_url(&endpoint.url) == endpoint_url;
     }
 }
 
@@ -698,18 +1013,25 @@ fn normalized_endpoint_url(endpoint_url: &str) -> String {
     endpoint_url.trim().trim_end_matches('/').to_owned()
 }
 
-fn state_mini_snapshot_uri(endpoint_url: &str) -> Result<Uri, ClientCoreError> {
-    let endpoint_url = endpoint_url.trim().trim_end_matches('/');
-    if endpoint_url.is_empty() {
-        return Err(ClientCoreError::InvalidEndpoint);
-    }
-    let recovery_base_url = state_mini_snapshot_base_url(endpoint_url)?;
+fn state_mini_snapshot_uri(endpoint: &ClientEndpoint) -> Result<Uri, ClientCoreError> {
+    let recovery_base_url = state_mini_snapshot_base_url(endpoint)?;
     format!("{recovery_base_url}{STATE_MINI_SNAPSHOT_PATH}")
         .parse::<Uri>()
         .map_err(|_| ClientCoreError::InvalidEndpoint)
 }
 
-fn state_mini_snapshot_base_url(endpoint_url: &str) -> Result<String, ClientCoreError> {
+fn state_mini_snapshot_base_url(endpoint: &ClientEndpoint) -> Result<String, ClientCoreError> {
+    let explicit = endpoint.recovery_base_url.trim().trim_end_matches('/');
+    if !explicit.is_empty() {
+        return Ok(explicit.to_owned());
+    }
+    if endpoint.transport == ClientEndpointTransport::H3 {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
+    let endpoint_url = endpoint.url.trim().trim_end_matches('/');
+    if endpoint_url.is_empty() {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
     let uri = endpoint_url
         .parse::<Uri>()
         .map_err(|_| ClientCoreError::InvalidEndpoint)?;
@@ -728,6 +1050,131 @@ fn snapshot_recovery_authority(scheme: &str, authority: &str) -> String {
         return format!("{host}:{DEFAULT_HTTP_API_PORT}");
     }
     authority.to_owned()
+}
+
+fn h3_client_endpoint(
+    endpoint: &ClientEndpoint,
+) -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+    let cert_pin = normalized_sha256_pin(&endpoint.h3_certificate_sha256)?;
+    let spki_pin = normalized_sha256_pin(&endpoint.h3_certificate_spki_sha256)?;
+    if cert_pin.is_none() && spki_pin.is_none() {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
+
+    let mut client_endpoint = tonic_h3::quinn::h3_quinn::Endpoint::client(
+        "0.0.0.0:0"
+            .parse::<SocketAddr>()
+            .map_err(|_| ClientCoreError::InvalidEndpoint)?,
+    )
+    .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
+    let tls_config = h3_client_tls_config(cert_pin, spki_pin)?;
+    let quic_config =
+        QuicClientConfig::try_from(tls_config).map_err(|_| ClientCoreError::InvalidEndpoint)?;
+    client_endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
+    Ok(client_endpoint)
+}
+
+fn h3_client_tls_config(
+    cert_pin: Option<String>,
+    spki_pin: Option<String>,
+) -> Result<quinn_rustls::ClientConfig, ClientCoreError> {
+    let provider = quinn_rustls::crypto::ring::default_provider();
+    let verifier = Arc::new(PinnedH3CertificateVerifier {
+        cert_pin,
+        spki_pin,
+        supported: provider.signature_verification_algorithms,
+    });
+    let mut tls_config = quinn_rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&quinn_rustls::version::TLS13])
+        .map_err(|_| ClientCoreError::InvalidEndpoint)?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![b"h3".to_vec()];
+    Ok(tls_config)
+}
+
+#[derive(Debug)]
+struct PinnedH3CertificateVerifier {
+    cert_pin: Option<String>,
+    spki_pin: Option<String>,
+    supported: quinn_rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl quinn_rustls::client::danger::ServerCertVerifier for PinnedH3CertificateVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &quinn_rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[quinn_rustls::pki_types::CertificateDer<'_>],
+        _server_name: &quinn_rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: quinn_rustls::pki_types::UnixTime,
+    ) -> Result<quinn_rustls::client::danger::ServerCertVerified, quinn_rustls::Error> {
+        let cert_sha256 = sha256_hex(end_entity.as_ref());
+        if self.cert_pin.as_deref() == Some(cert_sha256.as_str()) {
+            return Ok(quinn_rustls::client::danger::ServerCertVerified::assertion());
+        }
+        if let Some(expected_spki_pin) = self.spki_pin.as_deref() {
+            let spki_sha256 = certificate_spki_sha256(end_entity.as_ref())?;
+            if expected_spki_pin == spki_sha256 {
+                return Ok(quinn_rustls::client::danger::ServerCertVerified::assertion());
+            }
+        }
+        Err(quinn_rustls::Error::InvalidCertificate(
+            quinn_rustls::CertificateError::ApplicationVerificationFailure,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> Result<quinn_rustls::client::danger::HandshakeSignatureValid, quinn_rustls::Error> {
+        quinn_rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> Result<quinn_rustls::client::danger::HandshakeSignatureValid, quinn_rustls::Error> {
+        quinn_rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<quinn_rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+fn certificate_spki_sha256(certificate_der: &[u8]) -> Result<String, quinn_rustls::Error> {
+    let (_, certificate) = X509Certificate::from_der(certificate_der).map_err(|_| {
+        quinn_rustls::Error::InvalidCertificate(quinn_rustls::CertificateError::BadEncoding)
+    })?;
+    Ok(sha256_hex(certificate.tbs_certificate.subject_pki.raw))
+}
+
+fn normalized_sha256_pin(pin: &str) -> Result<Option<String>, ClientCoreError> {
+    let pin = pin.trim();
+    if pin.is_empty() {
+        return Ok(None);
+    }
+    let hex = pin.strip_prefix("sha256:").unwrap_or(pin);
+    if hex.len() != 64 || !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        return Err(ClientCoreError::InvalidEndpoint);
+    }
+    Ok(Some(hex.to_ascii_lowercase()))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
 }
 
 fn apply_metadata(
@@ -976,10 +1423,10 @@ fn client_state_mini_delta(
         return Ok(seq_only_state_mini_delta(delta));
     };
     if state_mini_payload_requires_snapshot_recovery(&payload) {
-        return Err(StateMiniTransportError::RecoveryRequired {
-            latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
-            error_description: state_mini_payload_recovery_reason(&payload),
-        });
+        return Err(state_mini_recovery_required_error(
+            state_mini_payload_latest_seq(&payload, delta.seq),
+            state_mini_payload_recovery_reason(&payload),
+        ));
     }
     let replace_sessions = payload
         .get(REPLACE_FIELD)
@@ -1158,9 +1605,18 @@ mod tests {
     use serde_json::json;
     use std::{
         io::{Read, Write},
-        net::TcpListener,
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
+        sync::{Arc, Mutex},
         thread,
         time::Instant,
+    };
+
+    use rcgen::generate_simple_self_signed;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use tonic_h3::quinn::H3QuinnAcceptor;
+    use tonic_h3::quinn::h3_quinn::Endpoint as H3Endpoint;
+    use tonic_h3::quinn::h3_quinn::quinn::{
+        ServerConfig, VarInt, crypto::rustls::QuicServerConfig,
     };
 
     use super::*;
@@ -1208,7 +1664,8 @@ mod tests {
 
     #[test]
     fn state_mini_snapshot_url_uses_http_api_port_for_realtime_endpoint() {
-        let url = state_mini_snapshot_uri("http://127.0.0.1:8766/base/").expect("snapshot url");
+        let url = state_mini_snapshot_uri(&h2_endpoint("http://127.0.0.1:8766/base/", false))
+            .expect("snapshot url");
 
         assert_eq!(
             url.to_string(),
@@ -1218,7 +1675,8 @@ mod tests {
 
     #[test]
     fn state_mini_snapshot_url_keeps_non_realtime_ports() {
-        let url = state_mini_snapshot_uri("https://100.119.200.69:8781/").expect("snapshot url");
+        let url = state_mini_snapshot_uri(&h2_endpoint("https://100.119.200.69:8781/", false))
+            .expect("snapshot url");
 
         assert_eq!(
             url.to_string(),
@@ -1230,19 +1688,35 @@ mod tests {
     fn snapshot_recovery_endpoints_keep_fallbacks_after_last_good() {
         let endpoints = snapshot_recovery_endpoints(&[
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://100.119.200.69:8765".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://192.168.1.33:8765".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: true,
             },
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://192.168.1.33:8765/".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://127.0.0.1:8765".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
         ])
@@ -1275,11 +1749,19 @@ mod tests {
             .block_on(fetch_state_mini_snapshot(
                 vec![
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: slow_url,
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: true,
                     },
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: fast_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     },
                 ],
@@ -1307,7 +1789,11 @@ mod tests {
         let error = runtime
             .block_on(fetch_state_mini_snapshot(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: true,
                 }],
                 String::new(),
@@ -1343,6 +1829,7 @@ mod tests {
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                ..
             }) => {
                 assert_eq!(latest_seq, 57);
                 assert_eq!(error_description, "state_delta_frame_cap_exceeded");
@@ -1359,19 +1846,35 @@ mod tests {
     fn session_transport_endpoints_keep_fallbacks_after_last_good() {
         let endpoints = session_transport_endpoints(&[
             ClientEndpoint {
+                transport: ClientEndpointTransport::H2,
                 url: "http://100.119.200.69:8766".to_owned(),
+                recovery_base_url: "http://100.119.200.69:8765".to_owned(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
             ClientEndpoint {
+                transport: ClientEndpointTransport::H2,
                 url: "http://192.168.1.33:8766".to_owned(),
+                recovery_base_url: "http://192.168.1.33:8765".to_owned(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: true,
             },
             ClientEndpoint {
+                transport: ClientEndpointTransport::H2,
                 url: "http://192.168.1.33:8766/".to_owned(),
+                recovery_base_url: "http://192.168.1.33:8765".to_owned(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
             ClientEndpoint {
+                transport: ClientEndpointTransport::H2,
                 url: "http://127.0.0.1:8766".to_owned(),
+                recovery_base_url: "http://127.0.0.1:8765".to_owned(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
         ])
@@ -1392,23 +1895,151 @@ mod tests {
     }
 
     #[test]
+    fn h3_endpoint_transport_order_prefers_h3_before_h2_and_last_good_h3_first() {
+        let endpoints = session_transport_endpoints(&[
+            h2_endpoint("http://127.0.0.1:8766", true),
+            h3_endpoint(
+                "https://127.0.0.1:8766",
+                "http://127.0.0.1:8765",
+                "sha256:01",
+                false,
+            ),
+            h3_endpoint(
+                "https://100.64.0.2:8766",
+                "http://100.64.0.2:8765",
+                "sha256:02",
+                true,
+            ),
+            h2_endpoint("http://100.64.0.2:8766", false),
+        ])
+        .expect("endpoints");
+
+        let ordered = endpoints
+            .into_iter()
+            .map(|endpoint| (endpoint.transport, endpoint.url))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered,
+            vec![
+                (
+                    ClientEndpointTransport::H3,
+                    "https://100.64.0.2:8766".to_owned()
+                ),
+                (
+                    ClientEndpointTransport::H3,
+                    "https://127.0.0.1:8766".to_owned()
+                ),
+                (
+                    ClientEndpointTransport::H2,
+                    "http://127.0.0.1:8766".to_owned()
+                ),
+                (
+                    ClientEndpointTransport::H2,
+                    "http://100.64.0.2:8766".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn state_mini_snapshot_recovery_uses_explicit_recovery_base_url_for_h3() {
+        let url = state_mini_snapshot_uri(&h3_endpoint(
+            "https://127.0.0.1:8766/realtime",
+            "http://127.0.0.1:9876/mobile",
+            "sha256:01",
+            true,
+        ))
+        .expect("snapshot url");
+
+        assert_eq!(
+            url.to_string(),
+            "http://127.0.0.1:9876/mobile/api/mobile/session-minis/snapshot"
+        );
+    }
+
+    #[test]
+    fn h3_rejects_missing_or_malformed_certificate_pin_material() {
+        let missing_pin = h3_endpoint("https://127.0.0.1:8766", "http://127.0.0.1:8765", "", false);
+        assert_eq!(
+            h3_client_endpoint(&missing_pin).expect_err("missing H3 pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+
+        let malformed_cert_pin = h3_endpoint(
+            "https://127.0.0.1:8766",
+            "http://127.0.0.1:8765",
+            "sha256:not-hex",
+            false,
+        );
+        assert_eq!(
+            h3_client_endpoint(&malformed_cert_pin).expect_err("malformed H3 cert pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+
+        let malformed_spki_pin = ClientEndpoint {
+            transport: ClientEndpointTransport::H3,
+            url: "https://127.0.0.1:8766".to_owned(),
+            recovery_base_url: "http://127.0.0.1:8765".to_owned(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: "sha256:short".to_owned(),
+            last_good: false,
+        };
+        assert_eq!(
+            h3_client_endpoint(&malformed_spki_pin).expect_err("malformed H3 SPKI pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+        println!(
+            "manual_qa_malformed_h3_pin missing_pin=reject malformed_cert=reject malformed_spki=reject"
+        );
+    }
+
+    #[test]
+    fn h3_snapshot_recovery_rejects_missing_explicit_recovery_base_url() {
+        let error = state_mini_snapshot_uri(&h3_endpoint(
+            "https://127.0.0.1:8766/realtime",
+            "",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            true,
+        ))
+        .expect_err("H3 recovery requires explicit HTTP base URL");
+
+        assert_eq!(error, ClientCoreError::InvalidEndpoint);
+    }
+
+    #[test]
     fn successful_session_endpoint_becomes_next_last_good() {
         let mut endpoints = vec![
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://100.119.200.69:8766".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: true,
             },
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://192.168.1.33:8766/".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
             ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: "http://127.0.0.1:8766".to_owned(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             },
         ];
 
-        mark_endpoint_last_good(&mut endpoints, " http://192.168.1.33:8766 ");
+        mark_endpoint_last_good(
+            &mut endpoints,
+            " http://192.168.1.33:8766 ",
+            ClientEndpointTransport::H2,
+        );
 
         assert!(!endpoints[0].last_good);
         assert!(endpoints[1].last_good);
@@ -1437,11 +2068,19 @@ mod tests {
             let stale_url = unused_local_url();
             let mut endpoints = vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: stale_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: true,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: fallback_url.clone(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
             ];
@@ -1481,6 +2120,313 @@ mod tests {
             server.abort();
             let _ = server.await;
         });
+    }
+
+    #[test]
+    fn h3_session_stream_uses_quinn() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let h3 = spawn_h3_realtime_session_server(81).await;
+            let mut endpoints = vec![h3_endpoint(
+                &h3.url,
+                "http://127.0.0.1:8765",
+                &h3.certificate_sha256,
+                false,
+            )];
+            let (command_sender, mut commands) = mpsc::channel(1);
+            let (events_sender, mut events) = mpsc::channel(4);
+            let (command_acks_sender, _command_acks) = mpsc::channel(1);
+            let session_task = tokio::spawn(async move {
+                run_state_mini_stream_session(
+                    &mut endpoints,
+                    "",
+                    "",
+                    80,
+                    &mut commands,
+                    events_sender,
+                    command_acks_sender,
+                )
+                .await
+            });
+
+            let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+                .await
+                .expect("H3 event timeout")
+                .expect("opened endpoint event");
+            match event {
+                StateMiniStreamEvent::Heartbeat {
+                    endpoint_url,
+                    endpoint_transport,
+                    latest_seq,
+                    fallback_reason,
+                    ..
+                } => {
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&h3.url));
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                    assert_eq!(latest_seq, 80);
+                    assert!(fallback_reason.is_empty());
+                    println!(
+                        "manual_qa_h3_success transport=h3 endpoint={} latest_seq={}",
+                        endpoint_url, latest_seq
+                    );
+                }
+                other => panic!("expected H3 endpoint heartbeat, got {other:?}"),
+            }
+
+            drop(command_sender);
+            session_task.abort();
+            let _ = session_task.await;
+            h3.shutdown().await;
+        });
+    }
+
+    #[test]
+    fn h3_failure_falls_back_to_h2_without_losing_resume_or_ack() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let dead_h3 = reserve_dead_udp_url().await;
+            let (h2_url, server, observed_resume) =
+                spawn_realtime_session_server_with_ack(88, "mutation-fallback").await;
+            let mut endpoints = vec![
+                h3_endpoint(
+                    &dead_h3,
+                    "http://127.0.0.1:8765",
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    false,
+                ),
+                h2_endpoint(&h2_url, false),
+            ];
+            let (command_sender, mut commands) = mpsc::channel(2);
+            command_sender
+                .send(test_outbound_command("mutation-fallback", 77))
+                .await
+                .expect("queue command");
+            let (events_sender, mut events) = mpsc::channel(4);
+            let (command_acks_sender, mut command_acks) = mpsc::channel(2);
+
+            let latest_seq = run_state_mini_stream_session(
+                &mut endpoints,
+                "",
+                "",
+                77,
+                &mut commands,
+                events_sender,
+                command_acks_sender,
+            )
+            .await
+            .expect("H2 fallback session connects");
+
+            assert_eq!(latest_seq, 88);
+            assert_eq!(
+                observed_resume.lock().expect("resume lock").as_slice(),
+                &[77],
+                "fallback must preserve Resume after_seq"
+            );
+            let event = events.recv().await.expect("fallback endpoint event");
+            match event {
+                StateMiniStreamEvent::Heartbeat {
+                    endpoint_url,
+                    endpoint_transport,
+                    fallback_reason,
+                    latest_seq,
+                    ..
+                } => {
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&h2_url));
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H2);
+                    assert_eq!(latest_seq, 77);
+                    assert!(
+                        fallback_reason.contains("h3"),
+                        "fallback reason should identify H3 failure: {fallback_reason}"
+                    );
+                    println!(
+                        "manual_qa_h3_fallback transport=h2 fallback_reason={fallback_reason} resume_after_seq=77 ack_seq=88"
+                    );
+                }
+                other => panic!("expected H2 fallback heartbeat, got {other:?}"),
+            }
+            let ack = command_acks.recv().await.expect("fallback command ack");
+            assert_eq!(ack.client_mutation_id, "mutation-fallback");
+            assert_eq!(ack.ack_seq, 88);
+            assert!(!endpoints[0].last_good);
+            assert!(endpoints[1].last_good);
+
+            server.abort();
+            let _ = server.await;
+        });
+    }
+
+    #[test]
+    fn h3_established_stream_failure_reconnects_with_after_seq_and_preserves_pending_ack() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let h3 =
+                spawn_h3_realtime_session_server_fail_then_ack(91, 95, "mutation-after-h3-failure")
+                    .await;
+            let (h2_url, h2_server, h2_observed_resume) =
+                spawn_realtime_session_server_with_ack(95, "mutation-after-h3-failure").await;
+            let endpoints = vec![
+                h3_endpoint(
+                    &h3.url,
+                    "http://127.0.0.1:8765",
+                    &h3.certificate_sha256,
+                    false,
+                ),
+                h2_endpoint(&h2_url, false),
+            ];
+            let (command_sender, commands) = mpsc::channel(2);
+            let (events_sender, mut events) = mpsc::channel(8);
+            let (command_acks_sender, mut command_acks) = mpsc::channel(2);
+            let stream_task = tokio::spawn(async move {
+                run_state_mini_stream(
+                    endpoints,
+                    String::new(),
+                    String::new(),
+                    90,
+                    commands,
+                    events_sender,
+                    command_acks_sender,
+                )
+                .await;
+            });
+
+            let opened = recv_stream_event(&mut events, "initial H3 heartbeat").await;
+            match opened {
+                StateMiniStreamEvent::Heartbeat {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    ..
+                } => {
+                    assert_eq!(latest_seq, 90);
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                    assert!(fallback_reason.is_empty());
+                }
+                other => panic!("expected initial H3 heartbeat, got {other:?}"),
+            }
+
+            let mut expected_resume_after_seq = 90;
+            let reconnecting = loop {
+                let event = recv_stream_event(&mut events, "H3 reconnecting event").await;
+                match event {
+                    StateMiniStreamEvent::Heartbeat {
+                        latest_seq,
+                        endpoint_transport,
+                        ..
+                    } => {
+                        assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                        expected_resume_after_seq = expected_resume_after_seq.max(latest_seq);
+                    }
+                    other @ StateMiniStreamEvent::Reconnecting { .. } => break other,
+                    other => panic!("expected H3 heartbeat or reconnecting event, got {other:?}"),
+                }
+            };
+            match reconnecting {
+                StateMiniStreamEvent::Reconnecting {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    error_description,
+                } => {
+                    assert_eq!(latest_seq, expected_resume_after_seq);
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                    assert!(fallback_reason.is_empty());
+                    assert!(
+                        error_description.contains("Connection error")
+                            || error_description.contains("established h3 stream failed"),
+                        "unexpected reconnect reason: {error_description}"
+                    );
+                }
+                other => panic!("expected H3 reconnecting event, got {other:?}"),
+            }
+
+            h3.endpoint.close(VarInt::from_u32(0), b"test h3 down");
+            command_sender
+                .send(test_outbound_command(
+                    "mutation-after-h3-failure",
+                    expected_resume_after_seq,
+                ))
+                .await
+                .expect("queue command across reconnect");
+
+            let reopened = recv_stream_event(&mut events, "fallback H2 heartbeat").await;
+            match reopened {
+                StateMiniStreamEvent::Heartbeat {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    endpoint_url,
+                    ..
+                } => {
+                    assert_eq!(latest_seq, expected_resume_after_seq);
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&h2_url));
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H2);
+                    assert!(
+                        fallback_reason.contains("h3"),
+                        "fallback reason should identify H3 reconnect failure: {fallback_reason}"
+                    );
+                }
+                other => panic!("expected fallback H2 heartbeat, got {other:?}"),
+            }
+
+            let ack = tokio::time::timeout(Duration::from_secs(3), command_acks.recv())
+                .await
+                .expect("ack timeout")
+                .expect("ack after H3 reconnect");
+            assert_eq!(ack.client_mutation_id, "mutation-after-h3-failure");
+            assert_eq!(ack.ack_seq, 95);
+
+            let resumes = wait_for_resume_count(h2_observed_resume, 1).await;
+            assert_eq!(
+                resumes.last().copied(),
+                Some(expected_resume_after_seq),
+                "H3 reconnect must preserve Resume after_seq from the failed established stream"
+            );
+            assert!(
+                !resumes.contains(&0),
+                "H3 reconnect must not reset Resume after_seq to zero: {resumes:?}"
+            );
+            println!(
+                "manual_qa_h3_established_reconnect transport=h3_then_h2 resumes={resumes:?} ack_seq={}",
+                ack.ack_seq
+            );
+
+            stream_task.abort();
+            let _ = stream_task.await;
+            drop(command_sender);
+            h2_server.abort();
+            let _ = h2_server.await;
+            h3.shutdown().await;
+        });
+    }
+
+    fn h2_endpoint(url: &str, last_good: bool) -> ClientEndpoint {
+        ClientEndpoint {
+            transport: ClientEndpointTransport::H2,
+            url: url.to_owned(),
+            recovery_base_url: url.replace(":8766", ":8765"),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: String::new(),
+            last_good,
+        }
+    }
+
+    fn h3_endpoint(
+        url: &str,
+        recovery_base_url: &str,
+        certificate_sha256: &str,
+        last_good: bool,
+    ) -> ClientEndpoint {
+        ClientEndpoint {
+            transport: ClientEndpointTransport::H3,
+            url: url.to_owned(),
+            recovery_base_url: recovery_base_url.to_owned(),
+            h3_certificate_sha256: certificate_sha256.to_owned(),
+            h3_certificate_spki_sha256: String::new(),
+            last_good,
+        }
     }
 
     fn spawn_snapshot_server(
@@ -1559,7 +2505,7 @@ mod tests {
         drop(listener);
         let handle = tokio::spawn(async move {
             let service = proto::looper_realtime_server::LooperRealtimeServer::new(
-                TestRealtimeSessionService,
+                TestRealtimeSessionService::default(),
             );
             let _ = tonic::transport::Server::builder()
                 .add_service(service)
@@ -1570,7 +2516,254 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
-    struct TestRealtimeSessionService;
+    async fn spawn_realtime_session_server_with_ack(
+        ack_seq: i64,
+        client_mutation_id: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<i64>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind realtime server port");
+        let address = listener.local_addr().expect("realtime server addr");
+        drop(listener);
+        let observed_resume = Arc::new(Mutex::new(Vec::new()));
+        let service = TestRealtimeSessionService {
+            heartbeat_seq: None,
+            ack_seq: Some(ack_seq),
+            ack_client_mutation_id: client_mutation_id.to_owned(),
+            observed_resume: observed_resume.clone(),
+        };
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(service);
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), handle, observed_resume)
+    }
+
+    struct SpawnedH3RealtimeSessionServer {
+        url: String,
+        certificate_sha256: String,
+        endpoint: H3Endpoint,
+        server_task: tokio::task::JoinHandle<Result<(), tonic_h3::Error>>,
+    }
+
+    impl SpawnedH3RealtimeSessionServer {
+        async fn shutdown(self) {
+            self.endpoint.close(VarInt::from_u32(0), b"test shutdown");
+            self.endpoint.wait_idle().await;
+            let _ = self.server_task.await;
+        }
+    }
+
+    async fn spawn_h3_realtime_session_server(
+        heartbeat_seq: i64,
+    ) -> SpawnedH3RealtimeSessionServer {
+        let observed_resume = Arc::new(Mutex::new(Vec::new()));
+        let service = TestRealtimeSessionService {
+            heartbeat_seq: Some(heartbeat_seq),
+            ack_seq: None,
+            ack_client_mutation_id: String::new(),
+            observed_resume: observed_resume.clone(),
+        };
+        spawn_h3_realtime_session_server_with_service(service).await
+    }
+
+    async fn spawn_h3_realtime_session_server_fail_then_ack(
+        heartbeat_seq: i64,
+        ack_seq: i64,
+        client_mutation_id: &'static str,
+    ) -> SpawnedH3RealtimeSessionServer {
+        let observed_resume = Arc::new(Mutex::new(Vec::new()));
+        let service = FailThenAckRealtimeSessionService {
+            heartbeat_seq,
+            ack_seq,
+            ack_client_mutation_id: client_mutation_id.to_owned(),
+            observed_resume: observed_resume.clone(),
+            session_count: Arc::new(Mutex::new(0)),
+        };
+        spawn_h3_realtime_session_server_with_service(service).await
+    }
+
+    async fn spawn_h3_realtime_session_server_with_service<S>(
+        service: S,
+    ) -> SpawnedH3RealtimeSessionServer
+    where
+        S: proto::looper_realtime_server::LooperRealtime + Clone + Send + Sync + 'static,
+        S::SessionStream: Send + 'static,
+    {
+        let certificate = generate_simple_self_signed(vec!["localhost".to_owned()])
+            .expect("generate H3 test certificate");
+        let certificate_der = certificate.cert.der().as_ref().to_vec();
+        let certificate_sha256 = format!("sha256:{}", sha256_hex(&certificate_der));
+        let mut tls_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("H3 TLS versions")
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from(certificate_der)],
+            PrivateKeyDer::Pkcs8(certificate.key_pair.serialize_der().into()),
+        )
+        .expect("H3 test cert");
+        tls_config.alpn_protocols = vec![b"h3".to_vec()];
+        let quic_config =
+            QuicServerConfig::try_from(Arc::new(tls_config)).expect("H3 QUIC server config");
+        let endpoint = H3Endpoint::server(
+            ServerConfig::with_crypto(Arc::new(quic_config)),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .expect("H3 server endpoint");
+        let address = endpoint.local_addr().expect("H3 local addr");
+        let acceptor = H3QuinnAcceptor::new(endpoint.clone());
+        let routes = tonic::service::Routes::new(
+            proto::looper_realtime_server::LooperRealtimeServer::new(service),
+        );
+        let server_task = tokio::spawn(async move {
+            tonic_h3::server::H3Router::new(routes)
+                .serve(acceptor)
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        SpawnedH3RealtimeSessionServer {
+            url: format!("https://{}:{}", address.ip(), address.port()),
+            certificate_sha256,
+            endpoint,
+            server_task,
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailThenAckRealtimeSessionService {
+        heartbeat_seq: i64,
+        ack_seq: i64,
+        ack_client_mutation_id: String,
+        observed_resume: Arc<Mutex<Vec<i64>>>,
+        session_count: Arc<Mutex<usize>>,
+    }
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for FailThenAckRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let heartbeat_seq = self.heartbeat_seq;
+            let ack_seq = self.ack_seq;
+            let ack_client_mutation_id = self.ack_client_mutation_id.clone();
+            let observed_resume = self.observed_resume.clone();
+            let session_index = {
+                let mut session_count = self.session_count.lock().expect("session count lock");
+                *session_count += 1;
+                *session_count
+            };
+            let mut stream = request.into_inner();
+            let (sender, receiver) = mpsc::channel(4);
+            tokio::spawn(async move {
+                if session_index == 1 {
+                    let _ = sender
+                        .send(Ok(proto::ServerFrame {
+                            frame: Some(proto::server_frame::Frame::Heartbeat(proto::Heartbeat {
+                                latest_seq: heartbeat_seq,
+                                server_time: "2026-07-01T00:00:00Z".to_owned(),
+                            })),
+                        }))
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if let Ok(Ok(Some(frame))) =
+                        tokio::time::timeout(Duration::from_millis(50), stream.message()).await
+                    {
+                        if let Some(proto::client_frame::Frame::Resume(resume)) = frame.frame {
+                            observed_resume
+                                .lock()
+                                .expect("resume lock")
+                                .push(resume.after_seq);
+                        }
+                    }
+                    let _ = sender
+                        .send(Err(tonic::Status::unavailable(
+                            "established h3 stream failed",
+                        )))
+                        .await;
+                    return;
+                }
+
+                if let Ok(Ok(Some(frame))) =
+                    tokio::time::timeout(Duration::from_millis(500), stream.message()).await
+                {
+                    if let Some(proto::client_frame::Frame::Resume(resume)) = frame.frame {
+                        observed_resume
+                            .lock()
+                            .expect("resume lock")
+                            .push(resume.after_seq);
+                    }
+                }
+                let _ = sender
+                    .send(Ok(proto::ServerFrame {
+                        frame: Some(proto::server_frame::Frame::Ack(proto::CommandAck {
+                            accepted: true,
+                            account_id: "test".to_owned(),
+                            node_id: "default".to_owned(),
+                            client_mutation_id: ack_client_mutation_id.clone(),
+                            ack_seq,
+                            entity_id: "thread-fallback".to_owned(),
+                            revision: format!("rev-{ack_seq}"),
+                            server_time: "2026-07-01T00:00:00Z".to_owned(),
+                            idempotent_replay: true,
+                            error_code: String::new(),
+                            reject_reason: String::new(),
+                            current_state: String::new(),
+                        })),
+                    }))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            });
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
+    }
+
+    async fn reserve_dead_udp_url() -> String {
+        let socket =
+            tokio::net::UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+                .await
+                .expect("reserve dead UDP socket");
+        let address = socket.local_addr().expect("dead UDP addr");
+        drop(socket);
+        format!("https://{}:{}", address.ip(), address.port())
+    }
+
+    #[derive(Clone)]
+    struct TestRealtimeSessionService {
+        heartbeat_seq: Option<i64>,
+        ack_seq: Option<i64>,
+        ack_client_mutation_id: String,
+        observed_resume: Arc<Mutex<Vec<i64>>>,
+    }
+
+    impl Default for TestRealtimeSessionService {
+        fn default() -> Self {
+            Self {
+                heartbeat_seq: None,
+                ack_seq: None,
+                ack_client_mutation_id: String::new(),
+                observed_resume: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
 
     #[tonic::async_trait]
     impl proto::looper_realtime_server::LooperRealtime for TestRealtimeSessionService {
@@ -1589,10 +2782,105 @@ mod tests {
 
         async fn session(
             &self,
-            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+            request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
         ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
-            let (_sender, receiver) = mpsc::channel(1);
+            let heartbeat_seq = self.heartbeat_seq;
+            let ack_seq = self.ack_seq;
+            let ack_client_mutation_id = self.ack_client_mutation_id.clone();
+            let observed_resume = self.observed_resume.clone();
+            let mut stream = request.into_inner();
+            let (sender, receiver) = mpsc::channel(4);
+            tokio::spawn(async move {
+                if let Some(heartbeat_seq) = heartbeat_seq {
+                    let _ = sender
+                        .send(Ok(proto::ServerFrame {
+                            frame: Some(proto::server_frame::Frame::Heartbeat(proto::Heartbeat {
+                                latest_seq: heartbeat_seq,
+                                server_time: "2026-07-01T00:00:00Z".to_owned(),
+                            })),
+                        }))
+                        .await;
+                    return;
+                }
+                while let Ok(Some(frame)) = stream.message().await {
+                    match frame.frame {
+                        Some(proto::client_frame::Frame::Resume(resume)) => {
+                            observed_resume
+                                .lock()
+                                .expect("resume lock")
+                                .push(resume.after_seq);
+                        }
+                        Some(proto::client_frame::Frame::Command(_)) => {
+                            if let Some(ack_seq) = ack_seq {
+                                let _ = sender
+                                    .send(Ok(proto::ServerFrame {
+                                        frame: Some(proto::server_frame::Frame::Ack(
+                                            proto::CommandAck {
+                                                accepted: true,
+                                                account_id: "test".to_owned(),
+                                                node_id: "default".to_owned(),
+                                                client_mutation_id: ack_client_mutation_id.clone(),
+                                                ack_seq,
+                                                entity_id: "thread-fallback".to_owned(),
+                                                revision: format!("rev-{ack_seq}"),
+                                                server_time: "2026-07-01T00:00:00Z".to_owned(),
+                                                idempotent_replay: false,
+                                                error_code: String::new(),
+                                                reject_reason: String::new(),
+                                                current_state: String::new(),
+                                            },
+                                        )),
+                                    }))
+                                    .await;
+                            }
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
+    }
+
+    fn test_outbound_command(client_mutation_id: &str, after_seq: i64) -> OutboundSessionFrame {
+        OutboundSessionFrame {
+            frame_kind: OutboundSessionFrameKind::Command,
+            command_kind: ClientCommandKind::SetSessionMode,
+            thread_id: "thread-fallback".to_owned(),
+            preset: "auto".to_owned(),
+            prompt: String::new(),
+            prompt_intent: String::new(),
+            assistant_surface: String::new(),
+            notification_id: String::new(),
+            notification_target_ids: Vec::new(),
+            archived: false,
+            client_mutation_id: client_mutation_id.to_owned(),
+            after_seq,
+        }
+    }
+
+    async fn recv_stream_event(
+        events: &mut mpsc::Receiver<StateMiniStreamEvent>,
+        label: &str,
+    ) -> StateMiniStreamEvent {
+        tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{label} timed out"))
+            .unwrap_or_else(|| panic!("{label} channel closed"))
+    }
+
+    async fn wait_for_resume_count(
+        observed_resume: Arc<Mutex<Vec<i64>>>,
+        expected_count: usize,
+    ) -> Vec<i64> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let resumes = observed_resume.lock().expect("resume lock").clone();
+            if resumes.len() >= expected_count || tokio::time::Instant::now() >= deadline {
+                return resumes;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -1830,6 +3118,7 @@ mod tests {
             StateMiniStreamEvent::Reconnecting {
                 latest_seq,
                 error_description,
+                ..
             } => {
                 assert_eq!(latest_seq, 42);
                 assert_eq!(error_description, STATE_MINI_STREAM_ENDED);

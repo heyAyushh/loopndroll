@@ -180,8 +180,10 @@ impl LooperClientCoreSessionRuntime {
             .recover_state_mini_snapshot(endpoints, bearer_token, mobile_session_header)
             .await?;
         if recovered.did_change {
-            self.local_store
-                .mark_last_good_endpoint(recovered.endpoint_url.clone())?;
+            self.local_store.mark_last_good_endpoint(
+                recovered.endpoint_url.clone(),
+                recovered.endpoint_transport,
+            )?;
         }
         self.local_store.replace_state_minis(recovered.snapshot)
     }
@@ -196,11 +198,12 @@ impl LooperClientCoreSessionRuntime {
             self.local_store.clone(),
             thread_id,
             preset.clone(),
-            client_mutation_id,
+            client_mutation_id.clone(),
         )?;
         Ok(ClientSessionModeIntentResult {
             accepted: true,
             preset,
+            client_mutation_id,
         })
     }
 
@@ -218,12 +221,13 @@ impl LooperClientCoreSessionRuntime {
             prompt,
             assistant_surface,
             prompt_intent,
-            client_mutation_id,
+            client_mutation_id.clone(),
         )?;
         Ok(ClientSessionPromptIntentResult {
             accepted: true,
             dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
             prompt_id: String::new(),
+            client_mutation_id,
         })
     }
 
@@ -494,7 +498,7 @@ impl LooperClientCoreSessionRuntime {
             return Ok(());
         }
         self.local_store
-            .mark_last_good_endpoint(snapshot.endpoint_url.clone())
+            .mark_last_good_endpoint(snapshot.endpoint_url.clone(), snapshot.endpoint_transport)
     }
 
     fn emit_cached_local_state(
@@ -1009,7 +1013,11 @@ mod tests {
         let started = runtime
             .start(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: "http://127.0.0.1:1".to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 }],
                 String::new(),
@@ -1043,7 +1051,11 @@ mod tests {
             runtime
                 .start(
                     vec![ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: stream_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     }],
                     String::new(),
@@ -1079,7 +1091,11 @@ mod tests {
             let snapshot = runtime
                 .start(
                     vec![ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: format!("{}/", stream_url.trim_end_matches('/')),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     }],
                     String::new(),
@@ -1137,7 +1153,11 @@ mod tests {
         runtime
             .start(
                 vec![ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: "http://127.0.0.1:1".to_owned(),
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 }],
                 String::new(),
@@ -1166,7 +1186,7 @@ mod tests {
         let stale_url = unused_local_url();
         runtime
             .local_store
-            .mark_last_good_endpoint(stale_url.clone())
+            .mark_last_good_endpoint(stale_url.clone(), crate::model::ClientEndpointTransport::H2)
             .expect("seed stale last-good endpoint");
 
         let fallback_url = test_runtime.block_on(async {
@@ -1175,11 +1195,19 @@ mod tests {
                 .start(
                     vec![
                         ClientEndpoint {
+                            transport: crate::model::ClientEndpointTransport::H2,
                             url: stale_url.clone(),
+                            recovery_base_url: String::new(),
+                            h3_certificate_sha256: String::new(),
+                            h3_certificate_spki_sha256: String::new(),
                             last_good: false,
                         },
                         ClientEndpoint {
+                            transport: crate::model::ClientEndpointTransport::H2,
                             url: fallback_url.clone(),
+                            recovery_base_url: String::new(),
+                            h3_certificate_sha256: String::new(),
+                            h3_certificate_spki_sha256: String::new(),
                             last_good: false,
                         },
                     ],
@@ -1213,11 +1241,19 @@ mod tests {
             .local_store
             .endpoints_with_last_good(vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: stale_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: fallback_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
             ])
@@ -1237,14 +1273,21 @@ mod tests {
             let (heartbeat_url, server) = spawn_realtime_session_server().await;
             runtime
                 .local_store
-                .mark_last_good_endpoint(heartbeat_url.clone())
+                .mark_last_good_endpoint(
+                    heartbeat_url.clone(),
+                    crate::model::ClientEndpointTransport::H2,
+                )
                 .expect("seed last-good endpoint");
             let before = std::fs::read(&path).expect("read initial local store");
 
             runtime
                 .start(
                     vec![ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: heartbeat_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     }],
                     String::new(),
@@ -1272,7 +1315,11 @@ mod tests {
         let endpoints = reopened
             .local_store
             .endpoints_with_last_good(vec![ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: heartbeat_url,
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             }])
             .expect("stored endpoints");
@@ -1288,7 +1335,7 @@ mod tests {
         let stale_url = unused_local_url();
         runtime
             .local_store
-            .mark_last_good_endpoint(stale_url.clone())
+            .mark_last_good_endpoint(stale_url.clone(), crate::model::ClientEndpointTransport::H2)
             .expect("seed stale endpoint");
         let (recovery_url, recovery_server) = spawn_snapshot_server(31, "thread-recovered");
 
@@ -1296,11 +1343,19 @@ mod tests {
             .block_on(runtime.recover_state_mini_snapshot(
                 vec![
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: stale_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     },
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: recovery_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     },
                 ],
@@ -1320,11 +1375,19 @@ mod tests {
             .local_store
             .endpoints_with_last_good(vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: stale_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: recovery_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
             ])
@@ -1342,7 +1405,7 @@ mod tests {
         let stale_url = unused_local_url();
         runtime
             .local_store
-            .mark_last_good_endpoint(stale_url.clone())
+            .mark_last_good_endpoint(stale_url.clone(), crate::model::ClientEndpointTransport::H2)
             .expect("seed stale endpoint");
         seed_runtime_state_minis(
             &runtime,
@@ -1358,11 +1421,19 @@ mod tests {
             .block_on(runtime.recover_state_mini_snapshot(
                 vec![
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: stale_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     },
                     ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: recovery_url.clone(),
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     },
                 ],
@@ -1382,11 +1453,19 @@ mod tests {
             .local_store
             .endpoints_with_last_good(vec![
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: stale_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
                 ClientEndpoint {
+                    transport: crate::model::ClientEndpointTransport::H2,
                     url: recovery_url,
+                    recovery_base_url: String::new(),
+                    h3_certificate_sha256: String::new(),
+                    h3_certificate_spki_sha256: String::new(),
                     last_good: false,
                 },
             ])
@@ -1404,7 +1483,11 @@ mod tests {
 
         let local_snapshot = block_on_without_tokio(runtime.recover_state_mini_snapshot(
             vec![ClientEndpoint {
+                transport: crate::model::ClientEndpointTransport::H2,
                 url: recovery_url.clone(),
+                recovery_base_url: String::new(),
+                h3_certificate_sha256: String::new(),
+                h3_certificate_spki_sha256: String::new(),
                 last_good: false,
             }],
             String::new(),
@@ -1428,7 +1511,11 @@ mod tests {
             runtime
                 .start(
                     vec![ClientEndpoint {
+                        transport: crate::model::ClientEndpointTransport::H2,
                         url: stream_url,
+                        recovery_base_url: String::new(),
+                        h3_certificate_sha256: String::new(),
+                        h3_certificate_spki_sha256: String::new(),
                         last_good: false,
                     }],
                     String::new(),

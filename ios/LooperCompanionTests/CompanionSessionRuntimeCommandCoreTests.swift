@@ -8,7 +8,10 @@ struct CompanionSessionRuntimeCommandCoreTests {
     @Test
     func sessionRuntimeStartIfNeededWaitsForStreamLiveness() async throws {
         let runtime = try Self.temporarySessionRuntime()
-        let endpointURL = try #require(URL(string: "http://100.64.0.2:8765"))
+        let endpoint = ClientEndpoint.h2(
+            url: "http://100.64.0.2:8766",
+            recoveryBaseURL: "http://100.64.0.2:8765"
+        )
         var endpointProviderCalls = 0
 
         let snapshot = try await runtime.startIfNeeded(
@@ -16,7 +19,7 @@ struct CompanionSessionRuntimeCommandCoreTests {
             mobileSessionHeader: "mobile-session"
         ) {
             endpointProviderCalls += 1
-            return [endpointURL]
+            return [endpoint]
         }
 
         let secondStart = try await runtime.startIfNeeded(
@@ -24,7 +27,7 @@ struct CompanionSessionRuntimeCommandCoreTests {
             mobileSessionHeader: "mobile-session"
         ) {
             endpointProviderCalls += 1
-            return [endpointURL]
+            return [endpoint]
         }
         _ = try runtime.stop()
         let restartedSnapshot = try await runtime.startIfNeeded(
@@ -32,7 +35,7 @@ struct CompanionSessionRuntimeCommandCoreTests {
             mobileSessionHeader: "mobile-session"
         ) {
             endpointProviderCalls += 1
-            return [endpointURL]
+            return [endpoint]
         }
 
         #expect(snapshot?.phase == .connecting)

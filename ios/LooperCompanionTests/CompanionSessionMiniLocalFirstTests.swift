@@ -217,6 +217,94 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(service.loadSnapshotCallCount == 0)
     }
 
+    @Test
+    func testRealtimeEndpointResolverPassesH3HealthMetadataToClientCore() throws {
+        let endpoints = CompanionRealtimeEndpointResolver.endpoints(
+            configuredBaseURLs: [try #require(URL(string: "http://127.0.0.1:8765"))],
+            health: CompanionServerHealth(
+                ok: true,
+                baseURL: "http://100.95.2.4:8765",
+                baseURLs: ["http://100.95.2.4:8765", "http://192.168.1.33:8765"],
+                grpcBaseURL: "http://100.95.2.4:8766",
+                grpcBaseURLs: ["http://192.168.1.33:8766"],
+                grpcH3BaseURL: "https://100.95.2.4:8766",
+                grpcH3BaseURLs: ["https://192.168.1.33:8766"],
+                grpcH3CertificateSha256: "sha256:pin",
+                serverTime: Constants.timestamp
+            )
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h3, .h2, .h2, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://100.95.2.4:8766",
+            "https://192.168.1.33:8766",
+            "http://100.95.2.4:8766",
+            "http://192.168.1.33:8766",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints[0].recoveryBaseUrl == "http://100.95.2.4:8765")
+        #expect(endpoints[1].recoveryBaseUrl == "http://192.168.1.33:8765")
+        #expect(endpoints[0].h3CertificateSha256 == "sha256:pin")
+        #expect(endpoints[0].h3CertificateSpkiSha256.isEmpty)
+    }
+
+    @Test
+    func testRealtimeEndpointResolverKeepsH2OnlyHealthUsable() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "baseURL": "http://100.95.2.4:8765",
+            "baseURLs": ["http://100.95.2.4:8765"],
+            "grpcBaseURL": "http://100.95.2.4:8766",
+            "grpcBaseURLs": ["http://192.168.1.33:8766"],
+            "serverTime": Constants.timestamp,
+        ])
+        let health = try JSONDecoder().decode(CompanionServerHealth.self, from: data)
+        let endpoints = CompanionRealtimeEndpointResolver.endpoints(
+            configuredBaseURLs: [try #require(URL(string: "http://127.0.0.1:8765"))],
+            health: health
+        )
+
+        #expect(endpoints.map(\.transport) == [.h2, .h2, .h2])
+        #expect(endpoints.map(\.url) == [
+            "http://100.95.2.4:8766",
+            "http://192.168.1.33:8766",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints.allSatisfy { $0.h3CertificateSha256.isEmpty })
+    }
+
+    @Test
+    func testDeadH3LiveH2FallbackFixtureLeavesRustEnoughRouteData() throws {
+        let health = CompanionServerHealth(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: ["http://127.0.0.1:8765"],
+            grpcBaseURL: "http://127.0.0.1:8766",
+            grpcBaseURLs: [],
+            grpcH3BaseURL: "https://127.0.0.1:9",
+            grpcH3BaseURLs: [],
+            grpcH3CertificateSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            serverTime: Constants.timestamp
+        )
+
+        let endpoints = CompanionRealtimeEndpointResolver.endpoints(
+            configuredBaseURLs: [],
+            health: health
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://127.0.0.1:9",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints.map(\.recoveryBaseUrl) == [
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765",
+        ])
+        #expect(endpoints[0].h3CertificateSha256.hasPrefix("sha256:"))
+        #expect(endpoints[1].h3CertificateSha256.isEmpty)
+    }
+
     @MainActor
     @Test
     func testAssistantSurfaceSwitchPaintsBeforeRuntimeAcceptWithoutSnapshotLoad() async throws {
