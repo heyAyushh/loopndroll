@@ -1469,14 +1469,6 @@ async fn grpc_session_stream_accepts_settings_and_route_commands() {
 
 #[tokio::test]
 async fn grpc_session_stream_accepts_siri_archive_delete_mute_certificates() {
-    let fixture = IsolatedCodexFixture::new();
-    fixture.write_state_db();
-    let control_plane = fixture.control_plane();
-    record_thread_active(&control_plane, "thread-main");
-    seed_replyable_session_mini(&control_plane, "mini-revision-siri-session-command", 4);
-    let router = build_router(control_plane.clone());
-    let authorization = issue_mobile_authorization_header(&router).await;
-    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
     let commands = vec![
         (
             "session-siri-current",
@@ -1523,21 +1515,27 @@ async fn grpc_session_stream_accepts_siri_archive_delete_mute_certificates() {
             })),
         ),
     ];
-    let expected_mutations = commands
-        .iter()
-        .map(|(mutation_id, _)| *mutation_id)
-        .collect::<Vec<_>>();
-    let mut stream = open_session_stream(
-        &mut client,
-        &authorization,
-        commands.into_iter().map(|(_, frame)| frame).collect(),
-    )
-    .await;
 
-    for mutation_id in expected_mutations {
-        let ack = next_session_ack_frame(&mut stream, mutation_id).await;
+    for (mutation_id, frame) in commands {
+        let ack = finality_command_ack_for_fresh_visible_session(mutation_id, frame).await;
         assert_accepted_finality_certificate(&ack, mutation_id);
     }
+}
+
+async fn finality_command_ack_for_fresh_visible_session(
+    mutation_id: &str,
+    frame: ClientFrame,
+) -> agent_control_plane::grpc::proto::CommandAck {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_replyable_session_mini(&control_plane, &format!("mini-revision-{mutation_id}"), 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane).await;
+    let mut stream = open_session_stream(&mut client, &authorization, vec![frame]).await;
+    next_session_ack_frame(&mut stream, mutation_id).await
 }
 
 #[tokio::test]
