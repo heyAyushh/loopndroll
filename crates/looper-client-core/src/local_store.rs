@@ -10,7 +10,8 @@ use crate::{
     error::ClientCoreError,
     model::{
         ClientEndpoint, ClientLocalStateSnapshot, ClientNotificationReplyRetryPlan,
-        ClientPendingCommand, ClientPendingCommandKind, ClientStateMini, ClientStateMiniSnapshot,
+        ClientPendingCommand, ClientPendingCommandKind, ClientSessionDetailProjection,
+        ClientSessionLatestReply, ClientStateMini, ClientStateMiniSnapshot, ClientTextChunk,
     },
     state_mini::{
         DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_covered_node_ids,
@@ -28,6 +29,7 @@ const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const LEGACY_CONTROL_PAYLOAD_REVISION_FIELD: &str = "\"revision\"";
 const LEGACY_CONTROL_PAYLOAD_GLOBAL_SETTINGS_FIELD: &str = "globalSettings";
+const MAX_LATEST_REPLY_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
 pub(crate) struct LooperClientCoreLocalStore {
@@ -54,6 +56,8 @@ struct StoredState {
         default
     )]
     last_good_endpoint_url: Option<String>,
+    #[serde(rename = "latestReplies", default)]
+    latest_replies: Vec<ClientSessionLatestReply>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -105,6 +109,34 @@ impl LooperClientCoreLocalStore {
             .collect())
     }
 
+    pub(crate) fn session_detail(
+        &self,
+        session_id: String,
+    ) -> Result<ClientSessionDetailProjection, ClientCoreError> {
+        let session_id = required_session_id(session_id)?;
+        Ok(self.lock_state()?.session_detail(&session_id))
+    }
+
+    pub(crate) fn apply_text_chunk(
+        &self,
+        chunk: ClientTextChunk,
+    ) -> Result<ClientSessionDetailProjection, ClientCoreError> {
+        require_valid_sequence(chunk.seq)?;
+        let session_id = required_session_id(chunk.thread_id.clone())?;
+
+        let mut state = self.lock_state()?;
+        let detail = state.apply_text_chunk(session_id, chunk);
+        state.latest_seq = state.latest_seq.max(detail.latest_reply.latest_seq);
+        if let Some(server_time) = non_empty(detail.latest_reply.server_time.clone()) {
+            state.server_time = Some(newer_optional_time(
+                state.server_time.clone().unwrap_or_default(),
+                server_time,
+            ));
+        }
+        self.persist_locked(&state)?;
+        Ok(detail)
+    }
+
     pub(crate) fn replace_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
@@ -144,6 +176,7 @@ impl LooperClientCoreLocalStore {
         if let Some(server_time) = non_empty(snapshot.server_time) {
             state.server_time = Some(server_time);
         }
+        state.retain_latest_replies_for_visible_sessions();
         self.persist_locked(&state)?;
         Ok(state.snapshot())
     }
@@ -167,6 +200,7 @@ impl LooperClientCoreLocalStore {
         if let Some(server_time) = non_empty(snapshot.server_time) {
             state.server_time = Some(server_time);
         }
+        state.retain_latest_replies_for_visible_sessions();
         self.persist_locked(&state)?;
         Ok(state.snapshot())
     }
@@ -683,6 +717,58 @@ impl StoredState {
             delay_nanoseconds: notification_reply_retry_delay(command.attempt_count),
         }
     }
+
+    fn session_detail(&self, session_id: &str) -> ClientSessionDetailProjection {
+        let Some(reply) = self
+            .latest_replies
+            .iter()
+            .find(|reply| reply.session_id == session_id)
+            .cloned()
+        else {
+            return ClientSessionDetailProjection::empty(session_id.to_owned());
+        };
+
+        ClientSessionDetailProjection {
+            session_id: session_id.to_owned(),
+            has_latest_reply: true,
+            latest_reply: reply,
+        }
+    }
+
+    fn apply_text_chunk(
+        &mut self,
+        session_id: String,
+        chunk: ClientTextChunk,
+    ) -> ClientSessionDetailProjection {
+        if let Some(index) = self
+            .latest_replies
+            .iter()
+            .position(|reply| reply.session_id == session_id)
+        {
+            if chunk.seq <= self.latest_replies[index].latest_seq {
+                return self.session_detail(&session_id);
+            }
+            let current = self.latest_replies[index].clone();
+            self.latest_replies[index] = updated_latest_reply(current, chunk);
+        } else {
+            self.latest_replies.push(latest_reply_from_chunk(chunk));
+        }
+        self.latest_replies
+            .sort_by(|left, right| left.session_id.cmp(&right.session_id));
+        self.session_detail(&session_id)
+    }
+
+    fn retain_latest_replies_for_visible_sessions(&mut self) -> bool {
+        let visible_session_ids = self
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect::<HashSet<_>>();
+        let original_len = self.latest_replies.len();
+        self.latest_replies
+            .retain(|reply| visible_session_ids.contains(reply.session_id.as_str()));
+        self.latest_replies.len() != original_len
+    }
 }
 
 impl From<ClientPendingCommand> for StoredPendingCommand {
@@ -790,6 +876,15 @@ fn require_present(value: &str, error: ClientCoreError) -> Result<(), ClientCore
     }
 }
 
+fn required_session_id(value: String) -> Result<String, ClientCoreError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(ClientCoreError::EmptySessionId)
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
 fn normalized_prompt_intent(value: String) -> Result<String, ClientCoreError> {
     match value.trim() {
         "" | "queue" => Ok(default_prompt_intent()),
@@ -829,6 +924,66 @@ fn non_empty(value: String) -> Option<String> {
         None
     } else {
         Some(value)
+    }
+}
+
+fn latest_reply_from_chunk(chunk: ClientTextChunk) -> ClientSessionLatestReply {
+    let (text, is_truncated) = bounded_latest_reply_text(chunk.content, false);
+    ClientSessionLatestReply {
+        session_id: chunk.thread_id.trim().to_owned(),
+        message_id: chunk.message_id,
+        text,
+        latest_seq: chunk.seq,
+        is_final: chunk.is_final,
+        is_truncated,
+        server_time: chunk.server_time,
+    }
+}
+
+fn updated_latest_reply(
+    current: ClientSessionLatestReply,
+    chunk: ClientTextChunk,
+) -> ClientSessionLatestReply {
+    let message_id = non_empty(chunk.message_id).unwrap_or(current.message_id.clone());
+    let same_message = current.message_id == message_id || current.message_id.trim().is_empty();
+    let next_text = if same_message {
+        let mut text = current.text;
+        text.push_str(&chunk.content);
+        text
+    } else {
+        chunk.content
+    };
+    let (text, is_truncated) =
+        bounded_latest_reply_text(next_text, same_message && current.is_truncated);
+
+    ClientSessionLatestReply {
+        session_id: current.session_id,
+        message_id,
+        text,
+        latest_seq: chunk.seq,
+        is_final: chunk.is_final,
+        is_truncated,
+        server_time: newer_optional_time(current.server_time, chunk.server_time),
+    }
+}
+
+fn bounded_latest_reply_text(value: String, was_truncated: bool) -> (String, bool) {
+    if value.len() <= MAX_LATEST_REPLY_BYTES {
+        return (value, was_truncated);
+    }
+
+    let start = value
+        .char_indices()
+        .find_map(|(index, _)| (value.len() - index <= MAX_LATEST_REPLY_BYTES).then_some(index))
+        .unwrap_or(value.len());
+    (value[start..].to_owned(), true)
+}
+
+fn newer_optional_time(current: String, candidate: String) -> String {
+    if candidate.trim().is_empty() || (!current.is_empty() && current > candidate) {
+        current
+    } else {
+        candidate
     }
 }
 
@@ -924,6 +1079,58 @@ mod tests {
     const TEST_ACCOUNT_ID: &str = "local-account";
     const TEST_NODE_ID: &str = "node-a";
     const TEST_ASSISTANT_SURFACE: &str = "codex";
+
+    #[test]
+    fn local_store_text_chunk_persists_bounded_latest_reply_projection() {
+        let path = temp_store_path("text-chunk-latest-reply");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", "Hello ", false))
+            .expect("first chunk");
+        store
+            .apply_text_chunk(text_chunk(8, "thread-main", "message-1", "world", true))
+            .expect("second chunk");
+        store
+            .apply_text_chunk(text_chunk(6, "thread-main", "message-1", " stale", true))
+            .expect("stale chunk ignored");
+
+        let detail = store
+            .session_detail("thread-main".to_owned())
+            .expect("detail projection");
+        assert!(detail.has_latest_reply);
+        assert_eq!(detail.latest_reply.text, "Hello world");
+        assert_eq!(detail.latest_reply.latest_seq, 8);
+        assert!(detail.latest_reply.is_final);
+
+        drop(store);
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let reopened_detail = reopened
+            .session_detail("thread-main".to_owned())
+            .expect("reopened detail projection");
+        assert_eq!(reopened_detail.latest_reply.text, "Hello world");
+        assert_eq!(reopened_detail.latest_reply.message_id, "message-1");
+    }
+
+    #[test]
+    fn local_store_text_chunk_replaces_latest_reply_for_new_message() {
+        let path = temp_store_path("text-chunk-replaces-message");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", "Old", true))
+            .expect("old chunk");
+        let detail = store
+            .apply_text_chunk(text_chunk(9, "thread-main", "message-2", "New", false))
+            .expect("new chunk");
+
+        assert_eq!(detail.latest_reply.message_id, "message-2");
+        assert_eq!(detail.latest_reply.text, "New");
+        assert!(!detail.latest_reply.is_final);
+    }
 
     #[test]
     fn local_store_dedupes_outbox_attempts_and_persists_minis() {
@@ -1673,6 +1880,23 @@ mod tests {
 
     fn payload_value(session: &ClientStateMini) -> serde_json::Value {
         serde_json::from_str(&session.payload_json).expect("payload json")
+    }
+
+    fn text_chunk(
+        seq: i64,
+        thread_id: &str,
+        message_id: &str,
+        content: &str,
+        is_final: bool,
+    ) -> ClientTextChunk {
+        ClientTextChunk {
+            seq,
+            thread_id: thread_id.to_owned(),
+            message_id: message_id.to_owned(),
+            content: content.to_owned(),
+            is_final,
+            server_time: format!("2026-06-24T00:00:{seq:02}Z"),
+        }
     }
 
     fn temp_store_path(name: &str) -> PathBuf {

@@ -259,6 +259,34 @@ pub struct ClientStateMiniDelta {
     pub sessions: Vec<ClientStateMini>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct ClientTextChunk {
+    pub seq: i64,
+    pub thread_id: String,
+    pub message_id: String,
+    pub content: String,
+    pub is_final: bool,
+    pub server_time: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct ClientSessionLatestReply {
+    pub session_id: String,
+    pub message_id: String,
+    pub text: String,
+    pub latest_seq: i64,
+    pub is_final: bool,
+    pub is_truncated: bool,
+    pub server_time: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientSessionDetailProjection {
+    pub session_id: String,
+    pub has_latest_reply: bool,
+    pub latest_reply: ClientSessionLatestReply,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientStateSnapshot {
     pub phase: ConnectionPhase,
@@ -292,6 +320,7 @@ pub struct ClientStateMiniDeltaApplyResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum ClientStateMiniStreamUpdateReason {
     Delta,
+    TextChunk,
     Heartbeat,
     Reconnecting,
     RecoveryRequired,
@@ -305,6 +334,8 @@ pub struct ClientStateMiniStreamUpdate {
     pub did_change: bool,
     pub latest_seq: i64,
     pub error_description: String,
+    pub has_text_chunk: bool,
+    pub text_chunk: ClientTextChunk,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -313,6 +344,8 @@ pub struct ClientLocalStateStreamUpdate {
     pub snapshot: ClientLocalStateSnapshot,
     pub did_change: bool,
     pub error_description: String,
+    pub has_text_chunk: bool,
+    pub text_chunk: ClientTextChunk,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -325,4 +358,43 @@ pub struct ClientMobileSnapshotStreamUpdate {
     pub server_time: String,
     pub error_description: String,
     pub debug_message: String,
+    pub has_text_chunk: bool,
+    pub text_chunk: ClientTextChunk,
+}
+
+impl ClientTextChunk {
+    pub(crate) fn empty() -> Self {
+        Self {
+            seq: 0,
+            thread_id: String::new(),
+            message_id: String::new(),
+            content: String::new(),
+            is_final: false,
+            server_time: String::new(),
+        }
+    }
+}
+
+impl ClientSessionLatestReply {
+    pub(crate) fn empty(session_id: String) -> Self {
+        Self {
+            session_id,
+            message_id: String::new(),
+            text: String::new(),
+            latest_seq: 0,
+            is_final: false,
+            is_truncated: false,
+            server_time: String::new(),
+        }
+    }
+}
+
+impl ClientSessionDetailProjection {
+    pub(crate) fn empty(session_id: String) -> Self {
+        Self {
+            session_id: session_id.clone(),
+            has_latest_reply: false,
+            latest_reply: ClientSessionLatestReply::empty(session_id),
+        }
+    }
 }

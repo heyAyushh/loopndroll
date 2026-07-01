@@ -22,7 +22,7 @@ use crate::model::{
     ClientEndpoint, ClientLocalStateSnapshot, ClientPendingCommand, ClientPendingCommandKind,
     ClientPendingMutation, ClientStateMini, ClientStateMiniDelta, ClientStateMiniSnapshot,
     ClientStateMiniStreamUpdate, ClientStateMiniStreamUpdateReason, ClientStateSnapshot,
-    ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
+    ClientTextChunk, ConnectionPhase, OutboundSessionFrame, OutboundSessionFrameKind,
     STATE_MINI_BATCH_COMPLETE_KIND, STATE_MINI_REPLACEMENT_COMPLETE_KIND,
     STATE_MINI_REPLACEMENT_KIND,
 };
@@ -1305,6 +1305,8 @@ impl LooperClientCore {
             did_change: true,
             latest_seq: snapshot.latest_seq,
             error_description: String::new(),
+            has_text_chunk: false,
+            text_chunk: ClientTextChunk::empty(),
             snapshot,
         });
     }
@@ -1496,69 +1498,98 @@ impl LooperClientCore {
         event: StateMiniStreamEvent,
     ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let mut state = self.lock_state()?;
-        let (reason, did_change, latest_seq, error_description) = match event {
-            StateMiniStreamEvent::Delta(delta) => {
-                let latest_seq = delta.seq.max(delta.latest_seq);
-                let did_change = state.apply_state_mini_delta(delta);
-                state.phase = ConnectionPhase::Ready;
-                (
-                    ClientStateMiniStreamUpdateReason::Delta,
-                    did_change,
-                    latest_seq,
-                    String::new(),
-                )
-            }
-            StateMiniStreamEvent::Heartbeat {
-                latest_seq,
-                server_time,
-                endpoint_url,
-            } => {
-                state.phase = ConnectionPhase::Ready;
-                let did_change = false;
-                update_server_time_if_newer(&mut state.server_time, server_time);
-                if !endpoint_url.is_empty() {
-                    state.endpoint_url = endpoint_url;
+        let (reason, did_change, latest_seq, error_description, has_text_chunk, text_chunk) =
+            match event {
+                StateMiniStreamEvent::Delta(delta) => {
+                    let latest_seq = delta.seq.max(delta.latest_seq);
+                    let did_change = state.apply_state_mini_delta(delta);
+                    state.phase = ConnectionPhase::Ready;
+                    (
+                        ClientStateMiniStreamUpdateReason::Delta,
+                        did_change,
+                        latest_seq,
+                        String::new(),
+                        false,
+                        ClientTextChunk::empty(),
+                    )
                 }
-                (
-                    ClientStateMiniStreamUpdateReason::Heartbeat,
-                    did_change,
-                    state.latest_seq.max(latest_seq),
-                    String::new(),
-                )
-            }
-            StateMiniStreamEvent::Reconnecting {
-                latest_seq,
-                error_description,
-            } => {
-                state.phase = ConnectionPhase::Reconnecting;
-                state.last_error = error_description.clone();
-                (
-                    ClientStateMiniStreamUpdateReason::Reconnecting,
-                    false,
+                StateMiniStreamEvent::TextChunk(text_chunk) => {
+                    require_valid_sequence(text_chunk.seq)?;
+                    state.phase = ConnectionPhase::Ready;
+                    state.latest_seq = state.latest_seq.max(text_chunk.seq);
+                    update_server_time_if_newer(
+                        &mut state.server_time,
+                        text_chunk.server_time.clone(),
+                    );
+                    state.last_error.clear();
+                    (
+                        ClientStateMiniStreamUpdateReason::TextChunk,
+                        true,
+                        text_chunk.seq,
+                        String::new(),
+                        true,
+                        text_chunk,
+                    )
+                }
+                StateMiniStreamEvent::Heartbeat {
+                    latest_seq,
+                    server_time,
+                    endpoint_url,
+                } => {
+                    state.phase = ConnectionPhase::Ready;
+                    let did_change = false;
+                    update_server_time_if_newer(&mut state.server_time, server_time);
+                    if !endpoint_url.is_empty() {
+                        state.endpoint_url = endpoint_url;
+                    }
+                    (
+                        ClientStateMiniStreamUpdateReason::Heartbeat,
+                        did_change,
+                        state.latest_seq.max(latest_seq),
+                        String::new(),
+                        false,
+                        ClientTextChunk::empty(),
+                    )
+                }
+                StateMiniStreamEvent::Reconnecting {
                     latest_seq,
                     error_description,
-                )
-            }
-            StateMiniStreamEvent::RecoveryRequired {
-                latest_seq,
-                error_description,
-            } => {
-                state.phase = ConnectionPhase::Reconnecting;
-                state.last_error = error_description.clone();
-                (
-                    ClientStateMiniStreamUpdateReason::RecoveryRequired,
-                    false,
+                } => {
+                    state.phase = ConnectionPhase::Reconnecting;
+                    state.last_error = error_description.clone();
+                    (
+                        ClientStateMiniStreamUpdateReason::Reconnecting,
+                        false,
+                        latest_seq,
+                        error_description,
+                        false,
+                        ClientTextChunk::empty(),
+                    )
+                }
+                StateMiniStreamEvent::RecoveryRequired {
                     latest_seq,
                     error_description,
-                )
-            }
-        };
+                } => {
+                    state.phase = ConnectionPhase::Reconnecting;
+                    state.last_error = error_description.clone();
+                    (
+                        ClientStateMiniStreamUpdateReason::RecoveryRequired,
+                        false,
+                        latest_seq,
+                        error_description,
+                        false,
+                        ClientTextChunk::empty(),
+                    )
+                }
+            };
         Ok(ClientStateMiniStreamUpdate {
             reason,
             snapshot: state.snapshot(),
             did_change,
             latest_seq,
             error_description,
+            has_text_chunk,
+            text_chunk,
         })
     }
 }
