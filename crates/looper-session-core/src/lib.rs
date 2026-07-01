@@ -412,9 +412,14 @@ fn next_steer_prompt_state(
             mode,
             client_mutation_id: Some(client_mutation_id),
         }),
-        SessionState::Idle | SessionState::Done | SessionState::ModeArmed { .. } => {
-            Err(reject_mode_required(state))
-        }
+        // Arm-then-prompt is the advertised mobile flow; on a stopped session there is
+        // nothing to steer yet, so a steer prompt degrades to the queue behavior
+        // instead of rejecting the user's message.
+        SessionState::ModeArmed { mode } => Ok(SessionState::PromptPending {
+            mode,
+            client_mutation_id,
+        }),
+        SessionState::Idle | SessionState::Done => Err(reject_mode_required(state)),
         SessionState::PromptPending { .. }
         | SessionState::Dispatched { .. }
         | SessionState::StopRequested { .. }

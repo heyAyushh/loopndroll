@@ -139,10 +139,33 @@ fn resolve_delivery_action(
         return Ok(cached);
     }
 
-    Err(MobileSessionError::PromptSnapshotUnavailable(
-        "prompt delivery action cache is cold; refresh state minis before sending prompt"
-            .to_owned(),
-    ))
+    // Cold cache means the reconciler simply hasn't run since the last invalidation
+    // (e.g. right after SetSessionMode). Rejecting the user's prompt over a cache miss
+    // is wrong; compute the action from a fresh snapshot and re-warm the entry.
+    let snapshot = control_plane.desktop_mobile_snapshot().map_err(|error| {
+        MobileSessionError::PromptSnapshotUnavailable(format!(
+            "prompt delivery snapshot unavailable: {error}"
+        ))
+    })?;
+    let session_state = control_plane
+        .mobile_session_service()
+        .state()
+        .map_err(|error| {
+            MobileSessionError::PromptSnapshotUnavailable(format!(
+                "prompt delivery session state unavailable: {error}"
+            ))
+        })?;
+    let action = match assistant_surface {
+        Some(surface) => prompt_delivery_action_for_visible_target(
+            &snapshot,
+            &session_state,
+            thread_id,
+            Some(surface),
+        )?,
+        None => prompt_delivery_action_for_target(&snapshot, &session_state, thread_id)?,
+    };
+    locked_delivery_action_cache(control_plane).insert(cache_key, action.clone());
+    Ok(action)
 }
 
 pub fn accept_session_prompt(
@@ -647,21 +670,23 @@ mod tests {
     }
 
     #[test]
-    fn non_acp_prompt_does_not_recompute_cold_delivery_action() {
+    fn non_acp_prompt_recomputes_cold_delivery_action_from_fresh_snapshot() {
         let temp_dir = TempDir::new().expect("temp dir");
         let control_plane = test_control_plane(&temp_dir);
         let thread_id = "cold-cache-non-acp-prompt";
 
+        // A cold cache no longer rejects the prompt outright; the action is computed
+        // from a fresh snapshot. This thread doesn't exist in the snapshot, so the
+        // error is about the session, not about the cache.
         invalidate_delivery_action_cache(&control_plane, thread_id);
         let error = send_non_acp_session_prompt(&control_plane, thread_id, "hello")
-            .expect_err("cold delivery action cache should reject without snapshot recomputation");
+            .expect_err("unknown thread should fail session resolution, not cache lookup");
 
         match error {
-            MobileSessionError::PromptSnapshotUnavailable(message) => assert!(
-                message.contains("cache is cold"),
-                "unexpected cold-cache message: {message}"
-            ),
-            other => panic!("unexpected error for cold delivery cache: {other}"),
+            MobileSessionError::PromptSnapshotUnavailable(message) => {
+                panic!("cold cache should recompute instead of rejecting: {message}")
+            }
+            _ => {}
         }
     }
 

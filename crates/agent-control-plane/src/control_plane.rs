@@ -228,6 +228,10 @@ struct SessionMiniProjectionSourceSignature {
     state_db_path: PathBuf,
     modified_at_ms: i64,
     len: u64,
+    // In-process ACP runtimes (zed/devin) never touch the codex state DB; their
+    // session activity is folded in here so the source-change reconciler wakes for
+    // non-codex surfaces too.
+    acp_runtime_signature: String,
 }
 
 struct SessionMiniProjectionReconcilePermit {
@@ -618,6 +622,11 @@ impl ControlPlane {
             .map(|records| session_mini_projection_inputs_from_records(&records))
             .filter(|minis| !minis.is_empty());
         self.persist_and_publish_mobile_event(event, minis);
+        // Hook-driven activity (claude/grok/acp) never touches the codex state DB, so
+        // the source-change reconciler stays quiet for it; this throttled spawn is what
+        // keeps non-codex surfaces' minis fresh — and creates them for brand-new
+        // sessions whose republished cache above was empty.
+        self.spawn_mobile_session_mini_projection_reconcile_if_due();
     }
 
     pub fn emit_mobile_session_event_without_projection(&self, input: MobileEventInput) {
@@ -860,7 +869,28 @@ impl ControlPlane {
             state_db_path,
             modified_at_ms,
             len: metadata.len(),
+            acp_runtime_signature: self.acp_runtime_source_signature(),
         })
+    }
+
+    fn acp_runtime_source_signature(&self) -> String {
+        let zed_status = self.zed_acp_runtime.status();
+        let devin_status = self.devin_acp_runtime.status();
+        let mut parts = Vec::with_capacity(zed_status.sessions.len() + devin_status.sessions.len());
+        parts.extend(zed_status.sessions.iter().map(|session| {
+            format!(
+                "zed:{}:{}:{}",
+                session.public_thread_id, session.updated_at_ms, session.cancelled
+            )
+        }));
+        parts.extend(devin_status.sessions.iter().map(|session| {
+            format!(
+                "devin:{}:{}:{}",
+                session.session_id, session.updated_at_ms, session.cancelled
+            )
+        }));
+        parts.sort();
+        parts.join("|")
     }
 
     fn persist_and_publish_mobile_event(
@@ -3113,6 +3143,7 @@ mod tests {
             state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
             modified_at_ms: 1,
             len: 10,
+            acp_runtime_signature: String::new(),
         };
         let changed_signature = SessionMiniProjectionSourceSignature {
             len: 11,
@@ -3144,6 +3175,7 @@ mod tests {
             state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
             modified_at_ms: 1,
             len: 10,
+            acp_runtime_signature: String::new(),
         };
 
         let permit = reconciler

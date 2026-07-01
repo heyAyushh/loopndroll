@@ -384,7 +384,13 @@ create index if not exists mobile_state_event_log_entity_seq
         let created_at_ms = current_time_millis();
         let input = mobile_state_event_input_for_mobile_event(event);
         let state_record = insert_mobile_state_event(&transaction, &input, created_at_ms, None)?;
-        for mini in minis {
+        for mut mini in minis {
+            // Clients read a mini's seq from the body, not the record row; a cached
+            // overlay body still carries the seq it was projected at, and a stale body
+            // seq makes clients drop this update as older than what they already have.
+            if let Some(body) = mini.body_json.as_object_mut() {
+                body.insert("seq".to_owned(), serde_json::Value::from(state_record.seq));
+            }
             upsert_mobile_session_mini(
                 &transaction,
                 &mini,

@@ -1582,6 +1582,10 @@ fn emit_session_mode_changed(control_plane: &ControlPlane, thread_id: &str, pres
         prompt_id: None,
         detail: Some(MODE_UPDATED_DETAIL.to_owned()),
     });
+    // Re-warm the delivery-action cache we just invalidated: the periodic reconciler
+    // only fires on codex source changes, and a mode change is not one, so without
+    // this the very next prompt for this thread would hit a cold cache.
+    control_plane.spawn_mobile_session_mini_projection_reconcile_if_due();
 }
 
 fn siri_session_detail(target: SiriSessionTarget) -> &'static str {
