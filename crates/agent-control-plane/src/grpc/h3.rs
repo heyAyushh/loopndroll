@@ -1,5 +1,6 @@
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
@@ -13,7 +14,9 @@ use tokio::task::JoinHandle;
 use tonic_h3::quinn::H3QuinnAcceptor;
 use tonic_h3::quinn::h3_quinn::Endpoint;
 use tonic_h3::quinn::h3_quinn::quinn::{
-    ServerConfig, VarInt, crypto::rustls::QuicServerConfig, rustls as quinn_rustls,
+    ClientConfig, ServerConfig, VarInt,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    rustls as quinn_rustls,
 };
 
 use crate::control_plane::ControlPlane;
@@ -54,20 +57,9 @@ pub fn default_h3_listen_address(h2_listen_address: SocketAddr) -> Result<Socket
 }
 
 pub fn load_or_create_h3_certificate(control_plane: &ControlPlane) -> Result<GrpcH3Certificate> {
-    let path = control_plane
-        .store_path()
-        .with_extension(H3_CERT_STATE_EXTENSION);
+    let path = h3_certificate_state_path(control_plane.store_path());
     if path.exists() {
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("read H3 certificate state {}", path.display()))?;
-        let persisted: PersistedGrpcH3Certificate = serde_json::from_str(&content)
-            .with_context(|| format!("parse H3 certificate state {}", path.display()))?;
-        let certificate_der = BASE64
-            .decode(persisted.certificate_der_base64)
-            .context("decode H3 certificate DER")?;
-        let private_key_der = BASE64
-            .decode(persisted.private_key_der_base64)
-            .context("decode H3 private key DER")?;
+        let (certificate_der, private_key_der) = load_persisted_h3_certificate(&path)?;
         return Ok(GrpcH3Certificate::new(certificate_der, private_key_der));
     }
 
@@ -86,6 +78,26 @@ pub fn load_or_create_h3_certificate(control_plane: &ControlPlane) -> Result<Grp
     )
     .with_context(|| format!("write H3 certificate state {}", path.display()))?;
     Ok(certificate)
+}
+
+pub fn load_persisted_h3_certificate_sha256(store_path: &Path) -> Result<Option<String>> {
+    let path = h3_certificate_state_path(store_path);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let (certificate_der, _) = load_persisted_h3_certificate(&path)?;
+    Ok(Some(format!("sha256:{}", sha256_hex(&certificate_der))))
+}
+
+pub(crate) fn pinned_h3_client_endpoint(certificate_sha256: &str) -> Result<Endpoint> {
+    let certificate_sha256 = normalized_sha256_pin(certificate_sha256)?;
+    let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .context("create H3 client endpoint")?;
+    let tls_config = pinned_h3_client_tls_config(certificate_sha256)?;
+    let quic_config = QuicClientConfig::try_from(tls_config)
+        .map_err(|error| anyhow!("configure H3 QUIC client TLS: {error:?}"))?;
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
+    Ok(endpoint)
 }
 
 pub async fn spawn_h3_server(
@@ -179,6 +191,112 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex
 }
 
+fn h3_certificate_state_path(store_path: &Path) -> std::path::PathBuf {
+    store_path.with_extension(H3_CERT_STATE_EXTENSION)
+}
+
+fn load_persisted_h3_certificate(path: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read H3 certificate state {}", path.display()))?;
+    let persisted: PersistedGrpcH3Certificate = serde_json::from_str(&content)
+        .with_context(|| format!("parse H3 certificate state {}", path.display()))?;
+    let certificate_der = BASE64
+        .decode(persisted.certificate_der_base64)
+        .context("decode H3 certificate DER")?;
+    let private_key_der = BASE64
+        .decode(persisted.private_key_der_base64)
+        .context("decode H3 private key DER")?;
+    Ok((certificate_der, private_key_der))
+}
+
+fn pinned_h3_client_tls_config(certificate_sha256: String) -> Result<quinn_rustls::ClientConfig> {
+    let provider = quinn_rustls::crypto::ring::default_provider();
+    let verifier = Arc::new(PinnedH3CertificateVerifier {
+        certificate_sha256,
+        supported: provider.signature_verification_algorithms,
+    });
+    let mut tls_config = quinn_rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&quinn_rustls::version::TLS13])
+        .map_err(|error| anyhow!("configure H3 TLS client protocol versions: {error:?}"))?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![H3_ALPN.to_vec()];
+    Ok(tls_config)
+}
+
+#[derive(Debug)]
+struct PinnedH3CertificateVerifier {
+    certificate_sha256: String,
+    supported: quinn_rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl quinn_rustls::client::danger::ServerCertVerifier for PinnedH3CertificateVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &quinn_rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[quinn_rustls::pki_types::CertificateDer<'_>],
+        _server_name: &quinn_rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: quinn_rustls::pki_types::UnixTime,
+    ) -> std::result::Result<quinn_rustls::client::danger::ServerCertVerified, quinn_rustls::Error>
+    {
+        let actual = sha256_hex(end_entity.as_ref());
+        if self.certificate_sha256 == actual {
+            return Ok(quinn_rustls::client::danger::ServerCertVerified::assertion());
+        }
+        Err(quinn_rustls::Error::InvalidCertificate(
+            quinn_rustls::CertificateError::ApplicationVerificationFailure,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        quinn_rustls::client::danger::HandshakeSignatureValid,
+        quinn_rustls::Error,
+    > {
+        quinn_rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        quinn_rustls::client::danger::HandshakeSignatureValid,
+        quinn_rustls::Error,
+    > {
+        quinn_rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<quinn_rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+fn normalized_sha256_pin(value: &str) -> Result<String> {
+    let normalized = value.trim().strip_prefix("sha256:").unwrap_or(value.trim());
+    if normalized.len() != 64
+        || !normalized
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return bail_invalid_h3_pin();
+    }
+    Ok(normalized.to_ascii_lowercase())
+}
+
+fn bail_invalid_h3_pin() -> Result<String> {
+    Err(anyhow!(
+        "H3 certificate pin must be sha256-prefixed or raw 64-character hex"
+    ))
+}
+
 fn h3_listen_address_from_env_value(
     h2_listen_address: SocketAddr,
     listen_address: Option<&str>,
@@ -195,7 +313,10 @@ fn h3_listen_address_from_env_value(
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use super::{generate_h3_certificate, h3_listen_address_from_env_value, h3_tls_server_config};
+    use super::{
+        generate_h3_certificate, h3_listen_address_from_env_value, h3_tls_server_config,
+        pinned_h3_client_endpoint,
+    };
 
     #[test]
     fn grpc_h3_invalid_listen_address_is_rejected() {
@@ -217,6 +338,16 @@ mod tests {
         assert_eq!(
             tls_config.max_early_data_size, 0,
             "H3 Session transport must not accept replayable 0-RTT early data"
+        );
+    }
+
+    #[test]
+    fn grpc_h3_pinned_client_rejects_malformed_certificate_pin() {
+        let error = pinned_h3_client_endpoint("sha256:not-hex")
+            .expect_err("malformed H3 certificate pin should be rejected");
+        assert!(
+            error.to_string().contains("H3 certificate pin"),
+            "unexpected malformed pin error: {error:#}"
         );
     }
 }

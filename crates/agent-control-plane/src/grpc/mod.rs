@@ -22,9 +22,10 @@ pub mod proto {
 }
 
 pub(crate) use client_commands::submit_local_session_command;
+pub(crate) use h3::pinned_h3_client_endpoint;
 pub use h3::{
     GRPC_H3_LISTEN_ENV, GrpcH3Certificate, SpawnedGrpcH3Server, default_h3_listen_address,
-    load_or_create_h3_certificate, spawn_h3_server,
+    load_or_create_h3_certificate, load_persisted_h3_certificate_sha256, spawn_h3_server,
 };
 pub use service::LooperRealtimeService;
 
