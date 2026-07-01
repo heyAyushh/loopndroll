@@ -14,10 +14,10 @@ use crate::{
         ClientSessionLatestReply, ClientStateMini, ClientStateMiniSnapshot, ClientTextChunk,
     },
     state_mini::{
-        fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
-        normalize_state_minis, require_valid_sequence, sort_state_minis, state_mini_key,
-        state_mini_snapshot_is_stale_for_all_nodes, state_mini_snapshot_last_seq_by_node,
-        validate_state_minis, StateMiniKey, DEFAULT_NODE_ID,
+        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_covered_node_ids,
+        last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
+        sort_state_minis, state_mini_key, state_mini_snapshot_is_stale_for_all_nodes,
+        state_mini_snapshot_last_seq_by_node, validate_state_minis,
     },
 };
 

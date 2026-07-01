@@ -1,0 +1,32 @@
+final-F4 fmt repair
+timestamp_utc: 2026-07-01T03:10:01Z
+worktree: /Users/ay/.codex/worktrees/b3a1/looper
+
+scope:
+- Source change limited to crates/looper-client-core/src/local_store.rs.
+- Artifact written at .omo/evidence/grpc-session-latency-freshness/final-F4-fmt-repair.txt.
+- Did not edit .omo/boulder.json. It was already modified before this repair started.
+
+repair:
+- Reordered the crates/looper-client-core/src/local_store.rs state_mini import group to rustfmt order.
+- No logic changes.
+
+initial focused failure:
+- command: cargo fmt --manifest-path crates/looper-client-core/Cargo.toml --check
+- exit: 1
+- observed diff: rustfmt wanted DEFAULT_NODE_ID and StateMiniKey first in the state_mini import group.
+
+verification:
+- command: cargo fmt --manifest-path crates/looper-client-core/Cargo.toml --check
+- exit: 0
+
+- command: pnpm run check:client-core
+- exit: 0
+- summary: cargo fmt --check, cargo test, client-core boundary self-test, client-core boundary check, and strict runtime boundary check all passed.
+- test summary: 179 unit tests passed; 0 failed. Doc-tests: 0 passed; 0 failed.
+
+- command: git diff --check
+- exit: 0
+
+pending source diff:
+- crates/looper-client-core/src/local_store.rs import ordering only.
