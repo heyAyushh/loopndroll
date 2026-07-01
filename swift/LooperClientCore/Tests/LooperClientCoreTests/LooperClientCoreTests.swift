@@ -76,6 +76,31 @@ struct LooperClientCoreTests {
     }
 
     @Test
+    func sessionManagerAcceptsDeadH3ThenH2FallbackCandidatesForRustPolicy() throws {
+        let manager = try temporarySessionManager()
+        let snapshot = try manager.start(
+            endpoints: [
+                ClientEndpoint.h3(
+                    url: "https://127.0.0.1:9",
+                    recoveryBaseURL: "http://127.0.0.1:8765",
+                    certificateSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                ),
+                ClientEndpoint.h2(
+                    url: "http://127.0.0.1:8766",
+                    recoveryBaseURL: "http://127.0.0.1:8765"
+                ),
+            ],
+            bearerToken: "token",
+            mobileSessionHeader: "mobile-session"
+        )
+
+        #expect(snapshot.phase == .connecting)
+        #expect(snapshot.endpointUrl.isEmpty)
+        #expect(snapshot.transportFallbackReason.isEmpty)
+        _ = try manager.stop()
+    }
+
+    @Test
     func mobileProjectionBuildsSnapshotFromStateMinis() throws {
         let projection = try reduceStateMinisMobileSnapshot(
             latestSeq: 10,

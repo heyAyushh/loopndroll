@@ -317,6 +317,37 @@ struct MenuBarSessionMiniLocalFirstTests {
         #expect(endpoints[0].h3CertificateSpkiSha256.isEmpty)
     }
 
+    @Test("dead H3 route keeps live H2 fallback candidate for Rust")
+    func testDeadH3LiveH2FallbackFixtureLeavesRustEnoughRouteData() throws {
+        let endpoints = MenuBarRealtimeEndpointResolver.endpoints(
+            controlPlaneBaseURL: try #require(URL(string: "http://127.0.0.1:8765")),
+            health: MobileHealthResponse(
+                ok: true,
+                baseURL: "http://127.0.0.1:8765",
+                baseURLs: ["http://127.0.0.1:8765"],
+                grpcBaseURL: "http://127.0.0.1:8766",
+                grpcBaseURLs: [],
+                grpcH3BaseURL: "https://127.0.0.1:9",
+                grpcH3BaseURLs: [],
+                grpcH3CertificateSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                requiresAuthentication: true
+            ),
+            preference: .tailscale
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://127.0.0.1:9",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints.map(\.recoveryBaseUrl) == [
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765",
+        ])
+        #expect(endpoints[0].h3CertificateSha256.hasPrefix("sha256:"))
+        #expect(endpoints[1].h3CertificateSha256.isEmpty)
+    }
+
     @Test("offline notification reply stays durable and dedupes retry")
     func testOfflineNotificationReplyStaysDurableAndDedupesRetry() async throws {
         let runtime = try MenuBarSessionRuntime(fileURL: temporaryStoreFileURL())

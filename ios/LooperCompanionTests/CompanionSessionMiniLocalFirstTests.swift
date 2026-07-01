@@ -273,6 +273,38 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(endpoints.allSatisfy { $0.h3CertificateSha256.isEmpty })
     }
 
+    @Test
+    func testDeadH3LiveH2FallbackFixtureLeavesRustEnoughRouteData() throws {
+        let health = CompanionServerHealth(
+            ok: true,
+            baseURL: "http://127.0.0.1:8765",
+            baseURLs: ["http://127.0.0.1:8765"],
+            grpcBaseURL: "http://127.0.0.1:8766",
+            grpcBaseURLs: [],
+            grpcH3BaseURL: "https://127.0.0.1:9",
+            grpcH3BaseURLs: [],
+            grpcH3CertificateSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            serverTime: Constants.timestamp
+        )
+
+        let endpoints = CompanionRealtimeEndpointResolver.endpoints(
+            configuredBaseURLs: [],
+            health: health
+        )
+
+        #expect(endpoints.map(\.transport) == [.h3, .h2])
+        #expect(endpoints.map(\.url) == [
+            "https://127.0.0.1:9",
+            "http://127.0.0.1:8766",
+        ])
+        #expect(endpoints.map(\.recoveryBaseUrl) == [
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765",
+        ])
+        #expect(endpoints[0].h3CertificateSha256.hasPrefix("sha256:"))
+        #expect(endpoints[1].h3CertificateSha256.isEmpty)
+    }
+
     @MainActor
     @Test
     func testAssistantSurfaceSwitchPaintsBeforeRuntimeAcceptWithoutSnapshotLoad() async throws {
