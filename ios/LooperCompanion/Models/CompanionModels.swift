@@ -1011,7 +1011,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
         ipAddresses = try container.decodeIfPresent([String].self, forKey: .ipAddresses) ?? []
         baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL)
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL)
-        grpcH3BaseURL = try container.decodeIfPresent(String.self, forKey: .grpcH3BaseURL)
+        grpcH3BaseURL = container.decodeLossyStringIfPresent(forKey: .grpcH3BaseURL)
         health = try container.decodeIfPresent([String].self, forKey: .health) ?? []
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
@@ -1073,14 +1073,21 @@ struct CompanionServerHealth: Codable, Sendable {
         baseURLs = try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? []
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
         grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
-        grpcH3BaseURL = try container.decodeIfPresent(String.self, forKey: .grpcH3BaseURL) ?? ""
-        grpcH3BaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcH3BaseURLs) ?? []
-        grpcH3CertificateSha256 = try container.decodeIfPresent(
-            String.self,
-            forKey: .grpcH3CertificateSha256
-        )
+        grpcH3BaseURL = container.decodeLossyStringIfPresent(forKey: .grpcH3BaseURL) ?? ""
+        grpcH3BaseURLs = container.decodeLossyStringArrayIfPresent(forKey: .grpcH3BaseURLs) ?? []
+        grpcH3CertificateSha256 = container.decodeLossyStringIfPresent(forKey: .grpcH3CertificateSha256)
         serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime) ?? ""
         tailscale = try container.decodeIfPresent(CompanionTailscaleStatus.self, forKey: .tailscale)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossyStringIfPresent(forKey key: Key) -> String? {
+        try? decodeIfPresent(String.self, forKey: key)
+    }
+
+    func decodeLossyStringArrayIfPresent(forKey key: Key) -> [String]? {
+        try? decodeIfPresent([String].self, forKey: key)
     }
 }
 
