@@ -6,6 +6,12 @@ import Testing
 
 @Suite("CompanionSessionMiniLocalFirstTests")
 struct CompanionSessionMiniLocalFirstTests {
+    init() {
+        // Surface selection persists across app launches by design; tests must not
+        // inherit a surface persisted by an earlier test in the same process.
+        CompanionSnapshotStateStore.clearPersistedAssistantSurfaceForTesting()
+    }
+
     private enum Constants {
         static let cachedThreadID = "cached-thread"
         static let fallbackThreadID = "fallback-thread"
@@ -234,13 +240,15 @@ struct CompanionSessionMiniLocalFirstTests {
             )
         )
 
+        // Endpoints run through the shared attemptability filter, which on the
+        // simulator prioritizes loopback (and on-device drops it entirely).
         #expect(endpoints.map(\.transport) == [.h3, .h3, .h2, .h2, .h2])
         #expect(endpoints.map(\.url) == [
             "https://100.95.2.4:8766",
             "https://192.168.1.33:8766",
+            "http://127.0.0.1:8766",
             "http://100.95.2.4:8766",
             "http://192.168.1.33:8766",
-            "http://127.0.0.1:8766",
         ])
         #expect(endpoints[0].recoveryBaseUrl == "http://100.95.2.4:8765")
         #expect(endpoints[1].recoveryBaseUrl == "http://192.168.1.33:8765")
@@ -266,9 +274,9 @@ struct CompanionSessionMiniLocalFirstTests {
 
         #expect(endpoints.map(\.transport) == [.h2, .h2, .h2])
         #expect(endpoints.map(\.url) == [
+            "http://127.0.0.1:8766",
             "http://100.95.2.4:8766",
             "http://192.168.1.33:8766",
-            "http://127.0.0.1:8766",
         ])
         #expect(endpoints.allSatisfy { $0.h3CertificateSha256.isEmpty })
     }

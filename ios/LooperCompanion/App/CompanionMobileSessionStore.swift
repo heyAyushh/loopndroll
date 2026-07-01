@@ -11,11 +11,24 @@ struct CompanionMobileSession: Codable, Sendable {
     }
 
     var isExpired: Bool {
-        guard let expiresAtDate = ISO8601DateFormatter().date(from: expiresAt) else {
+        guard let expiresAtDate = Self.parseServerTimestamp(expiresAt) else {
             return true
         }
 
         return expiresAtDate <= Date().addingTimeInterval(Self.expirySkewSeconds)
+    }
+
+    // The server formats RFC 3339 with fractional seconds (e.g.
+    // "2026-07-02T08:05:46.280272Z"); a plain ISO8601DateFormatter returns nil for
+    // that, which used to make every freshly minted session read as expired and get
+    // deleted — locking the app out of its own auth.
+    private static func parseServerTimestamp(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: value)
     }
 
     private static let expirySkewSeconds: TimeInterval = 30

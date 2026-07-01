@@ -5,6 +5,10 @@ import Testing
 
 @Suite("Session summary timing")
 struct SessionSummaryTimingTests {
+    init() {
+        CompanionSnapshotStateStore.clearPersistedAssistantSurfaceForTesting()
+    }
+
     private enum Constants {
         static let millisecondsPerSecond: TimeInterval = 1_000
         static let dateToleranceSeconds: TimeInterval = 0.000_001

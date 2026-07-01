@@ -2,6 +2,7 @@ import AppIntents
 import Foundation
 import LooperClientCore
 import LooperCompanionCore
+import Network
 import Observation
 import UserNotifications
 
@@ -180,6 +181,8 @@ final class CompanionAppModel {
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
     @ObservationIgnored private var connectionRevision = 0
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
+    @ObservationIgnored private var networkPathMonitor: NWPathMonitor?
+    @ObservationIgnored private var lastNetworkPathIdentity: String?
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
 
@@ -311,6 +314,7 @@ final class CompanionAppModel {
         configureStopQuickActions()
         await refreshLocalNotificationStatus()
         startSessionRuntimeSyncIfNeeded()
+        startNetworkPathMonitoringIfNeeded()
         startNotificationReplyOutboxDrainIfNeeded()
 
         CompanionDiagnostics.record("snapshot:load-skip-state-mini-prepare")
@@ -324,6 +328,47 @@ final class CompanionAppModel {
     func stopSessionRuntimeSync() {
         sessionMiniController.stopSync()
         markSessionStreamStopped()
+    }
+
+    private func startNetworkPathMonitoringIfNeeded() {
+        guard networkPathMonitor == nil else {
+            return
+        }
+        let monitor = NWPathMonitor()
+        networkPathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            let identity = Self.networkPathIdentity(path)
+            Task { @MainActor [weak self] in
+                self?.handleNetworkPathChange(identity: identity)
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "companion.network-path-monitor"))
+    }
+
+    private func handleNetworkPathChange(identity: String) {
+        // The first callback reports the current path, not a change.
+        guard let previousIdentity = lastNetworkPathIdentity else {
+            lastNetworkPathIdentity = identity
+            return
+        }
+        guard identity != previousIdentity else {
+            return
+        }
+        lastNetworkPathIdentity = identity
+        // A dead stream cannot always notice the network moved out from under it
+        // (blackholed reads have no error); restarting the sync re-races the full
+        // endpoint list so LAN<->Tailscale switches recover in under a second.
+        CompanionDiagnostics.record("network:path-changed identity=\(identity)")
+        stopSessionRuntimeSyncForRestart()
+        startSessionRuntimeSyncIfNeeded()
+    }
+
+    private nonisolated static func networkPathIdentity(_ path: NWPath) -> String {
+        let interfaces = path.availableInterfaces
+            .map { "\($0.type)" }
+            .sorted()
+            .joined(separator: ",")
+        return "\(path.status):\(interfaces)"
     }
 
     private func stopSessionRuntimeSyncForRestart() {
@@ -2116,7 +2161,10 @@ final class CompanionAppModel {
         if snapshotState.allSessions.isEmpty {
             return true
         }
-        return latestSeq > realtimeLatestSeq
+        // The liveness pass of the same stream frame has already advanced
+        // realtimeLatestSeq to this frame's seq, so requiring strictly-greater here
+        // rejected every streamed update and froze the visible session list.
+        return latestSeq >= realtimeLatestSeq
     }
 
     private func markCachedSnapshotReadyIfNeeded(reason: String) {

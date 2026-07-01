@@ -184,6 +184,7 @@ final class CompanionSnapshotStateStore {
             from: selection.selectedAssistantSurface
         ) ?? surface
         hasUserSelectedAssistantSurface = selection.hasUserSelectedAssistantSurface
+        Self.persistSelectedAssistantSurface(selectedSurface)
         applyVisibleAssistantSurface(selectedSurface)
         return true
     }
@@ -583,7 +584,29 @@ final class CompanionSnapshotStateStore {
         if hasUserSelectedAssistantSurface {
             return selectedAssistantSurface
         }
+        // The on-device choice outranks the snapshot's global surface: nothing writes
+        // that server-side value anymore, so without this the switcher snapped back to
+        // a frozen surface on every launch.
+        if let persistedSurface = Self.persistedAssistantSurface() {
+            return persistedSurface
+        }
         return snapshot.globalSettings.assistantSurface
+    }
+
+    private nonisolated static let selectedAssistantSurfaceDefaultsKey = "companion.selectedAssistantSurface"
+
+    private nonisolated static func persistSelectedAssistantSurface(_ surface: CompanionAssistantSurface) {
+        UserDefaults.standard.set(surface.rawValue, forKey: selectedAssistantSurfaceDefaultsKey)
+    }
+
+    private nonisolated static func persistedAssistantSurface() -> CompanionAssistantSurface? {
+        UserDefaults.standard
+            .string(forKey: selectedAssistantSurfaceDefaultsKey)
+            .flatMap(CompanionAssistantSurface.init(rawValue:))
+    }
+
+    nonisolated static func clearPersistedAssistantSurfaceForTesting() {
+        UserDefaults.standard.removeObject(forKey: selectedAssistantSurfaceDefaultsKey)
     }
 
     private func sourceSnapshotForProjection() -> MobileSnapshot? {

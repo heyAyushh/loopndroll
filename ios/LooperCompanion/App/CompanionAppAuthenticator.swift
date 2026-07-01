@@ -58,6 +58,16 @@ final class CompanionAppAuthenticator {
         ) && storedPasskeyIsUsable
 
         if !storedFaceIDUnlockEnabled {
+            // If a credential was registered with the server, revoke it before wiping
+            // local state: an orphaned server credential keeps passkey-session
+            // enforcement armed while this device can no longer mint a session,
+            // locking the app out of every mobile API permanently.
+            if let orphanedCredentialID = Self.storedCredentialID(in: userDefaults) {
+                let client = authenticationClient
+                Task {
+                    try? await client.revokeCredential(credentialID: orphanedCredentialID)
+                }
+            }
             Self.clearStoredPasskeyState(in: userDefaults)
             CompanionMobileSessionStore.clear()
         }

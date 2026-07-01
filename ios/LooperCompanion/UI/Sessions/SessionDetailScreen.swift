@@ -503,6 +503,12 @@ struct SessionDetailScreen: View {
     private func selectDraftMode(_ mode: SessionMode?) {
         draftMode = mode
         hasDraftModeSelection = true
+        // Picking a mode applies it immediately; the draft only tracks the selection
+        // for prompt composition. Without this, the checkmark moved but nothing was
+        // ever sent unless the user also composed a prompt in the same visit.
+        Task { @MainActor in
+            await model.applyMode(mode, to: sessionID)
+        }
     }
 
     private func resetDraftMode(_ currentMode: SessionMode?) {

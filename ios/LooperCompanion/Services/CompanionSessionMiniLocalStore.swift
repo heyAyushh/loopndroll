@@ -72,9 +72,12 @@ enum CompanionRealtimeEndpointResolver {
             health: health
         )
         let primaryRecoveryBaseURL = recoveryBaseURLs.first?.absoluteString ?? ""
-        let h3Endpoints = uniqueURLs(
+        // Health-advertised URLs always include the server's loopback fallback, which
+        // is only dialable from the simulator; run everything through the same
+        // attemptability filter the HTTP layer uses.
+        let h3Endpoints = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(uniqueURLs(
             [health?.grpcH3BaseURL].compactMap(\.self) + (health?.grpcH3BaseURLs ?? [])
-        )
+        ))
         .map {
             ClientEndpoint.h3(
                 url: $0.absoluteString,
@@ -87,13 +90,13 @@ enum CompanionRealtimeEndpointResolver {
             )
         }
 
-        let h2EndpointURLs = uniqueURLs(
+        let h2EndpointURLs = CompanionBaseURLFiltering.uniqueAttemptableBaseURLs(uniqueURLs(
             [health?.grpcBaseURL].compactMap(\.self) +
                 (health?.grpcBaseURLs ?? []) +
                 configuredBaseURLs
                     .map(CompanionBaseURLRouting.canonicalRealtimeGRPCBaseURL)
                     .map(\.absoluteString)
-        )
+        ))
         let h2Endpoints = h2EndpointURLs.map {
             ClientEndpoint.h2(
                 url: $0.absoluteString,
