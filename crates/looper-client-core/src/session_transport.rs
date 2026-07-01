@@ -11,7 +11,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request as TonicRequest, metadata::MetadataValue, transport::Endpoint};
 use tonic_h3::quinn::H3QuinnConnector;
 use tonic_h3::quinn::h3_quinn::quinn::{
-    ClientConfig, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
+    ClientConfig, IdleTimeout, TransportConfig, crypto::rustls::QuicClientConfig,
+    rustls as quinn_rustls,
 };
 use x509_parser::prelude::{FromDer, X509Certificate};
 
@@ -31,7 +32,20 @@ pub(crate) mod proto {
 }
 
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
-const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+// Generous enough for a QUIC/TLS handshake over a Tailscale DERP relay (RTT can
+// exceed 250ms right after a network switch); the 25ms candidate stagger keeps the
+// fastest endpoint winning regardless.
+const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
+// The server heartbeats every 15s; a stream that stays silent past this deadline is
+// dead (e.g. the phone left the LAN and the TCP read blackholes) and must be redialed.
+const STATE_MINI_STREAM_READ_DEADLINE: Duration = Duration::from_secs(20);
+// H3/QUIC liveness: ping every 5s so quinn notices a blackholed path within
+// max_idle_timeout instead of waiting out the 30s default.
+const STATE_MINI_H3_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const STATE_MINI_H3_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+// H2/TCP liveness: keep-alive pings surface a dead path in seconds instead of never.
+const STATE_MINI_H2_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const STATE_MINI_H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 const STATE_MINI_STREAM_FALLBACK_RACE_DELAY: Duration = Duration::from_millis(25);
 const STATE_MINI_RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
@@ -630,7 +644,11 @@ async fn open_h2_state_mini_stream_candidate(
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let channel_endpoint = Endpoint::from_shared(endpoint.url)
         .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?
-        .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
+        .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT)
+        .http2_keep_alive_interval(STATE_MINI_H2_KEEP_ALIVE_INTERVAL)
+        .keep_alive_timeout(STATE_MINI_H2_KEEP_ALIVE_TIMEOUT)
+        .keep_alive_while_idle(true)
+        .tcp_keepalive(Some(STATE_MINI_H2_KEEP_ALIVE_INTERVAL));
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(channel_endpoint)
         .await
         .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
@@ -802,7 +820,20 @@ async fn drive_state_mini_stream_session(
                         )
                     })?;
             }
-            frame = stream.message() => {
+            frame = tokio::time::timeout(STATE_MINI_STREAM_READ_DEADLINE, stream.message()) => {
+                // The server heartbeats every 15s; silence past the deadline means the
+                // path is dead (blackholed TCP/QUIC after a network switch) even though
+                // the socket never errored. Surface it as a transport error so the
+                // reconnect loop re-races the full endpoint list.
+                let frame = frame.map_err(|_| {
+                    state_mini_transport_error_with_endpoint(
+                        latest_seq,
+                        "state mini stream read deadline elapsed without server heartbeat"
+                            .to_owned(),
+                        endpoint_transport,
+                        fallback_reason.clone(),
+                    )
+                })?;
                 let Some(frame) = frame.map_err(|status| {
                     if status.code() == tonic::Code::OutOfRange {
                         state_mini_recovery_required_error_with_endpoint(
@@ -1070,7 +1101,15 @@ fn h3_client_endpoint(
     let tls_config = h3_client_tls_config(cert_pin, spki_pin)?;
     let quic_config =
         QuicClientConfig::try_from(tls_config).map_err(|_| ClientCoreError::InvalidEndpoint)?;
-    client_endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
+    let mut client_config = ClientConfig::new(Arc::new(quic_config));
+    let mut transport_config = TransportConfig::default();
+    transport_config.keep_alive_interval(Some(STATE_MINI_H3_KEEP_ALIVE_INTERVAL));
+    transport_config.max_idle_timeout(Some(
+        IdleTimeout::try_from(STATE_MINI_H3_MAX_IDLE_TIMEOUT)
+            .map_err(|_| ClientCoreError::InvalidEndpoint)?,
+    ));
+    client_config.transport_config(Arc::new(transport_config));
+    client_endpoint.set_default_client_config(client_config);
     Ok(client_endpoint)
 }
 

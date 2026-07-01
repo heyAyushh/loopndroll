@@ -843,7 +843,14 @@ fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
             }
             Ok(state)
         }
-        Err(ClientCoreError::InvalidSnapshotJson) => Err(ClientCoreError::InvalidSnapshotJson),
+        // A corrupt or empty cache file is a cache problem, not a fatal one: bricking
+        // the runtime forever (and with it the realtime stream) over a bad cache is
+        // never the right trade. Start fresh; the server snapshot repopulates it.
+        Err(ClientCoreError::InvalidSnapshotJson) => {
+            let state = StoredState::default();
+            persist_state(file_path, &state)?;
+            Ok(state)
+        }
         Err(error) => Err(error),
     }
 }
@@ -1707,7 +1714,7 @@ mod tests {
     }
 
     #[test]
-    fn local_store_rejects_invalid_last_good_endpoint_transport() {
+    fn local_store_recovers_from_invalid_last_good_endpoint_transport() {
         let path = temp_store_path("invalid-last-good-endpoint-transport");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
@@ -1723,14 +1730,15 @@ mod tests {
         )
         .expect("invalid transport store");
 
-        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
-            .expect_err("invalid transport should not silently default to H2");
-
-        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+        // The invalid tuple must not silently default to H2 — but neither may it brick
+        // the runtime forever. The store resets to a fresh state (no last-good pin).
+        let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect("invalid transport recovers with a fresh store");
+        assert_eq!(store.snapshot().expect("snapshot").latest_seq, 0);
     }
 
     #[test]
-    fn local_store_rejects_missing_last_good_endpoint_transport_tuple() {
+    fn local_store_recovers_from_missing_last_good_endpoint_transport_tuple() {
         let path = temp_store_path("missing-last-good-endpoint-transport");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
@@ -1745,10 +1753,9 @@ mod tests {
         )
         .expect("missing transport store");
 
-        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
-            .expect_err("missing tuple transport should not silently default to H2");
-
-        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+        let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect("missing transport tuple recovers with a fresh store");
+        assert_eq!(store.snapshot().expect("snapshot").latest_seq, 0);
     }
 
     #[test]
@@ -1985,36 +1992,31 @@ mod tests {
     }
 
     #[test]
-    fn local_store_surfaces_corrupt_cache_without_deleting() {
+    fn local_store_recovers_from_corrupt_cache_with_fresh_state() {
         let path = temp_store_path("corrupt");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(&path, b"not-json").expect("write corrupt");
 
-        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
-            .expect_err("corrupt cache should not be replaced with empty state");
-
-        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
-        assert_eq!(
-            std::fs::read(&path).expect("corrupt cache retained"),
-            b"not-json"
+        // A corrupt cache is a cache problem, not a fatal one: the store starts fresh
+        // (and rewrites the file) instead of bricking the runtime until a manual wipe.
+        let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect("corrupt cache recovers with a fresh store");
+        assert_eq!(store.snapshot().expect("snapshot").latest_seq, 0);
+        assert_ne!(
+            std::fs::read(&path).expect("cache rewritten"),
+            b"not-json".to_vec()
         );
     }
 
     #[test]
-    fn local_store_surfaces_empty_cache_without_seq_zero_collapse() {
+    fn local_store_recovers_from_empty_cache_with_fresh_state() {
         let path = temp_store_path("empty-cache");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(&path, b"").expect("write empty cache");
 
-        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
-            .expect_err("empty cache should not be treated as an empty snapshot");
-
-        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
-        assert!(
-            std::fs::read(&path)
-                .expect("empty cache retained")
-                .is_empty()
-        );
+        let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect("empty cache recovers with a fresh store");
+        assert_eq!(store.snapshot().expect("snapshot").latest_seq, 0);
     }
 
     #[test]
