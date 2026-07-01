@@ -60,12 +60,19 @@ impl LooperClientCoreSessionRuntime {
         bearer_token: String,
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let restored_client_mutation_ids = self.seed_core_from_local_store()?;
         let endpoints = self.local_store.endpoints_with_last_good(endpoints)?;
+        let has_warm_stream = self.client_core.has_warm_stream_for_endpoints(&endpoints)?;
+        let restored_client_mutation_ids = if has_warm_stream {
+            self.restore_pending_commands_from_local_store()?
+        } else {
+            self.seed_core_from_local_store()?
+        };
         let snapshot = self
             .client_core
             .start(endpoints, bearer_token, mobile_session_header)?;
-        self.emit_cached_local_state(&snapshot)?;
+        if !has_warm_stream {
+            self.emit_cached_local_state(&snapshot)?;
+        }
         self.client_core.spawn_restored_command_ack_flush(
             self.local_store.clone(),
             restored_client_mutation_ids,
@@ -458,6 +465,11 @@ impl LooperClientCoreSessionRuntime {
             .restore_pending_commands(snapshot.pending_commands)
     }
 
+    fn restore_pending_commands_from_local_store(&self) -> Result<Vec<String>, ClientCoreError> {
+        self.client_core
+            .restore_pending_commands(self.local_store.pending_commands()?)
+    }
+
     fn persist_core_snapshot(
         &self,
         snapshot: &ClientStateSnapshot,
@@ -707,7 +719,10 @@ mod tests {
         future::Future,
         io::{Read, Write},
         net::TcpListener,
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         task::{Context, Poll, Wake},
         thread,
         time::Duration,
@@ -1007,6 +1022,80 @@ mod tests {
         assert_eq!(update.latest_seq, 7);
         assert!(update.snapshot_json.contains(r#""id":"thread-main""#));
         assert!(update.snapshot_json.contains(r#""title":"Cached""#));
+    }
+
+    #[test]
+    fn runtime_same_endpoint_start_keeps_warm_stream_and_live_core_state() {
+        let test_runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let runtime =
+            LooperClientCoreSessionRuntime::new(temp_store_path("warm-same-endpoint-start"))
+                .expect("runtime");
+
+        test_runtime.block_on(async {
+            let (stream_url, session_count, server) =
+                spawn_counting_realtime_session_server().await;
+            runtime
+                .start(
+                    vec![ClientEndpoint {
+                        url: stream_url.clone(),
+                        last_good: false,
+                    }],
+                    String::new(),
+                    String::new(),
+                )
+                .expect("start runtime");
+
+            let update = tokio::time::timeout(Duration::from_secs(1), runtime.observe())
+                .await
+                .expect("observe first warm stream heartbeat")
+                .expect("runtime update");
+            assert_eq!(update.reason, ClientStateMiniStreamUpdateReason::Heartbeat);
+            assert_eq!(update.snapshot.phase, crate::model::ConnectionPhase::Ready);
+            assert_eq!(session_count.load(Ordering::SeqCst), 1);
+
+            runtime
+                .client_core
+                .replace_state_minis(ClientStateMiniSnapshot {
+                    latest_seq: 21,
+                    sessions: vec![state_mini("thread-live", "codex", 21, "rev-21", "Live")],
+                    server_time: "2026-06-26T00:00:21Z".to_owned(),
+                })
+                .expect("seed live core state");
+            runtime
+                .local_store
+                .replace_state_minis(ClientStateMiniSnapshot {
+                    latest_seq: 7,
+                    sessions: vec![state_mini("thread-stale", "codex", 7, "rev-7", "Stale")],
+                    server_time: "2026-06-26T00:00:07Z".to_owned(),
+                })
+                .expect("seed stale disk cache");
+
+            let snapshot = runtime
+                .start(
+                    vec![ClientEndpoint {
+                        url: format!("{}/", stream_url.trim_end_matches('/')),
+                        last_good: false,
+                    }],
+                    String::new(),
+                    String::new(),
+                )
+                .expect("same identity start");
+
+            assert_eq!(snapshot.phase, crate::model::ConnectionPhase::Ready);
+            assert_eq!(snapshot.latest_seq, 21);
+            assert_eq!(snapshot.state_minis.len(), 1);
+            assert_eq!(snapshot.state_minis[0].session_id, "thread-live");
+            assert!(
+                snapshot.state_minis[0]
+                    .payload_json
+                    .contains(r#""title":"Live""#)
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert_eq!(session_count.load(Ordering::SeqCst), 1);
+
+            server.abort();
+            let _ = server.await;
+        });
     }
 
     #[test]
@@ -1678,6 +1767,26 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    async fn spawn_counting_realtime_session_server()
+    -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind realtime server port");
+        let address = listener.local_addr().expect("realtime server addr");
+        drop(listener);
+        let session_count = Arc::new(AtomicUsize::new(0));
+        let service = CountingRealtimeSessionService {
+            session_count: session_count.clone(),
+        };
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(service);
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), session_count, handle)
+    }
+
     async fn spawn_text_chunk_realtime_session_server() -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind text chunk server port");
         let address = listener.local_addr().expect("text chunk server addr");
@@ -1696,6 +1805,10 @@ mod tests {
     }
 
     struct TestRealtimeSessionService;
+
+    struct CountingRealtimeSessionService {
+        session_count: Arc<AtomicUsize>,
+    }
 
     struct TextChunkRealtimeSessionService;
 
@@ -1719,6 +1832,35 @@ mod tests {
             _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
         ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
             let (_sender, receiver) = mpsc::channel(1);
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
+    }
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for CountingRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            self.session_count.fetch_add(1, Ordering::SeqCst);
+            let (sender, receiver) = mpsc::channel(1);
+            tokio::spawn(async move {
+                let _sender = sender;
+                std::future::pending::<()>().await;
+            });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
     }

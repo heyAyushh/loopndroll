@@ -200,6 +200,19 @@ impl LooperClientCore {
         let _observe = self.observe_updates.lock().await;
         self.next_state_mini_stream_update().await
     }
+
+    pub(crate) fn has_warm_stream_for_endpoints(
+        &self,
+        endpoints: &[ClientEndpoint],
+    ) -> Result<bool, ClientCoreError> {
+        require_endpoints(endpoints)?;
+        let endpoints_identity = endpoints_identity(endpoints);
+        let stream = self.lock_stream()?;
+        Ok(stream
+            .as_ref()
+            .map(|stream| stream.endpoints_identity == endpoints_identity && stream.is_running())
+            .unwrap_or(false))
+    }
 }
 
 impl LooperClientCore {
@@ -985,9 +998,6 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_endpoints(&endpoints)?;
         let endpoints_identity = endpoints_identity(&endpoints);
-        let (sender, receiver) = mpsc::channel(64);
-        let (command_sender, command_receiver) = mpsc::channel(64);
-        let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
         let mut state = self.lock_state()?;
         let mut stream = self.lock_stream()?;
         let has_running_stream = stream
@@ -1006,6 +1016,9 @@ impl LooperClientCore {
         state.endpoint_url.clear();
         state.last_error.clear();
         let after_seq = state.latest_seq;
+        let (sender, receiver) = mpsc::channel(64);
+        let (command_sender, command_receiver) = mpsc::channel(64);
+        let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
         let task = self.runtime.spawn(run_state_mini_stream(
             endpoints,
             bearer_token,
@@ -2713,9 +2726,9 @@ mod tests {
             core.send_session_commands(outbox)
                 .await
                 .expect("send over retained stream");
-            let frame = commands_receiver
-                .recv()
+            let frame = tokio::time::timeout(Duration::from_secs(1), commands_receiver.recv())
                 .await
+                .expect("retained command frame did not hang")
                 .expect("retained command frame");
             assert_eq!(frame.client_mutation_id, "cmid-prompt");
         });
