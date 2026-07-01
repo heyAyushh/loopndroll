@@ -18,7 +18,7 @@ impl Default for ConnectionPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum ClientCommandKind {
     SetSessionMode,
     SendSessionPrompt,
@@ -37,9 +37,27 @@ pub enum OutboundSessionFrameKind {
     Command,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+pub enum ClientEndpointTransport {
+    #[serde(rename = "h2")]
+    H2,
+    #[serde(rename = "h3")]
+    H3,
+}
+
+impl Default for ClientEndpointTransport {
+    fn default() -> Self {
+        Self::H2
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientEndpoint {
+    pub transport: ClientEndpointTransport,
     pub url: String,
+    pub recovery_base_url: String,
+    pub h3_certificate_sha256: String,
+    pub h3_certificate_spki_sha256: String,
     pub last_good: bool,
 }
 
@@ -291,6 +309,8 @@ pub struct ClientSessionDetailProjection {
 pub struct ClientStateSnapshot {
     pub phase: ConnectionPhase,
     pub endpoint_url: String,
+    pub endpoint_transport: ClientEndpointTransport,
+    pub transport_fallback_reason: String,
     pub latest_seq: i64,
     pub revision: String,
     pub server_time: String,
