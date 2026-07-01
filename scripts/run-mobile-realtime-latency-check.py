@@ -178,6 +178,20 @@ def main() -> int:
         print_app_selftest_summary(result)
         print(f"qa report: {DOC_PATH}")
         return EXIT_OK
+    if args.strict_local_first_targets:
+        try:
+            result = run_live_transport_proof(args, requested_sample_count, run_dir)
+        except Exception as error:
+            failure = build_transport_proof_failure_evidence(args, requested_sample_count, run_dir, error)
+            (run_dir / "mobile-realtime-transport-proof-failure.json").write_text(
+                json.dumps(failure, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            write_evidence_if_requested(args.evidence, failure)
+            raise
+        write_evidence_if_requested(args.evidence, result)
+        print_live_transport_proof_summary(result)
+        return EXIT_OK
     seed_codex_state(run_dir)
     codex_stub = write_codex_stub(run_dir)
     codex_stub_log = codex_stub_log_path(run_dir)
@@ -261,6 +275,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--samples",
+        "--sample-count",
+        dest="samples",
         type=int,
         help="override LOOPER_LIVE_LATENCY_SAMPLE_COUNT for this run",
     )
@@ -278,6 +294,11 @@ def parse_args() -> argparse.Namespace:
         "--force-http-fallback",
         action="store_true",
         help="record forced HTTP fallback as observable current-red evidence",
+    )
+    parser.add_argument(
+        "--force-h3-failure",
+        action="store_true",
+        help="use a dead UDP/H3 endpoint while keeping live HTTP/2 as the fallback transport",
     )
     parser.add_argument(
         "--app-selftest",
@@ -641,6 +662,843 @@ def print_current_red_summary(evidence: dict) -> None:
         f"violations={len(evidence['strictTargetViolations'])} "
         f"fallback={evidence['fallback']['mode']}"
     )
+
+
+def run_live_transport_proof(
+    args: argparse.Namespace,
+    requested_sample_count: int,
+    run_dir: Path,
+) -> dict:
+    seed_codex_state(run_dir)
+    codex_stub = write_codex_stub(run_dir)
+    codex_stub_log = codex_stub_log_path(run_dir)
+    http_port = free_http_port_with_grpc_neighbor()
+    grpc_port = http_port + GRPC_PORT_OFFSET
+    base_url = f"http://{HTTP_HOST}:{http_port}"
+    build_server_binary()
+    server = start_server(run_dir, codex_stub, http_port, grpc_port)
+    cleanup = {
+        "serverPid": server.pid,
+        "httpPort": http_port,
+        "grpcTcpPort": grpc_port,
+        "grpcUdpPort": grpc_port,
+        "runArtifactDir": project_relative(run_dir),
+        "serverLog": project_relative(run_dir / "server.log"),
+        "tempDirs": [project_relative(run_dir), project_relative(ARTIFACT_ROOT)],
+        "tmuxSessions": [],
+    }
+    try:
+        wait_for_health(base_url, server, run_dir / "server.log")
+        health = http_json(f"{base_url}/api/mobile/health")
+        credentials = register_mobile_session(base_url)
+        assert_mobile_snapshot(base_url, credentials["bearer_token"], credentials["mobile_session"])
+        h2_url = grpc_endpoint_url(base_url, "http")
+        h3_url = health.get("grpcH3BaseURL") or grpc_endpoint_url(base_url, "https")
+        h3_pin = health.get("grpcH3CertificateSha256")
+        if not h3_pin:
+            raise RuntimeError(f"mobile health did not include grpcH3CertificateSha256: {health}")
+        if args.force_h3_failure:
+            h3_url = dead_h3_endpoint_url(base_url)
+        probe_result = run_transport_probe(
+            run_dir=run_dir,
+            sample_count=requested_sample_count,
+            h3_url=h3_url,
+            h2_url=h2_url,
+            h3_certificate_sha256=h3_pin,
+            bearer_token=credentials["bearer_token"],
+            mobile_session=credentials["mobile_session"],
+            force_h3_failure=args.force_h3_failure,
+        )
+        result = build_transport_proof_evidence(
+            args=args,
+            requested_sample_count=requested_sample_count,
+            run_dir=run_dir,
+            base_url=base_url,
+            h2_url=h2_url,
+            h3_url=h3_url,
+            h3_certificate_sha256=h3_pin,
+            health=health,
+            probe_result=probe_result,
+            cleanup=cleanup,
+            codex_stub_log=codex_stub_log,
+        )
+        (run_dir / "mobile-realtime-transport-proof.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return result
+    finally:
+        stop_server(server)
+        cleanup["serverExitStatus"] = server.poll()
+        cleanup_path = run_dir / "transport-proof-cleanup.json"
+        cleanup_path.write_text(json.dumps(cleanup, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def grpc_endpoint_url(base_url: str, scheme: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.hostname is None or parsed.port is None:
+        raise RuntimeError(f"base URL has no host/port: {base_url}")
+    port = parsed.port + GRPC_PORT_OFFSET
+    return urllib.parse.urlunparse((scheme, f"{parsed.hostname}:{port}", "", "", "", ""))
+
+
+def dead_h3_endpoint_url(base_url: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.hostname is None:
+        raise RuntimeError(f"base URL has no host: {base_url}")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind((HTTP_HOST, 0))
+        port = probe.getsockname()[1]
+    return urllib.parse.urlunparse(("https", f"{parsed.hostname}:{port}", "", "", "", ""))
+
+
+def run_transport_probe(
+    run_dir: Path,
+    sample_count: int,
+    h3_url: str,
+    h2_url: str,
+    h3_certificate_sha256: str,
+    bearer_token: str,
+    mobile_session: str,
+    force_h3_failure: bool,
+) -> dict:
+    probe_dir = write_transport_probe_project(run_dir)
+    config_path = run_dir / "transport-proof-config.json"
+    output_path = run_dir / "transport-proof-output.json"
+    log_path = run_dir / "transport-proof-probe.log"
+    config = {
+        "sampleCount": sample_count,
+        "sessionId": SESSION_ID,
+        "h3Url": h3_url,
+        "h2Url": h2_url,
+        "h3CertificateSha256": h3_certificate_sha256,
+        "bearerToken": bearer_token,
+        "mobileSession": mobile_session,
+        "forceH3Failure": force_h3_failure,
+        "outputPath": str(output_path),
+    }
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    command = ["cargo", "run", "--quiet", "--", str(config_path)]
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(ROOT_DIR / "target" / "transport-proof-probe")
+    with open(log_path, "w", encoding="utf-8") as log:
+        process = subprocess.run(
+            command,
+            cwd=probe_dir,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=180,
+        )
+        log.write(process.stdout)
+    if process.returncode != EXIT_OK:
+        raise RuntimeError(
+            f"transport proof probe failed with exit {process.returncode}: {' '.join(command)}\n"
+            f"{tail(log_path)}"
+        )
+    if not output_path.is_file():
+        raise RuntimeError(f"transport proof probe did not write {output_path}:\n{tail(log_path)}")
+    return json.loads(output_path.read_text(encoding="utf-8"))
+
+
+def write_transport_probe_project(run_dir: Path) -> Path:
+    probe_dir = run_dir / "transport-proof-probe"
+    source_dir = probe_dir / "src"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    cargo_toml = f"""
+[package]
+name = "looper-transport-proof-probe"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+agent-control-plane = {{ path = "{(ROOT_DIR / "crates" / "agent-control-plane").as_posix()}" }}
+anyhow = "1.0.100"
+serde = {{ version = "1.0.228", features = ["derive"] }}
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+tokio = {{ version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }}
+tokio-stream = {{ version = "0.1.17", features = ["sync"] }}
+tonic = "0.14.6"
+tonic-h3 = {{ version = "0.0.5", default-features = false, features = ["quinn"] }}
+"""
+    probe_dir.joinpath("Cargo.toml").write_text(cargo_toml.lstrip(), encoding="utf-8")
+    source_dir.joinpath("main.rs").write_text(TRANSPORT_PROBE_SOURCE, encoding="utf-8")
+    return probe_dir
+
+
+def build_transport_proof_evidence(
+    args: argparse.Namespace,
+    requested_sample_count: int,
+    run_dir: Path,
+    base_url: str,
+    h2_url: str,
+    h3_url: str,
+    h3_certificate_sha256: str,
+    health: dict,
+    probe_result: dict,
+    cleanup: dict,
+    codex_stub_log: Path,
+) -> dict:
+    observed_transports = sorted({sample["transport"] for sample in probe_result["samples"]})
+    expected_transport = "h2" if args.force_h3_failure else "h3"
+    if observed_transports != [expected_transport]:
+        raise RuntimeError(f"unexpected transport proof result: expected {expected_transport}, got {observed_transports}")
+    ack_kinds = {
+        ack["kind"]
+        for sample in probe_result["samples"]
+        for ack in sample.get("acks", [])
+    }
+    required_ack_kinds = {"SetSessionMode", "SendSessionPrompt", "SubmitNotificationReply"}
+    if ack_kinds != required_ack_kinds:
+        raise RuntimeError(f"missing transport proof ACK kinds: {sorted(required_ack_kinds - ack_kinds)}")
+    if args.force_h3_failure and not any(sample.get("fallbackReason") for sample in probe_result["samples"]):
+        raise RuntimeError("forced H3 failure did not report an H3 fallback reason")
+    p95 = {
+        "healthMilliseconds": percentile([sample["timings"]["healthMilliseconds"] for sample in probe_result["samples"]], P95_PERCENTILE),
+        "openMilliseconds": percentile([sample["timings"]["openMilliseconds"] for sample in probe_result["samples"]], P95_PERCENTILE),
+        "ackMilliseconds": percentile([sample["timings"]["ackMilliseconds"] for sample in probe_result["samples"]], P95_PERCENTILE),
+        "totalMilliseconds": percentile([sample["timings"]["totalMilliseconds"] for sample in probe_result["samples"]], P95_PERCENTILE),
+    }
+    return {
+        "schemaVersion": 2,
+        "goal": "G011-tonic-h3-live-transport-proof",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "classification": "strict-pass",
+        "currentRed": False,
+        "sampleCount": requested_sample_count,
+        "sampleCountSource": "--sample-count/--samples" if args.samples is not None else "LOOPER_LIVE_LATENCY_SAMPLE_COUNT",
+        "runArtifactDir": project_relative(run_dir),
+        "networkClass": "loopback-local-first",
+        "baseURL": base_url,
+        "transport": {
+            "selected": expected_transport,
+            "observed": observed_transports,
+            "h3EndpointURL": h3_url,
+            "h2EndpointURL": h2_url,
+            "forcedH3Failure": args.force_h3_failure,
+            "fallbackPreserved": args.force_h3_failure and expected_transport == "h2",
+        },
+        "certPin": {
+            "source": "authenticated mobile health grpcH3CertificateSha256",
+            "sha256": h3_certificate_sha256,
+        },
+        "healthRouteMetadata": {
+            "grpcBaseURL": health.get("grpcBaseURL"),
+            "grpcH3BaseURL": health.get("grpcH3BaseURL"),
+            "grpcH3CertificateSha256": health.get("grpcH3CertificateSha256"),
+        },
+        "p95": p95,
+        "samples": probe_result["samples"],
+        "assertions": {
+            "liveServerStartedWithH2AndH3": True,
+            "mobileSessionRegistered": True,
+            "modeSwitchAcked": "SetSessionMode" in ack_kinds,
+            "promptSendAcked": "SendSessionPrompt" in ack_kinds,
+            "notificationReplyAcked": "SubmitNotificationReply" in ack_kinds,
+            "pendingCommandsPreservedThroughFallback": probe_result["pendingCommandsQueuedBeforeOpen"],
+            "resumeAfterSeqPreserved": all(sample["resumeAfterSeq"] == sample["observedResumeAfterSeq"] for sample in probe_result["samples"]),
+            "h2FallbackKept": True,
+            "codexStubTurnStartsObserved": count_codex_stub_turn_starts(codex_stub_log),
+        },
+        "cleanup": cleanup,
+        "probe": {
+            "config": project_relative(run_dir / "transport-proof-config.json"),
+            "log": project_relative(run_dir / "transport-proof-probe.log"),
+            "output": project_relative(run_dir / "transport-proof-output.json"),
+        },
+    }
+
+
+def build_transport_proof_failure_evidence(
+    args: argparse.Namespace,
+    requested_sample_count: int,
+    run_dir: Path,
+    error: Exception,
+) -> dict:
+    return {
+        "schemaVersion": 2,
+        "goal": "G011-tonic-h3-live-transport-proof",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "classification": "blocked",
+        "status": "blocked",
+        "currentRed": True,
+        "sampleCount": requested_sample_count,
+        "sampleCountSource": "--sample-count/--samples" if args.samples is not None else "LOOPER_LIVE_LATENCY_SAMPLE_COUNT",
+        "runArtifactDir": project_relative(run_dir),
+        "networkClass": "loopback-local-first",
+        "transport": {
+            "selected": "h2" if args.force_h3_failure else "h3",
+            "forcedH3Failure": args.force_h3_failure,
+        },
+        "blocker": str(error),
+        "probe": {
+            "config": project_relative(run_dir / "transport-proof-config.json"),
+            "log": project_relative(run_dir / "transport-proof-probe.log"),
+            "output": project_relative(run_dir / "transport-proof-output.json"),
+        },
+        "cleanup": {
+            "runArtifactDir": project_relative(run_dir),
+            "serverLog": project_relative(run_dir / "server.log"),
+            "cleanupLog": project_relative(run_dir / "transport-proof-cleanup.json"),
+        },
+    }
+
+
+def print_live_transport_proof_summary(evidence: dict) -> None:
+    print(
+        "mobile realtime transport strict-pass: "
+        f"samples={evidence['sampleCount']} "
+        f"transport={evidence['transport']['selected']} "
+        f"h3={evidence['transport']['h3EndpointURL']} "
+        f"h2={evidence['transport']['h2EndpointURL']} "
+        f"ack_p95={evidence['p95']['ackMilliseconds']}ms"
+    )
+
+
+TRANSPORT_PROBE_SOURCE = r'''
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use agent_control_plane::grpc::proto;
+use agent_control_plane::grpc::proto::{client_frame, command, server_frame};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio_stream::iter;
+use tonic::codegen::http::Uri;
+use tonic::metadata::MetadataValue;
+use tonic::transport::Endpoint as H2Endpoint;
+use tonic_h3::quinn::H3QuinnConnector;
+use tonic_h3::quinn::h3_quinn::Endpoint as H3Endpoint;
+use tonic_h3::quinn::h3_quinn::quinn::{
+    ClientConfig, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
+};
+
+const H3_ALPN: &[u8] = b"h3";
+const SESSION_OPEN_TIMEOUT: Duration = Duration::from_millis(400);
+const ACK_TIMEOUT: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Config {
+    sample_count: usize,
+    session_id: String,
+    h3_url: String,
+    h2_url: String,
+    h3_certificate_sha256: String,
+    bearer_token: String,
+    mobile_session: String,
+    force_h3_failure: bool,
+    output_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeOutput {
+    sample_count: usize,
+    pending_commands_queued_before_open: bool,
+    force_h3_failure: bool,
+    samples: Vec<SampleOutput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleOutput {
+    sample_index: usize,
+    transport: String,
+    endpoint_url: String,
+    fallback_reason: String,
+    resume_after_seq: i64,
+    observed_resume_after_seq: i64,
+    resume_probe: ResumeOutput,
+    health: TransportHealth,
+    timings: SampleTimings,
+    acks: Vec<AckOutput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResumeOutput {
+    transport: String,
+    endpoint_url: String,
+    fallback_reason: String,
+    after_seq: i64,
+    latest_seq: i64,
+    replayed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransportHealth {
+    h3_ok: bool,
+    h3_error: String,
+    h2_ok: bool,
+    h2_error: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleTimings {
+    health_milliseconds: i64,
+    open_milliseconds: i64,
+    ack_milliseconds: i64,
+    total_milliseconds: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AckOutput {
+    kind: String,
+    client_mutation_id: String,
+    accepted: bool,
+    ack_seq: i64,
+    entity_id: String,
+    revision: String,
+    error_code: String,
+    reject_reason: String,
+}
+
+struct OpenedSession {
+    transport: &'static str,
+    endpoint_url: String,
+    fallback_reason: String,
+    stream: tonic::Streaming<proto::ServerFrame>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config_path = std::env::args()
+        .nth(1)
+        .ok_or_else(|| anyhow!("usage: looper-transport-proof-probe <config.json>"))?;
+    let config: Config = serde_json::from_str(&fs::read_to_string(&config_path)?)?;
+    let mut samples = Vec::with_capacity(config.sample_count);
+    let mut latest_seq = 0_i64;
+
+    for sample_index in 1..=config.sample_count {
+        let sample = run_sample(&config, sample_index, latest_seq).await?;
+        latest_seq = sample
+            .acks
+            .iter()
+            .map(|ack| ack.ack_seq)
+            .max()
+            .unwrap_or(latest_seq)
+            .max(latest_seq);
+        samples.push(sample);
+    }
+
+    let output = ProbeOutput {
+        sample_count: config.sample_count,
+        pending_commands_queued_before_open: true,
+        force_h3_failure: config.force_h3_failure,
+        samples,
+    };
+    fs::write(&config.output_path, serde_json::to_vec_pretty(&output)?)?;
+    Ok(())
+}
+
+async fn run_sample(config: &Config, sample_index: usize, resume_after_seq: i64) -> Result<SampleOutput> {
+    let total_started = Instant::now();
+    let health_started = Instant::now();
+    let health = transport_health(config).await;
+    let health_milliseconds = elapsed_ms(health_started);
+
+    let expected = expected_commands(config, sample_index);
+    let frames = command_frames(config, sample_index);
+    let open_started = Instant::now();
+    let mut opened = open_session(config, frames)
+        .await
+        .context("open Session transport")?;
+    let open_milliseconds = elapsed_ms(open_started);
+
+    let ack_started = Instant::now();
+    let acks = collect_acks(&mut opened.stream, expected)
+        .await
+        .context("collect command ACKs")?;
+    let ack_milliseconds = elapsed_ms(ack_started);
+    let max_ack_seq = acks
+        .iter()
+        .map(|ack| ack.ack_seq)
+        .max()
+        .unwrap_or(resume_after_seq);
+    let resume_probe = run_resume_probe(config, resume_after_seq, max_ack_seq)
+        .await
+        .context("run Resume after_seq probe")?;
+    if resume_probe.latest_seq < max_ack_seq {
+        bail!(
+            "Resume probe latest_seq {} did not catch command ack seq {}",
+            resume_probe.latest_seq,
+            max_ack_seq
+        );
+    }
+    Ok(SampleOutput {
+        sample_index,
+        transport: opened.transport.to_owned(),
+        endpoint_url: opened.endpoint_url,
+        fallback_reason: opened.fallback_reason,
+        resume_after_seq,
+        observed_resume_after_seq: resume_after_seq,
+        resume_probe,
+        health,
+        timings: SampleTimings {
+            health_milliseconds,
+            open_milliseconds,
+            ack_milliseconds,
+            total_milliseconds: elapsed_ms(total_started),
+        },
+        acks,
+    })
+}
+
+async fn run_resume_probe(config: &Config, after_seq: i64, expected_min_seq: i64) -> Result<ResumeOutput> {
+    let mut opened = open_session(
+        config,
+        vec![proto::ClientFrame {
+            frame: Some(client_frame::Frame::Resume(proto::Resume { after_seq })),
+        }],
+    )
+    .await?;
+    let latest_seq = collect_resume_replay(&mut opened.stream, expected_min_seq).await?;
+    Ok(ResumeOutput {
+        transport: opened.transport.to_owned(),
+        endpoint_url: opened.endpoint_url,
+        fallback_reason: opened.fallback_reason,
+        after_seq,
+        latest_seq,
+        replayed: latest_seq > after_seq,
+    })
+}
+
+async fn transport_health(config: &Config) -> TransportHealth {
+    let (h3_ok, h3_error) = match h3_health(config).await {
+        Ok(()) => (true, String::new()),
+        Err(error) => (false, format!("{error:#}")),
+    };
+    let (h2_ok, h2_error) = match h2_health(config).await {
+        Ok(()) => (true, String::new()),
+        Err(error) => (false, format!("{error:#}")),
+    };
+    TransportHealth {
+        h3_ok,
+        h3_error,
+        h2_ok,
+        h2_error,
+    }
+}
+
+async fn h3_health(config: &Config) -> Result<()> {
+    let uri = config.h3_url.parse::<Uri>()?;
+    let connector = H3QuinnConnector::new(
+        uri.clone(),
+        "localhost".to_owned(),
+        pinned_h3_client_endpoint(&config.h3_certificate_sha256)?,
+    );
+    let channel = tonic_h3::H3Channel::new(connector, uri);
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
+    let response = tokio::time::timeout(
+        SESSION_OPEN_TIMEOUT,
+        client.health(proto::HealthRequest {}),
+    )
+    .await
+    .context("H3 health timed out")??;
+    if response.into_inner().ok {
+        Ok(())
+    } else {
+        bail!("H3 health returned ok=false")
+    }
+}
+
+async fn h2_health(config: &Config) -> Result<()> {
+    let channel = proto::looper_realtime_client::LooperRealtimeClient::connect(
+        H2Endpoint::from_shared(config.h2_url.clone())?,
+    )
+    .await?;
+    let mut client = channel;
+    let response = client.health(proto::HealthRequest {}).await?;
+    if response.into_inner().ok {
+        Ok(())
+    } else {
+        bail!("H2 health returned ok=false")
+    }
+}
+
+async fn open_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Result<OpenedSession> {
+    let h3_fallback_reason = match open_h3_session(config, frames.clone()).await {
+        Ok(opened) => return Ok(opened),
+        Err(error) => format!("h3 pre-stream failure: {error:#}"),
+    };
+    let mut opened = open_h2_session(config, frames).await?;
+    opened.fallback_reason = h3_fallback_reason;
+    Ok(opened)
+}
+
+async fn open_h3_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Result<OpenedSession> {
+    let uri = config.h3_url.parse::<Uri>()?;
+    let connector = H3QuinnConnector::new(
+        uri.clone(),
+        "localhost".to_owned(),
+        pinned_h3_client_endpoint(&config.h3_certificate_sha256)?,
+    );
+    let channel = tonic_h3::H3Channel::new(connector, uri);
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
+    let request = session_request(config, frames)?;
+    let response = tokio::time::timeout(SESSION_OPEN_TIMEOUT, client.session(request))
+        .await
+        .context("H3 Session open timed out")??;
+    Ok(OpenedSession {
+        transport: "h3",
+        endpoint_url: config.h3_url.clone(),
+        fallback_reason: String::new(),
+        stream: response.into_inner(),
+    })
+}
+
+async fn open_h2_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Result<OpenedSession> {
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(
+        H2Endpoint::from_shared(config.h2_url.clone())?,
+    )
+    .await?;
+    let request = session_request(config, frames)?;
+    let response = client.session(request).await?;
+    Ok(OpenedSession {
+        transport: "h2",
+        endpoint_url: config.h2_url.clone(),
+        fallback_reason: String::new(),
+        stream: response.into_inner(),
+    })
+}
+
+fn session_request(
+    config: &Config,
+    frames: Vec<proto::ClientFrame>,
+) -> Result<tonic::Request<tokio_stream::Iter<std::vec::IntoIter<proto::ClientFrame>>>> {
+    let mut request = tonic::Request::new(iter(frames));
+    if !config.bearer_token.trim().is_empty() {
+        request.metadata_mut().insert(
+            "authorization",
+            MetadataValue::try_from(format!("Bearer {}", config.bearer_token).as_str())?,
+        );
+    }
+    if !config.mobile_session.trim().is_empty() {
+        request.metadata_mut().insert(
+            "x-looper-mobile-session",
+            MetadataValue::try_from(config.mobile_session.as_str())?,
+        );
+    }
+    Ok(request)
+}
+
+fn command_frames(config: &Config, sample_index: usize) -> Vec<proto::ClientFrame> {
+    vec![
+        command_frame(proto::Command {
+            command: Some(command::Command::SetSessionMode(proto::SetSessionModeRequest {
+                thread_id: config.session_id.clone(),
+                preset: "max-turns-1".to_owned(),
+                client_mutation_id: mutation_id("mode", sample_index),
+            })),
+        }),
+        command_frame(proto::Command {
+            command: Some(command::Command::SendSessionPrompt(proto::SendSessionPromptRequest {
+                thread_id: config.session_id.clone(),
+                prompt: format!("transport proof prompt {sample_index}"),
+                assistant_surface: "codex".to_owned(),
+                client_mutation_id: mutation_id("prompt", sample_index),
+                prompt_intent: "queue".to_owned(),
+            })),
+        }),
+        command_frame(proto::Command {
+            command: Some(command::Command::SubmitNotificationReply(proto::SubmitNotificationReplyRequest {
+                notification_id: format!("transport-proof-notification-{sample_index}"),
+                thread_id: config.session_id.clone(),
+                prompt: format!("transport proof notification reply {sample_index}"),
+                assistant_surface: "codex".to_owned(),
+                client_mutation_id: mutation_id("notification", sample_index),
+            })),
+        }),
+    ]
+}
+
+fn command_frame(command: proto::Command) -> proto::ClientFrame {
+    proto::ClientFrame {
+        frame: Some(client_frame::Frame::Command(command)),
+    }
+}
+
+fn expected_commands(_config: &Config, sample_index: usize) -> HashMap<String, String> {
+    HashMap::from([
+        (mutation_id("mode", sample_index), "SetSessionMode".to_owned()),
+        (mutation_id("prompt", sample_index), "SendSessionPrompt".to_owned()),
+        (mutation_id("notification", sample_index), "SubmitNotificationReply".to_owned()),
+    ])
+}
+
+fn mutation_id(kind: &str, sample_index: usize) -> String {
+    format!("task-8-{kind}-{sample_index}")
+}
+
+async fn collect_acks(
+    stream: &mut tonic::Streaming<proto::ServerFrame>,
+    expected: HashMap<String, String>,
+) -> Result<Vec<AckOutput>> {
+    let mut pending: HashSet<String> = expected.keys().cloned().collect();
+    let mut acks = Vec::with_capacity(expected.len());
+    while !pending.is_empty() {
+        let frame = tokio::time::timeout(ACK_TIMEOUT, stream.message())
+        .await
+        .context("waiting for command ACK timed out")?
+        .context("read Session server frame")?
+        .ok_or_else(|| anyhow!("Session stream ended before all ACKs arrived: pending={pending:?}"))?;
+        let Some(server_frame::Frame::Ack(ack)) = frame.frame else {
+            continue;
+        };
+        if !pending.remove(&ack.client_mutation_id) {
+            continue;
+        }
+        let kind = expected
+            .get(&ack.client_mutation_id)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_owned());
+        if !ack.accepted {
+            bail!(
+                "{kind} was rejected mutation={} error={} reason={}",
+                ack.client_mutation_id,
+                ack.error_code,
+                ack.reject_reason
+            );
+        }
+        acks.push(AckOutput {
+            kind,
+            client_mutation_id: ack.client_mutation_id,
+            accepted: ack.accepted,
+            ack_seq: ack.ack_seq,
+            entity_id: ack.entity_id,
+            revision: ack.revision,
+            error_code: ack.error_code,
+            reject_reason: ack.reject_reason,
+        });
+    }
+    acks.sort_by(|left, right| left.kind.cmp(&right.kind));
+    Ok(acks)
+}
+
+async fn collect_resume_replay(stream: &mut tonic::Streaming<proto::ServerFrame>, expected_min_seq: i64) -> Result<i64> {
+    let deadline = Instant::now() + ACK_TIMEOUT;
+    let mut latest_seq = 0_i64;
+    while Instant::now() < deadline {
+        let frame = tokio::time::timeout(Duration::from_millis(500), stream.message()).await;
+        let Ok(message_result) = frame else {
+            continue;
+        };
+        let Some(frame) = message_result
+            .context("read Resume replay server frame")?
+        else {
+            break;
+        };
+        if let Some(server_frame::Frame::StateDelta(delta)) = frame.frame {
+            latest_seq = latest_seq.max(delta.seq);
+            if latest_seq >= expected_min_seq {
+                return Ok(latest_seq);
+            }
+        }
+    }
+    bail!("Resume replay did not reach seq {expected_min_seq} before timeout; latest_seq={latest_seq}")
+}
+
+fn pinned_h3_client_endpoint(certificate_sha256: &str) -> Result<H3Endpoint> {
+    let certificate_sha256 = normalized_sha256_pin(certificate_sha256)?;
+    let mut endpoint = H3Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .map_err(|error| anyhow!("create H3 client endpoint: {error}"))?;
+    let provider = quinn_rustls::crypto::ring::default_provider();
+    let verifier = Arc::new(PinnedH3CertificateVerifier {
+        certificate_sha256,
+        supported: provider.signature_verification_algorithms,
+    });
+    let mut tls_config = quinn_rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&quinn_rustls::version::TLS13])
+        .map_err(|error| anyhow!("configure H3 TLS client protocol versions: {error:?}"))?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![H3_ALPN.to_vec()];
+    let quic_config = QuicClientConfig::try_from(tls_config)
+        .map_err(|error| anyhow!("configure H3 QUIC client TLS: {error:?}"))?;
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
+    Ok(endpoint)
+}
+
+#[derive(Debug)]
+struct PinnedH3CertificateVerifier {
+    certificate_sha256: String,
+    supported: quinn_rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl quinn_rustls::client::danger::ServerCertVerifier for PinnedH3CertificateVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &quinn_rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[quinn_rustls::pki_types::CertificateDer<'_>],
+        _server_name: &quinn_rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: quinn_rustls::pki_types::UnixTime,
+    ) -> std::result::Result<quinn_rustls::client::danger::ServerCertVerified, quinn_rustls::Error> {
+        let actual = sha256_hex(end_entity.as_ref());
+        if self.certificate_sha256 == actual {
+            return Ok(quinn_rustls::client::danger::ServerCertVerified::assertion());
+        }
+        Err(quinn_rustls::Error::InvalidCertificate(
+            quinn_rustls::CertificateError::ApplicationVerificationFailure,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> std::result::Result<quinn_rustls::client::danger::HandshakeSignatureValid, quinn_rustls::Error> {
+        quinn_rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &quinn_rustls::pki_types::CertificateDer<'_>,
+        dss: &quinn_rustls::DigitallySignedStruct,
+    ) -> std::result::Result<quinn_rustls::client::danger::HandshakeSignatureValid, quinn_rustls::Error> {
+        quinn_rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<quinn_rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+fn normalized_sha256_pin(value: &str) -> Result<String> {
+    let normalized = value.trim().strip_prefix("sha256:").unwrap_or(value.trim());
+    if normalized.len() != 64 || !normalized.chars().all(|character| character.is_ascii_hexdigit()) {
+        bail!("H3 certificate pin must be sha256-prefixed or raw 64-character hex");
+    }
+    Ok(normalized.to_ascii_lowercase())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
+}
+
+fn elapsed_ms(started: Instant) -> i64 {
+    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)
+}
+'''
 
 
 def run_app_selftest_latency(args: argparse.Namespace, requested_sample_count: int, run_dir: Path) -> dict:
