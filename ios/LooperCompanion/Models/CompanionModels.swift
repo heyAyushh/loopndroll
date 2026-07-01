@@ -579,10 +579,6 @@ enum SessionMode: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    var detailAccessibilityIdentifier: String {
-        "session-detail.mode.\(rawValue)"
-    }
-
     var symbolName: String {
         switch self {
         case .infinite:

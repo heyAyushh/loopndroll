@@ -29,8 +29,7 @@ private enum LiveLatencyMetrics {
     static let uiTestEnvironmentKey = "LOOPER_UI_TEST"
     static let defaultSessionTitle = "Looper latency fixture"
     static let promptText = "Live latency prompt"
-    static let awaitReplyModeIdentifier = "session-detail.mode.await-reply"
-    static let infiniteModeIdentifier = "session-detail.mode.infinite"
+    static let awaitReplyModeSummary = "Pause again until the user replies."
     static let millisecondsPerSecond = 1_000.0
     static let connectionTimeout: TimeInterval = 8
     static let detailTimeout: TimeInterval = 6
@@ -189,6 +188,8 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         launchApp()
         openPrimarySessionDetail()
         tapVisibleControl(named: "Queue")
+        let modeWheel = app.pickerWheels.firstMatch
+        scrollToElement(modeWheel)
         for modeLabel in [
             "Await Reply",
             "Completion Checks",
@@ -198,8 +199,12 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
             "Use Global Default",
             "Infinite"
         ] {
-            scrollToControl(named: modeLabel)
-            tapVisibleControl(named: modeLabel)
+            modeWheel.adjust(toPickerWheelValue: modeLabel)
+            XCTAssertTrue(
+                pollUntil(timeout: 2) {
+                    (modeWheel.value as? String) == modeLabel
+                }
+            )
         }
     }
 
@@ -430,14 +435,13 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         XCTAssertTrue(pollForButton("Use with Siri", timeout: LiveLatencyMetrics.detailTimeout))
         tapVisibleControl(named: "Queue")
 
-        let modeControl = app.buttons[LiveLatencyMetrics.awaitReplyModeIdentifier].firstMatch
-        scrollToElement(modeControl)
+        let modeWheel = app.pickerWheels.firstMatch
+        scrollToElement(modeWheel)
         let modeStartedAt = Date()
-        modeControl.tap()
-        let modeReadinessControl = app.buttons[LiveLatencyMetrics.infiniteModeIdentifier].firstMatch
+        modeWheel.adjust(toPickerWheelValue: "Await Reply")
         XCTAssertTrue(
-            pollForEnabledButton(
-                modeReadinessControl,
+            pollForText(
+                LiveLatencyMetrics.awaitReplyModeSummary,
                 timeout: LiveLatencyMetrics.mutationTimeout
             )
         )

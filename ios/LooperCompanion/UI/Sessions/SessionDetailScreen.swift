@@ -299,39 +299,22 @@ struct SessionDetailScreen: View {
 
     private func modeSection(_ presentation: SessionDetailPresentation) -> some View {
         let selectedMode = selectedPromptMode(presentation)
+        let modeSelection = Binding<SessionMode?>(
+            get: { selectedMode },
+            set: { selectDraftMode($0) }
+        )
         return Section {
-            ForEach(SessionMode.allCases, id: \.rawValue) { mode in
-                Button {
-                    selectDraftMode(mode)
-                } label: {
-                    HStack(spacing: 12) {
-                        Label(mode.label, systemImage: mode.symbolName)
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        if selectedMode == mode {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.tint)
-                        }
-                    }
+            Picker("Mode", selection: modeSelection) {
+                ForEach(SessionMode.allCases, id: \.rawValue) { mode in
+                    Text(mode.label)
+                        .tag(mode as SessionMode?)
                 }
-                .accessibilityIdentifier(mode.detailAccessibilityIdentifier)
+                Text("Use Global Default")
+                    .tag(nil as SessionMode?)
             }
-
-            Button {
-                selectDraftMode(nil)
-            } label: {
-                HStack {
-                    Label("Use Global Default", systemImage: "dial.low")
-                    Spacer()
-                    if selectedMode == nil {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.tint)
-                    }
-                }
-            }
-            .accessibilityIdentifier("session-detail.mode.global-default")
+            .pickerStyle(.wheel)
+            .labelsHidden()
+            .accessibilityIdentifier("session-detail.mode.wheel")
         } header: {
             Text("Mode")
         } footer: {
