@@ -2272,6 +2272,21 @@ extension SessionDetail {
         contentStatus.isDegraded
     }
 
+    mutating func applyLatestReplyProjection(_ projection: ClientSessionDetailProjection) {
+        guard projection.sessionId == id,
+              projection.hasLatestReply
+        else {
+            return
+        }
+
+        let reply = projection.latestReply
+        latestAssistantMessage = reply.text
+        lastMessageAt = reply.serverTime.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? lastMessageAt
+            : reply.serverTime
+        contentStatus = reply.isTruncated ? .localMiniOnly : contentStatus
+    }
+
     init(summary: SessionSummary, snapshot: MobileSnapshot) {
         self.init(
             id: summary.id,
@@ -2283,7 +2298,7 @@ extension SessionDetail {
             lastActivityAt: summary.lastActivityAt,
             lastMessageAt: summary.lastMessageAt,
             assistantPreview: summary.assistantPreview,
-            latestAssistantMessage: summary.assistantPreview,
+            latestAssistantMessage: nil,
             contentStatus: .localMiniOnly,
             firstUserPrompt: nil,
             isArchived: summary.isArchived,

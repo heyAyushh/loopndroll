@@ -77,8 +77,8 @@ struct SessionsScreen: View {
             .contentMargins(.top, 0, for: .scrollContent)
             .companionListSurface()
             .navigationTitle("Sessions")
-            .navigationDestination(for: SessionSummary.self) { session in
-                SessionDetailScreen(model: model, session: session)
+            .navigationDestination(for: SessionDetailRoute.self) { route in
+                SessionDetailScreen(model: model, route: route)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -202,7 +202,7 @@ struct SessionsScreen: View {
         )
         return Section {
             ForEach(visibleItems) { item in
-                NavigationLink(value: item.session) {
+                NavigationLink(value: item.detailRoute) {
                     SessionRow(
                         session: item.session,
                         assistantSurface: item.assistantSurface
@@ -298,7 +298,12 @@ struct SessionsScreen: View {
 
         _ = model.consumePendingOpenSessionID()
         var path = NavigationPath()
-        path.append(session)
+        path.append(
+            SessionDetailRoute(
+                sessionID: sessionID,
+                assistantSurface: model.viewState.assistantSurface(for: session.id)
+            )
+        )
         navigationPath = path
     }
 

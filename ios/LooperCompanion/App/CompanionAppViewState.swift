@@ -111,6 +111,13 @@ struct CompanionAppViewState {
         snapshotState.session(withID: sessionID)
     }
 
+    func session(
+        withID sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> SessionSummary? {
+        snapshotState.session(withID: sessionID, assistantSurface: assistantSurface)
+    }
+
     func assistantSurface(for sessionID: String) -> CompanionAssistantSurface {
         snapshotState.assistantSurface(for: sessionID)
     }
@@ -334,6 +341,13 @@ struct CompanionAppViewState {
 
     func detail(for sessionID: String) -> SessionDetail? {
         snapshotState.detail(for: sessionID)
+    }
+
+    func detail(for route: SessionDetailRoute) -> SessionDetail? {
+        model.sessionDetail(
+            for: route.sessionID,
+            assistantSurface: route.assistantSurface
+        )
     }
 
     private var connectedStatusSummary: String {

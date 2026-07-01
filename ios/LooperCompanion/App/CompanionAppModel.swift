@@ -1194,11 +1194,41 @@ final class CompanionAppModel {
     }
 
     @discardableResult
-    func refreshSessionDetail(id: String) -> Bool {
+    func refreshSessionDetail(
+        id: String,
+        assistantSurface: CompanionAssistantSurface? = nil
+    ) -> Bool {
         sessionDetailCoordinator.refresh(
             id: id,
+            assistantSurface: assistantSurface,
             snapshotState: snapshotState
         )
+    }
+
+    func sessionDetail(
+        for sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> SessionDetail? {
+        guard var detail = snapshotState.detail(
+            for: sessionID,
+            assistantSurface: assistantSurface
+        ) else {
+            return nil
+        }
+
+        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+            return detail
+        }
+
+        do {
+            let projection = try targetRuntime.sessionDetail(sessionID: sessionID)
+            detail.applyLatestReplyProjection(projection)
+        } catch {
+            CompanionDiagnostics.record(
+                "session-detail:client-core-read-failed sessionID=\(sessionID) error=\(error.localizedDescription)"
+            )
+        }
+        return detail
     }
 
     @discardableResult
@@ -1561,8 +1591,15 @@ final class CompanionAppModel {
 
     @discardableResult
     func setSiriDefaultSession(_ session: SessionSummary) async -> Bool {
-        let sessionID = session.id
-        let targetSurface = assistantSurface(for: sessionID)
+        await setSiriDefaultSession(session.id)
+    }
+
+    @discardableResult
+    func setSiriDefaultSession(
+        _ sessionID: String,
+        assistantSurface requestedSurface: CompanionAssistantSurface? = nil
+    ) async -> Bool {
+        let targetSurface = requestedSurface ?? assistantSurface(for: sessionID)
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
             Haptics.error()
@@ -1588,7 +1625,9 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         CompanionDiagnostics.record("siri-default:client-core-owned sessionID=\(sessionID)")
         Haptics.success()
-        await donateSetDefaultSiriSession(session)
+        if let session = snapshotState.session(withID: sessionID, assistantSurface: targetSurface) {
+            await donateSetDefaultSiriSession(session)
+        }
         return true
     }
 
@@ -1613,8 +1652,15 @@ final class CompanionAppModel {
 
     @discardableResult
     func markCurrentSiriSession(_ session: SessionSummary) async -> Bool {
-        let sessionID = session.id
-        let targetSurface = assistantSurface(for: sessionID)
+        await markCurrentSiriSession(session.id)
+    }
+
+    @discardableResult
+    func markCurrentSiriSession(
+        _ sessionID: String,
+        assistantSurface requestedSurface: CompanionAssistantSurface? = nil
+    ) async -> Bool {
+        let targetSurface = requestedSurface ?? assistantSurface(for: sessionID)
         guard let targetRuntime = sessionMiniController.sessionRuntime else {
             applyConnectionFailure(HTTPCompanionServiceError.localStoreUnavailable, suppressErrorWhenSnapshotUsable: true)
             return false

@@ -1,12 +1,28 @@
 import AppIntents
 import SwiftUI
 
+struct SessionDetailRoute: Hashable, Identifiable {
+    let sessionID: String
+    let assistantSurface: CompanionAssistantSurface
+
+    var id: String {
+        "\(assistantSurface.rawValue):\(sessionID)"
+    }
+}
+
 struct SessionRowDisplayItem: Identifiable, Hashable {
     let session: SessionSummary
     let assistantSurface: CompanionAssistantSurface
 
     var id: String {
         "\(assistantSurface.rawValue):\(session.id)"
+    }
+
+    var detailRoute: SessionDetailRoute {
+        SessionDetailRoute(
+            sessionID: session.id,
+            assistantSurface: assistantSurface
+        )
     }
 }
 

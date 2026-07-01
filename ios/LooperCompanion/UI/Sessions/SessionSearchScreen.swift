@@ -33,8 +33,8 @@ struct SessionSearchScreen: View {
             .contentMargins(.top, 0, for: .scrollContent)
             .companionListSurface()
             .navigationTitle("Search")
-            .navigationDestination(for: SessionSummary.self) { session in
-                SessionDetailScreen(model: model, session: session)
+            .navigationDestination(for: SessionDetailRoute.self) { route in
+                SessionDetailScreen(model: model, route: route)
             }
             .navigationDestination(for: SettingsSearchTarget.self) { target in
                 settingsDestination(for: target)
@@ -193,7 +193,7 @@ struct SessionSearchScreen: View {
         if !sessions.isEmpty {
             Section(title) {
                 ForEach(sessionRowItems(for: sessions)) { item in
-                    NavigationLink(value: item.session) {
+                    NavigationLink(value: item.detailRoute) {
                         SearchSessionRow(
                             session: item.session,
                             assistantSurface: item.assistantSurface
@@ -250,7 +250,7 @@ struct SessionSearchScreen: View {
         switch result {
         case let .session(session):
             let item = sessionRowItem(for: session)
-            NavigationLink(value: session) {
+            NavigationLink(value: item.detailRoute) {
                 SearchSessionRow(
                     session: item.session,
                     assistantSurface: item.assistantSurface
@@ -506,7 +506,7 @@ struct SessionSearchScreen: View {
         case let .session(session):
             dismissSearch()
             Haptics.selectionChanged()
-            searchPath.append(session)
+            searchPath.append(sessionRowItem(for: session).detailRoute)
         case let .settings(target):
             dismissSearch()
             Haptics.selectionChanged()

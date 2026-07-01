@@ -116,6 +116,70 @@ struct SessionSummaryTimingTests {
         )
     }
 
+    @MainActor
+    @Test("Stable detail route ignores stale row summary preview")
+    func stableDetailRouteIgnoresStaleRowSummaryPreview() throws {
+        var staleCodexRow = try sessionSummary(
+            id: "thread-main",
+            ref: "C1",
+            activityMilliseconds: Constants.olderActivityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        staleCodexRow.assistantPreview = "stale row preview"
+        var liveDevinSession = try sessionSummary(
+            id: "thread-main",
+            ref: "D1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        liveDevinSession.assistantPreview = "live detail preview"
+        let snapshot = MobileSnapshot(
+            revision: "revision-detail-route",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [staleCodexRow],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [staleCodexRow],
+                CompanionAssistantSurface.devin.rawValue: [liveDevinSession],
+            ],
+            notifications: [],
+            completionChecks: []
+        )
+        let store = CompanionSnapshotStateStore()
+        store.applySnapshot(snapshot)
+
+        let route = SessionDetailRoute(
+            sessionID: "thread-main",
+            assistantSurface: .devin
+        )
+        let routedDetail = try #require(
+            store.detail(
+                for: route.sessionID,
+                assistantSurface: route.assistantSurface
+            )
+        )
+
+        #expect(routedDetail.ref == "D1")
+        #expect(routedDetail.assistantPreview == "live detail preview")
+        #expect(routedDetail.latestAssistantMessage == nil)
+        #expect(store.session(withID: route.sessionID, assistantSurface: route.assistantSurface)?.ref == "D1")
+        #expect(store.detail(for: "thread-main")?.ref == "C1")
+    }
+
     @Test("Siri session entities use Rust projection ordering")
     func siriSessionEntitiesUseRustProjectionOrdering() async throws {
         let olderCodex = try sessionSummary(

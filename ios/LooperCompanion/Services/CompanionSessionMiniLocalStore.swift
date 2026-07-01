@@ -4,6 +4,7 @@ import LooperClientCore
 private enum CompanionSessionMiniSyncReason {
     static let delta = "delta"
     static let heartbeat = "heartbeat"
+    static let textChunk = "text_chunk"
 }
 
 struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
@@ -217,6 +218,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     func currentStateMiniSnapshot() throws -> ClientLocalStateSnapshot {
         try localStore.currentStateMiniSnapshot()
+    }
+
+    func sessionDetail(sessionID: String) throws -> ClientSessionDetailProjection {
+        try sessionManager.sessionDetail(sessionID: sessionID)
     }
 
     func recoverStateMiniSnapshot() async throws -> CompanionRecoveredSessionMiniSnapshot? {
@@ -647,7 +652,8 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             serverTime: nonEmpty(streamUpdate.serverTime) ?? "",
             isLive: !streamUpdate.shouldStop && (
                 streamUpdate.syncReason == CompanionSessionMiniSyncReason.delta ||
-                    streamUpdate.syncReason == CompanionSessionMiniSyncReason.heartbeat
+                    streamUpdate.syncReason == CompanionSessionMiniSyncReason.heartbeat ||
+                    streamUpdate.syncReason == CompanionSessionMiniSyncReason.textChunk
             ),
             endpointURL: endpointURL
         )

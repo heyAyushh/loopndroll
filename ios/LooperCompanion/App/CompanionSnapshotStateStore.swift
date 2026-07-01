@@ -231,6 +231,22 @@ final class CompanionSnapshotStateStore {
             ?? visibleSession(withID: sessionID)
     }
 
+    func session(
+        withID sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> SessionSummary? {
+        guard let sourceSnapshot = sourceSnapshotForProjection() else {
+            guard selectedAssistantSurface == assistantSurface else {
+                return nil
+            }
+            return visibleSession(withID: sessionID)
+        }
+
+        return sourceSnapshot.sessions(for: assistantSurface).first(where: { session in
+            session.id == sessionID
+        })
+    }
+
     func containsSession(_ sessionID: String) -> Bool {
         session(withID: sessionID) != nil
     }
@@ -278,12 +294,15 @@ final class CompanionSnapshotStateStore {
     }
 
     func detail(for sessionID: String) -> SessionDetail? {
+        detail(for: sessionID, assistantSurface: selectedAssistantSurface)
+    }
+
+    func detail(
+        for sessionID: String,
+        assistantSurface: CompanionAssistantSurface
+    ) -> SessionDetail? {
         guard let sourceSnapshot = sourceSnapshotForProjection(),
-              let session = sourceSnapshot.sessions(for: selectedAssistantSurface).first(where: { session in
-                  session.id == sessionID
-              })
-                ?? canonicalSessionIndex(for: sourceSnapshot).session(withID: sessionID)
-                ?? visibleSession(withID: sessionID)
+              let session = session(withID: sessionID, assistantSurface: assistantSurface)
         else {
             return nil
         }
@@ -292,15 +311,21 @@ final class CompanionSnapshotStateStore {
     }
 
     @discardableResult
-    func refreshDetail(for sessionID: String) -> Bool {
+    func refreshDetail(
+        for sessionID: String,
+        assistantSurface: CompanionAssistantSurface? = nil
+    ) -> Bool {
+        let targetSurface = assistantSurface ?? selectedAssistantSurface
         guard let sourceSnapshot = sourceSnapshotForProjection(),
-              detail(for: sessionID) != nil
+              detail(for: sessionID, assistantSurface: targetSurface) != nil
         else {
             return false
         }
 
-        visibleSurfaceProjections.removeValue(forKey: selectedAssistantSurface)
-        applyVisibleSnapshot(sourceSnapshot, surface: selectedAssistantSurface)
+        visibleSurfaceProjections.removeValue(forKey: targetSurface)
+        if targetSurface == selectedAssistantSurface {
+            applyVisibleSnapshot(sourceSnapshot, surface: targetSurface)
+        }
         return true
     }
 

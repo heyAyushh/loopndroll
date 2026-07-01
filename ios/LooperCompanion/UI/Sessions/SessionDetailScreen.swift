@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SessionDetailScreen: View {
     let model: CompanionAppModel
-    let session: SessionSummary
+    let route: SessionDetailRoute
 
     @Environment(\.dismiss) private var dismiss
     @State private var draftPrompt = ""
@@ -16,47 +16,60 @@ struct SessionDetailScreen: View {
     @State private var openedLifecycleTask: Task<Void, Never>?
     @FocusState private var focusedInput: SessionDetailInput?
 
+    private var sessionID: String {
+        route.sessionID
+    }
+
+    private var currentSummary: SessionSummary? {
+        model.viewState.session(
+            withID: route.sessionID,
+            assistantSurface: route.assistantSurface
+        )
+    }
+
     private var detail: SessionDetail? {
-        model.viewState.detail(for: session.id)
+        model.viewState.detail(for: route)
+    }
+
+    private var hasResolvedSession: Bool {
+        detail != nil || currentSummary != nil
     }
 
     private var currentStatus: SessionStatus {
-        detail?.status ?? session.status
+        detail?.status ?? currentSummary?.status ?? .stopped
     }
 
     private var currentMode: SessionMode? {
-        detail?.effectiveMode ?? session.effectiveMode
+        detail?.effectiveMode ?? currentSummary?.effectiveMode
     }
 
-    private var currentMessage: String? {
-        [
-            detail?.latestAssistantMessage,
-            detail?.assistantPreview,
-            session.assistantPreview,
-        ]
-            .lazy
-            .compactMap { value in
-                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .first
+    private var latestAssistantReply: String? {
+        guard let reply = detail?.latestAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reply.isEmpty
+        else {
+            return nil
+        }
+        return reply
     }
 
     private var currentTitle: String {
-        detail?.title ?? session.title
+        detail?.title ?? currentSummary?.title ?? "Session"
     }
 
-    private var currentAssistantSurface: CompanionAssistantSurface? {
+    private var currentRef: String {
+        detail?.ref ?? currentSummary?.ref ?? sessionID
+    }
+
+    private var currentAssistantSurface: CompanionAssistantSurface {
         let detailSurface = detail
             .flatMap { CompanionAssistantSurface(assistantClient: $0.assistantClient) }
             ?? detail.flatMap { CompanionAssistantSurface(sessionSource: $0.metadata.source) }
         return detailSurface
-            ?? CompanionAssistantSurface(assistantClient: session.assistantClient)
-            ?? CompanionAssistantSurface(sessionSource: session.metadata.source)
+            ?? route.assistantSurface
     }
 
     private var currentAssistantTitle: String {
-        currentAssistantSurface?.displayTitle ?? (detail?.assistantClient ?? session.assistantClient).displayTitle
+        currentAssistantSurface.displayTitle
     }
 
     private var firstUserPromptText: String? {
@@ -69,19 +82,19 @@ struct SessionDetailScreen: View {
     }
 
     private var currentMetadata: SessionMetadata {
-        detail?.metadata ?? session.metadata
+        detail?.metadata ?? currentSummary?.metadata ?? .empty
     }
 
     private var currentGoal: SessionGoalSummary? {
-        detail?.goal ?? session.goal
+        detail?.goal ?? currentSummary?.goal
     }
 
-    private var currentLastActivityAt: String {
-        detail?.lastActivityAt ?? session.lastActivityAt
+    private var currentLastActivityAt: String? {
+        detail?.lastActivityAt ?? currentSummary?.lastActivityAt
     }
 
     private var currentLastMessageAt: String? {
-        detail?.lastMessageAt ?? session.lastMessageAt
+        detail?.lastMessageAt ?? currentSummary?.lastMessageAt
     }
 
     private var availableNotifications: [NotificationDestination] {
@@ -92,43 +105,51 @@ struct SessionDetailScreen: View {
         detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })
     }
 
+    private var currentIsArchived: Bool {
+        detail?.isArchived ?? currentSummary?.isArchived ?? true
+    }
+
     var body: some View {
         List {
-            summarySection
-            if currentMessage != nil {
-                assistantReplySection
+            if hasResolvedSession {
+                summarySection
+                if latestAssistantReply != nil {
+                    assistantReplySection
+                }
+                promptSection
+                modeSection
+                notificationsSection
+                completionCheckSection
+                manageSection
+            } else {
+                missingSessionSection
             }
-            promptSection
-            modeSection
-            notificationsSection
-            completionCheckSection
-            manageSection
         }
         .listStyle(.insetGrouped)
         .contentMargins(.top, 0, for: .scrollContent)
         .safeAreaPadding(.bottom, CompanionMetrics.rowSpacing)
         .companionListSurface()
-        .navigationTitle(session.ref)
+        .navigationTitle(currentRef)
         .navigationBarTitleDisplayMode(.inline)
         .userActivity(LooperContinuationActivity.activityType, isActive: true) { activity in
             LooperContinuationActivity.configureContinuationActivity(
                 activity,
-                sessionID: session.id,
-                assistantSurface: model.siriAssistantSurface(for: session.id),
+                sessionID: sessionID,
+                assistantSurface: route.assistantSurface,
                 handoffBaseURL: URL(string: model.configuredBaseURL)
             )
         }
         .looperAppEntityIdentifier(
             LooperContinuationActivity.appEntityIdentifier(
-                sessionID: session.id,
-                assistantSurface: model.siriAssistantSurface(for: session.id)
+                sessionID: sessionID,
+                assistantSurface: route.assistantSurface
             )
         )
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             syncDraftModeFromCurrentModeIfNeeded()
         }
-        .onChange(of: session.id) {
+        .onChange(of: route.id) {
             resetDraftMode()
             openedLifecycleSessionID = nil
             openedLifecycleTask?.cancel()
@@ -162,14 +183,17 @@ struct SessionDetailScreen: View {
                 .accessibilityIdentifier("session-detail.keyboard-done")
             }
         }
-        .task(id: session.id) {
+        .task(id: route.id) {
             runOpenedSessionLifecycleIfNeeded()
         }
         .task(id: promptSuggestionContextKey) {
             await refreshPromptSuggestions()
         }
         .refreshable {
-            model.refreshSessionDetail(id: session.id)
+            model.refreshSessionDetail(
+                id: sessionID,
+                assistantSurface: route.assistantSurface
+            )
             await markCurrentSiriSessionIfNeeded()
         }
         .confirmationDialog(
@@ -179,7 +203,7 @@ struct SessionDetailScreen: View {
         ) {
             Button("Delete Session", role: .destructive) {
                 Task {
-                    await model.deleteSession(session.id)
+                    await model.deleteSession(sessionID)
                     if model.errorMessage == nil {
                         dismiss()
                     }
@@ -200,19 +224,22 @@ struct SessionDetailScreen: View {
         }
     }
 
+    private var missingSessionSection: some View {
+        Section {
+            ContentUnavailableView(
+                "Session unavailable",
+                systemImage: "exclamationmark.magnifyingglass",
+                description: Text("This session is not in the local detail state for \(route.assistantSurface.displayTitle).")
+            )
+        }
+    }
+
     private var summarySection: some View {
         Section("Summary") {
             LabeledContent {
                 HStack(spacing: 8) {
-                    if let currentAssistantSurface {
-                        AssistantSurfaceLogoMark(surface: currentAssistantSurface)
-                            .frame(width: 28, height: 28)
-                    } else {
-                        AssistantClientGlyph(
-                            client: detail?.assistantClient ?? session.assistantClient,
-                            isWorking: (detail?.status ?? session.status) == .active
-                        )
-                    }
+                    AssistantSurfaceLogoMark(surface: currentAssistantSurface)
+                        .frame(width: 28, height: 28)
                     Text(currentAssistantTitle)
                 }
             } label: {
@@ -292,8 +319,10 @@ struct SessionDetailScreen: View {
                     Text(ModelFormatting.relativeTimestamp(currentLastMessageAt))
                 }
             }
-            LabeledContent("Last Active") {
-                Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
+            if let currentLastActivityAt {
+                LabeledContent("Last Active") {
+                    Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
+                }
             }
             LabeledContent("Connection", value: model.viewState.deviceHubConnectionStatusLabel)
             LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
@@ -302,8 +331,8 @@ struct SessionDetailScreen: View {
 
     private var assistantReplySection: some View {
         Section("Latest Assistant Reply") {
-            if let currentMessage {
-                MarkdownMessageView(markdown: currentMessage)
+            if let latestAssistantReply {
+                MarkdownMessageView(markdown: latestAssistantReply)
                     .padding(.vertical, 4)
                 if let currentLastMessageAt {
                     Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
@@ -430,16 +459,16 @@ struct SessionDetailScreen: View {
             Button {
                 Task {
                     await model.setSessionArchived(
-                        !(detail?.isArchived ?? session.isArchived),
-                        sessionID: session.id
+                        !currentIsArchived,
+                        sessionID: sessionID
                     )
                 }
             } label: {
                 Label(
-                    (detail?.isArchived ?? session.isArchived)
+                    currentIsArchived
                         ? "Unarchive Session"
                         : "Archive Session",
-                    systemImage: (detail?.isArchived ?? session.isArchived)
+                    systemImage: currentIsArchived
                         ? "tray.and.arrow.up"
                         : "archivebox"
                 )
@@ -466,7 +495,7 @@ struct SessionDetailScreen: View {
             !trimmedPrompt.isEmpty &&
             promptDeliveryIsAvailable &&
             (draftPromptIntent == .steer || selectedPromptMode != nil) &&
-            !(detail?.isArchived ?? session.isArchived)
+            !currentIsArchived
     }
 
     private var promptFooterText: String {
@@ -487,16 +516,16 @@ struct SessionDetailScreen: View {
     }
 
     private var promptDeliveryIsAvailable: Bool {
-        detail?.canSendPrompt ?? session.canSendPrompt
+        detail?.canSendPrompt ?? currentSummary?.canSendPrompt ?? false
     }
 
     private var promptDeliveryUnavailableReason: String? {
-        detail?.promptDeliveryUnavailableReason ?? session.promptDeliveryUnavailableReason
+        detail?.promptDeliveryUnavailableReason ?? currentSummary?.promptDeliveryUnavailableReason
     }
 
     private var fallbackPromptSuggestions: [String] {
         LooperSessionContextEngine.fallbackSuggestions(
-            title: detail?.title ?? session.title,
+            title: currentTitle,
             status: currentStatus,
             assistantName: currentAssistantTitle,
             taskKind: currentMetadata.taskKind
@@ -524,9 +553,9 @@ struct SessionDetailScreen: View {
 
     private var promptSuggestionContextKey: String {
         [
-            session.id,
-            detail?.lastActivityAt ?? session.lastActivityAt,
-            detail?.lastMessageAt ?? session.lastMessageAt ?? "",
+            route.id,
+            detail?.lastActivityAt ?? currentSummary?.lastActivityAt ?? "",
+            detail?.lastMessageAt ?? currentSummary?.lastMessageAt ?? "",
             currentStatus.rawValue,
             currentMetadata.taskKind.rawValue,
             currentTitle,
@@ -584,12 +613,12 @@ struct SessionDetailScreen: View {
         focusedInput = nil
         let sendTask = Task { @MainActor in
             if shouldApplyDraftMode {
-                guard await model.beginApplyMode(modeToApply, to: session.id).value else {
+                guard await model.beginApplyMode(modeToApply, to: sessionID).value else {
                     return false
                 }
             }
 
-            return await model.sendSessionPrompt(prompt, intent: promptIntent, to: session.id)
+            return await model.sendSessionPrompt(prompt, intent: promptIntent, to: sessionID)
         }
         isSendingPrompt = true
         Task {
@@ -611,33 +640,51 @@ struct SessionDetailScreen: View {
 
     private func setSiriDefaultSession() {
         Task {
-            await model.setSiriDefaultSession(session)
+            await model.setSiriDefaultSession(
+                sessionID,
+                assistantSurface: route.assistantSurface
+            )
         }
     }
 
     private func markCurrentSiriSessionIfNeeded() async {
-        await model.markCurrentSiriSession(session)
+        await model.markCurrentSiriSession(
+            sessionID,
+            assistantSurface: route.assistantSurface
+        )
     }
 
     private func runOpenedSessionLifecycleIfNeeded() {
-        guard openedLifecycleSessionID != session.id else {
+        guard openedLifecycleSessionID != route.id else {
             return
         }
-        openedLifecycleSessionID = session.id
-        model.refreshSessionDetail(id: session.id)
+        openedLifecycleSessionID = route.id
+        model.refreshSessionDetail(
+            id: sessionID,
+            assistantSurface: route.assistantSurface
+        )
 
         openedLifecycleTask?.cancel()
-        let openedSession = session
+        let openedSessionID = sessionID
+        let openedSurface = route.assistantSurface
         openedLifecycleTask = Task { @MainActor in
             await Task.yield()
             guard !Task.isCancelled else {
                 return
             }
-            await model.markCurrentSiriSession(openedSession)
+            await model.markCurrentSiriSession(
+                openedSessionID,
+                assistantSurface: openedSurface
+            )
             guard !Task.isCancelled else {
                 return
             }
-            await model.donateOpenedSiriSession(openedSession)
+            if let openedSession = model.viewState.session(
+                withID: openedSessionID,
+                assistantSurface: openedSurface
+            ) {
+                await model.donateOpenedSiriSession(openedSession)
+            }
         }
     }
 
