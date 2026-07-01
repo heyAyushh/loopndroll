@@ -14,10 +14,10 @@ use crate::{
         ClientSessionLatestReply, ClientStateMini, ClientStateMiniSnapshot, ClientTextChunk,
     },
     state_mini::{
-        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_covered_node_ids,
-        last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
-        sort_state_minis, state_mini_key, state_mini_snapshot_is_stale_for_all_nodes,
-        state_mini_snapshot_last_seq_by_node, validate_state_minis,
+        DEFAULT_NODE_ID, fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
+        merge_state_minis_preserving_newer, normalize_state_minis, require_valid_sequence,
+        state_mini_snapshot_is_stale_for_all_nodes, state_mini_snapshot_last_seq_by_node,
+        validate_state_minis,
     },
 };
 
@@ -27,8 +27,6 @@ const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
 const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
-const LEGACY_CONTROL_PAYLOAD_REVISION_FIELD: &str = "\"revision\"";
-const LEGACY_CONTROL_PAYLOAD_GLOBAL_SETTINGS_FIELD: &str = "globalSettings";
 const MAX_LATEST_REPLY_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
@@ -222,7 +220,7 @@ impl LooperClientCoreLocalStore {
         );
         let fresh_last_seq_by_node =
             state_mini_snapshot_last_seq_by_node(snapshot.latest_seq, &sessions, &fresh_node_ids);
-        state.merge_snapshot_minis_preserving_newer(sessions, &fresh_last_seq_by_node);
+        merge_state_minis_preserving_newer(&mut state.sessions, sessions, &fresh_last_seq_by_node);
         state.merge_last_seq_by_node_from_minis();
         state.merge_last_seq_by_node(&fresh_last_seq_by_node);
         if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
@@ -239,6 +237,17 @@ impl LooperClientCoreLocalStore {
         Ok(state.snapshot())
     }
 
+    /// Persists the client core's own optimistic session-mini state verbatim, bypassing
+    /// the freshness guard in [`Self::replace_state_minis`].
+    ///
+    /// This is intentional, not a shortcut: an optimistic local mutation (e.g. setting a
+    /// session's mode ahead of transport ack) edits `payload_json` in place without
+    /// bumping `seq`, because the mutation has not been acknowledged by the server yet.
+    /// The freshness guard treats an incoming snapshot at the same seq as stale and
+    /// drops it, which would silently discard the optimistic edit. The snapshot passed
+    /// here always originates from the caller's own just-mutated `ClientCoreState`, not
+    /// from an external or potentially-stale source, so clobbering is safe: there is
+    /// nothing fresher to preserve.
     pub(crate) fn replace_local_state_minis(
         &self,
         snapshot: ClientStateMiniSnapshot,
@@ -614,24 +623,6 @@ impl LooperClientCoreLocalStore {
 }
 
 impl StoredState {
-    fn repair_legacy_control_payload_cursor(&mut self) -> bool {
-        if self.sessions.is_empty() || !has_legacy_control_payload(&self.sessions) {
-            return false;
-        }
-
-        let latest_materialized_seq = self
-            .sessions
-            .iter()
-            .map(|session| session.seq)
-            .max()
-            .unwrap_or_default();
-        if self.latest_seq > latest_materialized_seq {
-            self.latest_seq = latest_materialized_seq;
-            return true;
-        }
-        false
-    }
-
     fn coalesce_latest_pending_commands(&mut self) -> bool {
         let original_pending_commands = self.pending_commands.clone();
         let mut pending_commands = Vec::with_capacity(self.pending_commands.len());
@@ -668,54 +659,6 @@ impl StoredState {
                 .insert(DEFAULT_NODE_ID.to_owned(), self.latest_seq);
         }
         self.last_seq_by_node != original
-    }
-
-    fn merge_snapshot_minis_preserving_newer(
-        &mut self,
-        sessions: Vec<ClientStateMini>,
-        fresh_last_seq_by_node: &BTreeMap<String, i64>,
-    ) -> bool {
-        let before = self.sessions.clone();
-        let incoming_keys = sessions
-            .iter()
-            .filter_map(|session| {
-                let key = state_mini_key(session);
-                fresh_last_seq_by_node
-                    .contains_key(key.node_id())
-                    .then_some(key)
-            })
-            .collect::<HashSet<_>>();
-        self.sessions.retain(|current| {
-            let key = state_mini_key(current);
-            match fresh_last_seq_by_node.get(key.node_id()) {
-                Some(fresh_seq) => incoming_keys.contains(&key) || current.seq > *fresh_seq,
-                None => true,
-            }
-        });
-        let mut index_by_key: HashMap<StateMiniKey, usize> =
-            HashMap::with_capacity(self.sessions.len());
-        for (index, current) in self.sessions.iter().enumerate() {
-            index_by_key.entry(state_mini_key(current)).or_insert(index);
-        }
-        let mut changed = false;
-        for incoming in sessions {
-            let key = state_mini_key(&incoming);
-            if !fresh_last_seq_by_node.contains_key(key.node_id()) {
-                continue;
-            }
-            if let Some(index) = index_by_key.get(&key).copied() {
-                if incoming.seq >= self.sessions[index].seq {
-                    changed = self.sessions[index] != incoming || changed;
-                    self.sessions[index] = incoming;
-                }
-            } else {
-                index_by_key.insert(key, self.sessions.len());
-                self.sessions.push(incoming);
-                changed = true;
-            }
-        }
-        sort_state_minis(&mut self.sessions);
-        changed || self.sessions != before
     }
 
     fn merge_last_seq_by_node_from_minis(&mut self) {
@@ -858,14 +801,12 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
 fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     match load(file_path) {
         Ok(mut state) => {
-            let repaired_legacy_cursor = state.repair_legacy_control_payload_cursor();
             let coalesced_pending_commands = state.coalesce_latest_pending_commands();
             let dropped_legacy_assistant_surface_commands =
                 state.drop_legacy_assistant_surface_commands();
             let normalized_local_minis = state.normalize_local_minis();
             let repaired_last_seq_by_node = state.repair_last_seq_by_node();
-            if repaired_legacy_cursor
-                || coalesced_pending_commands
+            if coalesced_pending_commands
                 || dropped_legacy_assistant_surface_commands
                 || normalized_local_minis
                 || repaired_last_seq_by_node
@@ -953,17 +894,6 @@ fn pending_command_allows_empty_thread_id(kind: ClientPendingCommandKind) -> boo
             | ClientPendingCommandKind::SetAssistantSurface
             | ClientPendingCommandKind::SetDefaultNotificationTargets
     )
-}
-
-fn has_legacy_control_payload(sessions: &[ClientStateMini]) -> bool {
-    sessions.iter().any(|session| {
-        session
-            .payload_json
-            .contains(LEGACY_CONTROL_PAYLOAD_GLOBAL_SETTINGS_FIELD)
-            || session
-                .payload_json
-                .contains(LEGACY_CONTROL_PAYLOAD_REVISION_FIELD)
-    })
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -1670,8 +1600,15 @@ mod tests {
     }
 
     #[test]
-    fn local_store_clamps_legacy_control_payload_cursor_on_load() {
-        let path = temp_store_path("legacy-control-payload-cursor");
+    fn local_store_load_preserves_cursor_ahead_of_materialized_minis() {
+        // A payload containing "revision" or "globalSettings" is not a reliable signal
+        // of a legacy control payload: normalize_state_mini_for_source_with_key injects
+        // a `revision` field into every normalized session, so this shape is produced
+        // by ordinary, current-format snapshots too. The stored cursor can legitimately
+        // sit ahead of the newest materialized session seq (e.g. a text-chunk cursor
+        // advance that has not yet produced a new session mini), and loading the store
+        // must never clamp it back down -- cursor monotonicity is the invariant to keep.
+        let path = temp_store_path("cursor-ahead-of-materialized-minis");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
         std::fs::write(
             &path,
@@ -1700,7 +1637,7 @@ mod tests {
             LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
         let snapshot = store.snapshot().expect("snapshot");
 
-        assert_eq!(snapshot.latest_seq, 5206);
+        assert_eq!(snapshot.latest_seq, 5246);
         assert_eq!(snapshot.sessions.len(), 1);
         assert_eq!(snapshot.sessions[0].seq, 5206);
     }

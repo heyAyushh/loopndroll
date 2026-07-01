@@ -2,7 +2,7 @@
 use crate::model::ClientStateMiniDelta;
 use crate::{error::ClientCoreError, model::ClientStateMini};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const INITIAL_SEQUENCE: i64 = 0;
 pub(crate) const DEFAULT_ACCOUNT_ID: &str = "local-account";
@@ -412,6 +412,61 @@ pub(crate) fn state_mini_snapshot_last_seq_by_node(
             (seq > INITIAL_SEQUENCE).then(|| (node_id.clone(), seq))
         })
         .collect()
+}
+
+/// Merges an incoming batch of state minis into `current` while preserving any
+/// locally-held session that is newer than the incoming snapshot for its node. This
+/// is the single monotonic-merge reducer shared by the in-memory client core state
+/// and the on-disk local store; both callers pre-compute which node ids are "fresh"
+/// (via [`fresh_state_mini_snapshot_covered_node_ids`]) and pass that in so nodes
+/// with no fresher data are left untouched.
+///
+/// Returns whether the merge changed `current`.
+pub(crate) fn merge_state_minis_preserving_newer(
+    current: &mut Vec<ClientStateMini>,
+    incoming: Vec<ClientStateMini>,
+    fresh_last_seq_by_node: &BTreeMap<String, i64>,
+) -> bool {
+    let before = current.clone();
+    let incoming_keys = incoming
+        .iter()
+        .filter_map(|session| {
+            let key = state_mini_key(session);
+            fresh_last_seq_by_node
+                .contains_key(key.node_id())
+                .then_some(key)
+        })
+        .collect::<HashSet<_>>();
+    current.retain(|session| {
+        let key = state_mini_key(session);
+        match fresh_last_seq_by_node.get(key.node_id()) {
+            Some(fresh_seq) => incoming_keys.contains(&key) || session.seq > *fresh_seq,
+            None => true,
+        }
+    });
+    let mut index_by_key: HashMap<StateMiniKey, usize> = HashMap::with_capacity(current.len());
+    for (index, session) in current.iter().enumerate() {
+        index_by_key.entry(state_mini_key(session)).or_insert(index);
+    }
+    let mut did_change = false;
+    for session in incoming {
+        let key = state_mini_key(&session);
+        if !fresh_last_seq_by_node.contains_key(key.node_id()) {
+            continue;
+        }
+        if let Some(index) = index_by_key.get(&key).copied() {
+            if session.seq >= current[index].seq {
+                did_change = current[index] != session || did_change;
+                current[index] = session;
+            }
+        } else {
+            index_by_key.insert(key, current.len());
+            current.push(session);
+            did_change = true;
+        }
+    }
+    sort_state_minis(current);
+    did_change || *current != before
 }
 
 fn merged_current_last_seq_by_node(

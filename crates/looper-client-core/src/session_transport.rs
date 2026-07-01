@@ -26,7 +26,9 @@ pub(crate) mod proto {
 const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const STATE_MINI_STREAM_FALLBACK_RACE_DELAY: Duration = Duration::from_millis(25);
-const STATE_MINI_RECONNECT_DELAY: Duration = Duration::from_millis(500);
+const STATE_MINI_RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const STATE_MINI_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+const STATE_MINI_RECONNECT_BACKOFF_MULTIPLIER: u32 = 2;
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const MAX_STATE_MINI_SNAPSHOT_BYTES: usize = 512 * 1024;
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
@@ -182,6 +184,7 @@ pub(crate) async fn run_state_mini_stream(
     command_acks: mpsc::Sender<ClientCommandAck>,
 ) {
     let mut next_after_seq = after_seq;
+    let mut reconnect_backoff = ReconnectBackoff::new();
     loop {
         if events.is_closed() {
             return;
@@ -203,20 +206,37 @@ pub(crate) async fn run_state_mini_stream(
                 let _ = events
                     .send(state_mini_stream_ended_event(next_after_seq))
                     .await;
-                tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
+                reconnect_backoff.reset();
+                tokio::time::sleep(reconnect_backoff.next_delay()).await;
             }
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
+                if let Some(recovered) = recover_state_mini_snapshot_for_stream(
+                    &endpoints,
+                    &bearer_token,
+                    &mobile_session_header,
+                )
+                .await
+                {
+                    next_after_seq = next_after_seq.max(recovered.latest_seq);
+                    if events.send(recovered.into_delta_event()).await.is_err() {
+                        return;
+                    }
+                    // A fresh snapshot resolves the recovery; redial immediately at the
+                    // recovered cursor instead of waiting out the backoff.
+                    reconnect_backoff.reset();
+                    continue;
+                }
                 let _ = events
                     .send(StateMiniStreamEvent::RecoveryRequired {
                         latest_seq: next_after_seq,
                         error_description,
                     })
                     .await;
-                tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
+                tokio::time::sleep(reconnect_backoff.next_delay()).await;
             }
             Err(StateMiniTransportError::Transport {
                 latest_seq,
@@ -229,10 +249,85 @@ pub(crate) async fn run_state_mini_stream(
                         error_description,
                     })
                     .await;
-                tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
+                tokio::time::sleep(reconnect_backoff.next_delay()).await;
             }
         }
     }
+}
+
+/// Tracks the delay between redial attempts, growing exponentially on repeated
+/// failures (capped at `STATE_MINI_RECONNECT_MAX_DELAY`) so a persistently broken
+/// endpoint does not get hammered every `STATE_MINI_RECONNECT_INITIAL_DELAY`.
+struct ReconnectBackoff {
+    next: Duration,
+}
+
+impl ReconnectBackoff {
+    fn new() -> Self {
+        Self {
+            next: STATE_MINI_RECONNECT_INITIAL_DELAY,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.next = STATE_MINI_RECONNECT_INITIAL_DELAY;
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = (self.next * STATE_MINI_RECONNECT_BACKOFF_MULTIPLIER)
+            .min(STATE_MINI_RECONNECT_MAX_DELAY);
+        delay
+    }
+}
+
+struct RecoveredStreamSnapshot {
+    latest_seq: i64,
+    snapshot: ClientStateMiniSnapshot,
+}
+
+impl RecoveredStreamSnapshot {
+    fn into_delta_event(self) -> StateMiniStreamEvent {
+        StateMiniStreamEvent::Delta(ClientStateMiniDelta {
+            seq: self.latest_seq,
+            latest_seq: self.latest_seq,
+            entity_id: String::new(),
+            kind: STATE_MINI_REPLACEMENT_COMPLETE_KIND.to_owned(),
+            revision: String::new(),
+            server_time: self.snapshot.server_time,
+            has_session: false,
+            session: ClientStateMini {
+                session_id: String::new(),
+                assistant_surface: String::new(),
+                seq: self.latest_seq,
+                revision: String::new(),
+                payload_json: String::new(),
+            },
+            sessions: self.snapshot.sessions,
+        })
+    }
+}
+
+/// Fetches a fresh snapshot to resolve a `RecoveryRequired` verdict so the resume
+/// cursor advances past whatever gap forced the server to demand recovery. Returns
+/// `None` if recovery itself fails; the caller falls back to surfacing
+/// `RecoveryRequired` to observers and backing off before the next redial.
+async fn recover_state_mini_snapshot_for_stream(
+    endpoints: &[ClientEndpoint],
+    bearer_token: &str,
+    mobile_session_header: &str,
+) -> Option<RecoveredStreamSnapshot> {
+    let recovered = fetch_state_mini_snapshot(
+        endpoints.to_vec(),
+        bearer_token.to_owned(),
+        mobile_session_header.to_owned(),
+    )
+    .await
+    .ok()?;
+    Some(RecoveredStreamSnapshot {
+        latest_seq: recovered.snapshot.latest_seq,
+        snapshot: recovered.snapshot,
+    })
 }
 
 #[derive(Debug)]
@@ -269,6 +364,7 @@ async fn run_state_mini_stream_session(
         }
     })?;
     let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
+    let mut pending_recovery_required: Option<(i64, String)> = None;
     let (result_sender, mut result_receiver) = mpsc::channel(candidates.len());
     let mut handles = Vec::with_capacity(candidates.len());
     for (index, endpoint) in candidates.into_iter().enumerate() {
@@ -291,6 +387,10 @@ async fn run_state_mini_stream_session(
     }
     drop(result_sender);
 
+    // A RecoveryRequired verdict from one candidate does not mean every candidate is
+    // broken (e.g. a stale replica racing against a healthy primary), so we let the
+    // remaining candidates finish before treating recovery as the final outcome. A
+    // successful candidate always takes priority over a pending recovery verdict.
     while let Some(result) = result_receiver.recv().await {
         match result {
             Ok(opened) => {
@@ -318,13 +418,7 @@ async fn run_state_mini_stream_session(
                 latest_seq,
                 error_description,
             }) => {
-                for handle in handles {
-                    handle.abort();
-                }
-                return Err(StateMiniTransportError::RecoveryRequired {
-                    latest_seq,
-                    error_description,
-                });
+                pending_recovery_required = Some((latest_seq, error_description));
             }
             Err(StateMiniTransportError::Transport {
                 error_description, ..
@@ -332,6 +426,13 @@ async fn run_state_mini_stream_session(
                 last_transport_error = error_description;
             }
         }
+    }
+
+    if let Some((latest_seq, error_description)) = pending_recovery_required {
+        return Err(StateMiniTransportError::RecoveryRequired {
+            latest_seq,
+            error_description,
+        });
     }
 
     Err(StateMiniTransportError::Transport {

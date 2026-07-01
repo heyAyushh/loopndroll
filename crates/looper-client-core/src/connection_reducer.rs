@@ -22,6 +22,15 @@ pub struct ClientConnectionFailureProjection {
     pub should_suppress_error: bool,
 }
 
+/// `current_connection_state`, `has_server_health`, and `has_reached_base_url` are part
+/// of the stable FFI signature (Swift already builds and passes these) but are
+/// deliberately not used to influence the projection: an earlier version of this
+/// reducer used them to report a synthetic "connected" state from cached metadata
+/// when a snapshot load failed, which let a genuinely offline client claim it was
+/// connected (see the "stop cached routes from reporting connected" fix). Keep
+/// reporting the real error state instead of resurrecting that behavior. The
+/// parameters are still validated so callers get a consistent error contract for
+/// malformed input, even though the values themselves are otherwise unused.
 #[uniffi::export]
 pub fn reduce_snapshot_load_failure(
     mapped_error_state: String,
@@ -31,7 +40,7 @@ pub fn reduce_snapshot_load_failure(
     has_reached_base_url: bool,
 ) -> Result<ClientSnapshotLoadFailureProjection, ClientCoreError> {
     let error_state = normalize_connection_state(&mapped_error_state)?;
-    let _ = normalize_connection_state(&current_connection_state)?;
+    normalize_connection_state(&current_connection_state)?;
     let _ = (has_server_health, has_reached_base_url);
 
     Ok(ClientSnapshotLoadFailureProjection {

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -32,11 +32,12 @@ use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
     DEFAULT_NODE_ID, FRESHNESS_SOURCE_LOCAL, FRESHNESS_SOURCE_RECOVERY, FRESHNESS_SOURCE_STREAM,
-    StateMiniKey, fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
-    latest_state_mini_revision, normalize_state_mini_for_source, normalize_state_minis_for_source,
-    require_valid_sequence, same_state_mini_key, sort_state_minis, state_mini_key,
-    state_mini_node_id, state_mini_snapshot_is_stale_for_all_nodes,
-    state_mini_snapshot_last_seq_by_node, validate_state_minis,
+    fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
+    latest_state_mini_revision, merge_state_minis_preserving_newer,
+    normalize_state_mini_for_source, normalize_state_minis_for_source, require_valid_sequence,
+    same_state_mini_key, sort_state_minis, state_mini_node_id,
+    state_mini_snapshot_is_stale_for_all_nodes, state_mini_snapshot_last_seq_by_node,
+    validate_state_minis,
 };
 #[cfg(test)]
 use crate::transport::validate_endpoint_url;
@@ -48,6 +49,8 @@ const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
 const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
+const COMMAND_ACK_BACKLOG_OVERFLOW_ERROR: &str =
+    "command ack backlog overflowed; oldest unmatched ack was dropped";
 
 #[derive(Debug, Default)]
 struct ClientCoreState {
@@ -196,6 +199,36 @@ impl StreamEventReceiverLease<'_> {
 }
 
 impl Drop for StreamEventReceiverLease<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+/// Borrows the command-ack receiver for the duration of a single drain and always
+/// gives it back through the same restore-if-absent path as the sibling stream-event
+/// and local-update leases. Restoring unconditionally (the previous behavior) would
+/// clobber a receiver created by a stream restart that happened while this lease was
+/// checked out, silently losing acks delivered on the new stream.
+struct CommandAckReceiverLease<'a> {
+    core: &'a LooperClientCore,
+    receiver: Option<mpsc::Receiver<ClientCommandAck>>,
+}
+
+impl CommandAckReceiverLease<'_> {
+    async fn recv(&mut self) -> Option<ClientCommandAck> {
+        let receiver = self.receiver.as_mut()?;
+        receiver.recv().await
+    }
+
+    fn restore(&mut self) -> Result<(), ClientCoreError> {
+        if let Some(receiver) = self.receiver.take() {
+            self.core.restore_command_ack_receiver_if_absent(receiver)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CommandAckReceiverLease<'_> {
     fn drop(&mut self) {
         let _ = self.restore();
     }
@@ -1186,10 +1219,10 @@ impl LooperClientCore {
             return Ok(acks);
         }
 
-        let mut receiver = self.take_command_ack_receiver()?;
+        let mut lease = self.take_command_ack_receiver_lease()?;
         let result = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
             while acks.len() < expected_ack_count {
-                let ack = receiver
+                let ack = lease
                     .recv()
                     .await
                     .ok_or(ClientCoreError::SessionCommandTransportFailed)?;
@@ -1208,26 +1241,34 @@ impl LooperClientCore {
         .await
         .map_err(|_| ClientCoreError::SessionCommandAckTimedOut)
         .and_then(|result| result);
-        self.restore_command_ack_receiver(receiver)?;
+        lease.restore()?;
         result
     }
 
-    fn take_command_ack_receiver(
+    fn take_command_ack_receiver_lease(
         &self,
-    ) -> Result<mpsc::Receiver<ClientCommandAck>, ClientCoreError> {
-        self.lock_stream()?
+    ) -> Result<CommandAckReceiverLease<'_>, ClientCoreError> {
+        let receiver = self
+            .lock_stream()?
             .as_mut()
             .and_then(|stream| stream.command_ack_receiver.take())
-            .ok_or(ClientCoreError::NoEndpoint)
+            .ok_or(ClientCoreError::NoEndpoint)?;
+        Ok(CommandAckReceiverLease {
+            core: self,
+            receiver: Some(receiver),
+        })
     }
 
-    fn restore_command_ack_receiver(
+    fn restore_command_ack_receiver_if_absent(
         &self,
         receiver: mpsc::Receiver<ClientCommandAck>,
     ) -> Result<(), ClientCoreError> {
         let mut stream = self.lock_stream()?;
-        let stream = stream.as_mut().ok_or(ClientCoreError::NoEndpoint)?;
-        stream.command_ack_receiver = Some(receiver);
+        if let Some(stream) = stream.as_mut() {
+            if stream.command_ack_receiver.is_none() {
+                stream.command_ack_receiver = Some(receiver);
+            }
+        }
         Ok(())
     }
 
@@ -1267,6 +1308,11 @@ impl LooperClientCore {
         state.command_ack_backlog.push(ack);
         if state.command_ack_backlog.len() > COMMAND_ACK_BACKLOG_LIMIT {
             state.command_ack_backlog.remove(0);
+            // Surface the overflow instead of silently discarding an unmatched ack: a
+            // caller waiting on that mutation id would otherwise time out with no clue
+            // why. This does not fail the current call; it just annotates the next
+            // snapshot so Swift-side diagnostics can pick it up.
+            state.last_error = COMMAND_ACK_BACKLOG_OVERFLOW_ERROR.to_owned();
         }
         Ok(())
     }
@@ -2076,7 +2122,11 @@ impl ClientCoreState {
             Some(FRESHNESS_SOURCE_STREAM),
             Some(replacement.route_endpoint.as_str()),
         );
-        self.merge_snapshot_minis_preserving_newer(replacement_sessions, &fresh_last_seq_by_node);
+        merge_state_minis_preserving_newer(
+            &mut self.state_minis,
+            replacement_sessions,
+            &fresh_last_seq_by_node,
+        );
         for (node_id, seq) in fresh_last_seq_by_node {
             self.advance_node_cursor(node_id, seq);
         }
@@ -2129,8 +2179,11 @@ impl ClientCoreState {
         );
         let fresh_last_seq_by_node =
             state_mini_snapshot_last_seq_by_node(snapshot.latest_seq, &sessions, &fresh_node_ids);
-        let did_change =
-            self.merge_snapshot_minis_preserving_newer(sessions, &fresh_last_seq_by_node);
+        let did_change = merge_state_minis_preserving_newer(
+            &mut self.state_minis,
+            sessions,
+            &fresh_last_seq_by_node,
+        );
         self.merge_last_seq_by_node_from_minis(&self.state_minis.clone());
         for (node_id, seq) in fresh_last_seq_by_node {
             self.advance_node_cursor(node_id, seq);
@@ -2146,54 +2199,6 @@ impl ClientCoreState {
         }
         self.last_error.clear();
         did_change
-    }
-
-    fn merge_snapshot_minis_preserving_newer(
-        &mut self,
-        sessions: Vec<ClientStateMini>,
-        fresh_last_seq_by_node: &BTreeMap<String, i64>,
-    ) -> bool {
-        let before = self.state_minis.clone();
-        let incoming_keys = sessions
-            .iter()
-            .filter_map(|session| {
-                let key = state_mini_key(session);
-                fresh_last_seq_by_node
-                    .contains_key(key.node_id())
-                    .then_some(key)
-            })
-            .collect::<HashSet<_>>();
-        self.state_minis.retain(|current| {
-            let key = state_mini_key(current);
-            match fresh_last_seq_by_node.get(key.node_id()) {
-                Some(fresh_seq) => incoming_keys.contains(&key) || current.seq > *fresh_seq,
-                None => true,
-            }
-        });
-        let mut index_by_key: HashMap<StateMiniKey, usize> =
-            HashMap::with_capacity(self.state_minis.len());
-        for (index, current) in self.state_minis.iter().enumerate() {
-            index_by_key.entry(state_mini_key(current)).or_insert(index);
-        }
-        let mut did_change = false;
-        for incoming in sessions {
-            let key = state_mini_key(&incoming);
-            if !fresh_last_seq_by_node.contains_key(key.node_id()) {
-                continue;
-            }
-            if let Some(index) = index_by_key.get(&key).copied() {
-                if incoming.seq >= self.state_minis[index].seq {
-                    did_change = self.state_minis[index] != incoming || did_change;
-                    self.state_minis[index] = incoming;
-                }
-            } else {
-                self.state_minis.push(incoming);
-                index_by_key.insert(key, self.state_minis.len() - 1);
-                did_change = true;
-            }
-        }
-        sort_state_minis(&mut self.state_minis);
-        did_change || self.state_minis != before
     }
 
     fn delta_is_stale_for_all_nodes(&self, delta: &ClientStateMiniDelta) -> bool {
