@@ -48,14 +48,10 @@ use self::mobile_state::{
     mobile_session_minis_snapshot_response, mobile_snapshot_response,
 };
 use self::requests::{
-    AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest, DesktopAssistantSurfaceRequest,
-    DesktopCompletionCheckConfigRequest, DesktopCompletionCheckRequest,
-    DesktopConnectionRenameRequest, DesktopDefaultPromptRequest, DesktopGlobalNotificationRequest,
-    DesktopNotificationRequest, DesktopScopeRequest, DesktopSessionArchiveRequest,
-    DesktopSessionModeRequest, DesktopSessionNotificationsRequest, DesktopSnapshotQuery,
-    DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest, DevinAcpSessionPromptRequest,
-    MobilePasskeyAuthenticationChallengeRequest, MobilePushTestRequest, MobileSessionContentQuery,
-    MobileSessionDetailQuery,
+    AcpClientHostProbeRequest, AcpClientHostSessionObserveRequest, DesktopConnectionRenameRequest,
+    DesktopSnapshotQuery, DesktopTelegramChatsRequest, DevinAcpSessionCreateRequest,
+    DevinAcpSessionPromptRequest, MobilePasskeyAuthenticationChallengeRequest,
+    MobilePushTestRequest, MobileSessionContentQuery, MobileSessionDetailQuery,
 };
 use self::responses::{
     internal_mobile_error_response, mobile_auth_error_response,
@@ -194,20 +190,23 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
     Router::new()
         .route(
             "/desktop/settings/default-prompt",
-            post(disabled_desktop_default_prompt),
+            post(disabled_http_session_state_mutation),
         )
-        .route("/desktop/settings/scope", post(disabled_desktop_scope))
+        .route(
+            "/desktop/settings/scope",
+            post(disabled_http_session_state_mutation),
+        )
         .route(
             "/desktop/settings/assistant-surface",
-            post(disabled_desktop_assistant_surface),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/settings/global-preset",
-            post(disabled_desktop_global_preset),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/settings/global-notification",
-            post(disabled_desktop_global_notification),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/settings/default-notification-targets",
@@ -215,11 +214,11 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
         )
         .route(
             "/desktop/settings/global-completion-check",
-            post(disabled_desktop_global_completion_check),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/notifications",
-            post(disabled_desktop_notification_upsert),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/notifications/:notification_id",
@@ -228,7 +227,7 @@ fn desktop_settings_routes() -> Router<ControlPlane> {
         .route("/desktop/telegram/chats", post(desktop_telegram_chats))
         .route(
             "/desktop/completion-checks",
-            post(disabled_desktop_completion_check_upsert),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/completion-checks/:completion_check_id",
@@ -240,15 +239,15 @@ fn desktop_session_routes() -> Router<ControlPlane> {
     Router::new()
         .route(
             "/desktop/sessions/:thread_id/notifications",
-            post(disabled_desktop_session_notifications),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/sessions/:thread_id/completion-check",
-            post(disabled_desktop_session_completion_check),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/sessions/:thread_id/archive",
-            post(disabled_desktop_session_archive),
+            post(disabled_http_session_state_mutation),
         )
         .route(
             "/desktop/sessions/:thread_id/mute",
@@ -936,113 +935,6 @@ async fn desktop_telegram_chats(
         Ok(chats) => (StatusCode::OK, Json(serde_json::json!({ "chats": chats }))).into_response(),
         Err(error) => telegram_error_response(error),
     }
-}
-
-async fn disabled_desktop_default_prompt(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopDefaultPromptRequest>,
-) -> Response {
-    let _ = input.default_prompt;
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_scope(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopScopeRequest>,
-) -> Response {
-    let _ = input.scope;
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_assistant_surface(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopAssistantSurfaceRequest>,
-) -> Response {
-    let _ = input.assistant_surface;
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_global_preset(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopSessionModeRequest>,
-) -> Response {
-    let _ = input.preset;
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_global_notification(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopGlobalNotificationRequest>,
-) -> Response {
-    let _ = input.notification_id;
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_global_completion_check(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopCompletionCheckConfigRequest>,
-) -> Response {
-    let _ = (
-        input.completion_check_id,
-        input.wait_for_reply_after_completion,
-    );
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_notification_upsert(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopNotificationRequest>,
-) -> Response {
-    let _ = (
-        input.id,
-        input.label,
-        input.channel,
-        input.webhook_url,
-        input.chat_id,
-        input.bot_token,
-        input.chat_username,
-        input.chat_display_name,
-    );
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_completion_check_upsert(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Json(input): Json<DesktopCompletionCheckRequest>,
-) -> Response {
-    let _ = (input.id, input.label, input.commands);
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_session_notifications(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopSessionNotificationsRequest>,
-) -> Response {
-    let _ = (thread_id, input.notification_ids);
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_session_completion_check(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopCompletionCheckConfigRequest>,
-) -> Response {
-    let _ = (
-        thread_id,
-        input.completion_check_id,
-        input.wait_for_reply_after_completion,
-    );
-    disabled_http_session_state_mutation_for_socket(socket_addr)
-}
-
-async fn disabled_desktop_session_archive(
-    ConnectInfo(socket_addr): ConnectInfo<SocketAddr>,
-    Path(thread_id): Path<String>,
-    Json(input): Json<DesktopSessionArchiveRequest>,
-) -> Response {
-    let _ = (thread_id, input.archived);
-    disabled_http_session_state_mutation_for_socket(socket_addr)
 }
 
 async fn desktop_session_detail(

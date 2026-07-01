@@ -5,6 +5,10 @@ use tokio::sync::broadcast;
 const MOBILE_EVENT_CHANNEL_CAPACITY: usize = 256;
 pub const MOBILE_EVENT_CONNECTED_NAME: &str = "connected";
 pub const SNAPSHOT_REVISION_CHANGED_DETAIL: &str = "snapshot-revision-changed";
+/// Prefix for the synthetic revision string used when no minis-projection revision is
+/// available yet. The single shared formatter is `mobile_state_seq_revision`; do not
+/// hand-format `"mobile-state:seq-{n}"` at call sites.
+const MOBILE_STATE_SEQ_REVISION_PREFIX: &str = "mobile-state:seq-";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -132,6 +136,14 @@ pub fn snapshot_revision_changed_event(revision: String) -> MobileEvent {
         server_time: mobile_event_now(),
         revision: Some(revision),
     }
+}
+
+/// The fallback mobile-state revision string used when no minis-projection revision exists
+/// yet, derived from the latest mobile state-event seq. This was previously hand-copied as
+/// `format!("mobile-state:seq-{seq}")` in http/mobile_state.rs, grpc/service.rs,
+/// mobile/realtime_ack.rs, and control_plane.rs; those now all call this one function.
+pub fn mobile_state_seq_revision(latest_seq: i64) -> String {
+    format!("{MOBILE_STATE_SEQ_REVISION_PREFIX}{latest_seq}")
 }
 
 pub fn mobile_event_wire_name(kind: MobileEventKind) -> &'static str {

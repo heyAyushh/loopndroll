@@ -789,7 +789,11 @@ fn state_delta_frames(
         .mobile_session_minis_replaced_at_seq(record.seq)
     {
         Ok(replacement) => replacement,
-        Err(_) => {
+        Err(error) => {
+            eprintln!(
+                "state delta replacement lookup failed for seq {}: {error}",
+                record.seq
+            );
             return state_delta_frame(
                 record,
                 state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON),
@@ -797,15 +801,22 @@ fn state_delta_frames(
             .map(|frame| vec![frame]);
         }
     };
-    let Ok(minis) = control_plane
+    let minis = match control_plane
         .store()
         .mobile_session_minis_at_seq(record.seq)
-    else {
-        return state_delta_frame(
-            record,
-            state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON),
-        )
-        .map(|frame| vec![frame]);
+    {
+        Ok(minis) => minis,
+        Err(error) => {
+            eprintln!(
+                "state delta projection read failed for seq {}: {error}",
+                record.seq
+            );
+            return state_delta_frame(
+                record,
+                state_delta_control_payload_json(record, STATE_DELTA_PROJECTION_READ_FAILED_REASON),
+            )
+            .map(|frame| vec![frame]);
+        }
     };
     if replacement {
         return replacement_state_delta_frames(record, &minis);
@@ -966,22 +977,8 @@ fn mobile_event_record_frame(
         prompt_id: record.prompt_id.clone().unwrap_or_default(),
         detail: truncate_control_text(&record.detail.clone().unwrap_or_default()),
         server_time: mobile_event_now(),
-        revision: mobile_event_frame_revision(control_plane),
+        revision: control_plane.current_mobile_state_revision(),
     })
-}
-
-fn mobile_event_frame_revision(control_plane: &ControlPlane) -> String {
-    control_plane
-        .store()
-        .latest_mobile_session_mini_revision()
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| {
-            format!(
-                "mobile-state:seq-{}",
-                latest_mobile_state_seq(control_plane)
-            )
-        })
 }
 
 fn mobile_event_frame(event: proto::MobileEvent) -> proto::ServerFrame {

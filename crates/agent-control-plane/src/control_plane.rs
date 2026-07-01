@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::acp::client_host::{
@@ -56,6 +56,7 @@ use crate::devin::{
 };
 use crate::events::{
     AutomationRunInput, AutomationRunRecord, EventStore, MobileSessionMiniProjectionInput,
+    mobile_session_mini_content_fingerprint,
 };
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
@@ -72,7 +73,8 @@ use crate::mobile::api::{
 use crate::mobile::auth::MobileAuthService;
 use crate::mobile::events::{
     MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, MobileTextChunk,
-    MobileTextChunkInput, build_mobile_event, mobile_event_now, snapshot_revision_changed_event,
+    MobileTextChunkInput, build_mobile_event, mobile_event_now, mobile_state_seq_revision,
+    snapshot_revision_changed_event,
 };
 use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, prime_delivery_action_cache};
 use crate::mobile::push::MobilePushService;
@@ -681,6 +683,18 @@ impl ControlPlane {
         self.reconcile_mobile_session_mini_projection_with_options(false, None)
     }
 
+    /// Like `reconcile_mobile_session_mini_projection`, but tags the emitted event with
+    /// `detail` when a write happens, instead of the generic snapshot-revision-changed detail.
+    /// Still skips the write when the stored projection's content already matches (see
+    /// `stored_mobile_session_mini_projection_matches`) — callers that need an unconditional
+    /// write regardless of content should use `force_reconcile_mobile_session_mini_projection`.
+    pub fn reconcile_mobile_session_mini_projection_with_detail(
+        &self,
+        detail: &str,
+    ) -> Result<bool> {
+        self.reconcile_mobile_session_mini_projection_with_options(false, Some(detail))
+    }
+
     pub fn force_reconcile_mobile_session_mini_projection(&self, detail: &str) -> Result<bool> {
         self.reconcile_mobile_session_mini_projection_with_options(true, Some(detail))
     }
@@ -740,6 +754,12 @@ impl ControlPlane {
         Ok(true)
     }
 
+    /// Compares candidate projection bodies against what is already stored, by content rather
+    /// than just by which (session_id, assistant_surface) keys are present. A key-set-only
+    /// check cannot detect a session whose fields changed in place (e.g. `isArchived`,
+    /// `lifecycle`, `effectiveMode`) without also gaining or losing a session, which is why a
+    /// `force` flag previously existed as a workaround for callers that knew content-only
+    /// changes needed to bypass this check.
     fn stored_mobile_session_mini_projection_matches(
         &self,
         minis: &[MobileSessionMiniProjectionInput],
@@ -749,15 +769,37 @@ impl ControlPlane {
             return Ok(false);
         }
 
-        let expected_keys = minis
+        let expected_fingerprints = minis
             .iter()
-            .map(|mini| (mini.session_id.as_str(), mini.assistant_surface.as_str()))
-            .collect::<BTreeSet<_>>();
-        let stored_keys = stored
+            .map(|mini| {
+                (
+                    (mini.session_id.as_str(), mini.assistant_surface.as_str()),
+                    mobile_session_mini_content_fingerprint(
+                        &mini.body_json,
+                        &mini.session_id,
+                        &mini.assistant_surface,
+                    ),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let stored_fingerprints = stored
             .iter()
-            .map(|mini| (mini.session_id.as_str(), mini.assistant_surface.as_str()))
-            .collect::<BTreeSet<_>>();
-        Ok(stored_keys == expected_keys)
+            .filter_map(|record| {
+                let body_json = serde_json::from_str::<Value>(&record.body_json).ok()?;
+                Some((
+                    (
+                        record.session_id.as_str(),
+                        record.assistant_surface.as_str(),
+                    ),
+                    mobile_session_mini_content_fingerprint(
+                        &body_json,
+                        &record.session_id,
+                        &record.assistant_surface,
+                    ),
+                ))
+            })
+            .collect::<BTreeMap<_, _>>();
+        Ok(stored_fingerprints == expected_fingerprints)
     }
 
     pub fn spawn_mobile_session_mini_projection_reconcile_if_due(&self) {
@@ -850,11 +892,28 @@ impl ControlPlane {
             .ok()
             .flatten()
             .or_else(|| {
-                self.store
-                    .latest_mobile_state_event_seq()
-                    .ok()
-                    .map(|seq| format!("mobile-state:seq-{seq}"))
+                Some(mobile_state_seq_revision(
+                    self.latest_mobile_state_event_seq(),
+                ))
             })
+    }
+
+    /// The current mobile-state revision string, for callers that need one unconditionally.
+    ///
+    /// Prefers the minis projection's own revision; when there is none (no projection yet, or
+    /// the store read failed) falls back to a synthetic `mobile-state:seq-{n}` revision derived
+    /// from the latest state-event seq (0 if that read also fails). This was previously
+    /// hand-copied in four places (http/mobile_state.rs, grpc/service.rs,
+    /// mobile/realtime_ack.rs, control_plane.rs) — this is the single shared implementation;
+    /// the others now delegate here.
+    pub fn current_mobile_state_revision(&self) -> String {
+        self.latest_cached_mobile_revision().unwrap_or_default()
+    }
+
+    fn latest_mobile_state_event_seq(&self) -> i64 {
+        self.store
+            .latest_mobile_state_event_seq()
+            .unwrap_or_default()
     }
 
     pub fn mobile_snapshot_revision(&self) -> Result<String> {

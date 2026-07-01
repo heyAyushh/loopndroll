@@ -1,6 +1,8 @@
 // allow: SIZE_OK — event store boundary keeps append, cursor, replay, and serialization semantics in one ordered log module.
+use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -19,6 +21,26 @@ const MOBILE_STATE_EVENT_ID_PREFIX: &str = "mobile-state-event-";
 const MOBILE_STATE_EVENT_ID_WIDTH: usize = 20;
 const MOBILE_COMMAND_RESERVATION_STALE_AFTER_MS: i64 = 60_000;
 const NANOS_PER_MILLISECOND: i128 = 1_000_000;
+// Bounds unbounded growth of the append-only mobile state/command logs. Pruning runs
+// opportunistically on write once a store crosses the trigger, and always keeps at least
+// `MOBILE_STATE_EVENT_RETENTION_ROWS` of the newest rows so gRPC resume/replay (see
+// grpc/service.rs SESSION_REPLAY_BATCH_SIZE and the isolated_control_plane replay-batch and
+// large-replacement test fixtures, whose largest scenarios stay under ~2.5k rows) always has a
+// safe window to read from.
+const MOBILE_STATE_EVENT_RETENTION_ROWS: i64 = 50_000;
+const MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS: i64 = 60_000;
+const MOBILE_COMMAND_LOG_RETENTION_ROWS: i64 = 50_000;
+const MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS: i64 = 60_000;
+
+/// Tracks which store paths have already run schema setup + legacy migration this process,
+/// so `EventStore::ensure_initialized` is a cheap lock+lookup after the first call per path
+/// instead of replaying DDL, `pragma table_info`, and the legacy anti-join migration on every
+/// call. Keyed by path (not by `EventStore` instance) because `EventStore` is cheaply `Clone`d
+/// across async tasks and connection-pool-free call sites that all point at the same file.
+fn initialized_store_paths() -> &'static Mutex<HashSet<PathBuf>> {
+    static PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    PATHS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AutomationRunRecord {
@@ -307,8 +329,35 @@ create index if not exists mobile_state_event_log_entity_seq
         Ok(())
     }
 
-    pub fn record_mobile_event(&self, event: &MobileEvent) -> Result<MobileEventRecord> {
+    /// Runs `initialize` at most once per store path for the lifetime of the process.
+    ///
+    /// `initialize` replays the full DDL, a `pragma table_info` migration check, and the
+    /// legacy-event anti-join migration scan on every call, plus opens a throwaway connection
+    /// just to do so. Every read/write method on `EventStore` used to call `initialize`
+    /// unconditionally, which made that cost part of every store call — including hot paths
+    /// like the gRPC heartbeat (every 15s per connected client) and replayed state-delta
+    /// frames (two store calls per record). Schema setup only needs to happen once per
+    /// database file, so subsequent calls just check a process-wide set of already-initialized
+    /// paths under a short-lived lock.
+    fn ensure_initialized(&self) -> Result<()> {
+        let paths = initialized_store_paths();
+        if paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&self.path)
+        {
+            return Ok(());
+        }
         self.initialize()?;
+        paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(self.path.clone());
+        Ok(())
+    }
+
+    pub fn record_mobile_event(&self, event: &MobileEvent) -> Result<MobileEventRecord> {
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let input = mobile_state_event_input_for_mobile_event(event);
         let state_record =
@@ -329,7 +378,7 @@ create index if not exists mobile_state_event_log_entity_seq
         event: &MobileEvent,
         minis: Vec<MobileSessionMiniProjectionInput>,
     ) -> Result<MobileEventRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let created_at_ms = current_time_millis();
@@ -353,7 +402,7 @@ create index if not exists mobile_state_event_log_entity_seq
         event: &MobileEvent,
         minis: Vec<MobileSessionMiniProjectionInput>,
     ) -> Result<MobileEventRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let created_at_ms = current_time_millis();
@@ -379,7 +428,7 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         input: MobileStateEventInput,
     ) -> Result<MobileStateEventRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         insert_mobile_state_event(&connection, &input, current_time_millis(), None)
     }
@@ -389,7 +438,7 @@ create index if not exists mobile_state_event_log_entity_seq
         input: MobileStateEventInput,
         mini: MobileSessionMiniProjectionInput,
     ) -> Result<MobileStateEventRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let created_at_ms = current_time_millis();
@@ -411,7 +460,7 @@ create index if not exists mobile_state_event_log_entity_seq
         seq: i64,
         revision: &str,
     ) -> Result<MobileSessionMiniRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         upsert_mobile_session_mini(&connection, &mini, seq, revision, current_time_millis())
     }
@@ -422,7 +471,7 @@ create index if not exists mobile_state_event_log_entity_seq
         seq: i64,
         revision: &str,
     ) -> Result<Vec<MobileSessionMiniRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let updated_at_ms = current_time_millis();
@@ -438,7 +487,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn mobile_session_minis(&self) -> Result<Vec<MobileSessionMiniRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_minis(&connection)
     }
@@ -447,31 +496,31 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         session_id: &str,
     ) -> Result<Vec<MobileSessionMiniRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_minis_for_session(&connection, session_id)
     }
 
     pub fn latest_mobile_session_mini_revision(&self) -> Result<Option<String>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         latest_mobile_session_mini_revision(&connection)
     }
 
     pub fn has_mobile_session_minis(&self) -> Result<bool> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         has_mobile_session_minis(&connection)
     }
 
     pub fn mobile_session_minis_at_seq(&self, seq: i64) -> Result<Vec<MobileSessionMiniRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_minis_at_seq(&connection, seq)
     }
 
     pub fn mobile_session_minis_replaced_at_seq(&self, seq: i64) -> Result<bool> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_minis_replaced_at_seq(&connection, seq)
     }
@@ -480,7 +529,7 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         after_seq: i64,
     ) -> Result<Option<i64>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         latest_mobile_session_mini_replacement_event_seq_after(&connection, after_seq)
     }
@@ -489,13 +538,13 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         seq: i64,
     ) -> Result<Option<String>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_session_mini_replacement_revision_at_seq(&connection, seq)
     }
 
     pub fn latest_mobile_session_mini_snapshot(&self) -> Result<MobileSessionMiniSnapshotRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         Ok(MobileSessionMiniSnapshotRecord {
             latest_seq: latest_mobile_state_event_seq(&connection)?,
@@ -508,7 +557,7 @@ create index if not exists mobile_state_event_log_entity_seq
         after_seq: i64,
         limit: usize,
     ) -> Result<Vec<MobileSessionMiniRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let latest_seq = latest_mobile_state_event_seq(&connection)?;
         if after_seq > latest_seq {
@@ -537,7 +586,7 @@ create index if not exists mobile_state_event_log_entity_seq
         after_seq: i64,
         limit: usize,
     ) -> Result<Vec<MobileStateEventRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let latest_seq = latest_mobile_state_event_seq(&connection)?;
         if after_seq > latest_seq {
@@ -563,7 +612,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn mobile_state_events(&self) -> Result<Vec<MobileStateEventRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let mut statement = connection.prepare(
             "select seq, entity_id, kind, revision, server_time, payload_json,
@@ -581,7 +630,7 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         entity_id: &str,
     ) -> Result<Vec<MobileStateEventRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let mut statement = connection.prepare(
             "select seq, entity_id, kind, revision, server_time, payload_json,
@@ -597,7 +646,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn latest_mobile_state_event_seq(&self) -> Result<i64> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         latest_mobile_state_event_seq(&connection)
     }
@@ -607,7 +656,7 @@ create index if not exists mobile_state_event_log_entity_seq
         command_kind: &str,
         client_mutation_id: &str,
     ) -> Result<Option<MobileCommandAckRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         mobile_command_ack(&connection, command_kind, client_mutation_id)
     }
@@ -618,7 +667,7 @@ create index if not exists mobile_state_event_log_entity_seq
         client_mutation_id: &str,
         request_hash: &str,
     ) -> Result<MobileCommandReservationResult> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let created_at_ms = current_time_millis();
@@ -669,6 +718,9 @@ create index if not exists mobile_state_event_log_entity_seq
         } else {
             MobileCommandReservationResult::Reserved(record)
         };
+        if inserted > 0 {
+            prune_mobile_command_log_if_due(&transaction, transaction.last_insert_rowid())?;
+        }
         transaction.commit()?;
         Ok(result)
     }
@@ -679,7 +731,7 @@ create index if not exists mobile_state_event_log_entity_seq
         client_mutation_id: &str,
         request_hash: &str,
     ) -> Result<bool> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let deleted = connection.execute(
             "delete from mobile_command_log
@@ -696,7 +748,7 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         input: MobileCommandAckInput,
     ) -> Result<MobileCommandAckResult> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let mut connection = Connection::open(&self.path)?;
         let transaction = connection.transaction()?;
         let created_at_ms = current_time_millis();
@@ -772,7 +824,7 @@ create index if not exists mobile_state_event_log_entity_seq
         since_created_at_ms: i64,
         limit: usize,
     ) -> Result<Vec<MobileEventRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let mut statement = connection.prepare(
             "select seq, kind, payload_json, created_at_ms, legacy_event_id
@@ -794,7 +846,7 @@ create index if not exists mobile_state_event_log_entity_seq
         cursor: &MobileEventCursor,
         limit: usize,
     ) -> Result<Vec<MobileEventRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let cursor_seq = mobile_event_cursor_seq(&connection, cursor)?;
         let mut statement = connection.prepare(
@@ -814,7 +866,7 @@ create index if not exists mobile_state_event_log_entity_seq
         &self,
         input: AutomationRunInput<'_>,
     ) -> Result<Option<AutomationRunRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let existing: Option<String> = connection
             .query_row(
@@ -857,7 +909,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn automation_runs(&self) -> Result<Vec<AutomationRunRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let mut statement = connection.prepare(
             "select run_id, automation_id, target_thread_id, scheduled_at_ms, fired_at_ms,
@@ -887,7 +939,7 @@ create index if not exists mobile_state_event_log_entity_seq
         result: &str,
         detail: Option<&str>,
     ) -> Result<AutomationRunRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         connection.execute(
             "update automation_runs
@@ -922,7 +974,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn service_settings(&self) -> Result<ServiceSettingsRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let hooks_auto_registration = connection.query_row(
             "select hooks_auto_registration from service_settings where id = 1",
@@ -935,7 +987,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn set_hooks_auto_registration(&self, enabled: bool) -> Result<ServiceSettingsRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         connection.execute(
             "update service_settings set hooks_auto_registration = ?1 where id = 1",
@@ -953,7 +1005,7 @@ create index if not exists mobile_state_event_log_entity_seq
         generated_at_ms: i64,
         body_json: &str,
     ) -> Result<SyncManifestSnapshotRecord> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let record = SyncManifestSnapshotRecord {
             snapshot_id: format!("sync-snapshot-{}", uuid::Uuid::new_v4()),
@@ -976,7 +1028,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn latest_mobile_event_created_at_ms(&self) -> Result<i64> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         connection
             .query_row(
@@ -988,7 +1040,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn latest_mobile_event_cursor(&self) -> Result<MobileEventCursor> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         connection
             .query_row(
@@ -1012,7 +1064,7 @@ create index if not exists mobile_state_event_log_entity_seq
     }
 
     pub fn latest_sync_manifest_snapshot(&self) -> Result<Option<SyncManifestSnapshotRecord>> {
-        self.initialize()?;
+        self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         connection
             .query_row(
@@ -1189,6 +1241,9 @@ fn insert_mobile_state_event(
             .unwrap_or_else(|| connection.last_insert_rowid()),
         _ => connection.last_insert_rowid(),
     };
+    if inserted > 0 {
+        prune_mobile_state_event_log_if_due(connection, seq)?;
+    }
     Ok(MobileStateEventRecord {
         seq,
         entity_id: input.entity_id.clone(),
@@ -1202,6 +1257,67 @@ fn insert_mobile_state_event(
         command_response_json,
         created_at_ms,
     })
+}
+
+/// Opportunistically prunes `mobile_state_event_log` (and, in lockstep, the small
+/// `mobile_session_mini_replacements` marker table that references its `seq` values) once the
+/// log crosses `MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS`. Runs only every `PRUNE_TRIGGER - RETENTION`
+/// rows (checked via `latest_seq % ...`) so most writes pay a single cheap `max(seq)` lookup
+/// instead of a `count(*)` scan. Keeps the newest `MOBILE_STATE_EVENT_RETENTION_ROWS` rows, which
+/// comfortably covers the gRPC resume/replay window (see the module-level retention comment).
+fn prune_mobile_state_event_log_if_due(connection: &Connection, latest_seq: i64) -> Result<()> {
+    let prune_check_interval =
+        MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - MOBILE_STATE_EVENT_RETENTION_ROWS;
+    if prune_check_interval <= 0 || latest_seq % prune_check_interval != 0 {
+        return Ok(());
+    }
+    if latest_seq < MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS {
+        return Ok(());
+    }
+    let floor_seq = latest_seq - MOBILE_STATE_EVENT_RETENTION_ROWS;
+    connection.execute(
+        "delete from mobile_state_event_log where seq <= ?1",
+        params![floor_seq],
+    )?;
+    connection.execute(
+        "delete from mobile_session_mini_replacements where seq <= ?1",
+        params![floor_seq],
+    )?;
+    Ok(())
+}
+
+/// Opportunistically prunes `mobile_command_log`, the append-only idempotency ledger for
+/// mobile command acks, once it crosses `MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS`. Dedupe is
+/// keyed by `(command_kind, client_mutation_id)`, not by row age, so pruning the oldest acks
+/// only risks turning a very stale retry into a fresh (non-idempotent) command — acceptable
+/// given clients are not expected to replay mutations from `MOBILE_COMMAND_LOG_RETENTION_ROWS`
+/// commands ago. `last_insert_rowid` is a monotonically increasing per-table counter (this
+/// table has no dedicated `seq` column), so checking it modulo the prune interval is
+/// equivalent to "every N inserts" without a `count(*)` scan on every write.
+fn prune_mobile_command_log_if_due(connection: &Connection, last_insert_rowid: i64) -> Result<()> {
+    let prune_check_interval =
+        MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS - MOBILE_COMMAND_LOG_RETENTION_ROWS;
+    if prune_check_interval <= 0 || last_insert_rowid % prune_check_interval != 0 {
+        return Ok(());
+    }
+    let row_count: i64 =
+        connection.query_row("select count(*) from mobile_command_log", [], |row| {
+            row.get(0)
+        })?;
+    if row_count < MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS {
+        return Ok(());
+    }
+    let excess_rows = row_count - MOBILE_COMMAND_LOG_RETENTION_ROWS;
+    connection.execute(
+        "delete from mobile_command_log
+         where rowid in (
+           select rowid from mobile_command_log
+           order by created_at_ms asc, rowid asc
+           limit ?1
+         )",
+        params![excess_rows],
+    )?;
+    Ok(())
 }
 
 fn upsert_mobile_session_mini(
@@ -1395,11 +1511,30 @@ fn mobile_session_mini_body_json(
     seq: i64,
     _revision: &str,
 ) -> String {
+    let mut body_json =
+        normalized_mobile_session_mini_body(body_json, session_id, assistant_surface);
+    if let Some(body_object) = body_json.as_object_mut() {
+        body_object.insert("seq".to_owned(), serde_json::json!(seq));
+    }
+    body_json.to_string()
+}
+
+/// Strips the same non-content fields that storage strips (`revision`, `globalSettings`,
+/// `metadata.spawn/sources/tags`) and pins `id`/`sessionId`/`assistantSurface` to the given
+/// identity, but — unlike `mobile_session_mini_body_json` — leaves `seq` out entirely. `seq`
+/// is write-time metadata, not projection content, so including it would make every reconcile
+/// look "changed" purely because the log advanced.
+fn normalized_mobile_session_mini_body(
+    body_json: &Value,
+    session_id: &str,
+    assistant_surface: &str,
+) -> Value {
     let mut body_json = body_json.clone();
-    if let Some(body_json) = body_json.as_object_mut() {
-        body_json.remove("revision");
-        body_json.remove("globalSettings");
-        if let Some(metadata) = body_json
+    if let Some(body_object) = body_json.as_object_mut() {
+        body_object.remove("revision");
+        body_object.remove("globalSettings");
+        body_object.remove("seq");
+        if let Some(metadata) = body_object
             .get_mut("metadata")
             .and_then(serde_json::Value::as_object_mut)
         {
@@ -1407,15 +1542,29 @@ fn mobile_session_mini_body_json(
             metadata.remove("sources");
             metadata.remove("tags");
         }
-        body_json.insert("id".to_owned(), serde_json::json!(session_id));
-        body_json.insert("sessionId".to_owned(), serde_json::json!(session_id));
-        body_json.insert(
+        body_object.insert("id".to_owned(), serde_json::json!(session_id));
+        body_object.insert("sessionId".to_owned(), serde_json::json!(session_id));
+        body_object.insert(
             "assistantSurface".to_owned(),
             serde_json::json!(assistant_surface),
         );
-        body_json.insert("seq".to_owned(), serde_json::json!(seq));
     }
-    body_json.to_string()
+    body_json
+}
+
+/// A content-only fingerprint for a session-mini projection body, suitable for detecting
+/// whether a freshly computed projection differs from what is already stored — independent of
+/// `seq` (which always changes) and the control-only fields storage strips on write. Used by
+/// `ControlPlane::stored_mobile_session_mini_projection_matches` so a reconcile can skip the
+/// write only when the actual content is unchanged, not just when the same set of sessions is
+/// present (the previous key-set-only check silently missed in-place field changes, which is
+/// why a `force` flag existed as a workaround).
+pub fn mobile_session_mini_content_fingerprint(
+    body_json: &Value,
+    session_id: &str,
+    assistant_surface: &str,
+) -> String {
+    normalized_mobile_session_mini_body(body_json, session_id, assistant_surface).to_string()
 }
 
 fn mobile_session_mini_row(row: &Row<'_>) -> rusqlite::Result<MobileSessionMiniRecord> {
@@ -1627,7 +1776,13 @@ fn parse_mobile_event_kind(value: &str) -> MobileEventKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventStore, MobileEventCursor, MobileStateEventInput, insert_mobile_state_event};
+    use super::{
+        EventStore, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS, MOBILE_COMMAND_LOG_RETENTION_ROWS,
+        MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS, MOBILE_STATE_EVENT_RETENTION_ROWS,
+        MobileEventCursor, MobileStateEventInput, insert_mobile_state_event,
+        mobile_session_mini_content_fingerprint, prune_mobile_command_log_if_due,
+        prune_mobile_state_event_log_if_due,
+    };
     use crate::mobile::events::MobileEventKind;
     use rusqlite::{Connection, params};
     use tempfile::tempdir;
@@ -1711,5 +1866,172 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn ensure_initialized_runs_schema_setup_exactly_once_per_path() {
+        let tempdir = tempdir().expect("tempdir");
+        let path = tempdir.path().join("events.sqlite");
+        let store = EventStore::new(path.clone());
+        store
+            .ensure_initialized()
+            .expect("first ensure_initialized");
+        // A second `EventStore` pointed at the same path (as happens whenever `ControlPlane`
+        // is cloned across async tasks) must observe the process-wide cache too, not just the
+        // original instance.
+        let cloned_store = EventStore::new(path);
+        cloned_store
+            .ensure_initialized()
+            .expect("second ensure_initialized via a distinct EventStore for the same path");
+
+        // The schema must actually be in place after the memoized path: a real query against
+        // a table created only by `initialize` should succeed.
+        assert_eq!(
+            store
+                .mobile_state_events_after_seq(0, 10)
+                .expect("query succeeds once schema is initialized")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn mobile_state_event_log_is_pruned_once_it_crosses_the_retention_trigger() {
+        let tempdir = tempdir().expect("tempdir");
+        let store = EventStore::new(tempdir.path().join("events.sqlite"));
+        store.initialize().expect("initialize");
+        let connection = Connection::open(store.path()).expect("open events");
+
+        // Seed rows directly (bypassing the per-row insert helper) so the test stays fast:
+        // only the seq column and a couple of not-null columns matter for this check.
+        seed_mobile_state_event_log_rows(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1);
+        prune_mobile_state_event_log_if_due(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1)
+            .expect("prune check below trigger");
+        assert_eq!(
+            row_count(&connection, "mobile_state_event_log"),
+            MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1,
+            "must not prune before crossing the trigger"
+        );
+
+        seed_mobile_state_event_log_rows(&connection, 1);
+        prune_mobile_state_event_log_if_due(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS)
+            .expect("prune check at trigger");
+        assert_eq!(
+            row_count(&connection, "mobile_state_event_log"),
+            MOBILE_STATE_EVENT_RETENTION_ROWS,
+            "must prune down to the retention floor once the trigger is crossed"
+        );
+
+        let remaining_min_seq: i64 = connection
+            .query_row("select min(seq) from mobile_state_event_log", [], |row| {
+                row.get(0)
+            })
+            .expect("min seq after prune");
+        assert_eq!(
+            remaining_min_seq,
+            MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - MOBILE_STATE_EVENT_RETENTION_ROWS + 1,
+            "must keep exactly the newest RETENTION_ROWS rows"
+        );
+    }
+
+    #[test]
+    fn mobile_command_log_is_pruned_once_it_crosses_the_retention_trigger() {
+        let tempdir = tempdir().expect("tempdir");
+        let store = EventStore::new(tempdir.path().join("events.sqlite"));
+        store.initialize().expect("initialize");
+        let connection = Connection::open(store.path()).expect("open events");
+
+        seed_mobile_command_log_rows(&connection, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS);
+        prune_mobile_command_log_if_due(&connection, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS)
+            .expect("prune check at trigger");
+        assert_eq!(
+            row_count(&connection, "mobile_command_log"),
+            MOBILE_COMMAND_LOG_RETENTION_ROWS,
+            "must prune down to the retention floor once the trigger is crossed"
+        );
+    }
+
+    #[test]
+    fn mobile_session_mini_content_fingerprint_ignores_seq_and_stripped_fields_but_not_content() {
+        let same_content_different_seq_and_revision = mobile_session_mini_content_fingerprint(
+            &serde_json::json!({
+                "seq": 1,
+                "revision": "rev-a",
+                "globalSettings": {"anything": true},
+                "isArchived": false,
+                "lifecycle": "active",
+            }),
+            "thread-main",
+            "codex",
+        );
+        let same_content_different_seq_and_revision_2 = mobile_session_mini_content_fingerprint(
+            &serde_json::json!({
+                "seq": 99,
+                "revision": "rev-z",
+                "globalSettings": {"anything else": 1},
+                "isArchived": false,
+                "lifecycle": "active",
+            }),
+            "thread-main",
+            "codex",
+        );
+        assert_eq!(
+            same_content_different_seq_and_revision, same_content_different_seq_and_revision_2,
+            "seq/revision/globalSettings must not affect the content fingerprint"
+        );
+
+        let different_lifecycle = mobile_session_mini_content_fingerprint(
+            &serde_json::json!({
+                "seq": 1,
+                "revision": "rev-a",
+                "isArchived": false,
+                "lifecycle": "idle",
+            }),
+            "thread-main",
+            "codex",
+        );
+        assert_ne!(
+            same_content_different_seq_and_revision, different_lifecycle,
+            "an actual content change (lifecycle) must change the fingerprint"
+        );
+    }
+
+    fn seed_mobile_state_event_log_rows(connection: &Connection, count: i64) {
+        let transaction_connection = connection.unchecked_transaction().expect("transaction");
+        for _ in 0..count {
+            transaction_connection
+                .execute(
+                    "insert into mobile_state_event_log (
+                        entity_id, kind, revision, server_time, payload_json, created_at_ms
+                    ) values ('thread-main', 'session.changed', '', '', '{}', 0)",
+                    [],
+                )
+                .expect("seed state event row");
+        }
+        transaction_connection.commit().expect("commit seed rows");
+    }
+
+    fn seed_mobile_command_log_rows(connection: &Connection, count: i64) {
+        let transaction_connection = connection.unchecked_transaction().expect("transaction");
+        for index in 0..count {
+            transaction_connection
+                .execute(
+                    "insert into mobile_command_log (
+                        command_kind, client_mutation_id, request_hash, ack_seq, response_json,
+                        created_at_ms
+                    ) values ('SendSessionPrompt', ?1, 'hash', 0, '{}', ?2)",
+                    params![format!("mutation-{index}"), index],
+                )
+                .expect("seed command log row");
+        }
+        transaction_connection.commit().expect("commit seed rows");
+    }
+
+    fn row_count(connection: &Connection, table_name: &str) -> i64 {
+        connection
+            .query_row(&format!("select count(*) from {table_name}"), [], |row| {
+                row.get(0)
+            })
+            .expect("row count")
     }
 }

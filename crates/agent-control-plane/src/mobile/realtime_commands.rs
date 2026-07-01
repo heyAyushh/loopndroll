@@ -2,9 +2,10 @@ use serde::Serialize;
 use tonic::Status;
 
 use crate::control_plane::ControlPlane;
-use crate::control_plane::reducer::session_state_for_thread;
+use crate::control_plane::reducer::{projected_session_state_from_minis, session_state_for_thread};
 use crate::control_plane::session_fsm::{
-    SessionCommand, SessionMode, SessionReject, SessionRejectCode, next as next_session_state,
+    SessionCommand, SessionMode, SessionReject, SessionRejectCode, SessionState,
+    next as next_session_state,
 };
 use crate::events::{MobileCommandAckRecord, MobileCommandAckResult};
 use crate::mobile::api::{
@@ -1183,18 +1184,41 @@ fn ensure_session_fsm_allows(
     assistant_surface: Option<&str>,
     command: SessionCommand,
 ) -> Result<(), RealtimeCommandError> {
-    let events = control_plane
-        .store()
-        .mobile_state_events_for_entity(thread_id)
-        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    let state = current_session_fsm_state(control_plane, thread_id, assistant_surface)?;
+    next_session_state(state, command)
+        .map(|_| ())
+        .map_err(RealtimeCommandError::SessionRejected)
+}
+
+/// Resolves the FSM state for a thread, preferring the minis projection (the common case, and
+/// the current source of truth once it exists — see `session_state_for_thread`) and only
+/// falling back to a full per-entity event fold when no projection covers this thread yet.
+/// Avoids loading and folding the entire unbounded event history for the entity on every
+/// command when the cheap minis lookup already answers the question.
+fn current_session_fsm_state(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    assistant_surface: Option<&str>,
+) -> Result<SessionState, RealtimeCommandError> {
     let minis = control_plane
         .store()
         .mobile_session_minis_for_session(thread_id)
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
-    let state = session_state_for_thread(&events, &minis, thread_id, assistant_surface);
-    next_session_state(state, command)
-        .map(|_| ())
-        .map_err(RealtimeCommandError::SessionRejected)
+    if let Some(projected_state) =
+        projected_session_state_from_minis(&minis, thread_id, assistant_surface)
+    {
+        return Ok(projected_state);
+    }
+    let events = control_plane
+        .store()
+        .mobile_state_events_for_entity(thread_id)
+        .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
+    Ok(session_state_for_thread(
+        &events,
+        &minis,
+        thread_id,
+        assistant_surface,
+    ))
 }
 
 fn command_ack_with_idempotency(
@@ -1461,8 +1485,16 @@ fn emit_all_mobile_sessions_changed(control_plane: &ControlPlane, detail: &str) 
 fn emit_default_notification_targets_changed(
     control_plane: &ControlPlane,
 ) -> Result<(), RealtimeCommandError> {
+    // Reconciling (rather than forcing) is safe now that the reconcile's stored-projection
+    // comparison is content-aware: a default-notification-targets change always changes the
+    // `notificationStatus` field embedded in each session mini, so the content check below
+    // will correctly detect it and write, even when the desktop snapshot's `revision` string
+    // does not change. `force` used to be required here to bypass a key-set-only comparison
+    // that could not see that in-place change.
     if control_plane
-        .force_reconcile_mobile_session_mini_projection("default-notification-targets-updated")
+        .reconcile_mobile_session_mini_projection_with_detail(
+            "default-notification-targets-updated",
+        )
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?
     {
         return Ok(());

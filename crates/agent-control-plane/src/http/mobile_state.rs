@@ -9,6 +9,7 @@ use crate::mobile::api::{
     latest_session_mini_revision, mobile_session_mini_delta, mobile_session_mini_snapshot,
     mobile_snapshot,
 };
+use crate::mobile::events::mobile_state_seq_revision;
 use crate::mobile::network::advertised_mobile_grpc_base_urls;
 
 use super::mobile_access::{current_mobile_time, request_advertised_mobile_base_urls};
@@ -18,7 +19,6 @@ pub(super) const DEFAULT_SESSION_MINI_REPLAY_LIMIT: usize = 100;
 pub(super) const MAX_SESSION_MINI_REPLAY_LIMIT: usize = 500;
 const SESSION_MINI_RECOVERY_PATH: &str = "/api/mobile/session-minis/snapshot";
 const SESSION_MINI_FRESHNESS_SOURCE: &str = "mobile-session-mini-projection";
-const MOBILE_STATE_REVISION_PREFIX: &str = "mobile-state:seq-";
 
 pub(super) fn desktop_mobile_state_response(control_plane: &ControlPlane) -> Response {
     match fresh_desktop_mobile_state(control_plane) {
@@ -349,14 +349,8 @@ fn session_mini_recovery_revision(
     latest_seq: i64,
     records: &[MobileSessionMiniRecord],
 ) -> String {
-    latest_session_mini_revision(records).unwrap_or_else(|| {
-        control_plane
-            .store()
-            .latest_mobile_session_mini_revision()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| fallback_mobile_state_revision(latest_seq))
-    })
+    latest_session_mini_revision(records)
+        .unwrap_or_else(|| latest_mobile_state_revision(control_plane, latest_seq))
 }
 
 fn latest_session_mini_projection_seq(records: &[MobileSessionMiniRecord]) -> i64 {
@@ -373,11 +367,7 @@ fn latest_mobile_state_revision(control_plane: &ControlPlane, latest_seq: i64) -
         .latest_mobile_session_mini_revision()
         .ok()
         .flatten()
-        .unwrap_or_else(|| fallback_mobile_state_revision(latest_seq))
-}
-
-fn fallback_mobile_state_revision(latest_seq: i64) -> String {
-    format!("{MOBILE_STATE_REVISION_PREFIX}{latest_seq}")
+        .unwrap_or_else(|| mobile_state_seq_revision(latest_seq))
 }
 
 fn session_mini_freshness(latest_seq: i64, revision: &str, server_time: &str) -> Value {

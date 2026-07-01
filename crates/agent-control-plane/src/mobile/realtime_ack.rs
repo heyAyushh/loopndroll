@@ -3,7 +3,9 @@ use crate::events::{
     MobileCommandAckInput, MobileCommandAckRecord, MobileCommandAckResult,
     MobileCommandReservationResult, MobileStateEventInput,
 };
-use crate::mobile::events::{MobileEventInput, MobileEventKind, mobile_event_now};
+use crate::mobile::events::{
+    MobileEventInput, MobileEventKind, mobile_event_now, mobile_state_seq_revision,
+};
 
 const ACK_PAYLOAD_DETAIL: &str = "command-ack";
 pub(crate) const COMMAND_ACK_ACCOUNT_ID: &str = "local-account";
@@ -179,7 +181,7 @@ pub(crate) fn current_mobile_revision(
         .store()
         .latest_mobile_state_event_seq()
         .map_err(|error| CommandAckError::Internal(error.to_string()))?;
-    Ok(format!("mobile-state:seq-{latest_seq}"))
+    Ok(mobile_state_seq_revision(latest_seq))
 }
 
 pub(crate) fn command_ack_server_time() -> String {

@@ -71,12 +71,17 @@ pub fn session_state_for_thread(
     thread_id: &str,
     assistant_surface: Option<&str>,
 ) -> SessionState {
-    let reduced = fold_mobile_state_events(events);
+    // The minis projection is the current source of truth once it exists for a session (the
+    // common case); only fold the full event history when there is no projection to consult,
+    // so callers that already know a projection exists can skip loading events at all (see
+    // `ensure_session_fsm_allows` in realtime_commands.rs, which queries minis first and only
+    // falls back to an events query when this returns `None`).
     if let Some(projected_state) =
         projected_session_state_from_minis(minis, thread_id, assistant_surface)
     {
         return projected_state;
     }
+    let reduced = fold_mobile_state_events(events);
     if let Some(state) = reduced.state_for_thread(thread_id) {
         return state.clone();
     }
