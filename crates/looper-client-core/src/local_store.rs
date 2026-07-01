@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     error::ClientCoreError,
@@ -14,10 +14,10 @@ use crate::{
         ClientSessionLatestReply, ClientStateMini, ClientStateMiniSnapshot, ClientTextChunk,
     },
     state_mini::{
-        DEFAULT_NODE_ID, StateMiniKey, fresh_state_mini_snapshot_covered_node_ids,
-        last_seq_by_node_from_minis, normalize_state_minis, require_valid_sequence,
-        sort_state_minis, state_mini_key, state_mini_snapshot_is_stale_for_all_nodes,
-        state_mini_snapshot_last_seq_by_node, validate_state_minis,
+        fresh_state_mini_snapshot_covered_node_ids, last_seq_by_node_from_minis,
+        normalize_state_minis, require_valid_sequence, sort_state_minis, state_mini_key,
+        state_mini_snapshot_is_stale_for_all_nodes, state_mini_snapshot_last_seq_by_node,
+        validate_state_minis, StateMiniKey, DEFAULT_NODE_ID,
     },
 };
 
@@ -56,8 +56,12 @@ struct StoredState {
         default
     )]
     last_good_endpoint_url: Option<String>,
-    #[serde(rename = "latestReplies", default)]
-    latest_replies: Vec<ClientSessionLatestReply>,
+    #[serde(
+        rename = "latestReplies",
+        default,
+        deserialize_with = "deserialize_latest_replies"
+    )]
+    latest_replies: HashMap<String, ClientSessionLatestReply>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -83,6 +87,60 @@ struct StoredPendingCommand {
     archived: bool,
     #[serde(rename = "attemptCount", default)]
     attempt_count: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredLatestReplies {
+    Keyed(HashMap<String, ClientSessionLatestReply>),
+    LegacyList(Vec<ClientSessionLatestReply>),
+}
+
+fn deserialize_latest_replies<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, ClientSessionLatestReply>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match StoredLatestReplies::deserialize(deserializer)? {
+        StoredLatestReplies::Keyed(replies) => Ok(normalized_latest_replies(replies)),
+        StoredLatestReplies::LegacyList(replies) => Ok(normalized_latest_replies(
+            replies
+                .into_iter()
+                .map(|reply| (reply.session_id.clone(), reply)),
+        )),
+    }
+}
+
+fn normalized_latest_replies(
+    replies: impl IntoIterator<Item = (String, ClientSessionLatestReply)>,
+) -> HashMap<String, ClientSessionLatestReply> {
+    let mut normalized: HashMap<String, ClientSessionLatestReply> = HashMap::new();
+    for (key, mut reply) in replies {
+        let session_id = trimmed_session_id(&reply.session_id)
+            .or_else(|| trimmed_session_id(&key))
+            .unwrap_or_default();
+        if session_id.is_empty() {
+            continue;
+        }
+        reply.session_id = session_id.clone();
+        match normalized.get(&session_id) {
+            Some(current) if current.latest_seq > reply.latest_seq => {}
+            _ => {
+                normalized.insert(session_id, reply);
+            }
+        }
+    }
+    normalized
+}
+
+fn trimmed_session_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 impl LooperClientCoreLocalStore {
@@ -719,12 +777,7 @@ impl StoredState {
     }
 
     fn session_detail(&self, session_id: &str) -> ClientSessionDetailProjection {
-        let Some(reply) = self
-            .latest_replies
-            .iter()
-            .find(|reply| reply.session_id == session_id)
-            .cloned()
-        else {
+        let Some(reply) = self.latest_replies.get(session_id).cloned() else {
             return ClientSessionDetailProjection::empty(session_id.to_owned());
         };
 
@@ -740,21 +793,16 @@ impl StoredState {
         session_id: String,
         chunk: ClientTextChunk,
     ) -> ClientSessionDetailProjection {
-        if let Some(index) = self
-            .latest_replies
-            .iter()
-            .position(|reply| reply.session_id == session_id)
-        {
-            if chunk.seq <= self.latest_replies[index].latest_seq {
+        if let Some(current) = self.latest_replies.get(&session_id).cloned() {
+            if chunk.seq <= current.latest_seq {
                 return self.session_detail(&session_id);
             }
-            let current = self.latest_replies[index].clone();
-            self.latest_replies[index] = updated_latest_reply(current, chunk);
+            self.latest_replies
+                .insert(session_id.clone(), updated_latest_reply(current, chunk));
         } else {
-            self.latest_replies.push(latest_reply_from_chunk(chunk));
+            self.latest_replies
+                .insert(session_id.clone(), latest_reply_from_chunk(chunk));
         }
-        self.latest_replies
-            .sort_by(|left, right| left.session_id.cmp(&right.session_id));
         self.session_detail(&session_id)
     }
 
@@ -766,7 +814,7 @@ impl StoredState {
             .collect::<HashSet<_>>();
         let original_len = self.latest_replies.len();
         self.latest_replies
-            .retain(|reply| visible_session_ids.contains(reply.session_id.as_str()));
+            .retain(|session_id, _| visible_session_ids.contains(session_id.as_str()));
         self.latest_replies.len() != original_len
     }
 }
@@ -1103,6 +1151,12 @@ mod tests {
         assert_eq!(detail.latest_reply.text, "Hello world");
         assert_eq!(detail.latest_reply.latest_seq, 8);
         assert!(detail.latest_reply.is_final);
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+        let latest_replies = persisted["latestReplies"]
+            .as_object()
+            .expect("keyed latest replies");
+        assert_eq!(latest_replies["thread-main"]["latest_seq"], json!(8));
 
         drop(store);
         let reopened =
@@ -1112,6 +1166,62 @@ mod tests {
             .expect("reopened detail projection");
         assert_eq!(reopened_detail.latest_reply.text, "Hello world");
         assert_eq!(reopened_detail.latest_reply.message_id, "message-1");
+    }
+
+    #[test]
+    fn local_store_text_chunk_loads_legacy_latest_reply_list_as_keyed_projection() {
+        let path = temp_store_path("text-chunk-legacy-latest-reply-list");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 8,
+                "sessions": [
+                    state_mini("thread-main", "codex", 8, "rev-8", "Cached")
+                ],
+                "latestReplies": [
+                    {
+                        "session_id": "thread-main",
+                        "message_id": "message-stale",
+                        "text": "stale",
+                        "latest_seq": 5,
+                        "is_final": true,
+                        "is_truncated": false,
+                        "server_time": "2026-06-24T00:00:05Z"
+                    },
+                    {
+                        "session_id": "thread-main",
+                        "message_id": "message-fresh",
+                        "text": "fresh",
+                        "latest_seq": 8,
+                        "is_final": false,
+                        "is_truncated": false,
+                        "server_time": "2026-06-24T00:00:08Z"
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write legacy cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let detail = store
+            .session_detail("thread-main".to_owned())
+            .expect("detail projection");
+        assert_eq!(detail.latest_reply.message_id, "message-fresh");
+        assert_eq!(detail.latest_reply.text, "fresh");
+
+        store
+            .apply_text_chunk(text_chunk(9, "thread-main", "message-fresh", " live", true))
+            .expect("live chunk");
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+        let latest_replies = persisted["latestReplies"]
+            .as_object()
+            .expect("keyed latest replies");
+        assert_eq!(latest_replies["thread-main"]["text"], json!("fresh live"));
+        assert_eq!(latest_replies["thread-main"]["latest_seq"], json!(9));
     }
 
     #[test]
