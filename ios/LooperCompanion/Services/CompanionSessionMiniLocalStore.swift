@@ -1,5 +1,6 @@
 import Foundation
 import LooperClientCore
+import LooperCompanionCore
 
 private enum CompanionSessionMiniSyncReason {
     static let delta = "delta"
@@ -55,10 +56,92 @@ typealias CompanionSessionMiniLivenessUpdateHandler = @MainActor @Sendable (
 typealias CompanionSessionMiniSyncDebugHandler = @MainActor @Sendable (String) -> Void
 
 struct CompanionSessionRuntimeStartConfiguration: Sendable {
-    typealias EndpointResolver = @Sendable () async throws -> [URL]
+    typealias EndpointResolver = @Sendable () async throws -> [ClientEndpoint]
 
     let bearerToken: String?
     let endpointResolver: EndpointResolver
+}
+
+enum CompanionRealtimeEndpointResolver {
+    static func endpoints(
+        configuredBaseURLs: [URL],
+        health: CompanionServerHealth? = nil
+    ) -> [ClientEndpoint] {
+        let recoveryBaseURLs = recoveryBaseURLs(
+            configuredBaseURLs: configuredBaseURLs,
+            health: health
+        )
+        let primaryRecoveryBaseURL = recoveryBaseURLs.first?.absoluteString ?? ""
+        let h3Endpoints = uniqueURLs(
+            [health?.grpcH3BaseURL].compactMap(\.self) + (health?.grpcH3BaseURLs ?? [])
+        )
+        .map {
+            ClientEndpoint.h3(
+                url: $0.absoluteString,
+                recoveryBaseURL: recoveryBaseURL(
+                    for: $0,
+                    candidates: recoveryBaseURLs,
+                    fallback: primaryRecoveryBaseURL
+                ),
+                certificateSha256: health?.grpcH3CertificateSha256
+            )
+        }
+
+        let h2EndpointURLs = uniqueURLs(
+            [health?.grpcBaseURL].compactMap(\.self) +
+                (health?.grpcBaseURLs ?? []) +
+                configuredBaseURLs
+                    .map(CompanionBaseURLRouting.canonicalRealtimeGRPCBaseURL)
+                    .map(\.absoluteString)
+        )
+        let h2Endpoints = h2EndpointURLs.map {
+            ClientEndpoint.h2(
+                url: $0.absoluteString,
+                recoveryBaseURL: CompanionBaseURLRouting
+                    .canonicalHTTPAPIBaseURL(for: $0)
+                    .absoluteString
+            )
+        }
+
+        return h3Endpoints + h2Endpoints
+    }
+
+    private static func recoveryBaseURLs(
+        configuredBaseURLs: [URL],
+        health: CompanionServerHealth?
+    ) -> [URL] {
+        uniqueURLs(
+            [health?.baseURL].compactMap(\.self) +
+                (health?.baseURLs ?? []) +
+                configuredBaseURLs.map(\.absoluteString)
+        )
+        .map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
+    }
+
+    private static func recoveryBaseURL(
+        for endpointURL: URL,
+        candidates: [URL],
+        fallback: String
+    ) -> String {
+        let endpointHost = endpointURL.host?.lowercased()
+        return candidates
+            .first { $0.host?.lowercased() == endpointHost }?
+            .absoluteString ?? fallback
+    }
+
+    private static func uniqueURLs(_ values: [String]) -> [URL] {
+        var seen = Set<String>()
+        return values.compactMap { value -> URL? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  let url = URL(string: trimmed),
+                  seen.insert(url.absoluteString).inserted
+            else {
+                return nil
+            }
+            return url
+        }
+    }
 }
 
 private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
@@ -183,11 +266,9 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     func startIfNeeded(
         bearerToken: String?,
         mobileSessionHeader: String?,
-        preferredRealtimeEndpointURLs: () async throws -> [URL]
+        preferredRealtimeEndpoints: () async throws -> [ClientEndpoint]
     ) async throws -> ClientStateSnapshot? {
-        let endpoints = try await preferredRealtimeEndpointURLs().map {
-            ClientEndpoint(url: $0.absoluteString, lastGood: false)
-        }
+        let endpoints = try await preferredRealtimeEndpoints()
         guard !endpoints.isEmpty else {
             throw CompanionSessionRuntimeError.noRealtimeEndpoint
         }
@@ -228,9 +309,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         guard let startConfiguration = currentStartConfiguration() else {
             throw CompanionSessionRuntimeError.notConfigured
         }
-        let endpoints = try await startConfiguration.endpointResolver().map {
-            ClientEndpoint(url: $0.absoluteString, lastGood: false)
-        }
+        let endpoints = try await startConfiguration.endpointResolver()
         guard !endpoints.isEmpty else {
             throw CompanionSessionRuntimeError.noRealtimeEndpoint
         }

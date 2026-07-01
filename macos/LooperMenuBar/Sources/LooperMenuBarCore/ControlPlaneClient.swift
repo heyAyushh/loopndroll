@@ -1726,6 +1726,9 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
   public let baseURLs: [String]
   public let grpcBaseURL: String
   public let grpcBaseURLs: [String]
+  public let grpcH3BaseURL: String
+  public let grpcH3BaseURLs: [String]
+  public let grpcH3CertificateSha256: String?
   public let requiresAuthentication: Bool
   public let tailscale: MobileTailscaleStatus?
 
@@ -1745,6 +1748,15 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
   public var preferredRealtimeBaseURLs: [URL] {
     var seen = Set<String>()
     return ([grpcBaseURL] + grpcBaseURLs)
+      .compactMap(URL.init(string:))
+      .filter { url in
+        !url.absoluteString.isEmpty && seen.insert(url.absoluteString).inserted
+      }
+  }
+
+  public var preferredH3RealtimeBaseURLs: [URL] {
+    var seen = Set<String>()
+    return ([grpcH3BaseURL] + grpcH3BaseURLs)
       .compactMap(URL.init(string:))
       .filter { url in
         !url.absoluteString.isEmpty && seen.insert(url.absoluteString).inserted
@@ -1791,6 +1803,9 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     case baseURLs
     case grpcBaseURL
     case grpcBaseURLs
+    case grpcH3BaseURL
+    case grpcH3BaseURLs
+    case grpcH3CertificateSha256
     case requiresAuthentication
     case tailscale
   }
@@ -1801,6 +1816,9 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     baseURLs: [String],
     grpcBaseURL: String = "",
     grpcBaseURLs: [String] = [],
+    grpcH3BaseURL: String = "",
+    grpcH3BaseURLs: [String] = [],
+    grpcH3CertificateSha256: String? = nil,
     requiresAuthentication: Bool,
     tailscale: MobileTailscaleStatus? = nil
   ) {
@@ -1809,6 +1827,9 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     self.baseURLs = baseURLs
     self.grpcBaseURL = grpcBaseURL
     self.grpcBaseURLs = grpcBaseURLs
+    self.grpcH3BaseURL = grpcH3BaseURL
+    self.grpcH3BaseURLs = grpcH3BaseURLs
+    self.grpcH3CertificateSha256 = grpcH3CertificateSha256
     self.requiresAuthentication = requiresAuthentication
     self.tailscale = tailscale
   }
@@ -1820,6 +1841,12 @@ public struct MobileHealthResponse: Codable, Equatable, Sendable {
     baseURLs = try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? []
     grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
     grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
+    grpcH3BaseURL = (try? container.decodeIfPresent(String.self, forKey: .grpcH3BaseURL)) ?? ""
+    grpcH3BaseURLs = (try? container.decodeIfPresent([String].self, forKey: .grpcH3BaseURLs)) ?? []
+    grpcH3CertificateSha256 = try? container.decodeIfPresent(
+      String.self,
+      forKey: .grpcH3CertificateSha256
+    )
     requiresAuthentication =
       try container.decodeIfPresent(Bool.self, forKey: .requiresAuthentication) ?? true
     tailscale = try container.decodeIfPresent(MobileTailscaleStatus.self, forKey: .tailscale)

@@ -1364,13 +1364,21 @@ public func FfiConverterTypeClientDetailModeProjection_lower(_ value: ClientDeta
 
 
 public struct ClientEndpoint: Equatable, Hashable {
+    public var transport: ClientEndpointTransport
     public var url: String
+    public var recoveryBaseUrl: String
+    public var h3CertificateSha256: String
+    public var h3CertificateSpkiSha256: String
     public var lastGood: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(url: String, lastGood: Bool) {
+    public init(transport: ClientEndpointTransport, url: String, recoveryBaseUrl: String, h3CertificateSha256: String, h3CertificateSpkiSha256: String, lastGood: Bool) {
+        self.transport = transport
         self.url = url
+        self.recoveryBaseUrl = recoveryBaseUrl
+        self.h3CertificateSha256 = h3CertificateSha256
+        self.h3CertificateSpkiSha256 = h3CertificateSpkiSha256
         self.lastGood = lastGood
     }
 
@@ -1390,13 +1398,21 @@ public struct FfiConverterTypeClientEndpoint: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientEndpoint {
         return
             try ClientEndpoint(
+                transport: FfiConverterTypeClientEndpointTransport.read(from: &buf),
                 url: FfiConverterString.read(from: &buf),
+                recoveryBaseUrl: FfiConverterString.read(from: &buf),
+                h3CertificateSha256: FfiConverterString.read(from: &buf),
+                h3CertificateSpkiSha256: FfiConverterString.read(from: &buf),
                 lastGood: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: ClientEndpoint, into buf: inout [UInt8]) {
+        FfiConverterTypeClientEndpointTransport.write(value.transport, into: &buf)
         FfiConverterString.write(value.url, into: &buf)
+        FfiConverterString.write(value.recoveryBaseUrl, into: &buf)
+        FfiConverterString.write(value.h3CertificateSha256, into: &buf)
+        FfiConverterString.write(value.h3CertificateSpkiSha256, into: &buf)
         FfiConverterBool.write(value.lastGood, into: &buf)
     }
 }
@@ -3740,6 +3756,8 @@ public func FfiConverterTypeClientStateMiniStreamUpdate_lower(_ value: ClientSta
 public struct ClientStateSnapshot: Equatable, Hashable {
     public var phase: ConnectionPhase
     public var endpointUrl: String
+    public var endpointTransport: ClientEndpointTransport
+    public var transportFallbackReason: String
     public var latestSeq: Int64
     public var revision: String
     public var serverTime: String
@@ -3750,9 +3768,11 @@ public struct ClientStateSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(phase: ConnectionPhase, endpointUrl: String, latestSeq: Int64, revision: String, serverTime: String, stateMinis: [ClientStateMini], pendingMutations: [ClientPendingMutation], outboxDepth: UInt32, lastError: String) {
+    public init(phase: ConnectionPhase, endpointUrl: String, endpointTransport: ClientEndpointTransport, transportFallbackReason: String, latestSeq: Int64, revision: String, serverTime: String, stateMinis: [ClientStateMini], pendingMutations: [ClientPendingMutation], outboxDepth: UInt32, lastError: String) {
         self.phase = phase
         self.endpointUrl = endpointUrl
+        self.endpointTransport = endpointTransport
+        self.transportFallbackReason = transportFallbackReason
         self.latestSeq = latestSeq
         self.revision = revision
         self.serverTime = serverTime
@@ -3780,6 +3800,8 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
             try ClientStateSnapshot(
                 phase: FfiConverterTypeConnectionPhase.read(from: &buf),
                 endpointUrl: FfiConverterString.read(from: &buf),
+                endpointTransport: FfiConverterTypeClientEndpointTransport.read(from: &buf),
+                transportFallbackReason: FfiConverterString.read(from: &buf),
                 latestSeq: FfiConverterInt64.read(from: &buf),
                 revision: FfiConverterString.read(from: &buf),
                 serverTime: FfiConverterString.read(from: &buf),
@@ -3793,6 +3815,8 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
     public static func write(_ value: ClientStateSnapshot, into buf: inout [UInt8]) {
         FfiConverterTypeConnectionPhase.write(value.phase, into: &buf)
         FfiConverterString.write(value.endpointUrl, into: &buf)
+        FfiConverterTypeClientEndpointTransport.write(value.endpointTransport, into: &buf)
+        FfiConverterString.write(value.transportFallbackReason, into: &buf)
         FfiConverterInt64.write(value.latestSeq, into: &buf)
         FfiConverterString.write(value.revision, into: &buf)
         FfiConverterString.write(value.serverTime, into: &buf)
@@ -4254,6 +4278,73 @@ public func FfiConverterTypeClientCoreError_lift(_ buf: RustBuffer) throws -> Cl
 public func FfiConverterTypeClientCoreError_lower(_ value: ClientCoreError) -> RustBuffer {
     return FfiConverterTypeClientCoreError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ClientEndpointTransport: Equatable, Hashable {
+
+    case h2
+    case h3
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientEndpointTransport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientEndpointTransport: FfiConverterRustBuffer {
+    typealias SwiftType = ClientEndpointTransport
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientEndpointTransport {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .h2
+
+        case 2: return .h3
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClientEndpointTransport, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .h2:
+            writeInt(&buf, Int32(1))
+
+
+        case .h3:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientEndpointTransport_lift(_ buf: RustBuffer) throws -> ClientEndpointTransport {
+    return try FfiConverterTypeClientEndpointTransport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientEndpointTransport_lower(_ value: ClientEndpointTransport) -> RustBuffer {
+    return FfiConverterTypeClientEndpointTransport.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.

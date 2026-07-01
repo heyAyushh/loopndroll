@@ -1,5 +1,39 @@
 import Foundation
 
+public extension ClientEndpoint {
+    static func h2(
+        url: String,
+        recoveryBaseURL: String,
+        lastGood: Bool = false
+    ) -> ClientEndpoint {
+        ClientEndpoint(
+            transport: .h2,
+            url: url,
+            recoveryBaseUrl: recoveryBaseURL,
+            h3CertificateSha256: "",
+            h3CertificateSpkiSha256: "",
+            lastGood: lastGood
+        )
+    }
+
+    static func h3(
+        url: String,
+        recoveryBaseURL: String,
+        certificateSha256: String? = nil,
+        certificateSpkiSha256: String? = nil,
+        lastGood: Bool = false
+    ) -> ClientEndpoint {
+        ClientEndpoint(
+            transport: .h3,
+            url: url,
+            recoveryBaseUrl: recoveryBaseURL,
+            h3CertificateSha256: certificateSha256 ?? "",
+            h3CertificateSpkiSha256: certificateSpkiSha256 ?? "",
+            lastGood: lastGood
+        )
+    }
+}
+
 public final class LooperClientCoreSessionManager: @unchecked Sendable {
     private let runtime: LooperClientCoreSessionRuntime
 

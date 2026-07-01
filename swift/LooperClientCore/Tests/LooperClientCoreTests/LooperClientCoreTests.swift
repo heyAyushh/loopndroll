@@ -15,8 +15,16 @@ struct LooperClientCoreTests {
 
         let snapshot = try manager.start(
             endpoints: [
-                ClientEndpoint(url: primaryEndpoint, lastGood: false),
-                ClientEndpoint(url: lastGoodEndpoint, lastGood: true),
+                ClientEndpoint.h2(
+                    url: primaryEndpoint,
+                    recoveryBaseURL: "http://127.0.0.1:8765"
+                ),
+                ClientEndpoint.h3(
+                    url: "https://100.64.0.2:8766",
+                    recoveryBaseURL: "http://100.64.0.2:8765",
+                    certificateSha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    lastGood: true
+                ),
             ],
             bearerToken: "token",
             mobileSessionHeader: "mobile-session"
@@ -32,7 +40,13 @@ struct LooperClientCoreTests {
         let manager = try temporarySessionManager()
 
         _ = try manager.start(
-            endpoints: [ClientEndpoint(url: primaryEndpoint, lastGood: true)],
+            endpoints: [
+                ClientEndpoint.h2(
+                    url: primaryEndpoint,
+                    recoveryBaseURL: "http://127.0.0.1:8765",
+                    lastGood: true
+                )
+            ],
             bearerToken: "token",
             mobileSessionHeader: "mobile-session"
         )
@@ -41,6 +55,24 @@ struct LooperClientCoreTests {
         #expect(snapshot.phase == .connecting)
         #expect(snapshot.endpointUrl.isEmpty)
         #expect(snapshot.pendingMutations.isEmpty)
+    }
+
+    @Test
+    func endpointFactoryPreservesH3MetadataForRustClientCore() throws {
+        let endpoint = ClientEndpoint.h3(
+            url: "https://100.64.0.2:8766",
+            recoveryBaseURL: "http://100.64.0.2:8765",
+            certificateSha256: "sha256:abcdef",
+            certificateSpkiSha256: "sha256:fedcba",
+            lastGood: true
+        )
+
+        #expect(endpoint.transport == .h3)
+        #expect(endpoint.url == "https://100.64.0.2:8766")
+        #expect(endpoint.recoveryBaseUrl == "http://100.64.0.2:8765")
+        #expect(endpoint.h3CertificateSha256 == "sha256:abcdef")
+        #expect(endpoint.h3CertificateSpkiSha256 == "sha256:fedcba")
+        #expect(endpoint.lastGood)
     }
 
     @Test

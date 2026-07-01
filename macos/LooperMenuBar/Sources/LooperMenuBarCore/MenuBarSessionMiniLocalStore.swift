@@ -252,11 +252,9 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     public func startIfNeeded(
         bearerToken: String = "",
         mobileSessionHeader: String = "",
-        preferredRealtimeEndpointURLs: @MainActor () async throws -> [URL]
+        preferredRealtimeEndpoints: @MainActor () async throws -> [ClientEndpoint]
     ) async throws -> ClientStateSnapshot? {
-        let endpoints = try await preferredRealtimeEndpointURLs().map {
-            ClientEndpoint(url: $0.absoluteString, lastGood: false)
-        }
+        let endpoints = try await preferredRealtimeEndpoints()
         guard !endpoints.isEmpty else {
             throw MenuBarSessionRuntimeError.noRealtimeEndpoint
         }
