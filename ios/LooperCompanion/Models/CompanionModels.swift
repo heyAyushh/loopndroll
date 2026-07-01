@@ -919,6 +919,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
     var ipAddresses: [String]
     var baseURL: String?
     var grpcBaseURL: String?
+    var grpcH3BaseURL: String?
     var health: [String]
     var error: String?
 
@@ -954,6 +955,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
         case ipAddresses
         case baseURL
         case grpcBaseURL
+        case grpcH3BaseURL
         case health
         case error
     }
@@ -972,6 +974,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
         ipAddresses: [String] = [],
         baseURL: String? = nil,
         grpcBaseURL: String? = nil,
+        grpcH3BaseURL: String? = nil,
         health: [String] = [],
         error: String? = nil
     ) {
@@ -988,6 +991,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
         self.ipAddresses = ipAddresses
         self.baseURL = baseURL
         self.grpcBaseURL = grpcBaseURL
+        self.grpcH3BaseURL = grpcH3BaseURL
         self.health = health
         self.error = error
     }
@@ -1007,6 +1011,7 @@ struct CompanionTailscaleStatus: Codable, Sendable {
         ipAddresses = try container.decodeIfPresent([String].self, forKey: .ipAddresses) ?? []
         baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL)
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL)
+        grpcH3BaseURL = try container.decodeIfPresent(String.self, forKey: .grpcH3BaseURL)
         health = try container.decodeIfPresent([String].self, forKey: .health) ?? []
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
@@ -1018,6 +1023,9 @@ struct CompanionServerHealth: Codable, Sendable {
     var baseURLs: [String]
     var grpcBaseURL: String
     var grpcBaseURLs: [String]
+    var grpcH3BaseURL: String
+    var grpcH3BaseURLs: [String]
+    var grpcH3CertificateSha256: String?
     var serverTime: String
     var tailscale: CompanionTailscaleStatus?
 
@@ -1027,6 +1035,9 @@ struct CompanionServerHealth: Codable, Sendable {
         case baseURLs
         case grpcBaseURL
         case grpcBaseURLs
+        case grpcH3BaseURL
+        case grpcH3BaseURLs
+        case grpcH3CertificateSha256
         case serverTime
         case tailscale
     }
@@ -1037,6 +1048,9 @@ struct CompanionServerHealth: Codable, Sendable {
         baseURLs: [String],
         grpcBaseURL: String = "",
         grpcBaseURLs: [String] = [],
+        grpcH3BaseURL: String = "",
+        grpcH3BaseURLs: [String] = [],
+        grpcH3CertificateSha256: String? = nil,
         serverTime: String,
         tailscale: CompanionTailscaleStatus? = nil
     ) {
@@ -1045,6 +1059,9 @@ struct CompanionServerHealth: Codable, Sendable {
         self.baseURLs = baseURLs
         self.grpcBaseURL = grpcBaseURL
         self.grpcBaseURLs = grpcBaseURLs
+        self.grpcH3BaseURL = grpcH3BaseURL
+        self.grpcH3BaseURLs = grpcH3BaseURLs
+        self.grpcH3CertificateSha256 = grpcH3CertificateSha256
         self.serverTime = serverTime
         self.tailscale = tailscale
     }
@@ -1056,6 +1073,12 @@ struct CompanionServerHealth: Codable, Sendable {
         baseURLs = try container.decodeIfPresent([String].self, forKey: .baseURLs) ?? []
         grpcBaseURL = try container.decodeIfPresent(String.self, forKey: .grpcBaseURL) ?? ""
         grpcBaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcBaseURLs) ?? []
+        grpcH3BaseURL = try container.decodeIfPresent(String.self, forKey: .grpcH3BaseURL) ?? ""
+        grpcH3BaseURLs = try container.decodeIfPresent([String].self, forKey: .grpcH3BaseURLs) ?? []
+        grpcH3CertificateSha256 = try container.decodeIfPresent(
+            String.self,
+            forKey: .grpcH3CertificateSha256
+        )
         serverTime = try container.decodeIfPresent(String.self, forKey: .serverTime) ?? ""
         tailscale = try container.decodeIfPresent(CompanionTailscaleStatus.self, forKey: .tailscale)
     }

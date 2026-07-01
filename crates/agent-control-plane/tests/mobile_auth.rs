@@ -96,11 +96,22 @@ fn mobile_connection_codes_include_one_time_resolvable_orbs() {
     let fixture = MobileAuthFixture::new();
     let connection_code = fixture
         .service
-        .issue_connection_code(vec!["http://192.168.1.4:8765".to_owned()])
+        .issue_connection_code(
+            vec!["http://192.168.1.4:8765".to_owned()],
+            vec!["http://192.168.1.4:8766".to_owned()],
+            vec!["https://192.168.1.4:8766".to_owned()],
+            "sha256:test-pin".to_owned(),
+        )
         .expect("issue connection code");
 
     assert!(!connection_code.code.is_empty());
     assert!(connection_code.orb_id.starts_with("orb1_"));
+    assert_eq!(connection_code.grpc_base_url, "http://192.168.1.4:8766");
+    assert_eq!(connection_code.grpc_h3_base_url, "https://192.168.1.4:8766");
+    assert_eq!(
+        connection_code.grpc_h3_certificate_sha256,
+        "sha256:test-pin"
+    );
 
     let resolved_connection_code = fixture
         .service
@@ -121,7 +132,12 @@ fn mobile_connection_orb_image_round_trips_to_resolver() {
     let fixture = MobileAuthFixture::new();
     let orb_image = fixture
         .service
-        .issue_connection_orb_image(vec!["http://192.168.1.4:8765".to_owned()])
+        .issue_connection_orb_image(
+            vec!["http://192.168.1.4:8765".to_owned()],
+            vec!["http://192.168.1.4:8766".to_owned()],
+            vec!["https://192.168.1.4:8766".to_owned()],
+            "sha256:test-pin".to_owned(),
+        )
         .expect("issue connection orb image");
 
     assert!(!orb_image.png_data.is_empty());

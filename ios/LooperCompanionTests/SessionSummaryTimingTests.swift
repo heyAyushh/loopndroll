@@ -485,6 +485,59 @@ struct SessionSummaryTimingTests {
         #expect(sections.stopped.isEmpty)
     }
 
+    @Test("Server health decodes old H2-only realtime metadata")
+    func serverHealthDecodesOldH2OnlyRealtimeMetadata() throws {
+        let payload: [String: Any] = [
+            "ok": true,
+            "baseURL": "http://127.0.0.1:8765",
+            "baseURLs": ["http://127.0.0.1:8765"],
+            "grpcBaseURL": "http://127.0.0.1:8766",
+            "grpcBaseURLs": ["http://127.0.0.1:8766"],
+            "serverTime": "2026-06-16T08:02:00Z",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let health = try decoder.decode(CompanionServerHealth.self, from: data)
+
+        #expect(health.grpcBaseURL == "http://127.0.0.1:8766")
+        #expect(health.grpcBaseURLs == ["http://127.0.0.1:8766"])
+        #expect(health.grpcH3BaseURL == "")
+        #expect(health.grpcH3BaseURLs.isEmpty)
+        #expect(health.grpcH3CertificateSha256 == nil)
+    }
+
+    @Test("Server health decodes H3 realtime metadata and malformed optional pin")
+    func serverHealthDecodesH3RealtimeMetadataAndMalformedOptionalPin() throws {
+        let payload: [String: Any?] = [
+            "ok": true,
+            "baseURL": "http://192.168.1.4:8765",
+            "baseURLs": ["http://192.168.1.4:8765"],
+            "grpcBaseURL": "http://192.168.1.4:8766",
+            "grpcBaseURLs": ["http://192.168.1.4:8766"],
+            "grpcH3BaseURL": "https://192.168.1.4:8766",
+            "grpcH3BaseURLs": ["https://192.168.1.4:8766"],
+            "grpcH3CertificateSha256": NSNull(),
+            "serverTime": "2026-06-16T08:02:00Z",
+            "tailscale": [
+                "available": true,
+                "running": true,
+                "ipAddresses": ["100.95.2.4"],
+                "baseURL": "http://100.95.2.4:8765",
+                "grpcBaseURL": "http://100.95.2.4:8766",
+                "grpcH3BaseURL": "https://100.95.2.4:8766",
+                "health": [],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let health = try decoder.decode(CompanionServerHealth.self, from: data)
+
+        #expect(health.grpcBaseURL == "http://192.168.1.4:8766")
+        #expect(health.grpcBaseURLs == ["http://192.168.1.4:8766"])
+        #expect(health.grpcH3BaseURL == "https://192.168.1.4:8766")
+        #expect(health.grpcH3BaseURLs == ["https://192.168.1.4:8766"])
+        #expect(health.grpcH3CertificateSha256 == nil)
+        #expect(health.tailscale?.grpcH3BaseURL == "https://100.95.2.4:8766")
+    }
+
     @Test("Blocked goal is visible as a needs-attention card status")
     func blockedGoalIsVisibleAsNeedsAttentionCardStatus() throws {
         let session = try sessionSummary(

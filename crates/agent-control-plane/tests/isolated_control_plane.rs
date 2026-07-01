@@ -983,6 +983,28 @@ async fn mobile_health_prefers_reachable_request_host() {
     assert_eq!(response["ok"], serde_json::json!(true));
     assert_eq!(response["baseURL"], "http://192.168.99.10:8765");
     assert_eq!(response["baseURLs"][0], "http://192.168.99.10:8765");
+    assert_eq!(response["grpcBaseURL"], "http://192.168.99.10:8766");
+    assert_eq!(response["grpcBaseURLs"][0], "http://192.168.99.10:8766");
+    assert_eq!(response["grpcH3BaseURL"], "https://192.168.99.10:8766");
+    assert_eq!(response["grpcH3BaseURLs"][0], "https://192.168.99.10:8766");
+    assert!(
+        response["grpcH3CertificateSha256"]
+            .as_str()
+            .expect("H3 certificate pin")
+            .starts_with("sha256:")
+    );
+    println!(
+        "mobile_health_realtime_routes h2={} h3={} pin={}",
+        response["grpcBaseURL"].as_str().unwrap_or_default(),
+        response["grpcH3BaseURL"].as_str().unwrap_or_default(),
+        response["grpcH3CertificateSha256"]
+            .as_str()
+            .unwrap_or_default()
+    );
+    assert_eq!(
+        response["tailscale"]["grpcH3BaseURL"],
+        serde_json::Value::Null
+    );
 }
 
 #[tokio::test]
@@ -1017,6 +1039,34 @@ async fn mobile_connection_code_is_loopback_only_and_issues_rust_pairing() {
             .as_array()
             .expect("baseURLs")
             .is_empty()
+    );
+    assert_ne!(local_response["grpcBaseURL"], "");
+    assert!(
+        !local_response["grpcBaseURLs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_ne!(local_response["grpcH3BaseURL"], "");
+    assert!(
+        !local_response["grpcH3BaseURLs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        local_response["grpcH3CertificateSha256"]
+            .as_str()
+            .expect("H3 certificate pin")
+            .starts_with("sha256:")
+    );
+    println!(
+        "mobile_pairing_realtime_routes h2={} h3={} pin={}",
+        local_response["grpcBaseURL"].as_str().unwrap_or_default(),
+        local_response["grpcH3BaseURL"].as_str().unwrap_or_default(),
+        local_response["grpcH3CertificateSha256"]
+            .as_str()
+            .unwrap_or_default()
     );
 }
 

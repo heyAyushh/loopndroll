@@ -2,6 +2,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -27,7 +28,9 @@ use crate::mobile::auth::{
     CONNECTION_ORB_TTL_SECONDS, CompleteMobilePasskeyAuthenticationInput,
     CompleteMobilePasskeyRegistrationInput, MobileConnectionCode,
 };
-use crate::mobile::network::{advertised_mobile_grpc_base_urls, mobile_tailscale_status};
+use crate::mobile::network::{
+    advertised_mobile_grpc_base_urls, advertised_mobile_grpc_h3_base_urls, mobile_tailscale_status,
+};
 use crate::mobile::push::MobilePushRegistrationRequest;
 use crate::mobile::session::{ASSISTANT_SURFACES, MobileSessionError};
 mod handoff;
@@ -797,10 +800,16 @@ async fn desktop_pairing(
     }
 
     let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
-    match control_plane
-        .mobile_auth_service()
-        .issue_connection_code(base_urls)
-    {
+    let route_metadata = match mobile_grpc_route_metadata(&control_plane, &base_urls) {
+        Ok(metadata) => metadata,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    match control_plane.mobile_auth_service().issue_connection_code(
+        base_urls,
+        route_metadata.grpc_base_urls,
+        route_metadata.grpc_h3_base_urls,
+        route_metadata.grpc_h3_certificate_sha256,
+    ) {
         Ok(connection_code) => (
             StatusCode::OK,
             Json(desktop_pairing_response(&connection_code)),
@@ -1241,20 +1250,54 @@ async fn hook_contract_toml() -> impl IntoResponse {
     }
 }
 
-async fn mobile_health(headers: HeaderMap) -> impl IntoResponse {
+async fn mobile_health(State(control_plane): State<ControlPlane>, headers: HeaderMap) -> Response {
     let base_urls = request_advertised_mobile_base_urls(&headers);
-    let grpc_base_urls = advertised_mobile_grpc_base_urls(&base_urls);
-    let tailscale = mobile_tailscale_status(&base_urls, &grpc_base_urls).await;
+    let route_metadata = match mobile_grpc_route_metadata(&control_plane, &base_urls) {
+        Ok(metadata) => metadata,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    let tailscale = mobile_tailscale_status(
+        &base_urls,
+        &route_metadata.grpc_base_urls,
+        &route_metadata.grpc_h3_base_urls,
+    )
+    .await;
     Json(serde_json::json!({
         "ok": true,
         "baseURL": base_urls.first().cloned().unwrap_or_default(),
         "baseURLs": base_urls,
-        "grpcBaseURL": grpc_base_urls.first().cloned().unwrap_or_default(),
-        "grpcBaseURLs": grpc_base_urls,
+        "grpcBaseURL": route_metadata.grpc_base_urls.first().cloned().unwrap_or_default(),
+        "grpcBaseURLs": route_metadata.grpc_base_urls,
+        "grpcH3BaseURL": route_metadata.grpc_h3_base_urls.first().cloned().unwrap_or_default(),
+        "grpcH3BaseURLs": route_metadata.grpc_h3_base_urls,
+        "grpcH3CertificateSha256": route_metadata.grpc_h3_certificate_sha256,
         "requiresAuthentication": true,
         "serverTime": current_mobile_time(),
         "tailscale": tailscale,
     }))
+    .into_response()
+}
+
+#[derive(Debug)]
+struct MobileGrpcRouteMetadata {
+    grpc_base_urls: Vec<String>,
+    grpc_h3_base_urls: Vec<String>,
+    grpc_h3_certificate_sha256: String,
+}
+
+fn mobile_grpc_route_metadata(
+    control_plane: &ControlPlane,
+    base_urls: &[String],
+) -> Result<MobileGrpcRouteMetadata> {
+    let grpc_base_urls = advertised_mobile_grpc_base_urls(base_urls);
+    let grpc_h3_base_urls = advertised_mobile_grpc_h3_base_urls(base_urls);
+    let grpc_h3_certificate_sha256 =
+        crate::grpc::load_or_create_h3_certificate(control_plane)?.certificate_sha256;
+    Ok(MobileGrpcRouteMetadata {
+        grpc_base_urls,
+        grpc_h3_base_urls,
+        grpc_h3_certificate_sha256,
+    })
 }
 
 async fn mobile_connection_code(
@@ -1273,10 +1316,16 @@ async fn mobile_connection_code(
     }
 
     let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
-    match control_plane
-        .mobile_auth_service()
-        .issue_connection_code(base_urls)
-    {
+    let route_metadata = match mobile_grpc_route_metadata(&control_plane, &base_urls) {
+        Ok(metadata) => metadata,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
+    match control_plane.mobile_auth_service().issue_connection_code(
+        base_urls,
+        route_metadata.grpc_base_urls,
+        route_metadata.grpc_h3_base_urls,
+        route_metadata.grpc_h3_certificate_sha256,
+    ) {
         Ok(connection_code) => (StatusCode::OK, Json(connection_code)).into_response(),
         Err(error) => mobile_auth_error_response(error),
     }
@@ -1298,10 +1347,18 @@ async fn mobile_connection_orb_png(
     }
 
     let base_urls = request_advertised_mobile_pairing_base_urls(&headers).await;
+    let route_metadata = match mobile_grpc_route_metadata(&control_plane, &base_urls) {
+        Ok(metadata) => metadata,
+        Err(error) => return internal_mobile_error_response(error.to_string()),
+    };
     match control_plane
         .mobile_auth_service()
-        .issue_connection_orb_image(base_urls)
-    {
+        .issue_connection_orb_image(
+            base_urls,
+            route_metadata.grpc_base_urls,
+            route_metadata.grpc_h3_base_urls,
+            route_metadata.grpc_h3_certificate_sha256,
+        ) {
         Ok(orb_image) => png_response(orb_image.png_data),
         Err(error) => mobile_auth_error_response(error),
     }
@@ -1626,6 +1683,11 @@ fn desktop_pairing_response(connection_code: &MobileConnectionCode) -> serde_jso
     serde_json::json!({
         "baseURL": &connection_code.base_url,
         "baseURLs": &connection_code.base_urls,
+        "grpcBaseURL": &connection_code.grpc_base_url,
+        "grpcBaseURLs": &connection_code.grpc_base_urls,
+        "grpcH3BaseURL": &connection_code.grpc_h3_base_url,
+        "grpcH3BaseURLs": &connection_code.grpc_h3_base_urls,
+        "grpcH3CertificateSha256": &connection_code.grpc_h3_certificate_sha256,
         "pairingTokenId": &connection_code.pairing_token_id,
         "code": &connection_code.code,
         "orbId": &connection_code.orb_id,
