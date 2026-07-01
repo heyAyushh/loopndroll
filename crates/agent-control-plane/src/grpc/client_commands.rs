@@ -51,13 +51,20 @@ async fn submit_local_session_command_with_h3_certificate_sha256(
     let frame = proto::ClientFrame {
         frame: Some(proto::client_frame::Frame::Command(command)),
     };
-    let opened = open_local_session_command_stream(
+    let OpenLocalSessionCommandStream {
+        stream,
+        transport,
+        endpoint_url,
+        fallback_reason,
+        request_sender: _request_sender,
+        client: _client,
+    } = open_local_session_command_stream(
         local_session_transport_endpoints(http_base_url, h3_certificate_sha256)?,
         frame,
     )
     .await?;
 
-    let ack = wait_for_local_command_ack(opened.stream, client_mutation_id).await?;
+    let ack = wait_for_local_command_ack(stream, client_mutation_id).await?;
 
     if !ack.accepted {
         let reason = if ack.reject_reason.is_empty() {
@@ -69,9 +76,9 @@ async fn submit_local_session_command_with_h3_certificate_sha256(
     }
     Ok(LocalSessionCommandResult {
         ack,
-        transport: opened.transport,
-        endpoint_url: opened.endpoint_url,
-        fallback_reason: opened.fallback_reason,
+        transport,
+        endpoint_url,
+        fallback_reason,
     })
 }
 
@@ -112,9 +119,21 @@ pub(super) struct LocalSessionEndpoint {
 
 pub(super) struct OpenLocalSessionCommandStream {
     pub(super) stream: tonic::Streaming<proto::ServerFrame>,
+    pub(super) request_sender: tokio::sync::mpsc::Sender<proto::ClientFrame>,
+    pub(super) client: OpenLocalSessionClient,
     pub(super) transport: LocalSessionTransport,
     pub(super) endpoint_url: String,
     pub(super) fallback_reason: String,
+}
+
+#[allow(dead_code)]
+pub(super) enum OpenLocalSessionClient {
+    H2(proto::looper_realtime_client::LooperRealtimeClient<tonic::transport::Channel>),
+    H3(
+        proto::looper_realtime_client::LooperRealtimeClient<
+            tonic_h3::H3Channel<tonic_h3::quinn::H3QuinnConnector>,
+        >,
+    ),
 }
 
 #[derive(Debug)]

@@ -958,7 +958,7 @@ def print_live_transport_proof_summary(evidence: dict) -> None:
 
 
 TRANSPORT_PROBE_SOURCE = r'''
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -969,7 +969,8 @@ use agent_control_plane::grpc::proto::{client_frame, command, server_frame};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio_stream::iter;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::codegen::http::Uri;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Endpoint as H2Endpoint;
@@ -1068,6 +1069,13 @@ struct OpenedSession {
     endpoint_url: String,
     fallback_reason: String,
     stream: tonic::Streaming<proto::ServerFrame>,
+    request_sender: mpsc::Sender<proto::ClientFrame>,
+    _client: OpenedClient,
+}
+
+enum OpenedClient {
+    H3(proto::looper_realtime_client::LooperRealtimeClient<tonic_h3::H3Channel<H3QuinnConnector>>),
+    H2(proto::looper_realtime_client::LooperRealtimeClient<tonic::transport::Channel>),
 }
 
 #[tokio::main]
@@ -1108,15 +1116,18 @@ async fn run_sample(config: &Config, sample_index: usize, resume_after_seq: i64)
     let health_milliseconds = elapsed_ms(health_started);
 
     let expected = expected_commands(config, sample_index);
-    let frames = command_frames(config, sample_index);
+    let mut pending_frames = VecDeque::from(command_frames(config, sample_index));
+    let first_frame = pending_frames
+        .pop_front()
+        .ok_or_else(|| anyhow!("no command frames generated for sample {sample_index}"))?;
     let open_started = Instant::now();
-    let mut opened = open_session(config, frames)
+    let mut opened = open_session(config, vec![first_frame])
         .await
         .context("open Session transport")?;
     let open_milliseconds = elapsed_ms(open_started);
 
     let ack_started = Instant::now();
-    let acks = collect_acks(&mut opened.stream, expected)
+    let acks = collect_acks(&mut opened, expected, pending_frames)
         .await
         .context("collect command ACKs")?;
     let ack_milliseconds = elapsed_ms(ack_started);
@@ -1245,7 +1256,7 @@ async fn open_h3_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Re
     );
     let channel = tonic_h3::H3Channel::new(connector, uri);
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
-    let request = session_request(config, frames)?;
+    let (request, request_sender) = session_request(config, frames).await?;
     let response = tokio::time::timeout(SESSION_OPEN_TIMEOUT, client.session(request))
         .await
         .context("H3 Session open timed out")??;
@@ -1254,6 +1265,8 @@ async fn open_h3_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Re
         endpoint_url: config.h3_url.clone(),
         fallback_reason: String::new(),
         stream: response.into_inner(),
+        request_sender,
+        _client: OpenedClient::H3(client),
     })
 }
 
@@ -1262,21 +1275,34 @@ async fn open_h2_session(config: &Config, frames: Vec<proto::ClientFrame>) -> Re
         H2Endpoint::from_shared(config.h2_url.clone())?,
     )
     .await?;
-    let request = session_request(config, frames)?;
+    let (request, request_sender) = session_request(config, frames).await?;
     let response = client.session(request).await?;
     Ok(OpenedSession {
         transport: "h2",
         endpoint_url: config.h2_url.clone(),
         fallback_reason: String::new(),
         stream: response.into_inner(),
+        request_sender,
+        _client: OpenedClient::H2(client),
     })
 }
 
-fn session_request(
+async fn session_request(
     config: &Config,
     frames: Vec<proto::ClientFrame>,
-) -> Result<tonic::Request<tokio_stream::Iter<std::vec::IntoIter<proto::ClientFrame>>>> {
-    let mut request = tonic::Request::new(iter(frames));
+) -> Result<(
+    tonic::Request<ReceiverStream<proto::ClientFrame>>,
+    mpsc::Sender<proto::ClientFrame>,
+)> {
+    let capacity = frames.len().max(1);
+    let (request_sender, request_receiver) = mpsc::channel(capacity);
+    for frame in frames {
+        request_sender
+            .send(frame)
+            .await
+            .context("queue Session client frame")?;
+    }
+    let mut request = tonic::Request::new(ReceiverStream::new(request_receiver));
     if !config.bearer_token.trim().is_empty() {
         request.metadata_mut().insert(
             "authorization",
@@ -1289,7 +1315,7 @@ fn session_request(
             MetadataValue::try_from(config.mobile_session.as_str())?,
         );
     }
-    Ok(request)
+    Ok((request, request_sender))
 }
 
 fn command_frames(config: &Config, sample_index: usize) -> Vec<proto::ClientFrame> {
@@ -1341,13 +1367,14 @@ fn mutation_id(kind: &str, sample_index: usize) -> String {
 }
 
 async fn collect_acks(
-    stream: &mut tonic::Streaming<proto::ServerFrame>,
+    opened: &mut OpenedSession,
     expected: HashMap<String, String>,
+    mut pending_frames: VecDeque<proto::ClientFrame>,
 ) -> Result<Vec<AckOutput>> {
     let mut pending: HashSet<String> = expected.keys().cloned().collect();
     let mut acks = Vec::with_capacity(expected.len());
     while !pending.is_empty() {
-        let frame = tokio::time::timeout(ACK_TIMEOUT, stream.message())
+        let frame = tokio::time::timeout(ACK_TIMEOUT, opened.stream.message())
         .await
         .context("waiting for command ACK timed out")?
         .context("read Session server frame")?
@@ -1369,6 +1396,13 @@ async fn collect_acks(
                 ack.error_code,
                 ack.reject_reason
             );
+        }
+        if let Some(next_frame) = pending_frames.pop_front() {
+            opened
+                .request_sender
+                .send(next_frame)
+                .await
+                .context("send next pending Session command frame")?;
         }
         acks.push(AckOutput {
             kind,
