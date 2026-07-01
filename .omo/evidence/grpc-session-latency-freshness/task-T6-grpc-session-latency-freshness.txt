@@ -33,3 +33,12 @@ Verification:
 Out of scope:
 - No client-core, iOS, macOS, or frame-limit production changes.
 - No broad agent-control-plane gate.
+
+DoneClaim:
+- verdict: pass
+- task: T6
+- independently_complete: yes
+- blocker: none
+- proof_surface: real tonic Session stream in --test isolated_control_plane plus static grpc/service.rs hot-path guard
+- code_commit_observed: 67400a991
+- note: HEAD moved concurrently and included the T6 test/evidence together with unrelated client-core changes before I could create the requested scoped commit. This artifact records the final T6 DoneClaim in a T6-only follow-up commit.
