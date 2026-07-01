@@ -142,6 +142,13 @@ fn generate_h3_certificate() -> Result<GrpcH3Certificate> {
 }
 
 fn h3_server_config(certificate: &GrpcH3Certificate) -> Result<ServerConfig> {
+    let tls_config = h3_tls_server_config(certificate)?;
+    let quic_crypto = QuicServerConfig::try_from(Arc::new(tls_config))
+        .map_err(|error| anyhow!("configure H3 QUIC TLS: {error:?}"))?;
+    Ok(ServerConfig::with_crypto(Arc::new(quic_crypto)))
+}
+
+fn h3_tls_server_config(certificate: &GrpcH3Certificate) -> Result<quinn_rustls::ServerConfig> {
     let mut tls_config = quinn_rustls::ServerConfig::builder_with_provider(Arc::new(
         quinn_rustls::crypto::ring::default_provider(),
     ))
@@ -154,10 +161,7 @@ fn h3_server_config(certificate: &GrpcH3Certificate) -> Result<ServerConfig> {
     )
     .context("configure H3 TLS certificate")?;
     tls_config.alpn_protocols = vec![H3_ALPN.to_vec()];
-    tls_config.max_early_data_size = u32::MAX;
-    let quic_crypto = QuicServerConfig::try_from(Arc::new(tls_config))
-        .map_err(|error| anyhow!("configure H3 QUIC TLS: {error:?}"))?;
-    Ok(ServerConfig::with_crypto(Arc::new(quic_crypto)))
+    Ok(tls_config)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -186,7 +190,7 @@ fn h3_listen_address_from_env_value(
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use super::h3_listen_address_from_env_value;
+    use super::{generate_h3_certificate, h3_listen_address_from_env_value, h3_tls_server_config};
 
     #[test]
     fn grpc_h3_invalid_listen_address_is_rejected() {
@@ -198,6 +202,16 @@ mod tests {
                 .to_string()
                 .contains("invalid AGENT_CONTROL_PLANE_GRPC_H3_LISTEN value"),
             "unexpected parse error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn grpc_h3_server_tls_disables_0rtt_early_data() {
+        let certificate = generate_h3_certificate().expect("H3 test certificate");
+        let tls_config = h3_tls_server_config(&certificate).expect("H3 TLS config");
+        assert_eq!(
+            tls_config.max_early_data_size, 0,
+            "H3 Session transport must not accept replayable 0-RTT early data"
         );
     }
 }

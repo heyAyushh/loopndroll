@@ -163,6 +163,20 @@ async fn grpc_h3_auth_rejects_missing_pairing_token() {
     h3.shutdown().await;
 }
 
+#[test]
+fn grpc_h3_test_client_disables_0rtt_early_data() {
+    let fixture = TestControlPlaneFixture::new();
+    fixture.write_state_db();
+    let certificate =
+        agent_control_plane::grpc::load_or_create_h3_certificate(&fixture.control_plane())
+            .expect("H3 test certificate");
+    let tls_config = h3_client_tls_config(&certificate.certificate_der);
+    assert!(
+        !tls_config.enable_early_data,
+        "H3 Session test client must not send replayable 0-RTT early data"
+    );
+}
+
 struct SpawnedH2 {
     address: SocketAddr,
     client: LooperRealtimeClient<tonic::transport::Channel>,
@@ -260,12 +274,19 @@ fn h3_uri(address: SocketAddr) -> Uri {
 }
 
 async fn configured_client_endpoint(certificate_der: &[u8]) -> Endpoint {
+    let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .expect("H3 client endpoint");
+    let tls_config = h3_client_tls_config(certificate_der);
+    let quic_config = QuicClientConfig::try_from(tls_config).expect("H3 QUIC client config");
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
+    endpoint
+}
+
+fn h3_client_tls_config(certificate_der: &[u8]) -> quinn_rustls::ClientConfig {
     let mut roots = RootCertStore::empty();
     roots
         .add(CertificateDer::from(certificate_der.to_vec()))
         .expect("trust H3 test cert");
-    let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .expect("H3 client endpoint");
     let mut tls_config = quinn_rustls::ClientConfig::builder_with_provider(Arc::new(
         quinn_rustls::crypto::ring::default_provider(),
     ))
@@ -274,10 +295,7 @@ async fn configured_client_endpoint(certificate_der: &[u8]) -> Endpoint {
     .with_root_certificates(roots)
     .with_no_client_auth();
     tls_config.alpn_protocols = vec![b"h3".to_vec()];
-    tls_config.enable_early_data = true;
-    let quic_config = QuicClientConfig::try_from(tls_config).expect("H3 QUIC client config");
-    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
-    endpoint
+    tls_config
 }
 
 async fn issue_mobile_authorization_header(router: &Router) -> String {
