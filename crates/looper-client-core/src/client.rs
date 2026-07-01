@@ -85,6 +85,12 @@ struct PendingStateMiniReplacement {
     route_endpoint: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdoptedStateMiniRecovery {
+    snapshot: ClientStateSnapshot,
+    did_change: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct LooperClientCore {
     state: Mutex<ClientCoreState>,
@@ -199,19 +205,6 @@ impl LooperClientCore {
     pub(crate) async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let _observe = self.observe_updates.lock().await;
         self.next_state_mini_stream_update().await
-    }
-
-    pub(crate) fn has_warm_stream_for_endpoints(
-        &self,
-        endpoints: &[ClientEndpoint],
-    ) -> Result<bool, ClientCoreError> {
-        require_endpoints(endpoints)?;
-        let endpoints_identity = endpoints_identity(endpoints);
-        let stream = self.lock_stream()?;
-        Ok(stream
-            .as_ref()
-            .map(|stream| stream.endpoints_identity == endpoints_identity && stream.is_running())
-            .unwrap_or(false))
     }
 }
 
@@ -969,10 +962,13 @@ impl LooperClientCore {
             .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)??;
         let state_snapshot =
             self.adopt_recovered_state_minis(recovered.snapshot, recovered.endpoint_url.clone())?;
-        self.emit_local_state_update(state_snapshot.clone());
+        if state_snapshot.did_change {
+            self.emit_local_state_update(state_snapshot.snapshot.clone());
+        }
         Ok(RecoveredStateMiniSnapshot {
-            snapshot: ClientStateMiniSnapshot::from(state_snapshot),
+            snapshot: ClientStateMiniSnapshot::from(state_snapshot.snapshot),
             endpoint_url: recovered.endpoint_url,
+            did_change: state_snapshot.did_change,
         })
     }
 
@@ -980,14 +976,17 @@ impl LooperClientCore {
         &self,
         snapshot: ClientStateMiniSnapshot,
         _endpoint_url: String,
-    ) -> Result<ClientStateSnapshot, ClientCoreError> {
+    ) -> Result<AdoptedStateMiniRecovery, ClientCoreError> {
         require_valid_sequence(snapshot.latest_seq)?;
         validate_state_minis(&snapshot.sessions)?;
 
         let mut state = self.lock_state()?;
-        state.replace_state_minis_from_source(snapshot, FRESHNESS_SOURCE_RECOVERY, "");
-        state.last_error.clear();
-        Ok(state.snapshot())
+        let did_change =
+            state.replace_state_minis_from_source(snapshot, FRESHNESS_SOURCE_RECOVERY, "");
+        Ok(AdoptedStateMiniRecovery {
+            snapshot: state.snapshot(),
+            did_change,
+        })
     }
 
     fn start_state_mini_stream(
@@ -998,6 +997,9 @@ impl LooperClientCore {
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_endpoints(&endpoints)?;
         let endpoints_identity = endpoints_identity(&endpoints);
+        let (sender, receiver) = mpsc::channel(64);
+        let (command_sender, command_receiver) = mpsc::channel(64);
+        let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
         let mut state = self.lock_state()?;
         let mut stream = self.lock_stream()?;
         let has_running_stream = stream
@@ -1016,9 +1018,6 @@ impl LooperClientCore {
         state.endpoint_url.clear();
         state.last_error.clear();
         let after_seq = state.latest_seq;
-        let (sender, receiver) = mpsc::channel(64);
-        let (command_sender, command_receiver) = mpsc::channel(64);
-        let (command_ack_sender, command_ack_receiver) = mpsc::channel(64);
         let task = self.runtime.spawn(run_state_mini_stream(
             endpoints,
             bearer_token,
@@ -2071,8 +2070,6 @@ impl ClientCoreState {
             snapshot.latest_seq,
             &sessions,
         ) {
-            self.pending_replacement = None;
-            self.last_error.clear();
             return false;
         }
         let fresh_node_ids = fresh_state_mini_snapshot_covered_node_ids(
@@ -2726,9 +2723,9 @@ mod tests {
             core.send_session_commands(outbox)
                 .await
                 .expect("send over retained stream");
-            let frame = tokio::time::timeout(Duration::from_secs(1), commands_receiver.recv())
+            let frame = commands_receiver
+                .recv()
                 .await
-                .expect("retained command frame did not hang")
                 .expect("retained command frame");
             assert_eq!(frame.client_mutation_id, "cmid-prompt");
         });
@@ -3760,12 +3757,13 @@ mod tests {
             )
             .expect("adopt recovered endpoint");
 
-        assert_eq!(snapshot.phase, ConnectionPhase::Reconnecting);
-        assert_eq!(snapshot.endpoint_url, ENDPOINT_PRIMARY);
-        assert_eq!(snapshot.latest_seq, 20);
-        assert_eq!(snapshot.state_minis.len(), 1);
-        assert_eq!(snapshot.state_minis[0].session_id, "thread-zed");
-        assert!(snapshot.last_error.is_empty());
+        assert!(!snapshot.did_change);
+        assert_eq!(snapshot.snapshot.phase, ConnectionPhase::Reconnecting);
+        assert_eq!(snapshot.snapshot.endpoint_url, ENDPOINT_PRIMARY);
+        assert_eq!(snapshot.snapshot.latest_seq, 20);
+        assert_eq!(snapshot.snapshot.state_minis.len(), 1);
+        assert_eq!(snapshot.snapshot.state_minis[0].session_id, "thread-zed");
+        assert_eq!(snapshot.snapshot.last_error, "seq_gap");
     }
 
     #[test]
