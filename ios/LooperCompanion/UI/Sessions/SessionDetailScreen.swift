@@ -20,81 +20,68 @@ struct SessionDetailScreen: View {
         route.sessionID
     }
 
+    private var presentation: SessionDetailPresentation {
+        model.viewState.detailPresentation(for: route)
+    }
+
     private var currentSummary: SessionSummary? {
-        model.viewState.session(
-            withID: route.sessionID,
-            assistantSurface: route.assistantSurface
-        )
+        presentation.summary
     }
 
     private var detail: SessionDetail? {
-        model.viewState.detail(for: route)
+        presentation.detail
     }
 
     private var hasResolvedSession: Bool {
-        detail != nil || currentSummary != nil
+        presentation.hasResolvedSession
     }
 
     private var currentStatus: SessionStatus {
-        detail?.status ?? currentSummary?.status ?? .stopped
+        presentation.status
     }
 
     private var currentMode: SessionMode? {
-        detail?.effectiveMode ?? currentSummary?.effectiveMode
+        presentation.effectiveMode
     }
 
     private var latestAssistantReply: String? {
-        guard let reply = detail?.latestAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !reply.isEmpty
-        else {
-            return nil
-        }
-        return reply
+        presentation.latestAssistantReply
     }
 
     private var currentTitle: String {
-        detail?.title ?? currentSummary?.title ?? "Session"
+        presentation.title
     }
 
     private var currentRef: String {
-        detail?.ref ?? currentSummary?.ref ?? sessionID
+        presentation.ref
     }
 
     private var currentAssistantSurface: CompanionAssistantSurface {
-        let detailSurface = detail
-            .flatMap { CompanionAssistantSurface(assistantClient: $0.assistantClient) }
-            ?? detail.flatMap { CompanionAssistantSurface(sessionSource: $0.metadata.source) }
-        return detailSurface
-            ?? route.assistantSurface
+        presentation.assistantSurface
     }
 
     private var currentAssistantTitle: String {
-        currentAssistantSurface.displayTitle
+        presentation.assistantTitle
     }
 
     private var firstUserPromptText: String? {
-        guard let prompt = detail?.firstUserPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !prompt.isEmpty
-        else {
-            return nil
-        }
-        return prompt
+        presentation.firstUserPromptText
     }
 
     private var currentMetadata: SessionMetadata {
-        detail?.metadata ?? currentSummary?.metadata ?? .empty
+        presentation.metadata
     }
 
     private var currentGoal: SessionGoalSummary? {
-        detail?.goal ?? currentSummary?.goal
+        presentation.goal
     }
 
     private var currentLastActivityAt: String? {
-        detail?.lastActivityAt ?? currentSummary?.lastActivityAt
+        presentation.lastActivityAt
     }
 
     private var currentLastMessageAt: String? {
-        detail?.lastMessageAt ?? currentSummary?.lastMessageAt
+        presentation.lastMessageAt
     }
 
     private var availableNotifications: [NotificationDestination] {
@@ -106,7 +93,7 @@ struct SessionDetailScreen: View {
     }
 
     private var currentIsArchived: Bool {
-        detail?.isArchived ?? currentSummary?.isArchived ?? true
+        presentation.isArchived
     }
 
     var body: some View {
@@ -516,11 +503,11 @@ struct SessionDetailScreen: View {
     }
 
     private var promptDeliveryIsAvailable: Bool {
-        detail?.canSendPrompt ?? currentSummary?.canSendPrompt ?? false
+        presentation.canSendPrompt
     }
 
     private var promptDeliveryUnavailableReason: String? {
-        detail?.promptDeliveryUnavailableReason ?? currentSummary?.promptDeliveryUnavailableReason
+        presentation.promptDeliveryUnavailableReason
     }
 
     private var fallbackPromptSuggestions: [String] {

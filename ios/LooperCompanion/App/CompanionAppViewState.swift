@@ -350,6 +350,19 @@ struct CompanionAppViewState {
         )
     }
 
+    func detailPresentation(for route: SessionDetailRoute) -> SessionDetailPresentation {
+        let summary = session(
+            withID: route.sessionID,
+            assistantSurface: route.assistantSurface
+        )
+        let detail = detail(for: route)
+        return SessionDetailPresentation(
+            route: route,
+            summary: summary,
+            detail: detail
+        )
+    }
+
     private var connectedStatusSummary: String {
         "Connected."
     }
@@ -393,5 +406,88 @@ struct CompanionAppViewState {
         case .codex:
             return connectivitySummary
         }
+    }
+}
+
+struct SessionDetailPresentation {
+    let route: SessionDetailRoute
+    let summary: SessionSummary?
+    let detail: SessionDetail?
+
+    var hasResolvedSession: Bool {
+        detail != nil || summary != nil
+    }
+
+    var status: SessionStatus {
+        detail?.status ?? summary?.status ?? .stopped
+    }
+
+    var effectiveMode: SessionMode? {
+        detail?.effectiveMode ?? summary?.effectiveMode
+    }
+
+    var latestAssistantReply: String? {
+        guard let reply = detail?.latestAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reply.isEmpty
+        else {
+            return nil
+        }
+        return reply
+    }
+
+    var title: String {
+        detail?.title ?? summary?.title ?? "Session"
+    }
+
+    var ref: String {
+        detail?.ref ?? summary?.ref ?? route.sessionID
+    }
+
+    var assistantSurface: CompanionAssistantSurface {
+        let detailSurface = detail
+            .flatMap { CompanionAssistantSurface(assistantClient: $0.assistantClient) }
+            ?? detail.flatMap { CompanionAssistantSurface(sessionSource: $0.metadata.source) }
+        return detailSurface ?? route.assistantSurface
+    }
+
+    var assistantTitle: String {
+        assistantSurface.displayTitle
+    }
+
+    var firstUserPromptText: String? {
+        guard let prompt = detail?.firstUserPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !prompt.isEmpty
+        else {
+            return nil
+        }
+        return prompt
+    }
+
+    var metadata: SessionMetadata {
+        detail?.metadata ?? summary?.metadata ?? .empty
+    }
+
+    var goal: SessionGoalSummary? {
+        detail?.goal ?? summary?.goal
+    }
+
+    var lastActivityAt: String? {
+        detail?.lastActivityAt ?? summary?.lastActivityAt
+    }
+
+    var lastMessageAt: String? {
+        detail?.lastMessageAt ?? summary?.lastMessageAt
+    }
+
+    var isArchived: Bool {
+        detail?.isArchived ?? summary?.isArchived ?? true
+    }
+
+    var canSendPrompt: Bool {
+        detail?.canSendPrompt ?? summary?.canSendPrompt ?? false
+    }
+
+    var promptDeliveryUnavailableReason: String? {
+        detail?.promptDeliveryUnavailableReason ?? summary?.promptDeliveryUnavailableReason
     }
 }

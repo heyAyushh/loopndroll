@@ -126,6 +126,28 @@ final class CompanionSnapshotStateStore {
     }
 
     @discardableResult
+    func applyBroaderSnapshotPreservingCurrentSessions(
+        _ cachedSnapshot: MobileSnapshot,
+        preferredSurface: CompanionAssistantSurface? = nil
+    ) -> CompanionSnapshotApplyResult? {
+        guard let currentSnapshot = sourceSnapshotForProjection(),
+              Self.sessionRouteKeys(in: cachedSnapshot)
+              .isStrictSuperset(of: Self.sessionRouteKeys(in: currentSnapshot))
+        else {
+            return nil
+        }
+
+        let mergedSnapshot = Self.snapshotByAddingMissingSessions(
+            from: cachedSnapshot,
+            to: currentSnapshot
+        )
+        return applySnapshotResult(
+            mergedSnapshot,
+            preferredSurface: preferredSurface
+        )
+    }
+
+    @discardableResult
     func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) -> MobileSnapshot? {
         guard let snapshot = sourceSnapshotForProjection() else {
             visibleProjectionState = .empty(selectedSurface: surface)
@@ -395,15 +417,12 @@ final class CompanionSnapshotStateStore {
             sessionIndex: visibleSessionIndex,
             fingerprint: fingerprint
         )
-        let nextSessionIndex = sessionIndex == .empty
-            ? canonicalSessionIndex(for: sourceSnapshot)
-            : sessionIndex
         visibleProjectionState = CompanionVisibleProjectionState(
             snapshot: visibleSnapshot,
             selectedAssistantSurface: surface,
             sessionSections: visibleSections,
             visibleSessionIndex: visibleSessionIndex,
-            sessionIndex: nextSessionIndex
+            sessionIndex: canonicalSessionIndex(for: sourceSnapshot)
         )
         lastVisibleSnapshotFingerprint = fingerprint
         return visibleSnapshot
@@ -502,6 +521,60 @@ final class CompanionSnapshotStateStore {
 
     private static func millisecondsSinceEpoch(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970 * CompanionSnapshotSettingsTime.millisecondsPerSecond)
+    }
+
+    private static func snapshotByAddingMissingSessions(
+        from cachedSnapshot: MobileSnapshot,
+        to currentSnapshot: MobileSnapshot
+    ) -> MobileSnapshot {
+        var mergedSnapshot = currentSnapshot
+        var mergedSurfaceSessions = surfaceSessionsByRawValue(in: currentSnapshot)
+        let cachedSurfaceSessions = surfaceSessionsByRawValue(in: cachedSnapshot)
+
+        for surface in CompanionAssistantSurface.allCases {
+            let surfaceKey = surface.rawValue
+            var mergedSessions = mergedSurfaceSessions[surfaceKey] ?? []
+            var mergedSessionIDs = Set(mergedSessions.map(\.id))
+
+            for cachedSession in cachedSurfaceSessions[surfaceKey] ?? [] where !mergedSessionIDs.contains(cachedSession.id) {
+                mergedSessions.append(cachedSession)
+                mergedSessionIDs.insert(cachedSession.id)
+            }
+
+            if mergedSessions.isEmpty {
+                mergedSurfaceSessions.removeValue(forKey: surfaceKey)
+            } else {
+                mergedSurfaceSessions[surfaceKey] = mergedSessions
+            }
+        }
+
+        mergedSnapshot.surfaceSessions = mergedSurfaceSessions
+        mergedSnapshot.sessions = mergedSnapshot.sessions(for: mergedSnapshot.globalSettings.assistantSurface)
+        return mergedSnapshot
+    }
+
+    private static func surfaceSessionsByRawValue(
+        in snapshot: MobileSnapshot
+    ) -> [String: [SessionSummary]] {
+        var surfaceSessions: [String: [SessionSummary]] = [:]
+        for surface in CompanionAssistantSurface.allCases {
+            let sessions = snapshot.sessions(for: surface)
+            guard !sessions.isEmpty else {
+                continue
+            }
+            surfaceSessions[surface.rawValue] = sessions
+        }
+        return surfaceSessions
+    }
+
+    private static func sessionRouteKeys(in snapshot: MobileSnapshot) -> Set<String> {
+        var keys: Set<String> = []
+        for surface in CompanionAssistantSurface.allCases {
+            for session in snapshot.sessions(for: surface) {
+                keys.insert("\(surface.rawValue):\(session.id)")
+            }
+        }
+        return keys
     }
 
     private func fallbackAssistantSurface(
