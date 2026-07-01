@@ -175,9 +175,64 @@ struct SessionSummaryTimingTests {
 
         #expect(routedDetail.ref == "D1")
         #expect(routedDetail.assistantPreview == "live detail preview")
-        #expect(routedDetail.latestAssistantMessage == nil)
+        #expect(routedDetail.latestAssistantMessage == "live detail preview")
         #expect(store.session(withID: route.sessionID, assistantSurface: route.assistantSurface)?.ref == "D1")
         #expect(store.detail(for: "thread-main")?.ref == "C1")
+    }
+
+    @Test("Latest reply uses local mini until newer text chunk arrives")
+    func latestReplyUsesLocalMiniUntilNewerTextChunkArrives() throws {
+        var summary = try sessionSummary(
+            id: "thread-main",
+            ref: "S1",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        summary.assistantPreview = "latest local preview"
+        let snapshot = MobileSnapshot(
+            revision: "revision-latest-reply",
+            host: HostSummary(
+                id: "host",
+                name: "Looper",
+                address: "http://127.0.0.1:8765",
+                isReachable: true,
+                lastSyncedAt: "2026-06-16T08:02:00Z"
+            ),
+            globalSettings: GlobalSettings(
+                defaultPrompt: "Continue",
+                globalMode: nil,
+                scope: "global",
+                notificationLabel: nil,
+                completionCheckLabel: nil,
+                completionCheckWaitForReply: false,
+                assistantSurface: .codex
+            ),
+            sessions: [summary],
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [summary]],
+            notifications: [],
+            completionChecks: []
+        )
+        var detail = SessionDetail(summary: summary, snapshot: snapshot)
+
+        #expect(detail.latestAssistantMessage == "latest local preview")
+
+        detail.applyLatestReplyProjection(
+            projection(
+                sessionID: "thread-main",
+                text: "stale streamed reply",
+                serverTime: "2026-06-16T08:00:00Z"
+            )
+        )
+        #expect(detail.latestAssistantMessage == "latest local preview")
+
+        detail.applyLatestReplyProjection(
+            projection(
+                sessionID: "thread-main",
+                text: "new streamed reply",
+                serverTime: "2026-06-16T08:01:01Z"
+            )
+        )
+        #expect(detail.latestAssistantMessage == "new streamed reply")
     }
 
     @Test("Siri session entities use Rust projection ordering")
@@ -890,6 +945,26 @@ struct SessionSummaryTimingTests {
         )
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try decoder.decode(SessionSummary.self, from: data)
+    }
+
+    private func projection(
+        sessionID: String,
+        text: String,
+        serverTime: String
+    ) -> ClientSessionDetailProjection {
+        ClientSessionDetailProjection(
+            sessionId: sessionID,
+            hasLatestReply: true,
+            latestReply: ClientSessionLatestReply(
+                sessionId: sessionID,
+                messageId: "message-\(serverTime)",
+                text: text,
+                latestSeq: 1,
+                isFinal: true,
+                isTruncated: false,
+                serverTime: serverTime
+            )
+        )
     }
 
     private func sessionPayload(

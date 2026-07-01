@@ -2280,11 +2280,28 @@ extension SessionDetail {
         }
 
         let reply = projection.latestReply
+        guard shouldApplyLatestReplyProjection(reply) else {
+            return
+        }
+
         latestAssistantMessage = reply.text
         lastMessageAt = reply.serverTime.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? lastMessageAt
             : reply.serverTime
         contentStatus = reply.isTruncated ? .localMiniOnly : contentStatus
+    }
+
+    private func shouldApplyLatestReplyProjection(_ reply: ClientSessionLatestReply) -> Bool {
+        guard let currentLatestReply = latestAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !currentLatestReply.isEmpty,
+              let currentLastMessageAt = lastMessageAt,
+              let currentDate = SessionTimestampParser.date(from: currentLastMessageAt),
+              let projectedDate = SessionTimestampParser.date(from: reply.serverTime)
+        else {
+            return true
+        }
+
+        return projectedDate >= currentDate
     }
 
     init(summary: SessionSummary, snapshot: MobileSnapshot) {
@@ -2298,7 +2315,7 @@ extension SessionDetail {
             lastActivityAt: summary.lastActivityAt,
             lastMessageAt: summary.lastMessageAt,
             assistantPreview: summary.assistantPreview,
-            latestAssistantMessage: nil,
+            latestAssistantMessage: Self.latestAssistantReply(from: summary),
             contentStatus: .localMiniOnly,
             firstUserPrompt: nil,
             isArchived: summary.isArchived,
@@ -2313,6 +2330,16 @@ extension SessionDetail {
             availableNotifications: snapshot.notifications,
             availableCompletionChecks: snapshot.completionChecks
         )
+    }
+
+    private static func latestAssistantReply(from summary: SessionSummary) -> String? {
+        guard let reply = summary.assistantPreview?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reply.isEmpty
+        else {
+            return nil
+        }
+
+        return reply
     }
 }
 
