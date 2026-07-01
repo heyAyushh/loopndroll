@@ -19,7 +19,7 @@ Focused verification:
 
 Adversarial probes:
 - stale_state: Added runtime_recovery_stale_snapshot_preserves_live_local_state_and_endpoint. It seeds seq 20 live/local minis, serves a seq 10 HTTP recovery snapshot, and verifies seq 20/thread-live remain while the recovery endpoint is not marked last-good.
-- dirty_worktree: Initial and final status showed unrelated .omo/boulder.json plus concurrent client-core/local-store edits. .omo/boulder.json was not edited. T2 commit staging was kept to T2 hunks plus this evidence file.
+- dirty_worktree: Initial and final status showed unrelated .omo/boulder.json plus concurrent plan/evidence/code edits. .omo/boulder.json was not edited. During commit cleanup, previously staged T1/T6 artifacts from the shared index were preserved in follow-up commits rather than reverted or deleted.
 - misleading_success_output: The first focused cargo run failed before tests executed because of compile errors. After fixing the T2 type error and after the concurrent local-store annotation was corrected in the shared tree, the same recovery filter passed.
 - hung_command: The focused recovery gate completed normally. No hung command was observed for T2.
 
