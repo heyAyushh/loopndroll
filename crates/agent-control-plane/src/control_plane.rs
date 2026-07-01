@@ -63,6 +63,7 @@ use crate::grok_build::{
     grok_session_to_desktop_thread, inspect_grok_hooks, register_owned_grok_hooks,
     unregister_owned_grok_hooks,
 };
+use crate::grpc::frame_limits::SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES;
 use crate::hook_registration::{register_owned_hooks, unregister_owned_hooks};
 use crate::mobile::api::{
     latest_session_mini_revision, session_mini_projection_inputs,
@@ -70,8 +71,8 @@ use crate::mobile::api::{
 };
 use crate::mobile::auth::MobileAuthService;
 use crate::mobile::events::{
-    MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, build_mobile_event,
-    snapshot_revision_changed_event,
+    MobileEvent, MobileEventHub, MobileEventInput, MobileEventKind, MobileTextChunk,
+    MobileTextChunkInput, build_mobile_event, mobile_event_now, snapshot_revision_changed_event,
 };
 use crate::mobile::prompt_delivery::{PromptDeliveryActionCache, prime_delivery_action_cache};
 use crate::mobile::push::MobilePushService;
@@ -631,6 +632,28 @@ impl ControlPlane {
             .ok()
             .flatten();
         self.mobile_events.publish_ephemeral(event);
+    }
+
+    pub fn publish_mobile_text_chunk(&self, input: MobileTextChunkInput) {
+        if input.content.is_empty() || input.content.len() > SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES {
+            return;
+        }
+        let seq = self
+            .store
+            .latest_mobile_state_event_seq()
+            .unwrap_or_default();
+        let message_id = input
+            .message_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("{}:latest-assistant", input.thread_id));
+        self.mobile_events.publish_text_chunk(MobileTextChunk {
+            seq,
+            thread_id: input.thread_id,
+            message_id,
+            content: input.content,
+            is_final: input.is_final,
+            server_time: mobile_event_now(),
+        });
     }
 
     pub fn emit_mobile_session_event_with_cached_minis(

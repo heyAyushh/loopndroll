@@ -321,6 +321,67 @@ async fn grpc_mobile_events_streams_authenticated_prompt_resumed_event() {
 }
 
 #[tokio::test]
+async fn grpc_session_streams_text_chunk_from_acp_assistant_output_update() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let expected_thread_id =
+        agent_control_plane::acp::runtime::public_thread_id_for_client_agent_acp_session(
+            "zed",
+            "codex-acp",
+            "codex-session-1",
+        );
+
+    let (_session_sender, mut event_stream) = open_live_session_stream(
+        &mut client,
+        &authorization,
+        vec![ClientFrame { frame: None }],
+    )
+    .await;
+    let _subscription_ready =
+        next_session_ack_frame(&mut event_stream, "subscription-ready empty ACK").await;
+
+    control_plane
+        .observe_acp_client_host_session_response(
+            "zed",
+            agent_control_plane::acp::runtime::LooperAcpObservedSession {
+                agent_id: "codex-acp".to_owned(),
+                session_id: "codex-session-1".to_owned(),
+                connection_id: Some("zed-connection-1".to_owned()),
+                cwd: Some("/tmp/zed-project".to_owned()),
+                latest_user_prompt: None,
+                latest_assistant_message: Some("live assistant chunk".to_owned()),
+                latest_assistant_message_id: Some("assistant-message-1".to_owned()),
+                latest_assistant_message_is_final: false,
+                cancelled: false,
+            },
+        )
+        .expect("observe ACP assistant output");
+
+    let chunk = next_session_text_chunk_matching(&mut event_stream, "ACP text chunk", |chunk| {
+        chunk.thread_id == expected_thread_id
+    })
+    .await;
+
+    assert_eq!(
+        chunk.seq,
+        control_plane
+            .store()
+            .latest_mobile_state_event_seq()
+            .expect("latest mobile state seq")
+    );
+    assert_eq!(chunk.thread_id, expected_thread_id);
+    assert_eq!(chunk.message_id, "assistant-message-1");
+    assert_eq!(chunk.content, "live assistant chunk");
+    assert!(!chunk.is_final);
+    assert!(!chunk.server_time.is_empty());
+    assert_text_chunk_frame_under_test_cap(&chunk);
+}
+
+#[tokio::test]
 async fn grpc_session_stream_replays_before_liveness_cursor() {
     let fixture = IsolatedCodexFixture::new();
     let control_plane = fixture.control_plane();
@@ -1631,6 +1692,17 @@ fn assert_state_delta_frame_under_test_cap(
     );
 }
 
+fn assert_text_chunk_frame_under_test_cap(chunk: &agent_control_plane::grpc::proto::TextChunk) {
+    let frame = ServerFrame {
+        frame: Some(server_frame::Frame::TextChunk(chunk.clone())),
+    };
+    assert!(
+        frame.encoded_len() <= SESSION_FRAME_PAYLOAD_MAX_BYTES_FOR_TEST,
+        "encoded text chunk frame should stay below control-frame cap, got {} bytes",
+        frame.encoded_len()
+    );
+}
+
 #[tokio::test]
 async fn grpc_session_stream_replays_duplicate_command_ack() {
     let fixture = IsolatedCodexFixture::new();
@@ -1843,6 +1915,22 @@ async fn next_session_state_delta_matching(
         if let Some(server_frame::Frame::StateDelta(delta)) = frame.frame {
             if matches(&delta) {
                 return delta;
+            }
+        }
+    }
+    panic!("timed out scanning session stream for {label}");
+}
+
+async fn next_session_text_chunk_matching(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+    mut matches: impl FnMut(&agent_control_plane::grpc::proto::TextChunk) -> bool,
+) -> agent_control_plane::grpc::proto::TextChunk {
+    for _ in 0..SESSION_FRAME_SCAN_LIMIT {
+        let frame = next_session_frame(stream, label).await;
+        if let Some(server_frame::Frame::TextChunk(chunk)) = frame.frame {
+            if matches(&chunk) {
+                return chunk;
             }
         }
     }

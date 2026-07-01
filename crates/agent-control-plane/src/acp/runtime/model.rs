@@ -73,5 +73,7 @@ pub struct LooperAcpObservedSession {
     pub cwd: Option<String>,
     pub latest_user_prompt: Option<String>,
     pub latest_assistant_message: Option<String>,
+    pub latest_assistant_message_id: Option<String>,
+    pub latest_assistant_message_is_final: bool,
     pub cancelled: bool,
 }

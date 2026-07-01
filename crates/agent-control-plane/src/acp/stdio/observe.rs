@@ -9,6 +9,8 @@ use super::{
     TEXT_CONTENT_TYPE,
 };
 
+const STREAMING_MESSAGE_ID_META_KEY: &str = "cognition.ai/streamingMessageId";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PendingNewSession {
     pub(super) cwd: Option<String>,
@@ -21,6 +23,8 @@ pub(super) struct ObservedSessionEvent {
     pub(super) cwd: Option<String>,
     pub(super) latest_user_prompt: Option<String>,
     pub(super) latest_assistant_message: Option<String>,
+    pub(super) latest_assistant_message_id: Option<String>,
+    pub(super) latest_assistant_message_is_final: bool,
     pub(super) cancelled: bool,
 }
 
@@ -36,6 +40,8 @@ pub(super) async fn post_observed_sessions(
             "cwd": event.cwd,
             "latestUserPrompt": event.latest_user_prompt,
             "latestAssistantMessage": event.latest_assistant_message,
+            "latestAssistantMessageId": event.latest_assistant_message_id,
+            "latestAssistantMessageIsFinal": event.latest_assistant_message_is_final,
             "cancelled": event.cancelled,
         });
         let path = format!("/desktop/acp-client-hosts/{client_id}/sessions/observe");
@@ -87,6 +93,8 @@ pub(super) fn observe_zed_request(
                     cwd: None,
                     latest_user_prompt: prompt_text(params),
                     latest_assistant_message: None,
+                    latest_assistant_message_id: None,
+                    latest_assistant_message_is_final: false,
                     cancelled: false,
                 });
             }
@@ -99,6 +107,8 @@ pub(super) fn observe_zed_request(
                     cwd: None,
                     latest_user_prompt: None,
                     latest_assistant_message: None,
+                    latest_assistant_message_id: None,
+                    latest_assistant_message_is_final: false,
                     cancelled: true,
                 });
             }
@@ -142,6 +152,8 @@ pub(super) fn observe_agent_output(
         cwd: pending.cwd,
         latest_user_prompt: None,
         latest_assistant_message: None,
+        latest_assistant_message_id: None,
+        latest_assistant_message_is_final: false,
         cancelled: false,
     });
 }
@@ -155,23 +167,43 @@ fn observe_session_update(
     let Some(session_id) = params.get("sessionId").and_then(Value::as_str) else {
         return;
     };
-    let latest_assistant_message = params
-        .get("update")
-        .and_then(|update| update.get("content"))
+    let update = params.get("update").unwrap_or(&Value::Null);
+    let latest_assistant_message = update
+        .get("content")
         .and_then(|content| {
             (content.get("type").and_then(Value::as_str) == Some(TEXT_CONTENT_TYPE))
                 .then(|| content.get("text").and_then(Value::as_str))
                 .flatten()
         })
         .map(str::to_owned);
+    let latest_assistant_message_id = latest_assistant_message
+        .as_ref()
+        .and_then(|_| streaming_message_id(update));
+    let latest_assistant_message_is_final = update
+        .get("sessionUpdate")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| !kind.ends_with("_chunk"));
     let _ = observer_sender.send(ObservedSessionEvent {
         agent_id: agent_id.to_owned(),
         session_id: session_id.to_owned(),
         cwd: None,
         latest_user_prompt: None,
         latest_assistant_message,
+        latest_assistant_message_id,
+        latest_assistant_message_is_final,
         cancelled: false,
     });
+}
+
+fn streaming_message_id(update: &Value) -> Option<String> {
+    update
+        .get("_meta")
+        .and_then(|meta| meta.get(STREAMING_MESSAGE_ID_META_KEY))
+        .and_then(Value::as_str)
+        .or_else(|| update.get("messageId").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn request_id_key(value: Option<&Value>) -> Option<String> {

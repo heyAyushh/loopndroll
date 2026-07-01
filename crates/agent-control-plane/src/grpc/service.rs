@@ -17,8 +17,8 @@ use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::LooperRealtime;
 use crate::mobile::api::compact_mobile_session_mini_record;
 use crate::mobile::events::{
-    MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, mobile_event_now,
-    mobile_event_wire_name,
+    MobileEvent, MobileEventBroadcast, MobileEventKind, MobileEventRecord, MobileTextChunk,
+    mobile_event_now, mobile_event_wire_name,
 };
 use crate::mobile::realtime_ack::{COMMAND_ACK_ACCOUNT_ID, COMMAND_ACK_NODE_ID, CommandAckError};
 use crate::mobile::realtime_commands::{
@@ -180,6 +180,9 @@ impl LooperRealtime for LooperRealtimeService {
                             }
                             Ok(MobileEventBroadcast::Ephemeral(event)) => {
                                 yield_frame!(mobile_event_frame(proto_mobile_event_from_event(&event)));
+                            }
+                            Ok(MobileEventBroadcast::TextChunk(text_chunk)) => {
+                                yield_frame!(text_chunk_frame(&text_chunk));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 match drain_state_delta_frames(&control_plane, &mut last_seq) {
@@ -984,6 +987,19 @@ fn mobile_event_frame_revision(control_plane: &ControlPlane) -> String {
 fn mobile_event_frame(event: proto::MobileEvent) -> proto::ServerFrame {
     proto::ServerFrame {
         frame: Some(proto::server_frame::Frame::Event(event)),
+    }
+}
+
+fn text_chunk_frame(text_chunk: &MobileTextChunk) -> proto::ServerFrame {
+    proto::ServerFrame {
+        frame: Some(proto::server_frame::Frame::TextChunk(proto::TextChunk {
+            seq: text_chunk.seq,
+            thread_id: text_chunk.thread_id.clone(),
+            message_id: text_chunk.message_id.clone(),
+            content: text_chunk.content.clone(),
+            is_final: text_chunk.is_final,
+            server_time: text_chunk.server_time.clone(),
+        })),
     }
 }
 
