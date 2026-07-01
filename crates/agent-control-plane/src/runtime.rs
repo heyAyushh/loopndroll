@@ -44,6 +44,7 @@ pub async fn run_server() -> Result<()> {
     let grpc_listener = TcpListener::bind(default_grpc_listen_address(local_address)?).await?;
     let grpc_local_address = grpc_listener.local_addr()?;
     spawn_grpc_server(control_plane.clone(), grpc_listener, grpc_local_address);
+    spawn_grpc_h3_server(control_plane.clone(), grpc_local_address);
     let _bonjour_advertisement = match BonjourAdvertisement::start_for_listener(local_address) {
         Ok(advertisement) => advertisement,
         Err(error) => {
@@ -71,6 +72,30 @@ fn spawn_grpc_server(
             crate::grpc::serve_with_listener(control_plane, listener, shutdown_signal()).await
         {
             eprintln!("looper gRPC server failed: {error}");
+        }
+    });
+}
+
+fn spawn_grpc_h3_server(control_plane: ControlPlane, h2_listen_address: SocketAddr) {
+    tokio::spawn(async move {
+        let listen_address = match crate::grpc::default_h3_listen_address(h2_listen_address) {
+            Ok(listen_address) => listen_address,
+            Err(error) => {
+                eprintln!("looper H3 gRPC listener address failed: {error}");
+                return;
+            }
+        };
+        match crate::grpc::spawn_h3_server(control_plane, listen_address, shutdown_signal()).await {
+            Ok(server) => {
+                eprintln!(
+                    "looper H3 gRPC listening on {} pin={}",
+                    server.listen_address, server.certificate_sha256
+                );
+                if let Err(error) = server.server_task.await {
+                    eprintln!("looper H3 gRPC server task failed: {error}");
+                }
+            }
+            Err(error) => eprintln!("looper H3 gRPC server failed: {error}"),
         }
     });
 }

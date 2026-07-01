@@ -1,4 +1,4 @@
-use std::{pin::Pin, time::Duration};
+use std::{net::SocketAddr, pin::Pin, time::Duration};
 
 use async_stream::stream;
 use futures_core::Stream;
@@ -65,11 +65,25 @@ impl From<CommandAckError> for Status {
 #[derive(Clone)]
 pub struct LooperRealtimeService {
     control_plane: ControlPlane,
+    peer_addr_override: Option<SocketAddr>,
 }
 
 impl LooperRealtimeService {
     pub fn new(control_plane: ControlPlane) -> Self {
-        Self { control_plane }
+        Self {
+            control_plane,
+            peer_addr_override: None,
+        }
+    }
+
+    pub(crate) fn with_peer_addr_override(
+        control_plane: ControlPlane,
+        peer_addr_override: SocketAddr,
+    ) -> Self {
+        Self {
+            control_plane,
+            peer_addr_override: Some(peer_addr_override),
+        }
     }
 }
 
@@ -96,7 +110,7 @@ impl LooperRealtime for LooperRealtimeService {
         authorize_mobile_api_request_from_peer(
             &self.control_plane,
             request.metadata(),
-            request.remote_addr(),
+            self.peer_addr_override.or_else(|| request.remote_addr()),
         )?;
         let mut inbound = request.into_inner();
         let control_plane = self.control_plane.clone();

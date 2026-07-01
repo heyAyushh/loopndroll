@@ -14,6 +14,7 @@ use crate::control_plane::ControlPlane;
 mod auth;
 mod client_commands;
 pub(crate) mod frame_limits;
+mod h3;
 mod service;
 
 pub mod proto {
@@ -21,6 +22,10 @@ pub mod proto {
 }
 
 pub(crate) use client_commands::submit_local_session_command;
+pub use h3::{
+    GRPC_H3_LISTEN_ENV, GrpcH3Certificate, SpawnedGrpcH3Server, default_h3_listen_address,
+    load_or_create_h3_certificate, spawn_h3_server,
+};
 pub use service::LooperRealtimeService;
 
 const GRPC_HTTP2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);

@@ -578,6 +578,10 @@ impl ControlPlane {
         }
     }
 
+    pub(crate) fn store_path(&self) -> &Path {
+        &self.config.store_path
+    }
+
     pub fn mobile_event_hub(&self) -> &MobileEventHub {
         &self.mobile_events
     }
