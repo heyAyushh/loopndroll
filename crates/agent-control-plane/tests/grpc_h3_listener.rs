@@ -1,36 +1,13 @@
-use std::fs;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+mod support;
 
-use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
-use agent_control_plane::grpc::proto::{
-    ClientFrame, HealthRequest, HealthResponse, looper_realtime_client::LooperRealtimeClient,
-    server_frame,
-};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use agent_control_plane::grpc::proto::{ClientFrame, HealthRequest, server_frame};
 use agent_control_plane::http::build_router;
-use axum::Router;
-use axum::body::Body;
-use axum::extract::ConnectInfo;
-use axum::http::{Method, Request};
-use http_body_util::BodyExt;
-use rusqlite::Connection;
-use rustls::RootCertStore;
-use rustls::pki_types::CertificateDer;
-use tempfile::TempDir;
-use tokio::sync::oneshot;
-use tonic::codegen::http::Uri;
+use support::control_plane::TestControlPlaneFixture;
+use support::h3::{H3_TEST_TIMEOUT, h3_client_tls_config, spawn_h2_client, spawn_h3};
+use support::mobile_auth::issue_mobile_authorization_header;
 use tonic::metadata::MetadataValue;
-use tonic_h3::quinn::H3QuinnConnector;
-use tonic_h3::quinn::h3_quinn::Endpoint;
-use tonic_h3::quinn::h3_quinn::quinn::{
-    ClientConfig, VarInt, crypto::rustls::QuicClientConfig, rustls as quinn_rustls,
-};
-use tower::ServiceExt;
-
-const H3_LISTENER_TIMEOUT: Duration = Duration::from_secs(5);
-
-type H3LooperClient = LooperRealtimeClient<tonic_h3::H3Channel<H3QuinnConnector>>;
 
 #[tokio::test]
 async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
@@ -63,12 +40,12 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
         "authorization",
         MetadataValue::try_from(authorization.as_str()).expect("authorization metadata"),
     );
-    let mut h3_stream = tokio::time::timeout(H3_LISTENER_TIMEOUT, h3_client.session(h3_request))
+    let mut h3_stream = tokio::time::timeout(H3_TEST_TIMEOUT, h3_client.session(h3_request))
         .await
         .expect("H3 session open timed out")
         .expect("H3 session should open")
         .into_inner();
-    let h3_frame = tokio::time::timeout(H3_LISTENER_TIMEOUT, h3_stream.message())
+    let h3_frame = tokio::time::timeout(H3_TEST_TIMEOUT, h3_stream.message())
         .await
         .expect("H3 frame timed out")
         .expect("H3 frame result")
@@ -84,7 +61,7 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
     );
 
     let mut h2_client = h2.client.clone();
-    let h2_health = tokio::time::timeout(H3_LISTENER_TIMEOUT, h2_client.health(HealthRequest {}))
+    let h2_health = tokio::time::timeout(H3_TEST_TIMEOUT, h2_client.health(HealthRequest {}))
         .await
         .expect("H2 health timed out")
         .expect("H2 health response")
@@ -94,8 +71,7 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
 
     drop(h3_stream);
     drop(h3_client);
-    let h3_address = h3.address;
-    h3.shutdown().await;
+    let h3_address = h3.shutdown().await;
     println!("h3_shutdown_joined udp_addr={h3_address}");
     h2.shutdown().await;
 }
@@ -112,12 +88,12 @@ async fn grpc_h3_listener_allows_loopback_without_mobile_auth() {
     .await;
     let (mut client, _) = h3.ready_client().await;
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
-    let mut stream = tokio::time::timeout(H3_LISTENER_TIMEOUT, client.session(request))
+    let mut stream = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))
         .await
         .expect("loopback H3 session timed out")
         .expect("loopback H3 should bypass auth")
         .into_inner();
-    let frame = tokio::time::timeout(H3_LISTENER_TIMEOUT, stream.message())
+    let frame = tokio::time::timeout(H3_TEST_TIMEOUT, stream.message())
         .await
         .expect("loopback H3 frame timed out")
         .expect("loopback H3 frame result")
@@ -140,7 +116,7 @@ async fn grpc_h3_auth_rejects_missing_pairing_token() {
     h3.wait_until_ready().await;
     let mut client = h3.client_for_host(Ipv4Addr::LOCALHOST.into());
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
-    let status = tokio::time::timeout(H3_LISTENER_TIMEOUT, client.session(request))
+    let status = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))
         .await
         .expect("non-loopback H3 auth rejection timed out")
         .expect_err("non-loopback H3 should reject missing pairing token");
@@ -169,277 +145,4 @@ fn grpc_h3_test_client_disables_0rtt_early_data() {
         !tls_config.enable_early_data,
         "H3 Session test client must not send replayable 0-RTT early data"
     );
-}
-
-struct SpawnedH2 {
-    address: SocketAddr,
-    client: LooperRealtimeClient<tonic::transport::Channel>,
-    shutdown_sender: Option<oneshot::Sender<()>>,
-    server_task: tokio::task::JoinHandle<()>,
-}
-
-impl SpawnedH2 {
-    async fn shutdown(mut self) {
-        if let Some(sender) = self.shutdown_sender.take() {
-            let _ = sender.send(());
-        }
-        tokio::time::timeout(H3_LISTENER_TIMEOUT, self.server_task)
-            .await
-            .expect("H2 server task should shut down")
-            .expect("H2 server task should not panic");
-    }
-}
-
-async fn spawn_h2_client(control_plane: ControlPlane) -> SpawnedH2 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind H2 listener");
-    let address = listener.local_addr().expect("H2 listener address");
-    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-    let server_task = tokio::spawn(async move {
-        agent_control_plane::grpc::serve_with_listener(control_plane, listener, async {
-            let _ = shutdown_receiver.await;
-        })
-        .await
-        .expect("H2 server");
-    });
-    let client = LooperRealtimeClient::connect(format!("http://{address}"))
-        .await
-        .expect("connect H2 client");
-    SpawnedH2 {
-        address,
-        client,
-        shutdown_sender: Some(shutdown_sender),
-        server_task,
-    }
-}
-
-struct SpawnedH3 {
-    address: SocketAddr,
-    certificate_sha256: String,
-    client_endpoint: Endpoint,
-    shutdown_sender: Option<oneshot::Sender<()>>,
-    server_task: tokio::task::JoinHandle<Result<(), tonic_h3::Error>>,
-}
-
-impl SpawnedH3 {
-    fn client_for_host(&self, host: IpAddr) -> H3LooperClient {
-        LooperRealtimeClient::new(quinn_h3_channel(
-            h3_uri(SocketAddr::new(host, self.address.port())),
-            self.client_endpoint.clone(),
-        ))
-    }
-
-    async fn ready_client(&self) -> (H3LooperClient, HealthResponse) {
-        let deadline = tokio::time::Instant::now() + H3_LISTENER_TIMEOUT;
-        let mut attempts = 0;
-
-        loop {
-            attempts += 1;
-            let mut client = self.client_for_host(self.readiness_host());
-            let attempt_error = match tokio::time::timeout(
-                Duration::from_millis(750),
-                client.health(HealthRequest {}),
-            )
-            .await
-            {
-                Ok(Ok(response)) => return (client, response.into_inner()),
-                Ok(Err(error)) => error.to_string(),
-                Err(_) => "health attempt timed out".to_owned(),
-            };
-
-            if tokio::time::Instant::now() >= deadline {
-                panic!(
-                    "H3 health did not become ready after {attempts} attempts at {}: {attempt_error}",
-                    self.address
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    async fn wait_until_ready(&self) {
-        let (_, health) = self.ready_client().await;
-        assert!(health.ok, "H3 health should report ok before auth probe");
-    }
-
-    fn readiness_host(&self) -> IpAddr {
-        match self.address.ip() {
-            IpAddr::V4(address) if address.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(address) if address.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-            address => address,
-        }
-    }
-
-    async fn shutdown(self) {
-        let SpawnedH3 {
-            address,
-            client_endpoint,
-            shutdown_sender,
-            server_task,
-            ..
-        } = self;
-        if let Some(sender) = shutdown_sender {
-            let _ = sender.send(());
-        }
-        client_endpoint.close(VarInt::from_u32(0), b"test shutdown");
-        client_endpoint.wait_idle().await;
-        let result = tokio::time::timeout(H3_LISTENER_TIMEOUT, server_task)
-            .await
-            .unwrap_or_else(|_| panic!("H3 server task did not shut down for {address}"));
-        result
-            .unwrap_or_else(|error| panic!("H3 server task panicked for {address}: {error}"))
-            .unwrap_or_else(|error| panic!("H3 server returned error for {address}: {error}"));
-    }
-}
-
-async fn spawn_h3(control_plane: ControlPlane, listen_address: SocketAddr) -> SpawnedH3 {
-    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-    let server = agent_control_plane::grpc::spawn_h3_server(control_plane, listen_address, async {
-        let _ = shutdown_receiver.await;
-    })
-    .await
-    .expect("spawn H3 server");
-    let client_endpoint = configured_client_endpoint(&server.certificate_der).await;
-    SpawnedH3 {
-        address: server.listen_address,
-        certificate_sha256: server.certificate_sha256,
-        client_endpoint,
-        shutdown_sender: Some(shutdown_sender),
-        server_task: server.server_task,
-    }
-}
-
-fn quinn_h3_channel(uri: Uri, endpoint: Endpoint) -> tonic_h3::H3Channel<H3QuinnConnector> {
-    let connector = H3QuinnConnector::new(uri.clone(), "localhost".to_owned(), endpoint);
-    tonic_h3::H3Channel::new(connector, uri)
-}
-
-fn h3_uri(address: SocketAddr) -> Uri {
-    format!("https://{}:{}", address.ip(), address.port())
-        .parse()
-        .expect("H3 URI")
-}
-
-async fn configured_client_endpoint(certificate_der: &[u8]) -> Endpoint {
-    let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .expect("H3 client endpoint");
-    let tls_config = h3_client_tls_config(certificate_der);
-    let quic_config = QuicClientConfig::try_from(tls_config).expect("H3 QUIC client config");
-    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_config)));
-    endpoint
-}
-
-fn h3_client_tls_config(certificate_der: &[u8]) -> quinn_rustls::ClientConfig {
-    let mut roots = RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(certificate_der.to_vec()))
-        .expect("trust H3 test cert");
-    let mut tls_config = quinn_rustls::ClientConfig::builder_with_provider(Arc::new(
-        quinn_rustls::crypto::ring::default_provider(),
-    ))
-    .with_protocol_versions(&[&quinn_rustls::version::TLS13])
-    .expect("H3 client TLS versions")
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    tls_config.alpn_protocols = vec![b"h3".to_vec()];
-    tls_config
-}
-
-async fn issue_mobile_authorization_header(router: &Router) -> String {
-    let response = request_json(
-        router,
-        Method::GET,
-        "/api/mobile/connection-code",
-        Some("127.0.0.1:49152".parse().expect("loopback socket")),
-    )
-    .await;
-    let token_id = response["pairingTokenId"]
-        .as_str()
-        .expect("pairing token id");
-    let token = response["pairingToken"].as_str().expect("pairing token");
-    format!("Bearer {token_id}.{token}")
-}
-
-async fn request_json(
-    router: &Router,
-    method: Method,
-    path: &str,
-    remote_address: Option<SocketAddr>,
-) -> serde_json::Value {
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .body(Body::empty())
-        .expect("request");
-    if let Some(remote_address) = remote_address {
-        request.extensions_mut().insert(ConnectInfo(remote_address));
-    }
-    let response = router.clone().oneshot(request).await.expect("response");
-    assert!(
-        response.status().is_success(),
-        "response status: {}",
-        response.status()
-    );
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("response body")
-        .to_bytes();
-    serde_json::from_slice(&body).expect("json response")
-}
-
-struct TestControlPlaneFixture {
-    temp_dir: TempDir,
-    codex_home: std::path::PathBuf,
-}
-
-impl TestControlPlaneFixture {
-    fn new() -> Self {
-        let temp_dir = TempDir::new().expect("temp dir");
-        let codex_home = temp_dir.path().join(".codex");
-        fs::create_dir_all(codex_home.join("sessions")).expect("codex dirs");
-        fs::create_dir_all(temp_dir.path().join(".grok/sessions")).expect("grok dirs");
-        Self {
-            temp_dir,
-            codex_home,
-        }
-    }
-
-    fn write_state_db(&self) {
-        let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
-        connection
-            .execute_batch(
-                r#"
-create table threads (
-  thread_id text primary key,
-  title text,
-  cwd text,
-  source text,
-  model text,
-  reasoning_effort text,
-  created_at_ms integer,
-  updated_at_ms integer,
-  archived integer
-);
-insert into threads values
-  ('thread-main', 'Main task', '/tmp/project', 'desktop', 'gpt-5.5', 'high', 1000, 2000, 0);
-"#,
-            )
-            .expect("seed state");
-        Connection::open(self.codex_home.join("logs_1.sqlite")).expect("logs");
-    }
-
-    fn control_plane(&self) -> ControlPlane {
-        ControlPlane::new(ControlPlaneConfig {
-            codex_home: self.codex_home.clone(),
-            codex_executable: Some("/usr/bin/false".to_owned()),
-            grok_home: self.temp_dir.path().join(".grok"),
-            store_path: self.temp_dir.path().join("control-plane.sqlite"),
-            hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: self.temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
-        })
-    }
 }
