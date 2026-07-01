@@ -383,6 +383,13 @@ final class CompanionAppModel {
                 isLive: true,
                 endpointURL: update.endpointURL
             )
+            if update.reason == "text_chunk" {
+                lastUpdatedAt = Date()
+                CompanionDiagnostics.record(
+                    "session-detail:text-chunk-invalidated seq=\(update.latestSeq)"
+                )
+                return
+            }
             CompanionDiagnostics.record(
                 "session-mini:sync-snapshot-skip reason=\(update.reason) seq=\(update.latestSeq)"
             )
@@ -2046,16 +2053,54 @@ final class CompanionAppModel {
         reason: String,
         latestSeq: Int64
     ) -> Bool {
-        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason)
-                || hasBroaderStateMiniSnapshot(cachedSnapshot)
-        else {
+        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason) else {
+            guard applyBroaderCachedSessionMiniSnapshot(
+                cachedSnapshot,
+                reason: reason,
+                latestSeq: latestSeq
+            ) else {
+                CompanionDiagnostics.record(
+                    "session-mini:cache-skip reason=\(reason) latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
+                )
+                return false
+            }
+            return true
+        }
+
+        realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
+        applyCachedSnapshot(cachedSnapshot, reason: reason)
+        return true
+    }
+
+    @discardableResult
+    private func applyBroaderCachedSessionMiniSnapshot(
+        _ cachedSnapshot: MobileSnapshot,
+        reason: String,
+        latestSeq: Int64
+    ) -> Bool {
+        guard let result = snapshotState.applyBroaderSnapshotPreservingCurrentSessions(
+            cachedSnapshot,
+            preferredSurface: snapshotState.selectedAssistantSurface
+        ) else {
             CompanionDiagnostics.record(
                 "session-mini:cache-skip reason=\(reason) latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
             )
             return false
         }
+
         realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
-        applyCachedSnapshot(cachedSnapshot, reason: reason)
+        markCachedSnapshotReadyIfNeeded(reason: reason)
+        guard result.didChangeVisibleSnapshot else {
+            CompanionDiagnostics.record(
+                "session-mini:cache-merge-broader-noop reason=\(reason) sessions=\(result.visibleSnapshot.sessionsAcrossSurfaces.count)"
+            )
+            return true
+        }
+
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "session-mini:cache-merge-broader reason=\(reason) sessions=\(result.visibleSnapshot.sessionsAcrossSurfaces.count)"
+        )
         return true
     }
 
@@ -2137,11 +2182,6 @@ final class CompanionAppModel {
             return true
         }
         return latestSeq > realtimeLatestSeq
-    }
-
-    private func hasBroaderStateMiniSnapshot(_ cachedSnapshot: MobileSnapshot) -> Bool {
-        let cachedSessionCount = SessionIndex(localSnapshot: cachedSnapshot).allSessions.count
-        return cachedSessionCount > snapshotState.allSessions.count
     }
 
     private func markCachedSnapshotReadyIfNeeded(reason: String) {

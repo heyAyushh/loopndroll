@@ -1130,6 +1130,127 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
     );
 }
 
+#[test]
+fn grpc_session_hot_loop_rejects_projection_rebuild_calls() {
+    let source = include_str!("../../src/grpc/service.rs");
+    for forbidden in [
+        "desktop_snapshot",
+        "desktop_mobile_snapshot",
+        "reconcile_mobile_session_mini_projection",
+        "spawn_mobile_session_mini_projection",
+        "read_snapshot_state",
+        "transcript_preview",
+        "discover_sources",
+        "discover_grok_sessions",
+        "inspect_devin_desktop",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "grpc service hot path must not call {forbidden}"
+        );
+    }
+    for required_drain in [
+        "inbound.message()",
+        "event_receiver.recv()",
+        "heartbeat.tick()",
+        "drain_state_delta_frames",
+    ] {
+        assert!(
+            source.contains(required_drain),
+            "grpc service hot path should keep draining {required_drain}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn grpc_session_hot_loop_drains_compact_frames_while_projection_reconcile_runs() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let (_sender, mut stream) =
+        open_live_session_stream(&mut client, &authorization, Vec::new()).await;
+
+    let reconcile_plane = control_plane.clone();
+    let reconcile = tokio::task::spawn_blocking(move || {
+        for index in 0..3 {
+            reconcile_plane
+                .force_reconcile_mobile_session_mini_projection(&format!(
+                    "t6-background-reconcile-{index}"
+                ))
+                .map(|_| ())?;
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    for index in 0..3 {
+        let title = format!("T6 compact stream mini {index}");
+        control_plane.emit_mobile_session_event_with_cached_minis(
+            MobileEventInput {
+                kind: MobileEventKind::SessionChanged,
+                thread_id: Some("thread-main".to_owned()),
+                prompt_id: None,
+                detail: Some(format!("t6-compact-projection-{index}")),
+            },
+            vec![MobileSessionMiniProjectionInput {
+                session_id: "thread-main".to_owned(),
+                assistant_surface: "codex".to_owned(),
+                body_json: serde_json::json!({
+                    "id": "thread-main",
+                    "sessionId": "thread-main",
+                    "assistantSurface": "codex",
+                    "status": "running",
+                    "title": title,
+                    "lifecycle": "active",
+                    "replyable": true,
+                    "canSendPrompt": true,
+                    "notificationStatus": {
+                        "enabled": false,
+                        "targetIds": [],
+                        "usesDefault": true,
+                    },
+                }),
+            }],
+        );
+
+        let delta = next_session_state_delta_matching(
+            &mut stream,
+            &format!("T6 compact state delta {index}"),
+            |delta| {
+                if delta.entity_id != "thread-main" {
+                    return false;
+                }
+                serde_json::from_str::<serde_json::Value>(&delta.payload_json)
+                    .ok()
+                    .and_then(|payload| {
+                        payload
+                            .get("title")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|candidate| candidate == title)
+                    })
+                    .unwrap_or(false)
+            },
+        )
+        .await;
+        let payload: serde_json::Value =
+            serde_json::from_str(&delta.payload_json).expect("compact payload json");
+        assert_eq!(delta.kind, "session.changed");
+        assert_eq!(payload["sessionId"], "thread-main");
+        assert_eq!(payload["assistantSurface"], "codex");
+        assert_eq!(payload["title"], title);
+        assert!(payload.get("controlOnly").is_none());
+        assert!(payload.get("recovery").is_none());
+    }
+
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), reconcile)
+        .await
+        .expect("background projection reconcile should complete")
+        .expect("background projection reconcile join")
+        .expect("background projection reconcile result");
+}
+
 #[tokio::test]
 async fn grpc_session_frame_payload_instructs_recovery_for_oversized_replacement_mini() {
     let fixture = IsolatedCodexFixture::new();

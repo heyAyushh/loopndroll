@@ -1,0 +1,48 @@
+Task: T4 - make iOS switch/open presentation local-first and non-jumpy
+Date: 2026-07-01
+Workspace: /Users/ay/.codex/worktrees/b3a1/looper
+
+DoneClaim:
+- iOS detail presentation now binds one route-bound SessionDetailPresentation to stable session id + assistant surface.
+- Detail presentation composes local summary/detail with the current Rust client-core sessionDetail projection at render/read time.
+- Older broader state-mini cache replay is additive only: it can keep extra cached sessions visible but cannot replace existing newer sessions for the same route.
+- No HTTP hot detail/snapshot calls, Swift reducer, or Swift latest-reply JSON decode was added.
+
+Changed source:
+- ios/LooperCompanion/App/CompanionAppModel.swift
+- ios/LooperCompanion/App/CompanionAppViewState.swift
+- ios/LooperCompanion/App/CompanionSnapshotStateStore.swift
+- ios/LooperCompanion/UI/Sessions/SessionDetailScreen.swift
+- ios/LooperCompanionTests/CompanionSessionMiniLocalFirstTests.swift
+
+Verification:
+1. Focused iOS Xcode beta test, first run:
+   DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild test -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17' '-only-testing:LooperCompanionTests/CompanionSessionMiniLocalFirstTests/testDetailSwitchOpenUsesProjectionBeforeStaleBroaderSummary()'
+   Result: failed deterministically with .InvalidSnapshotJson from the test fixture's seeded latestReplies keyed shape.
+   Action: changed the test fixture to the Rust client-core accepted latestReplies list shape that normalizes into keyed projection on load.
+
+2. Focused iOS Xcode beta test, rerun:
+   DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild test -project ios/LooperCompanion.xcodeproj -scheme LooperCompanion -destination 'platform=iOS Simulator,name=iPhone 17' '-only-testing:LooperCompanionTests/CompanionSessionMiniLocalFirstTests/testDetailSwitchOpenUsesProjectionBeforeStaleBroaderSummary()'
+   Result: TEST SUCCEEDED.
+   Selected Swift Testing output:
+   - Test testDetailSwitchOpenUsesProjectionBeforeStaleBroaderSummary() passed after 0.076 seconds.
+   - Suite "CompanionSessionMiniLocalFirstTests" passed after 0.078 seconds.
+   - Test run with 1 test in 1 suite passed after 0.079 seconds.
+   Xcode result bundle:
+   /Users/ay/Library/Developer/Xcode/DerivedData/LooperCompanion-bewzluuxucedyrepdzwoztohtuzr/Logs/Test/Test-LooperCompanion-2026.07.01_08-20-49-+0530.xcresult
+
+3. Whitespace gate:
+   git diff --check
+   Result: passed with no output.
+
+Adversarial probes:
+- stale_state: Covered by the focused test. It seeds stale Codex row summary plus stale extra Devin cache, sets newer visible Codex detail, replays the stale broader local cache, then switches surfaces/detail reads 20 times. Expected and observed: fresh detail title remains "Fresh Detail Summary", latest reply remains "Newest projected reply", lastMessageAt remains the projected live reply time, and the extra cached Devin session remains visible.
+- dirty_worktree: Pre-existing unrelated dirt observed and not modified: .omo/boulder.json, .omo/start-work/ledger.jsonl, .omo/drafts/, .omo/plans/grpc-session-latency-freshness.md. Commit should stage only T4 source/test/evidence files.
+- misleading_success_output: First Xcode output reported an XCTest suite with "Executed 0 tests" before Swift Testing ran. I did not treat that as success; the pass claim is based on the later Swift Testing line with 1 selected test passing and final "** TEST SUCCEEDED **".
+- flaky/timing-sensitive test risk: The selected test itself is deterministic and does not sleep; Xcode simulator startup was slow. First failed run took about 195s, rerun took about 133s wall time before Swift Testing completed the selected test in 0.079s.
+- hung_command: The first run had long silent simulator phases but eventually produced a real failure and exited 65. The rerun also had a silent simulator phase but produced a real pass and exited 0. No command was left running.
+
+Out of scope:
+- No broad gates, no full iOS suite, no device install.
+- No Rust or generated Swift edits.
+- No .omo/boulder.json edit.

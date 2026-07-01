@@ -75,6 +75,7 @@ pub(crate) enum StateMiniStreamEvent {
 pub(crate) struct RecoveredStateMiniSnapshot {
     pub(crate) snapshot: ClientStateMiniSnapshot,
     pub(crate) endpoint_url: String,
+    pub(crate) did_change: bool,
 }
 
 pub(crate) async fn fetch_state_mini_snapshot(
@@ -103,6 +104,7 @@ pub(crate) async fn fetch_state_mini_snapshot(
             .map(|snapshot| RecoveredStateMiniSnapshot {
                 snapshot,
                 endpoint_url: normalized_endpoint_url(&endpoint.url),
+                did_change: true,
             });
             let _ = result_sender.send(result).await;
         }));

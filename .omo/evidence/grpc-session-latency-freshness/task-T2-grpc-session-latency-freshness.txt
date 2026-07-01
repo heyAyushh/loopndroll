@@ -1,0 +1,30 @@
+T2 evidence - make HTTP recovery bounded and non-authoritative for live readiness
+
+Scope touched:
+- crates/looper-client-core/src/client.rs
+- crates/looper-client-core/src/session_runtime.rs
+- crates/looper-client-core/src/session_transport.rs
+
+Implementation:
+- HTTP snapshot fetch remains bounded by existing timeout/body cap and first-ready raced endpoint behavior.
+- Recovery adoption now records whether it actually changed the Rust client-core projection.
+- Stale recovery no longer emits a fresh local delta, clears the stream recovery error, or promotes the HTTP recovery endpoint as last-good.
+- Runtime recovery still persists the merged local/client-core snapshot so recovery can fill gaps without overwriting newer live seq/minis.
+
+Focused verification:
+- cargo test --manifest-path crates/looper-client-core/Cargo.toml recovery -- --nocapture
+  Result: PASS. 12 passed; 0 failed; 0 ignored; 167 filtered out.
+- git diff --check
+  Result: PASS.
+
+Adversarial probes:
+- stale_state: Added runtime_recovery_stale_snapshot_preserves_live_local_state_and_endpoint. It seeds seq 20 live/local minis, serves a seq 10 HTTP recovery snapshot, and verifies seq 20/thread-live remain while the recovery endpoint is not marked last-good.
+- dirty_worktree: Initial and final status showed unrelated .omo/boulder.json plus concurrent plan/evidence/code edits. .omo/boulder.json was not edited. During commit cleanup, previously staged T1/T6 artifacts from the shared index were preserved in follow-up commits rather than reverted or deleted.
+- misleading_success_output: The first focused cargo run failed before tests executed because of compile errors. After fixing the T2 type error and after the concurrent local-store annotation was corrected in the shared tree, the same recovery filter passed.
+- hung_command: The focused recovery gate completed normally. No hung command was observed for T2.
+
+Out of scope:
+- No Swift surface changes.
+- No HTTP hot command/state/detail path added.
+- No second socket/transport added.
+- No broad iOS/macOS/full gates run.

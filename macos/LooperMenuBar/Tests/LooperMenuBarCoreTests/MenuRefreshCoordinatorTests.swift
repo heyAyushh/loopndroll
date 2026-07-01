@@ -158,6 +158,10 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.mobileStatusTitle == "Local cache: waiting for Session proof")
         #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
         #expect(readiness.tailscaleStatusTitle == "Local cache: waiting for Session proof")
+        #expect(
+            readiness.unprovenSessionMiniStatusTitle(runtimePhase: .ready)
+                == "Local cache: waiting for Session proof"
+        )
         #expect(readiness.provenReachableHandoffBaseURL == nil)
 
         readiness.applySessionState(
@@ -206,6 +210,10 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.health == nil)
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+        #expect(
+            readiness.unprovenSessionMiniStatusTitle(runtimePhase: .ready)
+                == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof"
+        )
     }
 
     @Test("ready Session route without HTTP health is not handoff proof")
@@ -286,6 +294,14 @@ struct MenuRefreshCoordinatorTests {
         )
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+        #expect(
+            readiness.unprovenSessionMiniStatusTitle(runtimePhase: .ready)
+                == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof"
+        )
+        #expect(
+            readiness.unprovenSessionMiniStatusTitle(runtimePhase: .reconnecting)
+                == "Reconnecting: Cached route: Tailscale: 100.119.200.69; waiting for Session proof"
+        )
 
         readiness.applySessionState(
             phase: .reconnecting,

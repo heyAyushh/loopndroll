@@ -1,0 +1,37 @@
+T3 evidence: enforce direct protobuf TextChunk detail reply projection
+
+Scope executed:
+- Changed only crates/looper-client-core/src/local_store.rs for the T3 implementation.
+- Kept ServerFrame.text_chunk -> client-core observe() -> local_store.apply_text_chunk() as the live detail reply path.
+- Converted latestReplies from linear Vec lookup/update to HashMap keyed by session_id.
+- Kept backward-compatible loading for the previous latestReplies array cache shape and persisted new updates as a keyed object.
+- Did not remove StateMiniDelta payload_json.
+- Did not edit generated Swift or regenerate UniFFI.
+- Did not change iOS binding because CompanionAppModel.sessionDetail already reads ClientSessionDetailProjection from Rust client-core and SessionDetail.init(summary:) does not JSON-decode latestAssistantMessage from mini payloads on open.
+
+Verification:
+- PASS: cargo test --manifest-path crates/looper-client-core/Cargo.toml text_chunk -- --nocapture
+  Result: 4 passed, 0 failed, 175 filtered out.
+  Covered:
+  - local_store_text_chunk_persists_bounded_latest_reply_projection
+  - local_store_text_chunk_loads_legacy_latest_reply_list_as_keyed_projection
+  - local_store_text_chunk_replaces_latest_reply_for_new_message
+  - runtime_text_chunk_persists_detail_projection_from_session_stream
+- PASS: git diff --check
+- PASS: strict stale-transport scan returned no matches:
+  rg -n "text/event-stream|MobileEventStream|LooperRealtimeStateMiniSynchronizer|/mobile/events|/desktop/events|HTTP.*sendSessionPrompt|HTTP.*setSessionMode|HTTP.*submitNotificationReply|loadSnapshot\\(\\).*sendSessionPrompt" ios macos swift crates/agent-control-plane crates/looper-client-core || true
+
+Swift/iOS verification decision:
+- Swift package test was not run because no Swift package source, generated UniFFI API shape, or iOS detail binding changed in this task.
+
+Adversarial probes:
+- stale_state: read .omo/plans/grpc-session-latency-freshness.md and docs/architecture/decisions.md before editing; checked Codex sqlite session truth read-only.
+- dirty_worktree: initial dirty state included .omo/boulder.json, .omo/drafts/, and the untracked plan file. During work, concurrent edits appeared in crates/looper-client-core/src/client.rs, src/session_runtime.rs, and src/session_transport.rs. These were not staged or reverted.
+- misleading_success_output: the first cargo test attempt failed before completion; after fixing the local_store type inference issue and after concurrent crate edits settled, the same focused test command was rerun and passed.
+- generated_artifact/no-edit: no files under swift/LooperClientCore/Sources/LooperClientCore/Generated were edited or staged.
+- hung_command: no verification command hung; all commands returned.
+
+Out of scope:
+- No broad gates.
+- No .omo/boulder.json edits.
+- No payload_json schema cut.

@@ -1,0 +1,24 @@
+DoneClaim: F2 auth identity repair is complete for crates/looper-client-core.
+
+Blocker repaired:
+- Warm Session reuse now includes endpoint identity, bearer token, and x-looper-mobile-session identity.
+- Same endpoint plus same auth still keeps the running warm stream.
+- Same endpoint plus changed bearer/mobile-session no longer takes the warm reuse path; the stale command channel is disconnected and a new stream identity is installed.
+
+Changed files:
+- crates/looper-client-core/src/client.rs
+- crates/looper-client-core/src/session_runtime.rs
+
+Verification:
+- cargo test --manifest-path crates/looper-client-core/Cargo.toml start_state_mini_stream_keeps_running_stream_for_same_endpoint -- --nocapture
+  Result: PASS, 1 passed.
+- cargo test --manifest-path crates/looper-client-core/Cargo.toml start_state_mini_stream_reconnects_for_same_endpoint_when_auth_identity_changes -- --nocapture
+  Result: PASS, 1 passed.
+- cargo fmt --manifest-path crates/looper-client-core/Cargo.toml --check
+  Result: PASS.
+- git diff --check
+  Result: PASS.
+
+Scope:
+- No broad gates run.
+- No edits made to .omo/boulder.json.

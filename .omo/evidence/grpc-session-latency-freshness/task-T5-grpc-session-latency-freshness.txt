@@ -1,0 +1,44 @@
+Task: T5 - Make macOS route/readiness labels live or explicitly stale
+Date: 2026-07-01
+
+Changed:
+- Added MobileRouteReadinessState.unprovenSessionMiniStatusTitle(runtimePhase:) so a local
+  Session runtime phase cannot label cached SessionMini state as connected without live
+  endpoint proof.
+- Updated the macOS menu Status line to use that readiness-owned stale/waiting title
+  whenever MobileRouteReadinessState.hasLiveRouteProof is false.
+- Added HTTP enrichment age/status next to menu route details so cached health remains
+  visible as enrichment, not Session proof.
+- Extended focused MenuRefreshCoordinator route/readiness assertions for ready/reconnecting
+  runtime phases while the endpoint is still stale or awaiting Session proof.
+
+Verification:
+- PASS: swift test --package-path macos/LooperMenuBar --filter Route
+  - Compiled LooperMenuBar package.
+  - Ran 7 filtered tests, including route preference and route readiness cases.
+- PASS: swift test --package-path macos/LooperMenuBar --filter MenuRefreshCoordinator
+  - Ran 26 filtered tests.
+  - Covered cached SessionMini visibility, HTTP enrichment behavior, stale endpoint after
+    route switch, recovery/non-live sync reasons, and different endpoint proof.
+- PASS: git diff --check
+
+Adversarial probes:
+- stale_state: Route switch invalidation clears HTTP health and requires a current-generation
+  delta/heartbeat Session proof before labels become Session-proven. Old-generation health and
+  recovery sync are asserted non-authoritative in the focused tests.
+- dirty_worktree: Pre-existing unrelated changes were present before this task:
+  .omo/boulder.json, .omo/start-work/ledger.jsonl, .omo/drafts/, and the untracked plan file.
+  .omo/boulder.json was not edited.
+- misleading_success_output: I did not rely on a generic build success. The focused Route and
+  MenuRefreshCoordinator filters both compiled the touched package and reported passing test
+  counts.
+- flaky/timing-sensitive test risk: No new sleeps, timers, or asynchronous waits were added.
+  Existing MenuRefreshCoordinator timing/concurrency tests ran under the requested filter and
+  passed in this run.
+- hung_command: No long-running command or exec session remains active; both SwiftPM filters
+  and git diff --check exited 0.
+
+Scope:
+- macOS menu bar route/readiness presentation only.
+- No HTTP command/state path was added.
+- No broad macOS suite or release/install gate was run.

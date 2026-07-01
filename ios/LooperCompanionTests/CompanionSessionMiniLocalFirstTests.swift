@@ -1425,6 +1425,133 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testDetailSwitchOpenUsesProjectionBeforeStaleBroaderSummary() async throws {
+        let sessionID = "detail-thread"
+        let liveReplyTime = "2026-06-24T00:00:45Z"
+        var staleSession = Self.sessionSummary(
+            id: sessionID,
+            title: "Stale Row Summary",
+            ref: "D1",
+            status: .active
+        )
+        staleSession.assistantPreview = "stale row preview"
+        staleSession.lastMessageAt = Constants.timestamp
+        var freshSession = Self.sessionSummary(
+            id: sessionID,
+            title: "Fresh Detail Summary",
+            ref: "D1",
+            status: .active
+        )
+        freshSession.assistantPreview = "fresh local preview"
+        freshSession.lastMessageAt = "2026-06-24T00:00:30Z"
+        let staleExtraSession = Self.sessionSummary(
+            id: "stale-extra-thread",
+            title: "Cached Devin Extra",
+            ref: "X1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 8,
+            records: [
+                Self.miniRecord(
+                    session: staleSession,
+                    assistantSurface: .codex,
+                    seq: 8,
+                    revision: "stale-detail-revision-8"
+                ),
+                Self.miniRecord(
+                    session: staleExtraSession,
+                    assistantSurface: .devin,
+                    seq: 8,
+                    revision: "stale-devin-revision-8"
+                ),
+            ],
+            latestReplies: [
+                Self.latestReply(
+                    sessionID: sessionID,
+                    messageID: "message-live",
+                    text: "Newest projected reply",
+                    latestSeq: 21,
+                    serverTime: liveReplyTime
+                ),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = SessionDetailRoute(
+            sessionID: sessionID,
+            assistantSurface: .codex
+        )
+
+        model.realtimeLatestSeq = 20
+        model.snapshot = Self.mobileSnapshot(
+            revision: "fresh-detail-revision-20",
+            sessions: [freshSession],
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [freshSession]]
+        )
+
+        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+
+        #expect(model.viewState.session(withID: sessionID, assistantSurface: .codex)?.title == "Fresh Detail Summary")
+        #expect(model.viewState.session(withID: staleExtraSession.id, assistantSurface: .devin)?.title == "Cached Devin Extra")
+        #expect(model.viewState.allSessions.map(\.id).sorted() == [sessionID, staleExtraSession.id])
+        for index in 0..<20 {
+            let surface: CompanionAssistantSurface = index.isMultiple(of: 2) ? .devin : .codex
+            _ = model.selectAssistantSurface(surface)
+            let presentation = model.viewState.detailPresentation(for: route)
+            #expect(presentation.title == "Fresh Detail Summary")
+            #expect(presentation.latestAssistantReply == "Newest projected reply")
+            #expect(presentation.lastMessageAt == liveReplyTime)
+        }
+        #expect(service.loadSnapshotCallCount == 0)
+        #expect(service.loadServerHealthCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func testDetailPresentationShowsCachedAssistantPreviewUntilLiveReplyProjectionArrives() async throws {
+        var cachedSession = Self.sessionSummary(
+            id: "preview-thread",
+            title: "Preview-backed Detail",
+            ref: "P1",
+            status: .active
+        )
+        cachedSession.assistantPreview = "Cached assistant reply from mini"
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 4,
+            records: [
+                Self.miniRecord(
+                    session: cachedSession,
+                    seq: 4,
+                    revision: "preview-revision-4"
+                ),
+            ]
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(
+                service: SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+            ),
+            sessionRuntime: runtime
+        )
+        let route = SessionDetailRoute(
+            sessionID: cachedSession.id,
+            assistantSurface: .codex
+        )
+
+        model.snapshot = Self.mobileSnapshot(
+            revision: "preview-snapshot",
+            sessions: [cachedSession],
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [cachedSession]]
+        )
+
+        #expect(model.viewState.detailPresentation(for: route).latestAssistantReply == "Cached assistant reply from mini")
+    }
+
+    @MainActor
+    @Test
     func testOlderStateMiniCacheCannotReplayAfterVisibleSnapshotReset() async throws {
         let staleSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -2030,10 +2157,16 @@ struct CompanionSessionMiniLocalFirstTests {
 
     private static func temporarySessionRuntime(
         latestSeq: Int64,
-        records: [SessionMiniFixture]
+        records: [SessionMiniFixture],
+        latestReplies: [SessionLatestReplyFixture] = []
     ) throws -> CompanionSessionRuntime {
         let fileURL = try temporaryStoreFileURL()
-        try seedMiniCache(at: fileURL, latestSeq: latestSeq, records: records)
+        try seedMiniCache(
+            at: fileURL,
+            latestSeq: latestSeq,
+            records: records,
+            latestReplies: latestReplies
+        )
         return try CompanionSessionRuntime(fileURL: fileURL)
     }
 
@@ -2075,7 +2208,8 @@ struct CompanionSessionMiniLocalFirstTests {
     private static func seedMiniCache(
         at fileURL: URL,
         latestSeq: Int64,
-        records: [SessionMiniFixture]
+        records: [SessionMiniFixture],
+        latestReplies: [SessionLatestReplyFixture] = []
     ) throws {
         let payload: [String: Any] = [
             "latestSeq": latestSeq,
@@ -2087,6 +2221,17 @@ struct CompanionSessionMiniLocalFirstTests {
                     "revision": record.revision,
                     "payloadJson": record.payloadJSON,
                 ]
+            },
+            "latestReplies": latestReplies.map { reply in
+                [
+                    "session_id": reply.sessionID,
+                    "message_id": reply.messageID,
+                    "text": reply.text,
+                    "latest_seq": reply.latestSeq,
+                    "is_final": reply.isFinal,
+                    "is_truncated": reply.isTruncated,
+                    "server_time": reply.serverTime,
+                ] as [String: Any]
             },
             "pendingCommands": [],
             "serverTime": Constants.timestamp,
@@ -2108,6 +2253,26 @@ struct CompanionSessionMiniLocalFirstTests {
             seq: seq,
             revision: revision,
             payloadJSON: String(decoding: data, as: UTF8.self)
+        )
+    }
+
+    private static func latestReply(
+        sessionID: String,
+        messageID: String,
+        text: String,
+        latestSeq: Int64,
+        isFinal: Bool = true,
+        isTruncated: Bool = false,
+        serverTime: String
+    ) -> SessionLatestReplyFixture {
+        SessionLatestReplyFixture(
+            sessionID: sessionID,
+            messageID: messageID,
+            text: text,
+            latestSeq: latestSeq,
+            isFinal: isFinal,
+            isTruncated: isTruncated,
+            serverTime: serverTime
         )
     }
 
@@ -2195,6 +2360,16 @@ private struct SessionMiniFixture: Equatable, Sendable {
     let seq: Int64
     let revision: String
     let payloadJSON: String
+}
+
+private struct SessionLatestReplyFixture: Equatable, Sendable {
+    let sessionID: String
+    let messageID: String
+    let text: String
+    let latestSeq: Int64
+    let isFinal: Bool
+    let isTruncated: Bool
+    let serverTime: String
 }
 
 private final class SessionMiniLocalFirstServiceSpy: CompanionService, @unchecked Sendable {
