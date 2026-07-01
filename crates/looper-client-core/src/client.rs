@@ -109,7 +109,38 @@ struct ClientCoreStream {
     receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
     command_sender: mpsc::Sender<OutboundSessionFrame>,
     command_ack_receiver: Option<mpsc::Receiver<ClientCommandAck>>,
+    identity: ClientCoreStreamIdentity,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct ClientCoreStreamIdentity {
     endpoints_identity: String,
+    bearer_token: String,
+    mobile_session_header: String,
+}
+
+impl std::fmt::Debug for ClientCoreStreamIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClientCoreStreamIdentity")
+            .field("endpoints_identity", &self.endpoints_identity)
+            .field("bearer_token", &redacted_identity_field(&self.bearer_token))
+            .field(
+                "mobile_session_header",
+                &redacted_identity_field(&self.mobile_session_header),
+            )
+            .finish()
+    }
+}
+
+impl ClientCoreStreamIdentity {
+    fn new(endpoints: &[ClientEndpoint], bearer_token: &str, mobile_session_header: &str) -> Self {
+        Self {
+            endpoints_identity: endpoints_identity(endpoints),
+            bearer_token: bearer_token.to_owned(),
+            mobile_session_header: mobile_session_header.to_owned(),
+        }
+    }
 }
 
 impl ClientCoreStream {
@@ -207,16 +238,19 @@ impl LooperClientCore {
         self.next_state_mini_stream_update().await
     }
 
-    pub(crate) fn has_warm_stream_for_endpoints(
+    pub(crate) fn has_warm_stream_for_configuration(
         &self,
         endpoints: &[ClientEndpoint],
+        bearer_token: &str,
+        mobile_session_header: &str,
     ) -> Result<bool, ClientCoreError> {
         require_endpoints(endpoints)?;
-        let endpoints_identity = endpoints_identity(endpoints);
+        let identity =
+            ClientCoreStreamIdentity::new(endpoints, bearer_token, mobile_session_header);
         let stream = self.lock_stream()?;
         Ok(stream
             .as_ref()
-            .map(|stream| stream.endpoints_identity == endpoints_identity && stream.is_running())
+            .map(|stream| stream.identity == identity && stream.is_running())
             .unwrap_or(false))
     }
 }
@@ -1009,7 +1043,8 @@ impl LooperClientCore {
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         require_endpoints(&endpoints)?;
-        let endpoints_identity = endpoints_identity(&endpoints);
+        let identity =
+            ClientCoreStreamIdentity::new(&endpoints, &bearer_token, &mobile_session_header);
         let mut state = self.lock_state()?;
         let mut stream = self.lock_stream()?;
         let has_running_stream = stream
@@ -1018,7 +1053,7 @@ impl LooperClientCore {
             .unwrap_or(false);
         let is_same_stream_configuration = stream
             .as_ref()
-            .map(|stream| stream.endpoints_identity == endpoints_identity)
+            .map(|stream| stream.identity == identity)
             .unwrap_or(false);
         if is_same_stream_configuration && has_running_stream {
             return Ok(state.snapshot());
@@ -1048,7 +1083,7 @@ impl LooperClientCore {
             receiver: Some(receiver),
             command_sender,
             command_ack_receiver: Some(command_ack_receiver),
-            endpoints_identity,
+            identity,
         });
         Ok(state.snapshot())
     }
@@ -2303,6 +2338,10 @@ fn endpoints_identity(endpoints: &[ClientEndpoint]) -> String {
     endpoint_urls.join("\n")
 }
 
+fn redacted_identity_field(value: &str) -> &'static str {
+    if value.is_empty() { "empty" } else { "present" }
+}
+
 fn restored_outbound_frame(
     command: ClientPendingCommand,
 ) -> Result<OutboundSessionFrame, ClientCoreError> {
@@ -2609,10 +2648,23 @@ mod tests {
         mpsc::Receiver<OutboundSessionFrame>,
         mpsc::Sender<ClientCommandAck>,
     ) {
-        let endpoints_identity = endpoints_identity(&[ClientEndpoint {
+        install_test_session_stream_with_auth(core, "token", "mobile-session")
+    }
+
+    fn install_test_session_stream_with_auth(
+        core: &Arc<LooperClientCore>,
+        bearer_token: &str,
+        mobile_session_header: &str,
+    ) -> (
+        mpsc::Receiver<OutboundSessionFrame>,
+        mpsc::Sender<ClientCommandAck>,
+    ) {
+        let endpoints = [ClientEndpoint {
             url: ENDPOINT_PRIMARY.to_owned(),
             last_good: false,
-        }]);
+        }];
+        let identity =
+            ClientCoreStreamIdentity::new(&endpoints, bearer_token, mobile_session_header);
         let (events_sender, events_receiver) = mpsc::channel(1);
         let (commands_sender, commands_receiver) = mpsc::channel(2);
         let (acks_sender, acks_receiver) = mpsc::channel(2);
@@ -2624,17 +2676,18 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
-            endpoints_identity,
+            identity,
         });
         drop(events_sender);
         (commands_receiver, acks_sender)
     }
 
     fn install_finished_test_session_stream(core: &Arc<LooperClientCore>) {
-        let endpoints_identity = endpoints_identity(&[ClientEndpoint {
+        let endpoints = [ClientEndpoint {
             url: ENDPOINT_PRIMARY.to_owned(),
             last_good: false,
-        }]);
+        }];
+        let identity = ClientCoreStreamIdentity::new(&endpoints, "token", "mobile-session");
         let (_events_sender, events_receiver) = mpsc::channel(1);
         let (commands_sender, _commands_receiver) = mpsc::channel(2);
         let (_acks_sender, acks_receiver) = mpsc::channel(2);
@@ -2654,7 +2707,7 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
-            endpoints_identity,
+            identity,
         });
     }
 
@@ -2742,6 +2795,45 @@ mod tests {
                 .expect("retained command frame");
             assert_eq!(frame.client_mutation_id, "cmid-prompt");
         });
+    }
+
+    #[test]
+    fn start_state_mini_stream_reconnects_for_same_endpoint_when_auth_identity_changes() {
+        let core = LooperClientCore::new();
+        let (mut stale_commands_receiver, _acks_sender) =
+            install_test_session_stream_with_auth(&core, "stale-token", "stale-mobile-session");
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Ready;
+            state.endpoint_url = ENDPOINT_PRIMARY.to_owned();
+        }
+        let endpoints = vec![ClientEndpoint {
+            url: ENDPOINT_PRIMARY.to_owned(),
+            last_good: true,
+        }];
+
+        let snapshot = core
+            .start_state_mini_stream(
+                endpoints.clone(),
+                "fresh-token".to_owned(),
+                "fresh-mobile-session".to_owned(),
+            )
+            .expect("auth identity change reconnects");
+
+        assert_eq!(snapshot.phase, ConnectionPhase::Connecting);
+        assert_eq!(snapshot.endpoint_url, "");
+        assert!(matches!(
+            stale_commands_receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert_eq!(
+            core.lock_stream()
+                .expect("stream lock")
+                .as_ref()
+                .expect("stream")
+                .identity,
+            ClientCoreStreamIdentity::new(&endpoints, "fresh-token", "fresh-mobile-session")
+        );
     }
 
     #[test]

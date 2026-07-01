@@ -61,7 +61,11 @@ impl LooperClientCoreSessionRuntime {
         mobile_session_header: String,
     ) -> Result<ClientStateSnapshot, ClientCoreError> {
         let endpoints = self.local_store.endpoints_with_last_good(endpoints)?;
-        let has_warm_stream = self.client_core.has_warm_stream_for_endpoints(&endpoints)?;
+        let has_warm_stream = self.client_core.has_warm_stream_for_configuration(
+            &endpoints,
+            &bearer_token,
+            &mobile_session_header,
+        )?;
         let restored_client_mutation_ids = if has_warm_stream {
             self.restore_pending_commands_from_local_store()?
         } else {
