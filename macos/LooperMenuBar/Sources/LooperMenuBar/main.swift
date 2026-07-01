@@ -439,19 +439,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func sessionMiniMenuStatusTitle(for snapshot: MenuBarSessionMiniLocalSnapshot) -> String {
     guard mobileRouteReadiness.hasLiveRouteProof else {
-      if let phase = try? sessionRuntime?.runtimeStateSnapshot().phase {
-        switch phase {
-        case .ready:
-          return "Session connected"
-        case .connecting:
-          return "Connecting"
-        case .reconnecting:
-          return "Reconnecting"
-        case .disconnected:
-          return "Local cache"
-        }
-      }
-      return "Local cache"
+      let phase = (try? sessionRuntime?.runtimeStateSnapshot().phase).map(MobileRouteSessionPhase.init)
+      return mobileRouteReadiness.unprovenSessionMiniStatusTitle(runtimePhase: phase)
     }
 
     return LooperHumanStatus.from(
@@ -681,6 +670,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func addMobileRouteDetails(to menu: NSMenu) {
     addDisabledItem("Route: \(mobileRouteReadiness.routeStatusTitle)", to: menu)
     addDisabledItem("Tailscale: \(mobileRouteReadiness.tailscaleStatusTitle)", to: menu)
+    if let enrichmentStatus = mobileRouteReadiness.httpEnrichmentStatusTitle() {
+      addDisabledItem(enrichmentStatus, to: menu)
+    }
   }
 
   private func addAgentDetails(

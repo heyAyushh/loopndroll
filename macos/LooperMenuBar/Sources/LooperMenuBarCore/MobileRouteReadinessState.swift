@@ -151,6 +151,23 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         return "\(Titles.sessionProven): \(hostTitle(for: provenRealtimeEndpoint))"
     }
 
+    public func unprovenSessionMiniStatusTitle(
+        runtimePhase: MobileRouteSessionPhase?
+    ) -> String {
+        guard !hasLiveRouteProof else {
+            return Titles.sessionProven
+        }
+
+        switch runtimePhase {
+        case .connecting:
+            return "Connecting: \(routeStatusTitle)"
+        case .reconnecting:
+            return "Reconnecting: \(routeStatusTitle)"
+        case .ready, .disconnected, nil:
+            return routeStatusTitle
+        }
+    }
+
     public func httpEnrichmentStatusTitle(now: Date = Date()) -> String? {
         guard health != nil else {
             return nil
