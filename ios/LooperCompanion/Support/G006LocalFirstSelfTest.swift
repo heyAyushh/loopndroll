@@ -18,6 +18,8 @@ enum G006LocalFirstSelfTest {
     private enum Constants {
         static let argument = "--g006-local-first-selftest"
         static let sampleCountArgument = "--g006-local-first-selftest-samples"
+        static let realtimeHostsArgument = "--g006-local-first-selftest-realtime-hosts"
+        static let realtimeHostsEnvironmentKey = "G006_SELFTEST_REALTIME_HOSTS"
         static let cachedThreadID = "cached-thread"
         static let fallbackThreadID = "fallback-thread"
         static let timestamp = "2026-06-24T00:00:00Z"
@@ -30,14 +32,14 @@ enum G006LocalFirstSelfTest {
         static let uiP95TargetMilliseconds = 30
         static let localLanAckP95TargetMilliseconds = 30
         static let tailscaleInternetAckP95TargetMilliseconds = 100
-        static let realtimePortConfigurationInput = """
-        http://100.119.200.69:8766
-        http://192.168.1.26:8766
-        """
-        static let expectedHTTPPortConfigurationOutput = [
-            "http://100.119.200.69:8765",
-            "http://192.168.1.26:8765",
-        ]
+        static let realtimePort = "8766"
+        static let httpCompanionPort = "8765"
+        // RFC 5737 TEST-NET-3 documentation addresses: guaranteed non-routable
+        // stand-ins for a real device's Tailscale/LAN IPs. Override with
+        // --g006-local-first-selftest-realtime-hosts or the
+        // G006_SELFTEST_REALTIME_HOSTS env var (comma-separated) to exercise
+        // this against real hosts locally.
+        static let defaultRealtimeHosts = ["203.0.113.10", "203.0.113.26"]
     }
 
     private enum SelfTestError: Error, CustomStringConvertible {
@@ -426,13 +428,47 @@ enum G006LocalFirstSelfTest {
     }
 
     private static func assertHTTPPortConfigurationRepair() throws {
+        let hosts = realtimeSelfTestHosts()
+        let realtimePortConfigurationInput = hosts
+            .map { "http://\($0):\(Constants.realtimePort)" }
+            .joined(separator: "\n")
+        let expectedHTTPPortConfigurationOutput = hosts.map { "http://\($0):\(Constants.httpCompanionPort)" }
+
         let urls = CompanionConfiguration.normalizedBaseURLsForUserInput(
-            Constants.realtimePortConfigurationInput
+            realtimePortConfigurationInput
         )
         try require(
-            urls.map(\.absoluteString) == Constants.expectedHTTPPortConfigurationOutput,
+            urls.map(\.absoluteString) == expectedHTTPPortConfigurationOutput,
             "realtime port leaked into HTTP companion configuration"
         )
+    }
+
+    /// Resolves the hosts used to exercise realtime-to-HTTP port rewriting.
+    /// Prefers an explicit launch argument, then an environment variable,
+    /// falling back to non-routable documentation addresses so this file
+    /// never needs to carry a real device's network address.
+    private static func realtimeSelfTestHosts() -> [String] {
+        let arguments = ProcessInfo.processInfo.arguments
+        if let argumentIndex = arguments.firstIndex(of: Constants.realtimeHostsArgument) {
+            let valueIndex = arguments.index(after: argumentIndex)
+            if valueIndex < arguments.endIndex {
+                return realtimeSelfTestHosts(fromCommaSeparated: arguments[valueIndex])
+            }
+        }
+
+        if let environmentValue = ProcessInfo.processInfo.environment[Constants.realtimeHostsEnvironmentKey] {
+            return realtimeSelfTestHosts(fromCommaSeparated: environmentValue)
+        }
+
+        return Constants.defaultRealtimeHosts
+    }
+
+    private static func realtimeSelfTestHosts(fromCommaSeparated value: String) -> [String] {
+        let hosts = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return hosts.isEmpty ? Constants.defaultRealtimeHosts : hosts
     }
 
     private static func assertSnapshotTimeoutPreservesConnectedMiniState() async throws {

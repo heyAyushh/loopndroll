@@ -751,10 +751,7 @@ struct LooperFoundationSessionSummarizer: Sendable {
     }
 
     private func fallbackSummary(for detail: SessionDetail) -> String {
-        let source = detail.latestAssistantMessage ?? detail.assistantPreview ?? ""
-        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmedSource.isEmpty else {
+        guard let trimmedSource = AssistantReplyResolution.resolve(detail: detail, summary: nil) else {
             return "\(detail.title) is \(detail.status.label.lowercased()) in \(detail.assistantClient.displayTitle)."
         }
 
@@ -772,7 +769,7 @@ struct LooperFoundationSessionSummarizer: Sendable {
             "Assistant: \(detail.assistantClient.displayTitle)",
             "Project: \(detail.metadata.sourceDisplayName)",
             "Goal: \(detail.goal?.title ?? "")",
-            "Latest assistant message: \(detail.latestAssistantMessage ?? detail.assistantPreview ?? "")"
+            "Latest assistant message: \(AssistantReplyResolution.resolve(detail: detail, summary: nil) ?? "")"
         ]
             .joined(separator: "\n")
             .prefix(contentLimit)
@@ -914,7 +911,7 @@ struct LooperSessionContextEngine: Sendable {
             "Repository: \(detail.metadata.gitRepository?.repositoryName ?? "")",
             "Branch: \(detail.metadata.gitRepository?.branch ?? "")",
             "Goal: \(detail.goal?.title ?? "")",
-            "Latest assistant message: \(detail.latestAssistantMessage ?? detail.assistantPreview ?? "")"
+            "Latest assistant message: \(AssistantReplyResolution.resolve(detail: detail, summary: nil) ?? "")"
         ]
             .filter { !$0.hasSuffix(": ") }
             .joined(separator: "\n")

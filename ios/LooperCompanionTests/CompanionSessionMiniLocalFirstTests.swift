@@ -172,7 +172,7 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
 
-        model.selectAssistantSurface(.claudeCode)
+        _ = model.selectAssistantSurface(.claudeCode)
         try await Self.waitForSelectedAssistantSurface(.claudeCode, model: model)
         model.connectionState = .connecting
         #expect(model.viewState.sessionsUnavailableTitle == "No Claude Code Sessions")
@@ -238,10 +238,8 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
 
-        let selectionTask = try #require(model.selectAssistantSurface(.devin))
+        #expect(model.selectAssistantSurface(.devin))
 
-        #expect(model.viewState.selectedAssistantSurface == .devin)
-        #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
         #expect(service.loadSnapshotCallCount == 0)
@@ -289,15 +287,9 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
         #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
 
-        let selectionTask = try #require(model.selectAssistantSurface(.zed))
+        #expect(model.selectAssistantSurface(.zed))
 
         #expect(service.loadSnapshotCallCount == 0)
-        #expect(model.viewState.selectedAssistantSurface == .zed)
-        #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
-        #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
-        #expect(model.viewState.assistantSurface(for: "zed-thread") == .zed)
-
-        #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .zed)
         #expect(model.viewState.activeSessions.map(\.id) == ["zed-thread"])
         #expect(model.viewState.allSessions.map(\.id).sorted() == ["codex-thread", "zed-thread"])
@@ -370,7 +362,7 @@ struct CompanionSessionMiniLocalFirstTests {
         _ = model.selectAssistantSurface(.claudeCode)
         _ = model.selectAssistantSurface(.devin)
         _ = model.selectAssistantSurface(.grokBuild)
-        let finalSelectionTask = try #require(model.selectAssistantSurface(.codex))
+        #expect(model.selectAssistantSurface(.codex))
 
         #expect(model.viewState.selectedAssistantSurface == .codex)
         #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
@@ -384,7 +376,6 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.assistantSurface(for: "claude-thread") == .claudeCode)
         #expect(model.viewState.assistantSurface(for: "devin-thread") == .devin)
         #expect(model.viewState.assistantSurface(for: "grok-thread") == .grokBuild)
-        #expect(await finalSelectionTask.value)
         #expect(service.loadSnapshotCallCount == 0)
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
     }
@@ -451,12 +442,10 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.activeSessions.map(\.id) == ["codex-thread"])
         #expect(model.viewState.allSessions.map(\.id).sorted() == localMiniSourceIDs)
 
-        let selectionTask = try #require(model.selectAssistantSurface(.devin))
+        #expect(model.selectAssistantSurface(.devin))
 
         #expect(service.loadSnapshotCallCount == 0)
         #expect(service.loadServerHealthCallCount == 0)
-
-        #expect(await selectionTask.value)
         #expect(model.viewState.selectedAssistantSurface == .devin)
         #expect(model.viewState.activeSessions.map(\.id) == ["devin-thread"])
         #expect(model.viewState.allSessions.map(\.id).sorted() == localMiniSourceIDs)
@@ -588,7 +577,7 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
 
-        model.selectAssistantSurface(.devin)
+        _ = model.selectAssistantSurface(.devin)
         try await Self.waitForSelectedAssistantSurface(.devin, model: model)
 
         #expect(model.viewState.selectedAssistantSurface == .devin)
@@ -619,11 +608,8 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
 
-        let claudeTask = try #require(model.selectAssistantSurface(.claudeCode))
-        let devinTask = try #require(model.selectAssistantSurface(.devin))
-
-        #expect(await claudeTask.value)
-        #expect(await devinTask.value)
+        #expect(model.selectAssistantSurface(.claudeCode))
+        #expect(model.selectAssistantSurface(.devin))
         #expect(model.viewState.selectedAssistantSurface == .devin)
 
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
@@ -651,16 +637,15 @@ struct CompanionSessionMiniLocalFirstTests {
             sessionRuntime: runtime
         )
         let surfaces = CompanionAssistantSurface.allCases
-        var latestTask: Task<Bool, Never>?
+        var didSelectLatestSurface = false
 
         for index in 0..<100 {
             let surface = surfaces[index % surfaces.count]
-            latestTask = model.selectAssistantSurface(surface)
+            didSelectLatestSurface = model.selectAssistantSurface(surface)
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        let resolvedTask = try #require(latestTask)
-        #expect(await resolvedTask.value)
+        #expect(didSelectLatestSurface)
         #expect(model.viewState.selectedAssistantSurface == .zed)
 
         #expect(Self.pendingCommands(in: runtime, kind: .setAssistantSurface).isEmpty)
@@ -691,12 +676,12 @@ struct CompanionSessionMiniLocalFirstTests {
         let didMarkCurrent = await model.markCurrentSiriSession(cachedSession)
         let didSetDefault = await model.setSiriDefaultSession(cachedSession)
         let didSavePrompt = await model.saveDefaultPrompt("Continue safely")
-        let didSelectSurface = await model.selectAssistantSurface(.devin)?.value
+        let didSelectSurface = model.selectAssistantSurface(.devin)
 
         #expect(didMarkCurrent)
         #expect(didSetDefault)
         #expect(didSavePrompt)
-        #expect(didSelectSurface == true)
+        #expect(didSelectSurface)
         #expect(model.snapshot?.globalSettings.siriCurrentSessionId == Constants.cachedThreadID)
         #expect(model.snapshot?.globalSettings.siriDefaultSessionId == Constants.cachedThreadID)
         #expect(model.snapshot?.globalSettings.defaultPrompt == "Continue safely")

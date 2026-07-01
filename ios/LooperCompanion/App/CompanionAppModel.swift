@@ -7,14 +7,7 @@ import UserNotifications
 
 private enum CachedSnapshotRestoreReason {
     static let appLaunch = "app-launch"
-    static let bundledConnectionChange = "bundled-connection-change"
-    static let storedConnectionChange = "stored-connection-change"
-    static let handoffConnectionChange = "handoff-connection-change"
     static let loadFailure = "load-failure"
-}
-
-private enum SessionMiniSnapshotReasonPrefix {
-    static let acceptedClientCoreCommand = "client-core-"
 }
 
 private enum SiriDonationEvent {
@@ -226,22 +219,18 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("model:bundled-connection-activated")
         }
 
-        let didRestoreSessionMiniSnapshot = restoreCachedSessionMiniSnapshotIfAvailable(
+        _ = restoreCachedSessionMiniSnapshotIfAvailable(
             reason: CachedSnapshotRestoreReason.appLaunch
         )
-        let didScheduleCachedSnapshotRestore = !didRestoreSessionMiniSnapshot && !configuredBaseURL.isEmpty
-        if didScheduleCachedSnapshotRestore {
-            snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: CachedSnapshotRestoreReason.appLaunch)
-        }
 
         configureStopQuickActions()
         SessionQuickActionCenter.shared.configureSessionRuntime(sessionMiniController.sessionRuntime)
         registerSessionQuickActionHandler()
         CompanionDiagnostics.lifecycle.info(
-            "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore, privacy: .public)"
+            "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public)"
         )
         CompanionDiagnostics.record(
-            "model:init baseURL=\(configuredBaseURL) cachedSnapshotRestoreScheduled=\(didScheduleCachedSnapshotRestore)"
+            "model:init baseURL=\(configuredBaseURL)"
         )
     }
 
@@ -309,12 +298,7 @@ final class CompanionAppModel {
         if reloadsServiceFromStoredConnection,
            didActivateBundledConnection || shouldReloadServiceFromStoredConnection() {
             CompanionDiagnostics.lifecycle.info("Stored connection changed during active-state preparation")
-            await resetConnectionStateForStoredConnection(
-                clearsSnapshotCache: false,
-                cachedSnapshotRestoreReason: didActivateBundledConnection
-                    ? CachedSnapshotRestoreReason.bundledConnectionChange
-                    : CachedSnapshotRestoreReason.storedConnectionChange
-            )
+            await resetConnectionStateForStoredConnection(clearsSnapshotCache: false)
         }
 
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
@@ -377,13 +361,22 @@ final class CompanionAppModel {
             reason: "session-mini-sync-\(update.reason)",
             latestSeq: update.latestSeq
         ) else {
+            // The stream is still delivering data even though this
+            // particular session-list snapshot was rejected as stale, so
+            // liveness genuinely advances here (it has its own seq guard).
             applyRealtimeStreamLiveness(
                 serverTime: update.snapshot.host.lastSyncedAt,
                 latestSeq: update.latestSeq,
                 isLive: true,
                 endpointURL: update.endpointURL
             )
-            if update.reason == "text_chunk" {
+            if update.reason == CompanionSessionMiniSyncReason.textChunk {
+                // A rejected text-chunk snapshot doesn't change the session
+                // list, but the assistant reply text itself still needs a
+                // fresh render: SessionDetailScreen re-reads the latest
+                // reply straight from client-core on each render. Bumping
+                // lastUpdatedAt is what triggers that re-render; it does not
+                // claim the snapshot was applied.
                 lastUpdatedAt = Date()
                 CompanionDiagnostics.record(
                     "session-detail:text-chunk-invalidated seq=\(update.latestSeq)"
@@ -526,20 +519,13 @@ final class CompanionAppModel {
     }
 
     private func reloadConnection() async {
-        await resetConnectionStateForStoredConnection(
-            clearsSnapshotCache: true,
-            cachedSnapshotRestoreReason: nil
-        )
+        await resetConnectionStateForStoredConnection(clearsSnapshotCache: true)
         startSessionRuntimeSyncIfNeeded()
         await loadSnapshot(allowsConcurrentConnectionReload: true)
     }
 
-    private func resetConnectionStateForStoredConnection(
-        clearsSnapshotCache: Bool,
-        cachedSnapshotRestoreReason: String?
-    ) async {
+    private func resetConnectionStateForStoredConnection(clearsSnapshotCache: Bool) async {
         connectionRevision += 1
-        snapshotLoads.cancelCachedSnapshotRestore()
         snapshotLoads.cancelSnapshotLoad()
         stopSessionRuntimeSyncForRestart()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
@@ -553,6 +539,7 @@ final class CompanionAppModel {
         connectionState = .connecting
         pendingOpenSessionID = nil
         errorMessage = nil
+        didAttemptForegroundSessionMiniRecovery = false
 
         if clearsSnapshotCache {
             CompanionSnapshotCache.clear()
@@ -562,10 +549,8 @@ final class CompanionAppModel {
             configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
             applyLiveEnvironmentFromSessionCore()
             activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
-            resetSnapshotState(cachedSnapshotRestoreReason: cachedSnapshotRestoreReason)
-        } else {
-            resetSnapshotState(cachedSnapshotRestoreReason: nil)
         }
+        resetSnapshotState()
         prepareSessionRuntimeInBackground()
     }
 
@@ -579,6 +564,7 @@ final class CompanionAppModel {
         serverHealth = nil
         reachedBaseURL = nil
         markSessionStreamStopped()
+        didAttemptForegroundSessionMiniRecovery = false
 
         restartSessionRuntimeSyncForRouteChange()
     }
@@ -590,14 +576,11 @@ final class CompanionAppModel {
         startSessionRuntimeSyncIfNeeded()
     }
 
-    private func resetSnapshotState(cachedSnapshotRestoreReason: String?) {
+    private func resetSnapshotState() {
         serverHealth = nil
         reachedBaseURL = nil
         activeSessionRouteBaseURL = nil
         errorMessage = nil
-        if let cachedSnapshotRestoreReason {
-            snapshotLoads.scheduleCachedSnapshotRestoreIfAvailable(reason: cachedSnapshotRestoreReason)
-        }
 
         guard !snapshotState.hasSnapshot else {
             CompanionDiagnostics.record("snapshot:reset-preserve-local-visible")
@@ -715,17 +698,6 @@ final class CompanionAppModel {
             } else {
                 didRestoreSessionMiniSnapshot = false
             }
-
-            let didRestoreCachedSnapshot: Bool
-            if snapshot == nil {
-                didRestoreCachedSnapshot = await restoreCachedSnapshotIfAvailable(
-                    reason: CachedSnapshotRestoreReason.loadFailure,
-                    onlyWhenSnapshotMissing: true,
-                    restoreRevision: loadRevision
-                )
-            } else {
-                didRestoreCachedSnapshot = false
-            }
             let hasUsableSnapshot = snapshot != nil
             let failureProjection = reduceSnapshotLoadFailureOrCrash(
                 mappedErrorState: connectionState(for: error),
@@ -749,10 +721,10 @@ final class CompanionAppModel {
                 error: error
             )
             CompanionDiagnostics.lifecycle.error(
-                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreSessionMiniSnapshot || didRestoreCachedSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreSessionMiniSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             CompanionDiagnostics.record(
-                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreSessionMiniSnapshot || didRestoreCachedSnapshot) error=\(error.localizedDescription)"
+                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreSessionMiniSnapshot) error=\(error.localizedDescription)"
             )
         }
     }
@@ -761,6 +733,18 @@ final class CompanionAppModel {
         await reconcileLocalSessionState(reason: .manualRefresh)
     }
 
+    /// Single linear reconciliation flow. Order of precedence:
+    /// 1. Skip entirely if the realtime stream is already live and this
+    ///    reason doesn't need a local replay on top of it.
+    /// 2. Reasons that must recover the state-mini snapshot before trusting
+    ///    any cached replay (pull-to-refresh style reasons) do that first.
+    /// 3. Otherwise, prefer an already-loaded snapshot; fall back to
+    ///    restoring one from the local cache; finally attempt state-mini
+    ///    recovery as the last resort.
+    ///
+    /// A cached snapshot, once present, always ends the flow via
+    /// `finishWithExistingSnapshot` (mirroring `recoverStateMiniSnapshotIfNeeded`
+    /// in the background) rather than being checked for a second time.
     func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
         startSessionRuntimeSyncIfNeeded()
 
@@ -793,26 +777,13 @@ final class CompanionAppModel {
         }
 
         if snapshotState.hasSnapshot, !reason.shouldReplayCachedSnapshotWhenLoaded {
-            markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
-            CompanionDiagnostics.record(
-                "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
-            )
-            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
+            await finishWithExistingSnapshot(reason: reason)
             return
         }
 
         if restoreCachedSessionMiniSnapshotIfAvailable(reason: reason.rawValue) {
             CompanionDiagnostics.record(
                 "session-mini:local-reconcile-applied reason=\(reason.rawValue)"
-            )
-            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
-            return
-        }
-
-        if snapshotState.hasSnapshot {
-            markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
-            CompanionDiagnostics.record(
-                "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
             )
             _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
             return
@@ -825,6 +796,14 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "session-mini:local-reconcile-wait reason=\(reason.rawValue)"
         )
+    }
+
+    private func finishWithExistingSnapshot(reason: CompanionLocalSessionReconcileReason) async {
+        markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
+        CompanionDiagnostics.record(
+            "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
+        )
+        _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
     }
 
     private func recoverStateMiniSnapshotIfNeeded(
@@ -1180,10 +1159,7 @@ final class CompanionAppModel {
             ),
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
-        await resetConnectionStateForStoredConnection(
-            clearsSnapshotCache: false,
-            cachedSnapshotRestoreReason: CachedSnapshotRestoreReason.handoffConnectionChange
-        )
+        await resetConnectionStateForStoredConnection(clearsSnapshotCache: false)
         startSessionRuntimeSyncIfNeeded()
         CompanionDiagnostics.lifecycle.info(
             "Handoff adopted baseURL=\(handoffBaseURL.absoluteString, privacy: .public)"
@@ -1784,8 +1760,11 @@ final class CompanionAppModel {
         return true
     }
 
+    /// Selecting an assistant surface is a purely local, synchronous
+    /// projection over already-loaded state (no FFI call, no network).
+    /// Returns whether the selection was applied.
     @discardableResult
-    func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Task<Bool, Never>? {
+    func selectAssistantSurface(_ surface: CompanionAssistantSurface) -> Bool {
         logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.requested, surface: surface)
 
         guard snapshotState.selectedAssistantSurface != surface else {
@@ -1795,7 +1774,7 @@ final class CompanionAppModel {
                 reason: AssistantSurfaceSelectionFailureReason.noChange
             )
             CompanionDiagnostics.record("assistant-surface:ignored surface=\(surface.rawValue) reason=no-change")
-            return nil
+            return false
         }
 
         AssistantSurfaceETTraceMetric.postStarted(for: surface)
@@ -1806,7 +1785,7 @@ final class CompanionAppModel {
                 reason: AssistantSurfaceSelectionFailureReason.projectionRejected
             )
             AssistantSurfaceETTraceMetric.postEnded(for: surface)
-            return nil
+            return false
         }
         logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.applied, surface: surface)
         CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
@@ -1814,7 +1793,7 @@ final class CompanionAppModel {
         lastUpdatedAt = Date()
         AssistantSurfaceETTraceMetric.postEnded(for: surface)
 
-        return Task { true }
+        return true
     }
 
     private func recordPromptAccepted(
@@ -1962,69 +1941,28 @@ final class CompanionAppModel {
     }
 
     @discardableResult
-    private func restoreCachedSessionMiniSnapshotIfAvailable(reason: String) -> Bool {
+    private func restoreCachedSessionMiniSnapshotIfAvailable(
+        reason: String,
+        bypassesSeqGating: Bool = false
+    ) -> Bool {
         sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason, latestSeq in
             self?.applyCachedSessionMiniSnapshot(
                 cachedSnapshot,
                 reason: reason,
-                latestSeq: latestSeq
+                latestSeq: latestSeq,
+                bypassesSeqGating: bypassesSeqGating
             ) ?? false
         }
     }
 
+    /// Client-core-accepted commands (archive, delete, mode, prompt, etc.)
+    /// already mutated the local store synchronously, so the resulting
+    /// cached snapshot is authoritative regardless of its sequence number.
+    /// This flag is threaded explicitly instead of inferring intent from a
+    /// magic string prefix on `reason`.
     @discardableResult
     private func applyAcceptedClientCoreLocalSnapshot(reason: String) -> Bool {
-        restoreCachedSessionMiniSnapshotIfAvailable(
-            reason: "\(SessionMiniSnapshotReasonPrefix.acceptedClientCoreCommand)\(reason)"
-        )
-    }
-
-    @discardableResult
-    private func restoreCachedSnapshotIfAvailable(
-        reason: String,
-        onlyWhenSnapshotMissing: Bool,
-        restoreRevision: Int
-    ) async -> Bool {
-        if hasKnownSessionMiniCursor() {
-            CompanionDiagnostics.record(
-                "snapshot:cache-restore-session-cursor-skip reason=\(reason) realtimeSeq=\(realtimeLatestSeq)"
-            )
-            return false
-        }
-
-        if sessionMiniController.hasLocalStateMiniEvidence(reason: reason) {
-            CompanionDiagnostics.record(
-                "snapshot:cache-restore-session-mini-store-skip reason=\(reason)"
-            )
-            return false
-        }
-
-        if snapshotState.shouldSkipCachedRestore(onlyWhenSnapshotMissing: onlyWhenSnapshotMissing) {
-            CompanionDiagnostics.record("snapshot:cache-restore-skip reason=\(reason) existingSnapshot=true")
-            return false
-        }
-
-        guard let cachedSnapshot = await CompanionSnapshotCache.load() else {
-            return false
-        }
-
-        guard !Task.isCancelled else {
-            CompanionDiagnostics.record("snapshot:cache-restore-cancelled reason=\(reason)")
-            return false
-        }
-
-        guard restoreRevision == connectionRevision else {
-            CompanionDiagnostics.record("snapshot:cache-restore-stale-skip reason=\(reason)")
-            return false
-        }
-
-        if snapshotState.shouldSkipCachedRestore(onlyWhenSnapshotMissing: onlyWhenSnapshotMissing) {
-            CompanionDiagnostics.record("snapshot:cache-restore-skip reason=\(reason) existingSnapshot=true")
-            return false
-        }
-
-        applyCachedSnapshot(cachedSnapshot, reason: reason)
-        return true
+        restoreCachedSessionMiniSnapshotIfAvailable(reason: reason, bypassesSeqGating: true)
     }
 
     private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {
@@ -2051,9 +1989,10 @@ final class CompanionAppModel {
     private func applyCachedSessionMiniSnapshot(
         _ cachedSnapshot: MobileSnapshot,
         reason: String,
-        latestSeq: Int64
+        latestSeq: Int64,
+        bypassesSeqGating: Bool = false
     ) -> Bool {
-        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq, reason: reason) else {
+        guard bypassesSeqGating || shouldApplyStateMiniSnapshot(latestSeq: latestSeq) else {
             guard applyBroaderCachedSessionMiniSnapshot(
                 cachedSnapshot,
                 reason: reason,
@@ -2114,7 +2053,6 @@ final class CompanionAppModel {
             reachedBaseURL = nil
         }
         lastUpdatedAt = Date()
-        CompanionSnapshotCache.save(nextSnapshot)
         spotlightCoordinator.sync(with: snapshotState.allSessions)
         scheduleLocalFallbackNotificationsIfNeeded(
             previousSnapshot: previousSnapshot,
@@ -2165,10 +2103,7 @@ final class CompanionAppModel {
         }
     }
 
-    private func shouldApplyStateMiniSnapshot(latestSeq: Int64, reason: String) -> Bool {
-        if reason.hasPrefix(SessionMiniSnapshotReasonPrefix.acceptedClientCoreCommand) {
-            return true
-        }
+    private func shouldApplyStateMiniSnapshot(latestSeq: Int64) -> Bool {
         if realtimeLatestSeq > 0, latestSeq < realtimeLatestSeq {
             return false
         }
@@ -2355,18 +2290,6 @@ extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {
 
     func snapshotLoadClearError() {
         errorMessage = nil
-    }
-
-    func snapshotLoadRestoreCachedSnapshot(
-        reason: String,
-        onlyWhenSnapshotMissing: Bool,
-        restoreRevision: Int
-    ) async -> Bool {
-        await restoreCachedSnapshotIfAvailable(
-            reason: reason,
-            onlyWhenSnapshotMissing: onlyWhenSnapshotMissing,
-            restoreRevision: restoreRevision
-        )
     }
 
     func snapshotLoadPerform(loadRevision: Int) async {

@@ -2315,7 +2315,7 @@ extension SessionDetail {
             lastActivityAt: summary.lastActivityAt,
             lastMessageAt: summary.lastMessageAt,
             assistantPreview: summary.assistantPreview,
-            latestAssistantMessage: Self.latestAssistantReply(from: summary),
+            latestAssistantMessage: AssistantReplyResolution.trimmedNonEmpty(summary.assistantPreview),
             contentStatus: .localMiniOnly,
             firstUserPrompt: nil,
             isArchived: summary.isArchived,
@@ -2331,15 +2331,36 @@ extension SessionDetail {
             availableCompletionChecks: snapshot.completionChecks
         )
     }
+}
 
-    private static func latestAssistantReply(from summary: SessionSummary) -> String? {
-        guard let reply = summary.assistantPreview?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !reply.isEmpty
+/// Single source of truth for resolving the assistant reply text shown to
+/// the user. Replaces what used to be three independent fallback layers
+/// (detail init seeding, presentation cascade, and ad hoc call sites) with
+/// one explicit precedence: the live FFI-projected message wins, then the
+/// detail's own preview, then the session-list summary's preview.
+enum AssistantReplyResolution {
+    static func trimmedNonEmpty(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
         else {
             return nil
         }
+        return trimmed
+    }
 
-        return reply
+    static func resolve(detail: SessionDetail?, summary: SessionSummary?) -> String? {
+        let candidates = [
+            detail?.latestAssistantMessage,
+            detail?.assistantPreview,
+            summary?.assistantPreview,
+        ]
+
+        for candidate in candidates {
+            if let resolved = trimmedNonEmpty(candidate) {
+                return resolved
+            }
+        }
+        return nil
     }
 }
 

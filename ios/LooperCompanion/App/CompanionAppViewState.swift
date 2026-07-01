@@ -427,21 +427,7 @@ struct SessionDetailPresentation {
     }
 
     var latestAssistantReply: String? {
-        let candidates = [
-            detail?.latestAssistantMessage,
-            detail?.assistantPreview,
-            summary?.assistantPreview
-        ]
-
-        for candidate in candidates {
-            guard let reply = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !reply.isEmpty
-            else {
-                continue
-            }
-            return reply
-        }
-        return nil
+        AssistantReplyResolution.resolve(detail: detail, summary: summary)
     }
 
     var title: String {

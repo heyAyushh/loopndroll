@@ -1,7 +1,7 @@
 import Foundation
 import LooperClientCore
 
-private enum CompanionSessionMiniSyncReason {
+enum CompanionSessionMiniSyncReason {
     static let delta = "delta"
     static let heartbeat = "heartbeat"
     static let textChunk = "text_chunk"

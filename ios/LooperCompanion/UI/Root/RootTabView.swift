@@ -282,6 +282,10 @@ struct RootTabView: View {
         await model.reconcileLocalSessionState(reason: .activeScene)
         await model.sendLaunchVerificationAlertIfRequested()
 
+        // `refreshTaskID` includes `scenePhase == .active`, so this task is
+        // cancelled and restarted the moment scenePhase leaves `.active`.
+        // The loop body below only ever runs while still active; it does not
+        // need to re-check scenePhase itself.
         while !Task.isCancelled {
             try? await Task.sleep(for: CompanionMetrics.autoRefreshInterval)
 
@@ -292,13 +296,6 @@ struct RootTabView: View {
             guard authenticator.isUnlocked else {
                 CompanionDiagnostics.lifecycle.info("Root refresh loop stopped because app locked")
                 return
-            }
-
-            guard scenePhase == .active else {
-                CompanionDiagnostics.lifecycle.info(
-                    "Root refresh loop waiting for active scenePhase=\(String(describing: scenePhase), privacy: .public)"
-                )
-                continue
             }
 
             await model.reconcileLocalSessionState(reason: .fallbackTimer)

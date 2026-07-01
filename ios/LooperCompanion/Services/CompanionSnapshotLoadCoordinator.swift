@@ -6,20 +6,12 @@ protocol CompanionSnapshotLoadCoordinatorDelegate: AnyObject {
 
     func snapshotLoadSetLoading(_ isLoading: Bool)
     func snapshotLoadClearError()
-    func snapshotLoadRestoreCachedSnapshot(
-        reason: String,
-        onlyWhenSnapshotMissing: Bool,
-        restoreRevision: Int
-    ) async -> Bool
     func snapshotLoadPerform(loadRevision: Int) async
 }
 
 @MainActor
 final class CompanionSnapshotLoadCoordinator {
     private weak var delegate: CompanionSnapshotLoadCoordinatorDelegate?
-    private var cachedSnapshotRestoreTask: Task<Void, Never>?
-    private var nextCachedSnapshotRestoreID = 0
-    private var activeCachedSnapshotRestoreID = 0
     private var snapshotLoadTask: Task<Void, Never>?
     private var nextSnapshotLoadID = 0
     private var activeSnapshotLoadID = 0
@@ -28,33 +20,6 @@ final class CompanionSnapshotLoadCoordinator {
 
     init(delegate: CompanionSnapshotLoadCoordinatorDelegate) {
         self.delegate = delegate
-    }
-
-    func scheduleCachedSnapshotRestoreIfAvailable(reason: String) {
-        cachedSnapshotRestoreTask?.cancel()
-        nextCachedSnapshotRestoreID += 1
-        let restoreID = nextCachedSnapshotRestoreID
-        activeCachedSnapshotRestoreID = restoreID
-        let restoreRevision = delegate?.snapshotLoadConnectionRevision ?? 0
-
-        cachedSnapshotRestoreTask = Task { @MainActor [weak self] in
-            guard let self, let delegate = self.delegate else {
-                return
-            }
-
-            _ = await delegate.snapshotLoadRestoreCachedSnapshot(
-                reason: reason,
-                onlyWhenSnapshotMissing: true,
-                restoreRevision: restoreRevision
-            )
-            self.finishCachedSnapshotRestore(id: restoreID)
-        }
-    }
-
-    func cancelCachedSnapshotRestore() {
-        cachedSnapshotRestoreTask?.cancel()
-        cachedSnapshotRestoreTask = nil
-        activeCachedSnapshotRestoreID = 0
     }
 
     func cancelSnapshotLoad() {
@@ -88,14 +53,6 @@ final class CompanionSnapshotLoadCoordinator {
             hasPendingSnapshotLoad = false
             await loadSnapshotOnce()
         } while shouldDrainPendingSnapshotLoad()
-    }
-
-    private func finishCachedSnapshotRestore(id: Int) {
-        guard id == activeCachedSnapshotRestoreID else {
-            return
-        }
-
-        cachedSnapshotRestoreTask = nil
     }
 
     private func loadSnapshotOnce() async {

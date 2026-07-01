@@ -20,94 +20,24 @@ struct SessionDetailScreen: View {
         route.sessionID
     }
 
-    private var presentation: SessionDetailPresentation {
-        model.viewState.detailPresentation(for: route)
-    }
-
-    private var currentSummary: SessionSummary? {
-        presentation.summary
-    }
-
-    private var detail: SessionDetail? {
-        presentation.detail
-    }
-
-    private var hasResolvedSession: Bool {
-        presentation.hasResolvedSession
-    }
-
-    private var currentStatus: SessionStatus {
-        presentation.status
-    }
-
-    private var currentMode: SessionMode? {
-        presentation.effectiveMode
-    }
-
-    private var latestAssistantReply: String? {
-        presentation.latestAssistantReply
-    }
-
-    private var currentTitle: String {
-        presentation.title
-    }
-
-    private var currentRef: String {
-        presentation.ref
-    }
-
-    private var currentAssistantSurface: CompanionAssistantSurface {
-        presentation.assistantSurface
-    }
-
-    private var currentAssistantTitle: String {
-        presentation.assistantTitle
-    }
-
-    private var firstUserPromptText: String? {
-        presentation.firstUserPromptText
-    }
-
-    private var currentMetadata: SessionMetadata {
-        presentation.metadata
-    }
-
-    private var currentGoal: SessionGoalSummary? {
-        presentation.goal
-    }
-
-    private var currentLastActivityAt: String? {
-        presentation.lastActivityAt
-    }
-
-    private var currentLastMessageAt: String? {
-        presentation.lastMessageAt
-    }
-
-    private var availableNotifications: [NotificationDestination] {
-        detail?.availableNotifications ?? model.viewState.availableNotifications
-    }
-
-    private var selectedCompletionCheck: CompletionCheckSummary? {
-        detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })
-    }
-
-    private var currentIsArchived: Bool {
-        presentation.isArchived
-    }
-
     var body: some View {
+        // Computed once per render: `detailPresentation(for:)` performs a
+        // synchronous Rust FFI local-store read, so every section/helper
+        // below takes this single value as a parameter instead of each
+        // re-deriving it from `model.viewState`.
+        let presentation = model.viewState.detailPresentation(for: route)
+
         List {
-            if hasResolvedSession {
-                summarySection
-                if latestAssistantReply != nil {
-                    assistantReplySection
+            if presentation.hasResolvedSession {
+                summarySection(presentation)
+                if presentation.latestAssistantReply != nil {
+                    assistantReplySection(presentation)
                 }
-                promptSection
-                modeSection
-                notificationsSection
-                completionCheckSection
-                manageSection
+                promptSection(presentation)
+                modeSection(presentation)
+                notificationsSection(presentation)
+                completionCheckSection(presentation)
+                manageSection(presentation)
             } else {
                 missingSessionSection
             }
@@ -116,7 +46,7 @@ struct SessionDetailScreen: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .safeAreaPadding(.bottom, CompanionMetrics.rowSpacing)
         .companionListSurface()
-        .navigationTitle(currentRef)
+        .navigationTitle(presentation.ref)
         .navigationBarTitleDisplayMode(.inline)
         .userActivity(LooperContinuationActivity.activityType, isActive: true) { activity in
             LooperContinuationActivity.configureContinuationActivity(
@@ -134,16 +64,16 @@ struct SessionDetailScreen: View {
         )
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
-            syncDraftModeFromCurrentModeIfNeeded()
+            syncDraftModeFromCurrentModeIfNeeded(presentation.effectiveMode)
         }
         .onChange(of: route.id) {
-            resetDraftMode()
+            resetDraftMode(presentation.effectiveMode)
             openedLifecycleSessionID = nil
             openedLifecycleTask?.cancel()
             openedLifecycleTask = nil
         }
-        .onChange(of: currentMode) {
-            syncDraftModeFromCurrentModeIfNeeded()
+        .onChange(of: presentation.effectiveMode) {
+            syncDraftModeFromCurrentModeIfNeeded(presentation.effectiveMode)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -157,7 +87,7 @@ struct SessionDetailScreen: View {
             ToolbarItemGroup(placement: .keyboard) {
                 if focusedInput == .prompt {
                     PromptSuggestionKeyboardBar(
-                        suggestions: keyboardPromptSuggestions,
+                        suggestions: keyboardPromptSuggestions(presentation),
                         onSelect: usePromptSuggestion
                     )
                 }
@@ -173,8 +103,8 @@ struct SessionDetailScreen: View {
         .task(id: route.id) {
             runOpenedSessionLifecycleIfNeeded()
         }
-        .task(id: promptSuggestionContextKey) {
-            await refreshPromptSuggestions()
+        .task(id: promptSuggestionContextKey(presentation)) {
+            await refreshPromptSuggestions(presentation)
         }
         .refreshable {
             model.refreshSessionDetail(
@@ -221,31 +151,32 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private var summarySection: some View {
-        Section("Summary") {
+    private func summarySection(_ presentation: SessionDetailPresentation) -> some View {
+        let metadata = presentation.metadata
+        return Section("Summary") {
             LabeledContent {
                 HStack(spacing: 8) {
-                    AssistantSurfaceLogoMark(surface: currentAssistantSurface)
+                    AssistantSurfaceLogoMark(surface: presentation.assistantSurface)
                         .frame(width: 28, height: 28)
-                    Text(currentAssistantTitle)
+                    Text(presentation.assistantTitle)
                 }
             } label: {
                 Text("Assistant")
             }
-            LabeledContent("Title", value: currentTitle)
-            if let firstUserPromptText {
+            LabeledContent("Title", value: presentation.title)
+            if let firstUserPromptText = presentation.firstUserPromptText {
                 LabeledContent("First Prompt") {
                     Text(firstUserPromptText)
                         .multilineTextAlignment(.trailing)
                         .lineLimit(4)
                 }
             }
-            LabeledContent("Kind", value: currentMetadata.kind.label)
+            LabeledContent("Kind", value: metadata.kind.label)
 
-            if let projectPath = currentMetadata.projectPath {
+            if let projectPath = metadata.projectPath {
                 LabeledContent("Project") {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(currentMetadata.projectName ?? projectPath)
+                        Text(metadata.projectName ?? projectPath)
                         Text(projectPath)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -254,13 +185,13 @@ struct SessionDetailScreen: View {
                 }
             }
 
-            LabeledContent("Started From", value: currentMetadata.sourceDisplayName)
-            LabeledContent("Task Type", value: currentMetadata.taskKind.label)
+            LabeledContent("Started From", value: metadata.sourceDisplayName)
+            LabeledContent("Task Type", value: metadata.taskKind.label)
             LabeledContent("Transcript") {
-                Text(currentMetadata.transcriptAvailable ? "Available" : "Not Available")
+                Text(metadata.transcriptAvailable ? "Available" : "Not Available")
             }
 
-            if let gitRepository = currentMetadata.gitRepository {
+            if let gitRepository = metadata.gitRepository {
                 LabeledContent("Git Repo") {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(gitRepository.repositoryName)
@@ -273,55 +204,55 @@ struct SessionDetailScreen: View {
                 }
             }
 
-            if let pullRequestURL = currentMetadata.pullRequestURL {
+            if let pullRequestURL = metadata.pullRequestURL {
                 LabeledContent("Pull Request", value: pullRequestURL)
             }
 
-            if currentMetadata.supportsSubagents {
+            if metadata.supportsSubagents {
                 LabeledContent("Subagents", value: "Supported")
             }
 
-            if !currentMetadata.installedPlugins.isEmpty {
+            if !metadata.installedPlugins.isEmpty {
                 LabeledContent(
                     "Plugins",
-                    value: currentMetadata.installedPlugins.map(\.name).joined(separator: ", ")
+                    value: metadata.installedPlugins.map(\.name).joined(separator: ", ")
                 )
             }
 
-            if !currentMetadata.sources.isEmpty {
+            if !metadata.sources.isEmpty {
                 LabeledContent(
                     "Sources",
-                    value: currentMetadata.sources.map(\.label).joined(separator: ", ")
+                    value: metadata.sources.map(\.label).joined(separator: ", ")
                 )
             }
 
-            LabeledContent("Status", value: currentStatus.label)
-            if let currentGoal {
+            LabeledContent("Status", value: presentation.status.label)
+            if let currentGoal = presentation.goal {
                 LabeledContent("Goal") {
                     SessionGoalStatusDetail(goal: currentGoal)
                 }
             }
-            if let currentLastMessageAt {
+            if let currentLastMessageAt = presentation.lastMessageAt {
                 LabeledContent("Last Message") {
                     Text(ModelFormatting.relativeTimestamp(currentLastMessageAt))
                 }
             }
-            if let currentLastActivityAt {
+            if let currentLastActivityAt = presentation.lastActivityAt {
                 LabeledContent("Last Active") {
                     Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
                 }
             }
             LabeledContent("Connection", value: model.viewState.deviceHubConnectionStatusLabel)
-            LabeledContent("Mode", value: ModelFormatting.friendlyMode(currentMode))
+            LabeledContent("Mode", value: ModelFormatting.friendlyMode(presentation.effectiveMode))
         }
     }
 
-    private var assistantReplySection: some View {
+    private func assistantReplySection(_ presentation: SessionDetailPresentation) -> some View {
         Section("Latest Assistant Reply") {
-            if let latestAssistantReply {
+            if let latestAssistantReply = presentation.latestAssistantReply {
                 MarkdownMessageView(markdown: latestAssistantReply)
                     .padding(.vertical, 4)
-                if let currentLastMessageAt {
+                if let currentLastMessageAt = presentation.lastMessageAt {
                     Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -331,7 +262,7 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private var promptSection: some View {
+    private func promptSection(_ presentation: SessionDetailPresentation) -> some View {
         Section {
             Picker("Prompt Action", selection: $draftPromptIntent) {
                 ForEach(CompanionPromptIntent.allCases) { intent in
@@ -349,7 +280,7 @@ struct SessionDetailScreen: View {
                 .accessibilityIdentifier("session-detail.prompt-editor")
 
             Button {
-                sendPrompt()
+                sendPrompt(presentation)
             } label: {
                 if isSendingPrompt {
                     ProgressView()
@@ -357,17 +288,18 @@ struct SessionDetailScreen: View {
                     Label(draftPromptIntent.sendButtonTitle, systemImage: draftPromptIntent.symbolName)
                 }
             }
-            .disabled(!canSendPrompt)
+            .disabled(!canSendPrompt(presentation))
             .accessibilityIdentifier("session-detail.send-prompt")
         } header: {
             Text("Prompt")
         } footer: {
-            Text(promptFooterText)
+            Text(promptFooterText(presentation))
         }
     }
 
-    private var modeSection: some View {
-        Section {
+    private func modeSection(_ presentation: SessionDetailPresentation) -> some View {
+        let selectedMode = selectedPromptMode(presentation)
+        return Section {
             ForEach(SessionMode.allCases, id: \.rawValue) { mode in
                 Button {
                     selectDraftMode(mode)
@@ -378,7 +310,7 @@ struct SessionDetailScreen: View {
 
                         Spacer()
 
-                        if selectedPromptMode == mode {
+                        if selectedMode == mode {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(.tint)
                         }
@@ -393,7 +325,7 @@ struct SessionDetailScreen: View {
                 HStack {
                     Label("Use Global Default", systemImage: "dial.low")
                     Spacer()
-                    if selectedPromptMode == nil {
+                    if selectedMode == nil {
                         Image(systemName: "checkmark")
                             .foregroundStyle(.tint)
                     }
@@ -403,12 +335,14 @@ struct SessionDetailScreen: View {
         } header: {
             Text("Mode")
         } footer: {
-            Text(selectedPromptMode?.summary ?? "This session follows the global Looper default.")
+            Text(selectedMode?.summary ?? "This session follows the global Looper default.")
         }
     }
 
-    private var notificationsSection: some View {
-        Section("Notification Routes") {
+    private func notificationsSection(_ presentation: SessionDetailPresentation) -> some View {
+        let detail = presentation.detail
+        let availableNotifications = detail?.availableNotifications ?? model.viewState.availableNotifications
+        return Section("Notification Routes") {
             if availableNotifications.isEmpty {
                 Text("No notification routes configured on the Mac.")
                     .foregroundStyle(.secondary)
@@ -424,8 +358,10 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private var completionCheckSection: some View {
-        Section("Completion Check") {
+    private func completionCheckSection(_ presentation: SessionDetailPresentation) -> some View {
+        let detail = presentation.detail
+        let selectedCompletionCheck = detail?.availableCompletionChecks.first(where: { $0.id == detail?.completionCheckID })
+        return Section("Completion Check") {
             if let selectedCompletionCheck {
                 LabeledContent("Rule", value: selectedCompletionCheck.label)
                 LabeledContent(
@@ -441,21 +377,22 @@ struct SessionDetailScreen: View {
         }
     }
 
-    private var manageSection: some View {
-        Section {
+    private func manageSection(_ presentation: SessionDetailPresentation) -> some View {
+        let isArchived = presentation.isArchived
+        return Section {
             Button {
                 Task {
                     await model.setSessionArchived(
-                        !currentIsArchived,
+                        !isArchived,
                         sessionID: sessionID
                     )
                 }
             } label: {
                 Label(
-                    currentIsArchived
+                    isArchived
                         ? "Unarchive Session"
                         : "Archive Session",
-                    systemImage: currentIsArchived
+                    systemImage: isArchived
                         ? "tray.and.arrow.up"
                         : "archivebox"
                 )
@@ -477,82 +414,77 @@ struct SessionDetailScreen: View {
         draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var canSendPrompt: Bool {
+    private func canSendPrompt(_ presentation: SessionDetailPresentation) -> Bool {
         !isSendingPrompt &&
             !trimmedPrompt.isEmpty &&
-            promptDeliveryIsAvailable &&
-            (draftPromptIntent == .steer || selectedPromptMode != nil) &&
-            !currentIsArchived
+            presentation.canSendPrompt &&
+            (draftPromptIntent == .steer || selectedPromptMode(presentation) != nil) &&
+            !presentation.isArchived
     }
 
-    private var promptFooterText: String {
-        if !promptDeliveryIsAvailable {
-            return promptDeliveryUnavailableReason ?? "This session cannot receive prompts from Looper."
+    private func promptFooterText(_ presentation: SessionDetailPresentation) -> String {
+        guard presentation.canSendPrompt else {
+            return presentation.promptDeliveryUnavailableReason ?? "This session cannot receive prompts from Looper."
         }
 
+        let selectedMode = selectedPromptMode(presentation)
         switch draftPromptIntent {
         case .steer:
-            return selectedPromptMode == nil
+            return selectedMode == nil
                 ? "Send now to the running agent."
                 : "Apply this mode, then steer the running agent."
         case .queue:
-            return selectedPromptMode == nil
+            return selectedMode == nil
                 ? "Choose a continuation mode before queueing."
                 : "Queue this prompt for the selected continuation mode."
         }
     }
 
-    private var promptDeliveryIsAvailable: Bool {
-        presentation.canSendPrompt
-    }
-
-    private var promptDeliveryUnavailableReason: String? {
-        presentation.promptDeliveryUnavailableReason
-    }
-
-    private var fallbackPromptSuggestions: [String] {
+    private func fallbackPromptSuggestions(_ presentation: SessionDetailPresentation) -> [String] {
         LooperSessionContextEngine.fallbackSuggestions(
-            title: currentTitle,
-            status: currentStatus,
-            assistantName: currentAssistantTitle,
-            taskKind: currentMetadata.taskKind
+            title: presentation.title,
+            status: presentation.status,
+            assistantName: presentation.assistantTitle,
+            taskKind: presentation.metadata.taskKind
         )
     }
 
-    private var promptSuggestions: [String] {
+    private func promptSuggestions(_ presentation: SessionDetailPresentation) -> [String] {
         let suggestions = contextualPromptSuggestions.isEmpty
-            ? fallbackPromptSuggestions
+            ? fallbackPromptSuggestions(presentation)
             : contextualPromptSuggestions
         return Array(suggestions.prefix(SessionPromptSuggestionLayout.visibleSuggestionLimit))
     }
 
-    private var keyboardPromptSuggestions: [String] {
-        focusedInput == .prompt ? promptSuggestions : []
+    private func keyboardPromptSuggestions(_ presentation: SessionDetailPresentation) -> [String] {
+        focusedInput == .prompt ? promptSuggestions(presentation) : []
     }
 
-    private var selectedPromptMode: SessionMode? {
-        hasDraftModeSelection ? draftMode : currentMode
+    private func selectedPromptMode(_ presentation: SessionDetailPresentation) -> SessionMode? {
+        hasDraftModeSelection ? draftMode : presentation.effectiveMode
     }
 
-    private var needsDraftModeApplyBeforePrompt: Bool {
-        hasDraftModeSelection && draftMode != currentMode
+    private func needsDraftModeApplyBeforePrompt(_ presentation: SessionDetailPresentation) -> Bool {
+        hasDraftModeSelection && draftMode != presentation.effectiveMode
     }
 
-    private var promptSuggestionContextKey: String {
-        [
+    private func promptSuggestionContextKey(_ presentation: SessionDetailPresentation) -> String {
+        let detail = presentation.detail
+        let summary = presentation.summary
+        return [
             route.id,
-            detail?.lastActivityAt ?? currentSummary?.lastActivityAt ?? "",
-            detail?.lastMessageAt ?? currentSummary?.lastMessageAt ?? "",
-            currentStatus.rawValue,
-            currentMetadata.taskKind.rawValue,
-            currentTitle,
+            detail?.lastActivityAt ?? summary?.lastActivityAt ?? "",
+            detail?.lastMessageAt ?? summary?.lastMessageAt ?? "",
+            presentation.status.rawValue,
+            presentation.metadata.taskKind.rawValue,
+            presentation.title,
         ]
             .joined(separator: "|")
     }
 
-    private func refreshPromptSuggestions() async {
-        contextualPromptSuggestions = fallbackPromptSuggestions
-        guard let detail else {
+    private func refreshPromptSuggestions(_ presentation: SessionDetailPresentation) async {
+        contextualPromptSuggestions = fallbackPromptSuggestions(presentation)
+        guard let detail = presentation.detail else {
             return
         }
 
@@ -560,7 +492,7 @@ struct SessionDetailScreen: View {
         guard !Task.isCancelled else {
             return
         }
-        contextualPromptSuggestions = suggestions.isEmpty ? fallbackPromptSuggestions : suggestions
+        contextualPromptSuggestions = suggestions.isEmpty ? fallbackPromptSuggestions(presentation) : suggestions
     }
 
     private func usePromptSuggestion(_ suggestion: String) {
@@ -573,12 +505,12 @@ struct SessionDetailScreen: View {
         hasDraftModeSelection = true
     }
 
-    private func resetDraftMode() {
+    private func resetDraftMode(_ currentMode: SessionMode?) {
         draftMode = currentMode
         hasDraftModeSelection = false
     }
 
-    private func syncDraftModeFromCurrentModeIfNeeded() {
+    private func syncDraftModeFromCurrentModeIfNeeded(_ currentMode: SessionMode?) {
         guard !hasDraftModeSelection else {
             return
         }
@@ -586,15 +518,15 @@ struct SessionDetailScreen: View {
         draftMode = currentMode
     }
 
-    private func sendPrompt() {
-        guard canSendPrompt else {
+    private func sendPrompt(_ presentation: SessionDetailPresentation) {
+        guard canSendPrompt(presentation) else {
             return
         }
 
         let prompt = trimmedPrompt
         let promptIntent = draftPromptIntent
         let modeToApply = draftMode
-        let shouldApplyDraftMode = needsDraftModeApplyBeforePrompt
+        let shouldApplyDraftMode = needsDraftModeApplyBeforePrompt(presentation)
         let didSelectDraftMode = hasDraftModeSelection
         draftPrompt = ""
         focusedInput = nil

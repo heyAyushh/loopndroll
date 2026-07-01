@@ -94,10 +94,6 @@ final class CompanionSnapshotStateStore {
         return didChange
     }
 
-    func shouldSkipCachedRestore(onlyWhenSnapshotMissing: Bool) -> Bool {
-        onlyWhenSnapshotMissing && hasSnapshot
-    }
-
     @discardableResult
     func applySnapshot(
         _ nextSnapshot: MobileSnapshot,
@@ -725,7 +721,27 @@ private struct VisibleSessionIndex {
     private let sessionsByID: [String: SessionSummary]
 
     init(sessions: [SessionSummary]) {
-        sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        sessionsByID = Dictionary(
+            sessions.map { ($0.id, $0) },
+            uniquingKeysWith: Self.preferFresherSession
+        )
+    }
+
+    /// Snapshots merged from network/cache sources can legitimately contain
+    /// duplicate session IDs (e.g. overlapping surfaces during a merge).
+    /// Keep whichever entry has the more recent update timestamp instead of
+    /// trapping, so a duplicate ID never crashes the app.
+    private static func preferFresherSession(
+        existing: SessionSummary,
+        incoming: SessionSummary
+    ) -> SessionSummary {
+        guard let incomingDate = incoming.lastUpdatedDate else {
+            return existing
+        }
+        guard let existingDate = existing.lastUpdatedDate else {
+            return incoming
+        }
+        return incomingDate >= existingDate ? incoming : existing
     }
 
     func session(withID sessionID: String) -> SessionSummary? {
