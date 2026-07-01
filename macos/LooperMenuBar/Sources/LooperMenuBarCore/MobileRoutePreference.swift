@@ -1,9 +1,13 @@
 import Foundation
 
 public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable {
-    case remote
     case tailscale
     case lan
+
+    /// Raw value previously stored for a "Remote first" option, retired when
+    /// LAN and Tailscale became the only user-visible routes. Stored prefs
+    /// with this legacy value migrate to `.tailscale` on read.
+    private static let legacyRemoteRawValue = "remote"
 
     public static let userDefaultsKey = "mobileRoutePreference"
     public static let defaultOption: MobileRoutePreference = .tailscale
@@ -15,8 +19,6 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
 
     public var menuTitle: String {
         switch self {
-        case .remote:
-            "Tailscale first"
         case .tailscale:
             "Tailscale first"
         case .lan:
@@ -28,28 +30,20 @@ public enum MobileRoutePreference: String, CaseIterable, Identifiable, Sendable 
         in userDefaults: UserDefaults = .standard,
         key: String = userDefaultsKey
     ) -> MobileRoutePreference {
-        guard let storedValue = userDefaults.string(forKey: key),
-              let option = MobileRoutePreference(rawValue: storedValue)
-        else {
+        guard let storedValue = userDefaults.string(forKey: key) else {
             return defaultOption
         }
+        guard storedValue != legacyRemoteRawValue else {
+            return .tailscale
+        }
 
-        return option.normalizedVisibleOption
+        return MobileRoutePreference(rawValue: storedValue) ?? defaultOption
     }
 
     public func save(
         in userDefaults: UserDefaults = .standard,
         key: String = userDefaultsKey
     ) {
-        userDefaults.set(normalizedVisibleOption.rawValue, forKey: key)
-    }
-
-    private var normalizedVisibleOption: MobileRoutePreference {
-        switch self {
-        case .remote:
-            .tailscale
-        case .tailscale, .lan:
-            self
-        }
+        userDefaults.set(rawValue, forKey: key)
     }
 }

@@ -264,8 +264,8 @@ struct MenuRefreshCoordinatorTests {
         )
     }
 
-    @Test("route switch marks previous endpoint stale until different Session endpoint proves live")
-    func routeSwitchMarksPreviousEndpointStaleUntilDifferentSessionEndpointProvesLive() throws {
+    @Test("route switch accepts a fresh live proof, including a fallback to the stale endpoint")
+    func routeSwitchAcceptsFreshLiveProofIncludingFallbackToStaleEndpoint() throws {
         var readiness = MobileRouteReadinessState(
             health: MenuRefreshRecordingClient.mobileHealth()
         )
@@ -287,6 +287,8 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
         #expect(readiness.tailscaleStatusTitle == "Cached route: 100.119.200.69; waiting for Session proof")
 
+        // A non-live-proving report (no syncReason) does not clear the
+        // waiting-for-proof state.
         readiness.applySessionState(
             phase: .ready,
             endpointURL: oldEndpoint,
@@ -303,6 +305,7 @@ struct MenuRefreshCoordinatorTests {
                 == "Reconnecting: Cached route: Tailscale: 100.119.200.69; waiting for Session proof"
         )
 
+        // Reconnect churn and recovery replays also do not prove liveness.
         readiness.applySessionState(
             phase: .reconnecting,
             endpointURL: oldEndpoint,
@@ -318,27 +321,33 @@ struct MenuRefreshCoordinatorTests {
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
 
+        // A fresh heartbeat that lands back on the retained stale endpoint is
+        // a legal fallback (MenuBarRealtimeEndpointResolver can hand back the
+        // same endpoint) and must prove readiness rather than deadlock.
         readiness.applySessionState(
             phase: .ready,
             endpointURL: oldEndpoint,
             refreshGeneration: switchGeneration,
             syncReason: .heartbeat
         )
-        #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
 
+        // A later route switch followed by a fresh proof on a different
+        // endpoint also proves readiness.
+        let secondSwitchGeneration = readiness.invalidateForRouteSwitch()
         readiness.applySessionState(
             phase: .ready,
             endpointURL: nextEndpoint,
-            refreshGeneration: switchGeneration,
+            refreshGeneration: secondSwitchGeneration,
             syncReason: .delta
         )
         #expect(readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Session-proven: LAN: 192.168.1.33")
     }
 
-    @Test("Tailscale recovers after LAN route switch fails")
-    func tailscaleRecoversAfterLANRouteSwitchFails() throws {
+    @Test("Tailscale fallback still proves readiness when a LAN route switch cannot connect")
+    func tailscaleFallbackProvesReadinessWhenLANRouteSwitchCannotConnect() throws {
         var readiness = MobileRouteReadinessState(
             health: MenuRefreshRecordingClient.mobileHealth()
         )
@@ -352,6 +361,10 @@ struct MenuRefreshCoordinatorTests {
         )
         #expect(readiness.hasLiveRouteProof)
 
+        // Switching preference to LAN invalidates the current proof, but the
+        // resolver's endpoint list still legally falls back to the Tailscale
+        // endpoint when LAN is unreachable. A fresh heartbeat there must
+        // prove readiness immediately instead of deadlocking forever.
         let lanGeneration = readiness.invalidateForRouteSwitch(preference: .lan)
         readiness.applySessionState(
             phase: .ready,
@@ -359,17 +372,11 @@ struct MenuRefreshCoordinatorTests {
             refreshGeneration: lanGeneration,
             syncReason: .heartbeat
         )
-        #expect(!readiness.hasLiveRouteProof)
-        #expect(readiness.routeStatusTitle == "Cached route: Tailscale: 100.119.200.69; waiting for Session proof")
+        #expect(readiness.hasLiveRouteProof)
+        #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
 
-        readiness.applySessionState(
-            phase: .reconnecting,
-            endpointURL: nil,
-            refreshGeneration: lanGeneration,
-            syncReason: .reconnecting
-        )
-        #expect(!readiness.hasLiveRouteProof)
-
+        // Switching preference back to Tailscale explicitly requires a new
+        // proof at the new generation.
         let tailscaleGeneration = readiness.invalidateForRouteSwitch(preference: .tailscale)
         #expect(!readiness.hasLiveRouteProof)
         #expect(readiness.routeStatusTitle == "Local cache: waiting for Session proof")
@@ -387,16 +394,16 @@ struct MenuRefreshCoordinatorTests {
 
     @Test("route preference ordering matches visible setting")
     func routePreferenceOrderingMatchesVisibleSetting() throws {
+        // `remote` here is a URL classified as the Remote route (a public
+        // host, not LAN/Tailscale/loopback); the .remote *preference* option
+        // was retired, but Remote-classified URLs still participate in
+        // ordering and must rank behind both visible preferences.
         let remote = try #require(URL(string: "https://looper.example.com"))
         let tailscale = try #require(URL(string: "http://100.119.200.69:8766"))
         let lan = try #require(URL(string: "http://192.168.1.33:8766"))
         let loopback = try #require(URL(string: "http://127.0.0.1:8766"))
         let urls = [loopback, lan, tailscale, remote]
 
-        #expect(
-            MobileRouteURLPolicy.sortedUniqueURLs(urls, preference: .remote)
-                == [remote, tailscale, lan, loopback]
-        )
         #expect(
             MobileRouteURLPolicy.sortedUniqueURLs(urls, preference: .tailscale)
                 == [tailscale, lan, remote, loopback]

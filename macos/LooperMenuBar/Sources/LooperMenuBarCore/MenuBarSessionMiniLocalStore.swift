@@ -206,6 +206,14 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
 
     private let localStore: MenuBarSessionMiniLocalStore
     private let sessionManager: LooperClientCoreSessionManager
+    private let stateLock = NSLock()
+
+    /// Bumped by every `start()`, so a caller that began observing an older
+    /// generation can tell whether it still owns `sessionManager` before
+    /// stopping it. Without this, a cancelled sync task's deferred `stop()`
+    /// can race a newer task's fresh `start()` and kill the stream it just
+    /// opened -- `stop()`/`start()` act on one instance shared across restarts.
+    private var generation: UInt64 = 0
 
     public init(fileURL: URL) throws {
         let sessionManager = try LooperClientCoreSessionManager(fileURL: fileURL)
@@ -273,6 +281,7 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         bearerToken: String,
         mobileSessionHeader: String
     ) throws -> ClientStateSnapshot {
+        bumpGeneration()
         return try sessionManager.start(
             endpoints: endpoints,
             bearerToken: bearerToken,
@@ -281,7 +290,31 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
     }
 
     public func stop() {
+        bumpGeneration()
         _ = try? sessionManager.stop()
+    }
+
+    /// Generation as of right now. A sync loop should capture this once it
+    /// has successfully started the runtime, then pass it back to
+    /// `stopIfCurrent(generation:)` instead of calling `stop()` unconditionally.
+    private func currentGeneration() -> UInt64 {
+        stateLock.withLock { generation }
+    }
+
+    /// Stops the shared session manager only if no newer `start()`/`stop()`
+    /// has happened since `generation` was captured. This is what lets a
+    /// cancelled sync task exit without stopping a stream a newer task
+    /// already started.
+    private func stopIfCurrent(generation: UInt64) {
+        let isCurrent = stateLock.withLock { generation == self.generation }
+        guard isCurrent else {
+            return
+        }
+        stop()
+    }
+
+    private func bumpGeneration() {
+        stateLock.withLock { generation &+= 1 }
     }
 
     public func nextMenuSnapshotStreamResult() async throws
@@ -309,8 +342,11 @@ public final class MenuBarSessionRuntime: @unchecked Sendable {
         onSnapshot: @escaping @MainActor (MenuBarSessionMiniLocalSnapshot, String) -> Void,
         onDebugMessage: @escaping @MainActor (String) -> Void
     ) async {
+        // Capture the generation this loop was started under so its cleanup
+        // only stops the runtime it actually owns -- see `stopIfCurrent`.
+        let ownedGeneration = currentGeneration()
         defer {
-            stop()
+            stopIfCurrent(generation: ownedGeneration)
         }
 
         do {

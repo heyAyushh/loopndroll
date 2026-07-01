@@ -1960,6 +1960,13 @@ public enum MobileRouteURLPolicy {
     url.routeTitle
   }
 
+  /// The real route identity for `url`. Callers within this module should
+  /// compare routes using this enum rather than matching on `routeTitle`,
+  /// which is UI display text and not meant to be a comparison key.
+  static func mobileRoute(for url: URL) -> MobileRoute {
+    url.mobileRoute
+  }
+
   public static func sortedUniqueURLs(
     _ urls: [URL],
     preference: MobileRoutePreference
@@ -1984,14 +1991,17 @@ public enum MobileRouteURLPolicy {
   }
 }
 
-extension URL {
-  fileprivate enum MobileRoute {
-    case remote
-    case tailscale
-    case lan
-    case loopback
-  }
+/// Route classification for a mobile control-plane endpoint URL. Internal
+/// (not `fileprivate`) so other files in this module can branch on the real
+/// route identity instead of string-matching against display titles.
+enum MobileRoute: Equatable {
+  case remote
+  case tailscale
+  case lan
+  case loopback
+}
 
+extension URL {
   fileprivate enum RoutePriority {
     static let first = 0
     static let second = 1
@@ -2042,8 +2052,6 @@ extension URL {
 
   fileprivate func routePriority(preference: MobileRoutePreference) -> Int {
     switch preference {
-    case .remote:
-      remotePriority
     case .tailscale:
       tailscalePriority
     case .lan:
@@ -2086,7 +2094,7 @@ extension URL {
     }
   }
 
-  private var mobileRoute: MobileRoute {
+  var mobileRoute: MobileRoute {
     guard !isLoopbackHost else {
       return .loopback
     }
@@ -2128,19 +2136,6 @@ extension URL {
     case .tailscale:
       RoutePriority.second
     case .remote:
-      RoutePriority.third
-    case .loopback:
-      RoutePriority.fourth
-    }
-  }
-
-  private var remotePriority: Int {
-    switch mobileRoute {
-    case .remote:
-      RoutePriority.first
-    case .tailscale:
-      RoutePriority.second
-    case .lan:
       RoutePriority.third
     case .loopback:
       RoutePriority.fourth

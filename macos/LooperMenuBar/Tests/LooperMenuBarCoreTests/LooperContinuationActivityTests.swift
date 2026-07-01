@@ -188,7 +188,7 @@ struct LooperContinuationActivityTests {
         )
         #expect(health.routeSummaryTitle(preference: .lan) == "LAN: 192.168.1.4")
         #expect(
-            health.preferredReachableHandoffBaseURL(preference: .remote)?.absoluteString ==
+            health.preferredReachableHandoffBaseURL(preference: .tailscale)?.absoluteString ==
                 "http://100.119.200.69:8765"
         )
     }
@@ -199,11 +199,15 @@ struct LooperContinuationActivityTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
 
-        defaults.set(MobileRoutePreference.remote.rawValue, forKey: MobileRoutePreference.userDefaultsKey)
+        // The "remote" option was retired when LAN and Tailscale became the
+        // only user-visible routes. A previously stored raw value of
+        // "remote" must migrate transparently to tailscale-first.
+        let legacyRemoteRawValue = "remote"
+        defaults.set(legacyRemoteRawValue, forKey: MobileRoutePreference.userDefaultsKey)
 
         #expect(MobileRoutePreference.stored(in: defaults) == .tailscale)
         #expect(MobileRoutePreference.allOptions == [.tailscale, .lan])
-        #expect(MobileRoutePreference.remote.menuTitle == "Tailscale first")
+        #expect(MobileRoutePreference.tailscale.menuTitle == "Tailscale first")
         defaults.removePersistentDomain(forName: suiteName)
     }
 

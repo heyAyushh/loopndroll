@@ -22,6 +22,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let threadMenuTitleCharacterLimit = 38
     static let detachServerOnQuitKey = "detachServerOnQuit"
     static let continuationRefreshInterval: Duration = .seconds(20)
+    // Mirrors MobileRouteReadinessState's HTTP health freshness window: cached
+    // HTTP menu enrichment older than this is dropped instead of rendered as
+    // if it were current.
+    static let cachedMenuEnrichmentMaxAge: TimeInterval = 30
     static let activationPolicy: NSApplication.ActivationPolicy = .accessory
     static let handoffFocusAssistMenuTitle = "Handoff Focus Assist"
     static let handoffHotkeySubMenuTitle = "Handoff Hotkey"
@@ -57,6 +61,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private var menu: NSMenu?
   private var cachedSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
   private var cachedMenuEnrichment: MenuRefreshResult?
+  private var cachedMenuEnrichmentRecordedAt: Date?
   private var continuationRefreshTask: Task<Void, Never>?
   private var sessionMiniSyncTask: Task<Void, Never>?
   private var sessionMiniSyncGeneration = 0
@@ -171,23 +176,45 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     statusItem = item
   }
 
-  private func refreshMenu(force: Bool = false) async {
-    let routeReadinessGeneration = mobileRouteReadiness.generation
-    let sessionMiniSnapshot = currentSessionMiniSnapshot()
-    if !force, let sessionMiniSnapshot {
-      replaceMenuWithCachedEnrichment(sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
-    }
+  private struct MenuRefreshOutcome {
+    let result: MenuRefreshResult
+    let latestSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+  }
 
+  /// Runs a coordinator refresh and folds its result into the cached
+  /// enrichment/SessionMini/HTTP-route state shared by every refresh
+  /// entry point (menu refresh, continuation-activity refresh, diagnostics).
+  /// Callers are responsible for whatever they render before and after.
+  private func performMenuRefresh(
+    force: Bool,
+    preRefreshSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+  ) async -> MenuRefreshOutcome {
+    let routeReadinessGeneration = mobileRouteReadiness.generation
     let result = await menuRefreshCoordinator.refresh(force: force)
     cacheMenuEnrichmentIfAvailable(result)
     cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
-      fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
+      fallback: result.sessionMiniSnapshot ?? preRefreshSessionMiniSnapshot
     )
     applyHTTPRefreshStateIfPresent(
       result,
       routeReadinessGeneration: routeReadinessGeneration
     )
+    return MenuRefreshOutcome(result: result, latestSessionMiniSnapshot: latestSessionMiniSnapshot)
+  }
+
+  private func refreshMenu(force: Bool = false) async {
+    let sessionMiniSnapshot = currentSessionMiniSnapshot()
+    if !force, let sessionMiniSnapshot {
+      replaceMenuWithCachedEnrichment(sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
+    }
+
+    let outcome = await performMenuRefresh(
+      force: force,
+      preRefreshSessionMiniSnapshot: sessionMiniSnapshot
+    )
+    let result = outcome.result
+    let latestSessionMiniSnapshot = outcome.latestSessionMiniSnapshot
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
@@ -221,32 +248,25 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshContinuationActivity() async {
-    let routeReadinessGeneration = mobileRouteReadiness.generation
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let sessionMiniSnapshot {
       publishContinuationActivity(from: sessionMiniSnapshot)
     }
 
-    let result = await menuRefreshCoordinator.refresh()
-    cacheMenuEnrichmentIfAvailable(result)
-    cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
-    let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
-      fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
+    let outcome = await performMenuRefresh(
+      force: false,
+      preRefreshSessionMiniSnapshot: sessionMiniSnapshot
     )
-    applyHTTPRefreshStateIfPresent(
-      result,
-      routeReadinessGeneration: routeReadinessGeneration
-    )
+    let result = outcome.result
+    let latestSessionMiniSnapshot = outcome.latestSessionMiniSnapshot
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
         snapshot: snapshot
       )
-    } else {
-      if latestSessionMiniSnapshot == nil {
-        continuationPublisher.publishFallbackIfIdle(
-          LooperContinuationActivityBuilder.genericDescriptor())
-      }
+    } else if latestSessionMiniSnapshot == nil {
+      continuationPublisher.publishFallbackIfIdle(
+        LooperContinuationActivityBuilder.genericDescriptor())
     }
   }
 
@@ -526,7 +546,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
     error: Error?
   ) {
-    let enrichment = cachedMenuEnrichment
+    let enrichment = currentMenuEnrichmentIfFresh()
     replaceMenu(
       snapshot: enrichment?.snapshot,
       sessionMiniSnapshot: sessionMiniSnapshot,
@@ -757,7 +777,29 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     guard result.hasReusableEnrichment else {
       return
     }
-    cachedMenuEnrichment = result.mergingReusableEnrichment(from: cachedMenuEnrichment)
+    cachedMenuEnrichment = result.mergingReusableEnrichment(from: currentMenuEnrichmentIfFresh())
+    cachedMenuEnrichmentRecordedAt = Date()
+  }
+
+  /// The cached HTTP menu enrichment, or nil once it has aged past
+  /// `Layout.cachedMenuEnrichmentMaxAge`. Without this, a route that stops
+  /// refreshing (e.g. the control plane going unreachable) would render
+  /// arbitrarily old snapshot/connections/ACP-host data forever with no
+  /// staleness marker, unlike `mobileHealth`, which already expires.
+  private func currentMenuEnrichmentIfFresh() -> MenuRefreshResult? {
+    guard let cachedMenuEnrichment else {
+      return nil
+    }
+    guard let cachedMenuEnrichmentRecordedAt else {
+      return cachedMenuEnrichment
+    }
+    guard Date().timeIntervalSince(cachedMenuEnrichmentRecordedAt) <= Layout.cachedMenuEnrichmentMaxAge
+    else {
+      self.cachedMenuEnrichment = nil
+      self.cachedMenuEnrichmentRecordedAt = nil
+      return nil
+    }
+    return cachedMenuEnrichment
   }
 
   private func cacheSessionMiniSnapshotIfAvailable(_ snapshot: MenuBarSessionMiniLocalSnapshot?) {
@@ -825,7 +867,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       await sessionRuntime.runStateMiniSync(
         onSnapshot: { [weak self] snapshot, syncReason in
           self?.applyCurrentSessionRuntimeState(
-            routeReadinessGeneration: routeReadinessGeneration,
             syncReason: MobileRouteSessionSyncReason(syncReason)
           )
           self?.applySessionMiniSnapshot(snapshot)
@@ -882,12 +923,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func applyCurrentSessionRuntimeState(
-    routeReadinessGeneration: UInt64,
     syncReason: MobileRouteSessionSyncReason = .unknown
   ) {
+    // Read the generation live rather than accepting it as a parameter: this
+    // runs from a long-lived stream callback, and a route switch can bump
+    // `mobileRouteReadiness.generation` at any point during that stream's
+    // life. Using a value captured once when the stream started would
+    // silently void every proof the stream reports afterward.
     applySessionRuntimeState(
       try? sessionRuntime?.runtimeStateSnapshot(),
-      routeReadinessGeneration: routeReadinessGeneration,
+      routeReadinessGeneration: mobileRouteReadiness.generation,
       syncReason: syncReason
     )
   }
@@ -1685,16 +1730,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func showDiagnosticsWindow(force: Bool) async {
-    let routeReadinessGeneration = mobileRouteReadiness.generation
     diagnosticsWindowController.showLoading()
-    let result = await menuRefreshCoordinator.refresh(force: force)
-    cacheMenuEnrichmentIfAvailable(result)
-    cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
-    let latestSessionMiniSnapshot = latestSessionMiniSnapshot(fallback: result.sessionMiniSnapshot)
-    applyHTTPRefreshStateIfPresent(
-      result,
-      routeReadinessGeneration: routeReadinessGeneration
-    )
+    let outcome = await performMenuRefresh(force: force, preRefreshSessionMiniSnapshot: nil)
+    let result = outcome.result
+    let latestSessionMiniSnapshot = outcome.latestSessionMiniSnapshot
     if let snapshot = result.snapshot {
       publishContinuationActivity(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
