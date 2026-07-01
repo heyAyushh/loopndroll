@@ -81,9 +81,20 @@ impl ControlPlane {
         input: LooperAcpObservedSession,
     ) -> Option<LooperAcpControlSessionResponse> {
         let runtime = self.acp_runtime_for_client(client_id)?;
+        let latest_assistant_message = input.latest_assistant_message.clone();
+        let latest_assistant_message_id = input.latest_assistant_message_id.clone();
+        let latest_assistant_message_is_final = input.latest_assistant_message_is_final;
         let session = runtime.observe_session(input);
         self.response_cache.invalidate_desktop_menu_surfaces();
         self.emit_acp_session_changed(&session.public_thread_id, "session-observed");
+        if let Some(content) = latest_assistant_message {
+            self.publish_mobile_text_chunk(MobileTextChunkInput {
+                thread_id: session.public_thread_id.clone(),
+                message_id: latest_assistant_message_id,
+                content,
+                is_final: latest_assistant_message_is_final,
+            });
+        }
         Some(LooperAcpControlSessionResponse {
             session,
             runtime: runtime.status(),

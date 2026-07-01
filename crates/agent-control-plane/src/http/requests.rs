@@ -48,6 +48,9 @@ pub(super) struct AcpClientHostSessionObserveRequest {
     pub(super) cwd: Option<String>,
     pub(super) latest_user_prompt: Option<String>,
     pub(super) latest_assistant_message: Option<String>,
+    pub(super) latest_assistant_message_id: Option<String>,
+    #[serde(default)]
+    pub(super) latest_assistant_message_is_final: bool,
     #[serde(default)]
     pub(super) cancelled: bool,
 }

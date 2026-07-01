@@ -35,6 +35,24 @@ pub struct MobileEventInput {
     pub detail: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MobileTextChunkInput {
+    pub thread_id: String,
+    pub message_id: Option<String>,
+    pub content: String,
+    pub is_final: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MobileTextChunk {
+    pub seq: i64,
+    pub thread_id: String,
+    pub message_id: String,
+    pub content: String,
+    pub is_final: bool,
+    pub server_time: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MobileEventRecord {
     pub event_id: String,
@@ -49,6 +67,7 @@ pub struct MobileEventRecord {
 pub enum MobileEventBroadcast {
     Persisted(MobileEventRecord),
     Ephemeral(MobileEvent),
+    TextChunk(MobileTextChunk),
 }
 
 #[derive(Clone)]
@@ -72,6 +91,12 @@ impl MobileEventHub {
 
     pub fn publish_ephemeral(&self, event: MobileEvent) {
         let _ = self.sender.send(MobileEventBroadcast::Ephemeral(event));
+    }
+
+    pub fn publish_text_chunk(&self, text_chunk: MobileTextChunk) {
+        let _ = self
+            .sender
+            .send(MobileEventBroadcast::TextChunk(text_chunk));
     }
 }
 

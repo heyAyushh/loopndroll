@@ -149,6 +149,8 @@ fn rejects_proxy_session_prompt_without_live_transport() {
         cwd: Some("/tmp/zed-project".to_owned()),
         latest_user_prompt: None,
         latest_assistant_message: None,
+        latest_assistant_message_id: None,
+        latest_assistant_message_is_final: false,
         cancelled: false,
     });
 

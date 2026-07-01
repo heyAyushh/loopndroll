@@ -551,6 +551,8 @@ async fn desktop_acp_client_host_session_observe(
         cwd: input.cwd,
         latest_user_prompt: input.latest_user_prompt,
         latest_assistant_message: input.latest_assistant_message,
+        latest_assistant_message_id: input.latest_assistant_message_id,
+        latest_assistant_message_is_final: input.latest_assistant_message_is_final,
         cancelled: input.cancelled,
     };
     match control_plane.observe_acp_client_host_session_response(&client_id, observed) {
