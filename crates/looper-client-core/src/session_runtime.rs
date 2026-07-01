@@ -185,11 +185,12 @@ impl LooperClientCoreSessionRuntime {
             self.local_store.clone(),
             thread_id,
             preset.clone(),
-            client_mutation_id,
+            client_mutation_id.clone(),
         )?;
         Ok(ClientSessionModeIntentResult {
             accepted: true,
             preset,
+            client_mutation_id,
         })
     }
 
@@ -207,12 +208,13 @@ impl LooperClientCoreSessionRuntime {
             prompt,
             assistant_surface,
             prompt_intent,
-            client_mutation_id,
+            client_mutation_id.clone(),
         )?;
         Ok(ClientSessionPromptIntentResult {
             accepted: true,
             dispatch_kind: LOCAL_ACCEPTED_DISPATCH_KIND.to_owned(),
             prompt_id: String::new(),
+            client_mutation_id,
         })
     }
 

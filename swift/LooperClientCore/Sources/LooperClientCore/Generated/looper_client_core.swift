@@ -1193,6 +1193,100 @@ public func FfiConverterTypeClientBaseUrlRaceCandidate_lower(_ value: ClientBase
 }
 
 
+public struct ClientCommandAck: Equatable, Hashable {
+    public var accepted: Bool
+    public var accountId: String
+    public var nodeId: String
+    public var clientMutationId: String
+    public var ackSeq: Int64
+    public var entityId: String
+    public var revision: String
+    public var serverTime: String
+    public var idempotentReplay: Bool
+    public var errorCode: String
+    public var rejectReason: String
+    public var currentState: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accepted: Bool, accountId: String, nodeId: String, clientMutationId: String, ackSeq: Int64, entityId: String, revision: String, serverTime: String, idempotentReplay: Bool, errorCode: String, rejectReason: String, currentState: String) {
+        self.accepted = accepted
+        self.accountId = accountId
+        self.nodeId = nodeId
+        self.clientMutationId = clientMutationId
+        self.ackSeq = ackSeq
+        self.entityId = entityId
+        self.revision = revision
+        self.serverTime = serverTime
+        self.idempotentReplay = idempotentReplay
+        self.errorCode = errorCode
+        self.rejectReason = rejectReason
+        self.currentState = currentState
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientCommandAck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientCommandAck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientCommandAck {
+        return
+            try ClientCommandAck(
+                accepted: FfiConverterBool.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf),
+                nodeId: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf),
+                ackSeq: FfiConverterInt64.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                revision: FfiConverterString.read(from: &buf),
+                serverTime: FfiConverterString.read(from: &buf),
+                idempotentReplay: FfiConverterBool.read(from: &buf),
+                errorCode: FfiConverterString.read(from: &buf),
+                rejectReason: FfiConverterString.read(from: &buf),
+                currentState: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientCommandAck, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.accepted, into: &buf)
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterString.write(value.nodeId, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
+        FfiConverterInt64.write(value.ackSeq, into: &buf)
+        FfiConverterString.write(value.entityId, into: &buf)
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterString.write(value.serverTime, into: &buf)
+        FfiConverterBool.write(value.idempotentReplay, into: &buf)
+        FfiConverterString.write(value.errorCode, into: &buf)
+        FfiConverterString.write(value.rejectReason, into: &buf)
+        FfiConverterString.write(value.currentState, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandAck_lift(_ buf: RustBuffer) throws -> ClientCommandAck {
+    return try FfiConverterTypeClientCommandAck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientCommandAck_lower(_ value: ClientCommandAck) -> RustBuffer {
+    return FfiConverterTypeClientCommandAck.lower(value)
+}
+
+
 public struct ClientConnectionFailureProjection: Equatable, Hashable {
     public var connectionState: String
     public var shouldClearRouteState: Bool
@@ -2972,12 +3066,14 @@ public func FfiConverterTypeClientSessionLatestReply_lower(_ value: ClientSessio
 public struct ClientSessionModeIntentResult: Equatable, Hashable {
     public var accepted: Bool
     public var preset: String
+    public var clientMutationId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(accepted: Bool, preset: String) {
+    public init(accepted: Bool, preset: String, clientMutationId: String) {
         self.accepted = accepted
         self.preset = preset
+        self.clientMutationId = clientMutationId
     }
 
 
@@ -2997,13 +3093,15 @@ public struct FfiConverterTypeClientSessionModeIntentResult: FfiConverterRustBuf
         return
             try ClientSessionModeIntentResult(
                 accepted: FfiConverterBool.read(from: &buf),
-                preset: FfiConverterString.read(from: &buf)
+                preset: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: ClientSessionModeIntentResult, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.accepted, into: &buf)
         FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
     }
 }
 
@@ -3027,13 +3125,15 @@ public struct ClientSessionPromptIntentResult: Equatable, Hashable {
     public var accepted: Bool
     public var dispatchKind: String
     public var promptId: String
+    public var clientMutationId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(accepted: Bool, dispatchKind: String, promptId: String) {
+    public init(accepted: Bool, dispatchKind: String, promptId: String, clientMutationId: String) {
         self.accepted = accepted
         self.dispatchKind = dispatchKind
         self.promptId = promptId
+        self.clientMutationId = clientMutationId
     }
 
 
@@ -3054,7 +3154,8 @@ public struct FfiConverterTypeClientSessionPromptIntentResult: FfiConverterRustB
             try ClientSessionPromptIntentResult(
                 accepted: FfiConverterBool.read(from: &buf),
                 dispatchKind: FfiConverterString.read(from: &buf),
-                promptId: FfiConverterString.read(from: &buf)
+                promptId: FfiConverterString.read(from: &buf),
+                clientMutationId: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -3062,6 +3163,7 @@ public struct FfiConverterTypeClientSessionPromptIntentResult: FfiConverterRustB
         FfiConverterBool.write(value.accepted, into: &buf)
         FfiConverterString.write(value.dispatchKind, into: &buf)
         FfiConverterString.write(value.promptId, into: &buf)
+        FfiConverterString.write(value.clientMutationId, into: &buf)
     }
 }
 
@@ -3763,12 +3865,13 @@ public struct ClientStateSnapshot: Equatable, Hashable {
     public var serverTime: String
     public var stateMinis: [ClientStateMini]
     public var pendingMutations: [ClientPendingMutation]
+    public var recentCommandAcks: [ClientCommandAck]
     public var outboxDepth: UInt32
     public var lastError: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(phase: ConnectionPhase, endpointUrl: String, endpointTransport: ClientEndpointTransport, transportFallbackReason: String, latestSeq: Int64, revision: String, serverTime: String, stateMinis: [ClientStateMini], pendingMutations: [ClientPendingMutation], outboxDepth: UInt32, lastError: String) {
+    public init(phase: ConnectionPhase, endpointUrl: String, endpointTransport: ClientEndpointTransport, transportFallbackReason: String, latestSeq: Int64, revision: String, serverTime: String, stateMinis: [ClientStateMini], pendingMutations: [ClientPendingMutation], recentCommandAcks: [ClientCommandAck], outboxDepth: UInt32, lastError: String) {
         self.phase = phase
         self.endpointUrl = endpointUrl
         self.endpointTransport = endpointTransport
@@ -3778,6 +3881,7 @@ public struct ClientStateSnapshot: Equatable, Hashable {
         self.serverTime = serverTime
         self.stateMinis = stateMinis
         self.pendingMutations = pendingMutations
+        self.recentCommandAcks = recentCommandAcks
         self.outboxDepth = outboxDepth
         self.lastError = lastError
     }
@@ -3807,6 +3911,7 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
                 serverTime: FfiConverterString.read(from: &buf),
                 stateMinis: FfiConverterSequenceTypeClientStateMini.read(from: &buf),
                 pendingMutations: FfiConverterSequenceTypeClientPendingMutation.read(from: &buf),
+                recentCommandAcks: FfiConverterSequenceTypeClientCommandAck.read(from: &buf),
                 outboxDepth: FfiConverterUInt32.read(from: &buf),
                 lastError: FfiConverterString.read(from: &buf)
         )
@@ -3822,6 +3927,7 @@ public struct FfiConverterTypeClientStateSnapshot: FfiConverterRustBuffer {
         FfiConverterString.write(value.serverTime, into: &buf)
         FfiConverterSequenceTypeClientStateMini.write(value.stateMinis, into: &buf)
         FfiConverterSequenceTypeClientPendingMutation.write(value.pendingMutations, into: &buf)
+        FfiConverterSequenceTypeClientCommandAck.write(value.recentCommandAcks, into: &buf)
         FfiConverterUInt32.write(value.outboxDepth, into: &buf)
         FfiConverterString.write(value.lastError, into: &buf)
     }
@@ -4722,6 +4828,31 @@ fileprivate struct FfiConverterSequenceTypeClientBaseUrlRaceCandidate: FfiConver
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeClientBaseUrlRaceCandidate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientCommandAck: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientCommandAck]
+
+    public static func write(_ value: [ClientCommandAck], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientCommandAck.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientCommandAck] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientCommandAck]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientCommandAck.read(from: &buf))
         }
         return seq
     }

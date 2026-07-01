@@ -152,7 +152,7 @@ pub struct OutboundSessionFrame {
     pub after_seq: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientCommandAck {
     pub accepted: bool,
     pub account_id: String,
@@ -197,6 +197,7 @@ pub struct ClientCommandBatchResponse {
 pub struct ClientSessionModeIntentResult {
     pub accepted: bool,
     pub preset: String,
+    pub client_mutation_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -204,6 +205,7 @@ pub struct ClientSessionPromptIntentResult {
     pub accepted: bool,
     pub dispatch_kind: String,
     pub prompt_id: String,
+    pub client_mutation_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -316,6 +318,7 @@ pub struct ClientStateSnapshot {
     pub server_time: String,
     pub state_minis: Vec<ClientStateMini>,
     pub pending_mutations: Vec<ClientPendingMutation>,
+    pub recent_command_acks: Vec<ClientCommandAck>,
     pub outbox_depth: u32,
     pub last_error: String,
 }

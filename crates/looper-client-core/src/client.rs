@@ -47,6 +47,7 @@ const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
 const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
+const RECENT_COMMAND_ACK_LIMIT: usize = 16;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 
 #[derive(Debug, Default)]
@@ -64,6 +65,7 @@ struct ClientCoreState {
     mode_rollbacks: Vec<ClientModeRollback>,
     outbox: Vec<OutboundSessionFrame>,
     command_ack_backlog: Vec<ClientCommandAck>,
+    recent_command_acks: Vec<ClientCommandAck>,
     pending_replacement: Option<PendingStateMiniReplacement>,
     last_error: String,
 }
@@ -1621,6 +1623,7 @@ impl ClientCoreState {
             server_time: self.server_time.clone(),
             state_minis: self.state_minis.clone(),
             pending_mutations: self.pending_mutations.clone(),
+            recent_command_acks: self.recent_command_acks.clone(),
             outbox_depth: self.outbox.len() as u32,
             last_error: self.last_error.clone(),
         }
@@ -1757,6 +1760,7 @@ impl ClientCoreState {
         update_server_time_if_newer(&mut self.server_time, ack.server_time.clone());
         self.pending_mutations
             .retain(|mutation| mutation.client_mutation_id != ack.client_mutation_id);
+        self.remember_recent_command_ack(ack.clone());
         if command_kind == Some(ClientCommandKind::SetSessionMode) && !ack.accepted {
             self.restore_mode_rollback(&ack.client_mutation_id);
         } else {
@@ -1768,6 +1772,20 @@ impl ClientCoreState {
             self.last_error.clear();
         } else {
             self.last_error = reject_message;
+        }
+    }
+
+    fn remember_recent_command_ack(&mut self, ack: ClientCommandAck) {
+        if let Some(existing_index) = self
+            .recent_command_acks
+            .iter()
+            .position(|seen| seen.client_mutation_id == ack.client_mutation_id)
+        {
+            self.recent_command_acks.remove(existing_index);
+        }
+        self.recent_command_acks.push(ack);
+        if self.recent_command_acks.len() > RECENT_COMMAND_ACK_LIMIT {
+            self.recent_command_acks.remove(0);
         }
     }
 

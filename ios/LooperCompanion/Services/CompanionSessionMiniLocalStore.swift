@@ -272,11 +272,14 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         guard !endpoints.isEmpty else {
             throw CompanionSessionRuntimeError.noRealtimeEndpoint
         }
-        return try start(
+        Self.recordEndpointCandidates(endpoints, reason: "start")
+        let snapshot = try start(
             endpoints: endpoints,
             bearerToken: bearerToken,
             mobileSessionHeader: mobileSessionHeader
         )
+        Self.recordRuntimeDiagnostics(snapshot, reason: "start")
+        return snapshot
     }
 
     func prepareSessionRuntime() async {
@@ -366,7 +369,9 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         async throws -> CompanionClientCoreMobileSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMobileSnapshotChange()
-        let endpointURL = Self.endpointURL(from: try? sessionManager.stateSnapshot())
+        let stateSnapshot = try? sessionManager.stateSnapshot()
+        Self.recordRuntimeDiagnostics(stateSnapshot, reason: streamUpdate.syncReason)
+        let endpointURL = Self.endpointURL(from: stateSnapshot)
         let livenessUpdate = Self.livenessUpdate(
             from: streamUpdate,
             endpointURL: endpointURL
@@ -455,7 +460,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("mode:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("mode:grpc-accepted id=\(threadID)")
+        CompanionDiagnostics.record(
+            "mode:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "mode-accepted")
         return result
     }
 
@@ -477,8 +485,9 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "prompt:grpc-accepted id=\(threadID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
+            "prompt:grpc-accepted id=\(threadID) kind=\(Self.dispatchKind(from: result.dispatchKind)) clientMutationID=\(result.clientMutationId)"
         )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "prompt-accepted")
         return result
     }
 
@@ -495,7 +504,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("siri-current:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("siri-current:grpc-accepted id=\(threadID)")
+        CompanionDiagnostics.record(
+            "siri-current:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "siri-current-accepted")
         return result
     }
 
@@ -512,7 +524,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("siri-default:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("siri-default:grpc-accepted id=\(threadID)")
+        CompanionDiagnostics.record(
+            "siri-default:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "siri-default-accepted")
         return result
     }
 
@@ -525,7 +540,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("default-prompt:grpc-invalid")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("default-prompt:grpc-accepted")
+        CompanionDiagnostics.record(
+            "default-prompt:grpc-accepted clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "default-prompt-accepted")
         return result
     }
 
@@ -542,7 +560,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("archive:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("archive:grpc-accepted id=\(threadID) archived=\(archived)")
+        CompanionDiagnostics.record(
+            "archive:grpc-accepted id=\(threadID) archived=\(archived) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "archive-accepted")
         return result
     }
 
@@ -555,7 +576,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("delete:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("delete:grpc-accepted id=\(threadID)")
+        CompanionDiagnostics.record(
+            "delete:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "delete-accepted")
         return result
     }
 
@@ -568,7 +592,10 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             CompanionDiagnostics.record("mute:grpc-invalid id=\(threadID)")
             throw HTTPCompanionServiceError.invalidResponse
         }
-        CompanionDiagnostics.record("mute:grpc-accepted id=\(threadID)")
+        CompanionDiagnostics.record(
+            "mute:grpc-accepted id=\(threadID) clientMutationID=\(result.clientMutationId)"
+        )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "mute-accepted")
         return result
     }
 
@@ -639,8 +666,9 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "notification-reply:grpc-pending-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: result.dispatchKind))"
+            "notification-reply:grpc-pending-accepted id=\(sessionID) notificationID=\(notificationID) kind=\(Self.dispatchKind(from: result.dispatchKind)) clientMutationID=\(result.clientMutationId) ackSeq=\(result.ackSeq)"
         )
+        Self.recordRuntimeDiagnostics(try? sessionManager.stateSnapshot(), reason: "notification-reply-pending-accepted")
         return try Self.notificationReplyResponse(
             from: result,
             fallbackNotificationID: notificationID,
@@ -700,7 +728,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             throw HTTPCompanionServiceError.invalidResponse
         }
         CompanionDiagnostics.record(
-            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind))"
+            "notification-reply:grpc-accepted id=\(sessionID) notificationID=\(fallbackNotificationID) kind=\(dispatchKind(from: result.dispatchKind)) clientMutationID=\(result.clientMutationId) ackSeq=\(result.ackSeq)"
         )
         return result
     }
@@ -744,6 +772,63 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         }
 
         return URL(string: endpointURLString)
+    }
+
+    private static func recordEndpointCandidates(_ endpoints: [ClientEndpoint], reason: String) {
+        let summary = endpoints.enumerated().map { index, endpoint in
+            "index=\(index) transport=\(transportName(endpoint.transport)) url=\(endpoint.url) recoveryBaseURL=\(endpoint.recoveryBaseUrl) h3CertSha256=\(nonEmpty(endpoint.h3CertificateSha256) ?? "none") h3SpkiSha256=\(nonEmpty(endpoint.h3CertificateSpkiSha256) ?? "none") lastGood=\(endpoint.lastGood)"
+        }.joined(separator: " | ")
+        CompanionDiagnostics.record("session-runtime:endpoint-candidates reason=\(reason) \(summary)")
+    }
+
+    private static func recordRuntimeDiagnostics(_ snapshot: ClientStateSnapshot?, reason: String) {
+        guard let snapshot else {
+            CompanionDiagnostics.record("session-runtime:state-unavailable reason=\(reason)")
+            return
+        }
+        let pending = snapshot.pendingMutations.map {
+            "\($0.clientMutationId):\(commandKindName($0.commandKind)):\($0.threadId)"
+        }.joined(separator: ",")
+        let recentAcks = snapshot.recentCommandAcks.map {
+            "\($0.clientMutationId):accepted=\($0.accepted):ackSeq=\($0.ackSeq):entity=\($0.entityId):revision=\($0.revision)"
+        }.joined(separator: ",")
+        CompanionDiagnostics.record(
+            "session-runtime:state reason=\(reason) phase=\(snapshot.phase) selectedTransport=\(transportName(snapshot.endpointTransport)) endpointURL=\(snapshot.endpointUrl) fallbackReason=\(nonEmpty(snapshot.transportFallbackReason) ?? "none") latestSeq=\(snapshot.latestSeq) outboxDepth=\(snapshot.outboxDepth) pendingMutations=[\(pending)] recentCommandAcks=[\(recentAcks)] lastError=\(nonEmpty(snapshot.lastError) ?? "none")"
+        )
+    }
+
+    private static func transportName(_ transport: ClientEndpointTransport) -> String {
+        switch transport {
+        case .h2:
+            "h2"
+        case .h3:
+            "h3"
+        }
+    }
+
+    private static func commandKindName(_ kind: ClientCommandKind) -> String {
+        switch kind {
+        case .setSessionMode:
+            "SetSessionMode"
+        case .sendSessionPrompt:
+            "SendSessionPrompt"
+        case .submitNotificationReply:
+            "SubmitNotificationReply"
+        case .setSiriCurrentSession:
+            "SetSiriCurrentSession"
+        case .setSiriDefaultSession:
+            "SetSiriDefaultSession"
+        case .saveDefaultPrompt:
+            "SaveDefaultPrompt"
+        case .setDefaultNotificationTargets:
+            "SetDefaultNotificationTargets"
+        case .setSessionArchived:
+            "SetSessionArchived"
+        case .deleteSession:
+            "DeleteSession"
+        case .muteSession:
+            "MuteSession"
+        }
     }
 }
 
