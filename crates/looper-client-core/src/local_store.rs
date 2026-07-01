@@ -1667,6 +1667,51 @@ mod tests {
     }
 
     #[test]
+    fn local_store_rejects_invalid_last_good_endpoint_transport() {
+        let path = temp_store_path("invalid-last-good-endpoint-transport");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "lastGoodEndpoint": {
+                    "url": "https://100.64.0.2:8766",
+                    "transport": "websocket"
+                },
+                "sessions": []
+            })
+            .to_string(),
+        )
+        .expect("invalid transport store");
+
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("invalid transport should not silently default to H2");
+
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+    }
+
+    #[test]
+    fn local_store_rejects_missing_last_good_endpoint_transport_tuple() {
+        let path = temp_store_path("missing-last-good-endpoint-transport");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "lastGoodEndpoint": {
+                    "url": "https://100.64.0.2:8766"
+                },
+                "sessions": []
+            })
+            .to_string(),
+        )
+        .expect("missing transport store");
+
+        let error = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect_err("missing tuple transport should not silently default to H2");
+
+        assert_eq!(error, ClientCoreError::InvalidSnapshotJson);
+    }
+
+    #[test]
     fn local_store_clamps_legacy_control_payload_cursor_on_load() {
         let path = temp_store_path("legacy-control-payload-cursor");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");

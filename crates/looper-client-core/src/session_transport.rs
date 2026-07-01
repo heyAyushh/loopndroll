@@ -222,14 +222,16 @@ pub(crate) async fn run_state_mini_stream(
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
                 let _ = events
                     .send(StateMiniStreamEvent::RecoveryRequired {
                         latest_seq: next_after_seq,
                         error_description,
-                        endpoint_transport: ClientEndpointTransport::H2,
-                        fallback_reason: String::new(),
+                        endpoint_transport,
+                        fallback_reason,
                     })
                     .await;
                 tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
@@ -237,14 +239,16 @@ pub(crate) async fn run_state_mini_stream(
             Err(StateMiniTransportError::Transport {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 next_after_seq = next_after_seq.max(latest_seq);
                 let _ = events
                     .send(StateMiniStreamEvent::Reconnecting {
                         latest_seq: next_after_seq,
                         error_description,
-                        endpoint_transport: ClientEndpointTransport::H2,
-                        fallback_reason: String::new(),
+                        endpoint_transport,
+                        fallback_reason,
                     })
                     .await;
                 tokio::time::sleep(STATE_MINI_RECONNECT_DELAY).await;
@@ -258,11 +262,67 @@ enum StateMiniTransportError {
     Transport {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
     RecoveryRequired {
         latest_seq: i64,
         error_description: String,
+        endpoint_transport: ClientEndpointTransport,
+        fallback_reason: String,
     },
+}
+
+fn state_mini_transport_error(
+    latest_seq: i64,
+    error_description: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::Transport {
+        latest_seq,
+        error_description,
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason: String::new(),
+    }
+}
+
+fn state_mini_transport_error_with_endpoint(
+    latest_seq: i64,
+    error_description: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::Transport {
+        latest_seq,
+        error_description,
+        endpoint_transport,
+        fallback_reason,
+    }
+}
+
+fn state_mini_recovery_required_error(
+    latest_seq: i64,
+    error_description: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::RecoveryRequired {
+        latest_seq,
+        error_description,
+        endpoint_transport: ClientEndpointTransport::H2,
+        fallback_reason: String::new(),
+    }
+}
+
+fn state_mini_recovery_required_error_with_endpoint(
+    latest_seq: i64,
+    error_description: String,
+    endpoint_transport: ClientEndpointTransport,
+    fallback_reason: String,
+) -> StateMiniTransportError {
+    StateMiniTransportError::RecoveryRequired {
+        latest_seq,
+        error_description,
+        endpoint_transport,
+        fallback_reason,
+    }
 }
 
 struct OpenStateMiniSession {
@@ -282,12 +342,8 @@ async fn run_state_mini_stream_session(
     events: mpsc::Sender<StateMiniStreamEvent>,
     command_acks: mpsc::Sender<ClientCommandAck>,
 ) -> Result<i64, StateMiniTransportError> {
-    let candidates = session_transport_endpoints(endpoints).map_err(|error| {
-        StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        }
-    })?;
+    let candidates = session_transport_endpoints(endpoints)
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
     let mut h3_fallback_reason = String::new();
     for tier in session_transport_tiers(candidates) {
@@ -329,10 +385,14 @@ async fn run_state_mini_stream_session(
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 return Err(StateMiniTransportError::RecoveryRequired {
                     latest_seq,
                     error_description,
+                    endpoint_transport,
+                    fallback_reason,
                 });
             }
             Err(StateMiniTransportError::Transport {
@@ -346,10 +406,7 @@ async fn run_state_mini_stream_session(
         }
     }
 
-    Err(StateMiniTransportError::Transport {
-        latest_seq: after_seq,
-        error_description: last_transport_error,
-    })
+    Err(state_mini_transport_error(after_seq, last_transport_error))
 }
 
 async fn open_state_mini_stream_tier(
@@ -395,6 +452,8 @@ async fn open_state_mini_stream_tier(
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                endpoint_transport,
+                fallback_reason,
             }) => {
                 for handle in handles {
                     handle.abort();
@@ -402,6 +461,8 @@ async fn open_state_mini_stream_tier(
                 return Err(StateMiniTransportError::RecoveryRequired {
                     latest_seq,
                     error_description,
+                    endpoint_transport,
+                    fallback_reason,
                 });
             }
             Err(StateMiniTransportError::Transport {
@@ -412,10 +473,7 @@ async fn open_state_mini_stream_tier(
         }
     }
 
-    Err(StateMiniTransportError::Transport {
-        latest_seq: after_seq,
-        error_description: last_transport_error,
-    })
+    Err(state_mini_transport_error(after_seq, last_transport_error))
 }
 
 async fn open_state_mini_stream_candidate(
@@ -460,44 +518,25 @@ async fn open_h2_state_mini_stream_candidate(
     fallback_reason: String,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let channel_endpoint = Endpoint::from_shared(endpoint.url)
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?
         .connect_timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT);
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(channel_endpoint)
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let (request_sender, request_receiver) = mpsc::channel(64);
     request_sender
         .send(resume_client_frame(after_seq))
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
-        |error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        },
-    )?;
+    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)
+        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
 
     let response = client.session(request).await.map_err(|status| {
         if status.code() == tonic::Code::OutOfRange {
-            StateMiniTransportError::RecoveryRequired {
-                latest_seq: after_seq,
-                error_description: status.message().to_owned(),
-            }
+            state_mini_recovery_required_error(after_seq, status.message().to_owned())
         } else {
-            StateMiniTransportError::Transport {
-                latest_seq: after_seq,
-                error_description: status.to_string(),
-            }
+            state_mini_transport_error(after_seq, status.to_string())
         }
     })?;
 
@@ -517,17 +556,22 @@ async fn open_h3_state_mini_stream_candidate(
     mobile_session_header: String,
     after_seq: i64,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
-    let uri = endpoint_url
-        .parse::<Uri>()
-        .map_err(|_| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: ClientCoreError::InvalidEndpoint.to_string(),
-        })?;
-    let client_endpoint =
-        h3_client_endpoint(&endpoint).map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
-        })?;
+    let uri = endpoint_url.parse::<Uri>().map_err(|_| {
+        state_mini_transport_error_with_endpoint(
+            after_seq,
+            ClientCoreError::InvalidEndpoint.to_string(),
+            ClientEndpointTransport::H3,
+            String::new(),
+        )
+    })?;
+    let client_endpoint = h3_client_endpoint(&endpoint).map_err(|error| {
+        state_mini_transport_error_with_endpoint(
+            after_seq,
+            error.to_string(),
+            ClientEndpointTransport::H3,
+            String::new(),
+        )
+    })?;
     let connector = H3QuinnConnector::new(uri.clone(), "localhost".to_owned(), client_endpoint);
     let channel = tonic_h3::H3Channel::new(connector, uri);
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
@@ -535,35 +579,51 @@ async fn open_h3_state_mini_stream_candidate(
     request_sender
         .send(resume_client_frame(after_seq))
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
+        .map_err(|error| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                error.to_string(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
         })?;
     let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
     apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
-        |error| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: error.to_string(),
+        |error| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                error.to_string(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
         },
     )?;
 
     let response = tokio::time::timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT, client.session(request))
         .await
-        .map_err(|_| StateMiniTransportError::Transport {
-            latest_seq: after_seq,
-            error_description: "H3 Session open timed out".to_owned(),
+        .map_err(|_| {
+            state_mini_transport_error_with_endpoint(
+                after_seq,
+                "H3 Session open timed out".to_owned(),
+                ClientEndpointTransport::H3,
+                String::new(),
+            )
         })?
         .map_err(|status| {
             if status.code() == tonic::Code::OutOfRange {
-                StateMiniTransportError::RecoveryRequired {
-                    latest_seq: after_seq,
-                    error_description: status.message().to_owned(),
-                }
+                state_mini_recovery_required_error_with_endpoint(
+                    after_seq,
+                    status.message().to_owned(),
+                    ClientEndpointTransport::H3,
+                    String::new(),
+                )
             } else {
-                StateMiniTransportError::Transport {
-                    latest_seq: after_seq,
-                    error_description: status.to_string(),
-                }
+                state_mini_transport_error_with_endpoint(
+                    after_seq,
+                    status.to_string(),
+                    ClientEndpointTransport::H3,
+                    String::new(),
+                )
             }
         })?;
 
@@ -597,9 +657,13 @@ async fn drive_state_mini_stream_session(
             fallback_reason: fallback_reason.clone(),
         })
         .await
-        .map_err(|error| StateMiniTransportError::Transport {
-            latest_seq,
-            error_description: error.to_string(),
+        .map_err(|error| {
+            state_mini_transport_error_with_endpoint(
+                latest_seq,
+                error.to_string(),
+                endpoint_transport,
+                fallback_reason.clone(),
+            )
         })?;
     loop {
         tokio::select! {
@@ -607,30 +671,42 @@ async fn drive_state_mini_stream_session(
                 let Some(command) = command else {
                     return Ok(latest_seq);
                 };
-                let frame = client_frame(command).map_err(|error| StateMiniTransportError::Transport {
-                    latest_seq,
-                    error_description: error.to_string(),
+                let frame = client_frame(command).map_err(|error| {
+                    state_mini_transport_error_with_endpoint(
+                        latest_seq,
+                        error.to_string(),
+                        endpoint_transport,
+                        fallback_reason.clone(),
+                    )
                 })?;
                 request_sender
                     .send(frame)
                     .await
-                    .map_err(|error| StateMiniTransportError::Transport {
-                        latest_seq,
-                        error_description: error.to_string(),
+                    .map_err(|error| {
+                        state_mini_transport_error_with_endpoint(
+                            latest_seq,
+                            error.to_string(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     })?;
             }
             frame = stream.message() => {
                 let Some(frame) = frame.map_err(|status| {
                     if status.code() == tonic::Code::OutOfRange {
-                        StateMiniTransportError::RecoveryRequired {
+                        state_mini_recovery_required_error_with_endpoint(
                             latest_seq,
-                            error_description: status.message().to_owned(),
-                        }
+                            status.message().to_owned(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     } else {
-                        StateMiniTransportError::Transport {
+                        state_mini_transport_error_with_endpoint(
                             latest_seq,
-                            error_description: status.to_string(),
-                        }
+                            status.to_string(),
+                            endpoint_transport,
+                            fallback_reason.clone(),
+                        )
                     }
                 })? else {
                     return Ok(latest_seq);
@@ -643,9 +719,13 @@ async fn drive_state_mini_stream_session(
                         command_acks
                             .send(ack)
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::StateDelta(delta)) => {
@@ -654,9 +734,13 @@ async fn drive_state_mini_stream_session(
                         events
                             .send(StateMiniStreamEvent::Delta(delta))
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::TextChunk(text_chunk)) => {
@@ -668,9 +752,13 @@ async fn drive_state_mini_stream_session(
                         events
                             .send(StateMiniStreamEvent::TextChunk(text_chunk))
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
@@ -685,9 +773,13 @@ async fn drive_state_mini_stream_session(
                                 fallback_reason: fallback_reason.clone(),
                             })
                             .await
-                            .map_err(|error| StateMiniTransportError::Transport {
-                                latest_seq,
-                                error_description: error.to_string(),
+                            .map_err(|error| {
+                                state_mini_transport_error_with_endpoint(
+                                    latest_seq,
+                                    error.to_string(),
+                                    endpoint_transport,
+                                    fallback_reason.clone(),
+                                )
                             })?;
                     }
                     _ => {}
@@ -1220,10 +1312,10 @@ fn client_state_mini_delta(
         return Ok(seq_only_state_mini_delta(delta));
     };
     if state_mini_payload_requires_snapshot_recovery(&payload) {
-        return Err(StateMiniTransportError::RecoveryRequired {
-            latest_seq: state_mini_payload_latest_seq(&payload, delta.seq),
-            error_description: state_mini_payload_recovery_reason(&payload),
-        });
+        return Err(state_mini_recovery_required_error(
+            state_mini_payload_latest_seq(&payload, delta.seq),
+            state_mini_payload_recovery_reason(&payload),
+        ));
     }
     let replace_sessions = payload
         .get(REPLACE_FIELD)
@@ -1626,6 +1718,7 @@ mod tests {
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
                 error_description,
+                ..
             }) => {
                 assert_eq!(latest_seq, 57);
                 assert_eq!(error_description, "state_delta_frame_cap_exceeded");
@@ -1751,6 +1844,55 @@ mod tests {
             url.to_string(),
             "http://127.0.0.1:9876/mobile/api/mobile/session-minis/snapshot"
         );
+    }
+
+    #[test]
+    fn h3_rejects_missing_or_malformed_certificate_pin_material() {
+        let missing_pin = h3_endpoint("https://127.0.0.1:8766", "http://127.0.0.1:8765", "", false);
+        assert_eq!(
+            h3_client_endpoint(&missing_pin).expect_err("missing H3 pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+
+        let malformed_cert_pin = h3_endpoint(
+            "https://127.0.0.1:8766",
+            "http://127.0.0.1:8765",
+            "sha256:not-hex",
+            false,
+        );
+        assert_eq!(
+            h3_client_endpoint(&malformed_cert_pin).expect_err("malformed H3 cert pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+
+        let malformed_spki_pin = ClientEndpoint {
+            transport: ClientEndpointTransport::H3,
+            url: "https://127.0.0.1:8766".to_owned(),
+            recovery_base_url: "http://127.0.0.1:8765".to_owned(),
+            h3_certificate_sha256: String::new(),
+            h3_certificate_spki_sha256: "sha256:short".to_owned(),
+            last_good: false,
+        };
+        assert_eq!(
+            h3_client_endpoint(&malformed_spki_pin).expect_err("malformed H3 SPKI pin rejects"),
+            ClientCoreError::InvalidEndpoint
+        );
+        println!(
+            "manual_qa_malformed_h3_pin missing_pin=reject malformed_cert=reject malformed_spki=reject"
+        );
+    }
+
+    #[test]
+    fn h3_snapshot_recovery_rejects_missing_explicit_recovery_base_url() {
+        let error = state_mini_snapshot_uri(&h3_endpoint(
+            "https://127.0.0.1:8766/realtime",
+            "",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            true,
+        ))
+        .expect_err("H3 recovery requires explicit HTTP base URL");
+
+        assert_eq!(error, ClientCoreError::InvalidEndpoint);
     }
 
     #[test]
@@ -2004,6 +2146,151 @@ mod tests {
         });
     }
 
+    #[test]
+    fn h3_established_stream_failure_reconnects_with_after_seq_and_preserves_pending_ack() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let h3 =
+                spawn_h3_realtime_session_server_fail_then_ack(91, 95, "mutation-after-h3-failure")
+                    .await;
+            let (h2_url, h2_server, h2_observed_resume) =
+                spawn_realtime_session_server_with_ack(95, "mutation-after-h3-failure").await;
+            let endpoints = vec![
+                h3_endpoint(
+                    &h3.url,
+                    "http://127.0.0.1:8765",
+                    &h3.certificate_sha256,
+                    false,
+                ),
+                h2_endpoint(&h2_url, false),
+            ];
+            let (command_sender, commands) = mpsc::channel(2);
+            let (events_sender, mut events) = mpsc::channel(8);
+            let (command_acks_sender, mut command_acks) = mpsc::channel(2);
+            let stream_task = tokio::spawn(async move {
+                run_state_mini_stream(
+                    endpoints,
+                    String::new(),
+                    String::new(),
+                    90,
+                    commands,
+                    events_sender,
+                    command_acks_sender,
+                )
+                .await;
+            });
+
+            let opened = recv_stream_event(&mut events, "initial H3 heartbeat").await;
+            match opened {
+                StateMiniStreamEvent::Heartbeat {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    ..
+                } => {
+                    assert_eq!(latest_seq, 90);
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                    assert!(fallback_reason.is_empty());
+                }
+                other => panic!("expected initial H3 heartbeat, got {other:?}"),
+            }
+
+            let mut expected_resume_after_seq = 90;
+            let reconnecting = loop {
+                let event = recv_stream_event(&mut events, "H3 reconnecting event").await;
+                match event {
+                    StateMiniStreamEvent::Heartbeat {
+                        latest_seq,
+                        endpoint_transport,
+                        ..
+                    } => {
+                        assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                        expected_resume_after_seq = expected_resume_after_seq.max(latest_seq);
+                    }
+                    other @ StateMiniStreamEvent::Reconnecting { .. } => break other,
+                    other => panic!("expected H3 heartbeat or reconnecting event, got {other:?}"),
+                }
+            };
+            match reconnecting {
+                StateMiniStreamEvent::Reconnecting {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    error_description,
+                } => {
+                    assert_eq!(latest_seq, expected_resume_after_seq);
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                    assert!(fallback_reason.is_empty());
+                    assert!(
+                        error_description.contains("Connection error")
+                            || error_description.contains("established h3 stream failed"),
+                        "unexpected reconnect reason: {error_description}"
+                    );
+                }
+                other => panic!("expected H3 reconnecting event, got {other:?}"),
+            }
+
+            h3.endpoint.close(VarInt::from_u32(0), b"test h3 down");
+            command_sender
+                .send(test_outbound_command(
+                    "mutation-after-h3-failure",
+                    expected_resume_after_seq,
+                ))
+                .await
+                .expect("queue command across reconnect");
+
+            let reopened = recv_stream_event(&mut events, "fallback H2 heartbeat").await;
+            match reopened {
+                StateMiniStreamEvent::Heartbeat {
+                    latest_seq,
+                    endpoint_transport,
+                    fallback_reason,
+                    endpoint_url,
+                    ..
+                } => {
+                    assert_eq!(latest_seq, expected_resume_after_seq);
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&h2_url));
+                    assert_eq!(endpoint_transport, ClientEndpointTransport::H2);
+                    assert!(
+                        fallback_reason.contains("h3"),
+                        "fallback reason should identify H3 reconnect failure: {fallback_reason}"
+                    );
+                }
+                other => panic!("expected fallback H2 heartbeat, got {other:?}"),
+            }
+
+            let ack = tokio::time::timeout(Duration::from_secs(3), command_acks.recv())
+                .await
+                .expect("ack timeout")
+                .expect("ack after H3 reconnect");
+            assert_eq!(ack.client_mutation_id, "mutation-after-h3-failure");
+            assert_eq!(ack.ack_seq, 95);
+
+            let resumes = wait_for_resume_count(h2_observed_resume, 1).await;
+            assert_eq!(
+                resumes.last().copied(),
+                Some(expected_resume_after_seq),
+                "H3 reconnect must preserve Resume after_seq from the failed established stream"
+            );
+            assert!(
+                !resumes.contains(&0),
+                "H3 reconnect must not reset Resume after_seq to zero: {resumes:?}"
+            );
+            println!(
+                "manual_qa_h3_established_reconnect transport=h3_then_h2 resumes={resumes:?} ack_seq={}",
+                ack.ack_seq
+            );
+
+            stream_task.abort();
+            let _ = stream_task.await;
+            drop(command_sender);
+            h2_server.abort();
+            let _ = h2_server.await;
+            h3.shutdown().await;
+        });
+    }
+
     fn h2_endpoint(url: &str, last_good: bool) -> ClientEndpoint {
         ClientEndpoint {
             transport: ClientEndpointTransport::H2,
@@ -2161,6 +2448,39 @@ mod tests {
     async fn spawn_h3_realtime_session_server(
         heartbeat_seq: i64,
     ) -> SpawnedH3RealtimeSessionServer {
+        let observed_resume = Arc::new(Mutex::new(Vec::new()));
+        let service = TestRealtimeSessionService {
+            heartbeat_seq: Some(heartbeat_seq),
+            ack_seq: None,
+            ack_client_mutation_id: String::new(),
+            observed_resume: observed_resume.clone(),
+        };
+        spawn_h3_realtime_session_server_with_service(service).await
+    }
+
+    async fn spawn_h3_realtime_session_server_fail_then_ack(
+        heartbeat_seq: i64,
+        ack_seq: i64,
+        client_mutation_id: &'static str,
+    ) -> SpawnedH3RealtimeSessionServer {
+        let observed_resume = Arc::new(Mutex::new(Vec::new()));
+        let service = FailThenAckRealtimeSessionService {
+            heartbeat_seq,
+            ack_seq,
+            ack_client_mutation_id: client_mutation_id.to_owned(),
+            observed_resume: observed_resume.clone(),
+            session_count: Arc::new(Mutex::new(0)),
+        };
+        spawn_h3_realtime_session_server_with_service(service).await
+    }
+
+    async fn spawn_h3_realtime_session_server_with_service<S>(
+        service: S,
+    ) -> SpawnedH3RealtimeSessionServer
+    where
+        S: proto::looper_realtime_server::LooperRealtime + Clone + Send + Sync + 'static,
+        S::SessionStream: Send + 'static,
+    {
         let certificate = generate_simple_self_signed(vec!["localhost".to_owned()])
             .expect("generate H3 test certificate");
         let certificate_der = certificate.cert.der().as_ref().to_vec();
@@ -2186,12 +2506,6 @@ mod tests {
         .expect("H3 server endpoint");
         let address = endpoint.local_addr().expect("H3 local addr");
         let acceptor = H3QuinnAcceptor::new(endpoint.clone());
-        let service = TestRealtimeSessionService {
-            heartbeat_seq: Some(heartbeat_seq),
-            ack_seq: None,
-            ack_client_mutation_id: String::new(),
-            observed_resume: Arc::new(Mutex::new(Vec::new())),
-        };
         let routes = tonic::service::Routes::new(
             proto::looper_realtime_server::LooperRealtimeServer::new(service),
         );
@@ -2206,6 +2520,108 @@ mod tests {
             certificate_sha256,
             endpoint,
             server_task,
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailThenAckRealtimeSessionService {
+        heartbeat_seq: i64,
+        ack_seq: i64,
+        ack_client_mutation_id: String,
+        observed_resume: Arc<Mutex<Vec<i64>>>,
+        session_count: Arc<Mutex<usize>>,
+    }
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for FailThenAckRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let heartbeat_seq = self.heartbeat_seq;
+            let ack_seq = self.ack_seq;
+            let ack_client_mutation_id = self.ack_client_mutation_id.clone();
+            let observed_resume = self.observed_resume.clone();
+            let session_index = {
+                let mut session_count = self.session_count.lock().expect("session count lock");
+                *session_count += 1;
+                *session_count
+            };
+            let mut stream = request.into_inner();
+            let (sender, receiver) = mpsc::channel(4);
+            tokio::spawn(async move {
+                if session_index == 1 {
+                    let _ = sender
+                        .send(Ok(proto::ServerFrame {
+                            frame: Some(proto::server_frame::Frame::Heartbeat(proto::Heartbeat {
+                                latest_seq: heartbeat_seq,
+                                server_time: "2026-07-01T00:00:00Z".to_owned(),
+                            })),
+                        }))
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if let Ok(Ok(Some(frame))) =
+                        tokio::time::timeout(Duration::from_millis(50), stream.message()).await
+                    {
+                        if let Some(proto::client_frame::Frame::Resume(resume)) = frame.frame {
+                            observed_resume
+                                .lock()
+                                .expect("resume lock")
+                                .push(resume.after_seq);
+                        }
+                    }
+                    let _ = sender
+                        .send(Err(tonic::Status::unavailable(
+                            "established h3 stream failed",
+                        )))
+                        .await;
+                    return;
+                }
+
+                if let Ok(Ok(Some(frame))) =
+                    tokio::time::timeout(Duration::from_millis(500), stream.message()).await
+                {
+                    if let Some(proto::client_frame::Frame::Resume(resume)) = frame.frame {
+                        observed_resume
+                            .lock()
+                            .expect("resume lock")
+                            .push(resume.after_seq);
+                    }
+                }
+                let _ = sender
+                    .send(Ok(proto::ServerFrame {
+                        frame: Some(proto::server_frame::Frame::Ack(proto::CommandAck {
+                            accepted: true,
+                            account_id: "test".to_owned(),
+                            node_id: "default".to_owned(),
+                            client_mutation_id: ack_client_mutation_id.clone(),
+                            ack_seq,
+                            entity_id: "thread-fallback".to_owned(),
+                            revision: format!("rev-{ack_seq}"),
+                            server_time: "2026-07-01T00:00:00Z".to_owned(),
+                            idempotent_replay: true,
+                            error_code: String::new(),
+                            reject_reason: String::new(),
+                            current_state: String::new(),
+                        })),
+                    }))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            });
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
     }
 
@@ -2330,6 +2746,30 @@ mod tests {
             archived: false,
             client_mutation_id: client_mutation_id.to_owned(),
             after_seq,
+        }
+    }
+
+    async fn recv_stream_event(
+        events: &mut mpsc::Receiver<StateMiniStreamEvent>,
+        label: &str,
+    ) -> StateMiniStreamEvent {
+        tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{label} timed out"))
+            .unwrap_or_else(|| panic!("{label} channel closed"))
+    }
+
+    async fn wait_for_resume_count(
+        observed_resume: Arc<Mutex<Vec<i64>>>,
+        expected_count: usize,
+    ) -> Vec<i64> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let resumes = observed_resume.lock().expect("resume lock").clone();
+            if resumes.len() >= expected_count || tokio::time::Instant::now() >= deadline {
+                return resumes;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
