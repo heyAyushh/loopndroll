@@ -21,16 +21,22 @@ const MOBILE_STATE_EVENT_ID_PREFIX: &str = "mobile-state-event-";
 const MOBILE_STATE_EVENT_ID_WIDTH: usize = 20;
 const MOBILE_COMMAND_RESERVATION_STALE_AFTER_MS: i64 = 60_000;
 const NANOS_PER_MILLISECOND: i128 = 1_000_000;
-// Bounds unbounded growth of the append-only mobile state/command logs. Pruning runs
-// opportunistically on write once a store crosses the trigger, and always keeps at least
-// `MOBILE_STATE_EVENT_RETENTION_ROWS` of the newest rows so gRPC resume/replay (see
-// grpc/service.rs SESSION_REPLAY_BATCH_SIZE and the isolated_control_plane replay-batch and
-// large-replacement test fixtures, whose largest scenarios stay under ~2.5k rows) always has a
-// safe window to read from.
-const MOBILE_STATE_EVENT_RETENTION_ROWS: i64 = 50_000;
-const MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS: i64 = 60_000;
-const MOBILE_COMMAND_LOG_RETENTION_ROWS: i64 = 50_000;
-const MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS: i64 = 60_000;
+const MILLIS_PER_SECOND: i64 = 1_000;
+const SECONDS_PER_MINUTE: i64 = 60;
+const MINUTES_PER_HOUR: i64 = 60;
+const HOURS_PER_DAY: i64 = 24;
+const MOBILE_EVENT_RETENTION_DAYS: i64 = 30;
+pub const MOBILE_STATE_EVENT_ENTITY_RETENTION_ROWS: i64 = 500;
+pub const MOBILE_STATE_EVENT_RETENTION_AGE_MS: i64 = MOBILE_EVENT_RETENTION_DAYS
+    * HOURS_PER_DAY
+    * MINUTES_PER_HOUR
+    * SECONDS_PER_MINUTE
+    * MILLIS_PER_SECOND;
+pub const MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS: i64 = 1_000;
+const MOBILE_COMMAND_ACK_RETENTION_AGE_MS: i64 = MOBILE_STATE_EVENT_RETENTION_AGE_MS;
+const MOBILE_EVENT_RETENTION_RECLAIM_DELETED_ROWS_THRESHOLD: usize = 10_000;
+const SQLITE_INCREMENTAL_AUTO_VACUUM_MODE: i64 = 2;
+const SQLITE_RECLAIM_FREELIST_MIN_PAGES: i64 = 512;
 
 /// Tracks which store paths have already run schema setup + legacy migration this process,
 /// so `EventStore::ensure_initialized` is a cheap lock+lookup after the first call per path
@@ -175,14 +181,15 @@ pub enum MobileCommandReservationResult {
 pub struct MobileStateEventGap {
     pub requested_after_seq: i64,
     pub latest_seq: i64,
+    pub oldest_seq: i64,
 }
 
 impl fmt::Display for MobileStateEventGap {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "mobile state event replay gap: requested after seq {} but latest seq is {}",
-            self.requested_after_seq, self.latest_seq
+            "mobile state event replay gap: requested after seq {} but retained seq range is {}..={}",
+            self.requested_after_seq, self.oldest_seq, self.latest_seq
         )
     }
 }
@@ -209,6 +216,38 @@ pub struct EventStore {
     path: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventRetentionReclaimMode {
+    Startup,
+    Periodic,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EventRetentionPruneReport {
+    pub deleted_mobile_state_events: usize,
+    pub deleted_mobile_command_acks: usize,
+    pub reclaim: EventRetentionReclaimReport,
+}
+
+impl EventRetentionPruneReport {
+    pub fn deleted_rows(&self) -> usize {
+        self.deleted_mobile_state_events + self.deleted_mobile_command_acks
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EventRetentionReclaimReport {
+    Skipped,
+    IncrementalVacuum { freelist_pages: i64 },
+    Vacuum { freelist_pages: i64 },
+}
+
+impl Default for EventRetentionReclaimReport {
+    fn default() -> Self {
+        Self::Skipped
+    }
+}
+
 impl EventStore {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -225,6 +264,10 @@ impl EventStore {
         }
         let connection = Connection::open(&self.path)
             .with_context(|| format!("open {}", self.path.display()))?;
+        // New databases can return freed pages with short incremental-vacuum work later.
+        // Existing non-incremental databases only switch modes after a full VACUUM, so reclaim
+        // stays startup-only and guarded by a freelist threshold.
+        connection.execute_batch("pragma auto_vacuum = incremental;")?;
         connection.execute_batch(
             r#"
 create table if not exists automation_runs (
@@ -566,12 +609,9 @@ create index if not exists mobile_state_event_log_entity_seq
         self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let latest_seq = latest_mobile_state_event_seq(&connection)?;
-        if after_seq > latest_seq {
-            return Err(MobileStateEventGap {
-                requested_after_seq: after_seq,
-                latest_seq,
-            }
-            .into());
+        let oldest_seq = oldest_mobile_state_event_seq(&connection)?;
+        if let Some(gap) = mobile_state_event_gap(after_seq, oldest_seq, latest_seq) {
+            return Err(gap.into());
         }
 
         let mut statement = connection.prepare(
@@ -595,12 +635,9 @@ create index if not exists mobile_state_event_log_entity_seq
         self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         let latest_seq = latest_mobile_state_event_seq(&connection)?;
-        if after_seq > latest_seq {
-            return Err(MobileStateEventGap {
-                requested_after_seq: after_seq,
-                latest_seq,
-            }
-            .into());
+        let oldest_seq = oldest_mobile_state_event_seq(&connection)?;
+        if let Some(gap) = mobile_state_event_gap(after_seq, oldest_seq, latest_seq) {
+            return Err(gap.into());
         }
 
         let mut statement = connection.prepare(
@@ -655,6 +692,39 @@ create index if not exists mobile_state_event_log_entity_seq
         self.ensure_initialized()?;
         let connection = Connection::open(&self.path)?;
         latest_mobile_state_event_seq(&connection)
+    }
+
+    pub fn prune_mobile_event_retention(
+        &self,
+        now_ms: i64,
+        reclaim_mode: EventRetentionReclaimMode,
+    ) -> Result<EventRetentionPruneReport> {
+        self.ensure_initialized()?;
+        let mut connection = Connection::open(&self.path)?;
+        let cutoff_ms = now_ms.saturating_sub(MOBILE_STATE_EVENT_RETENTION_AGE_MS);
+        let mut report = EventRetentionPruneReport::default();
+
+        loop {
+            let state_events_deleted =
+                prune_mobile_state_event_log_batch(&mut connection, cutoff_ms)?;
+            let command_acks_deleted = prune_mobile_command_log_batch(&mut connection, cutoff_ms)?;
+            report.deleted_mobile_state_events += state_events_deleted;
+            report.deleted_mobile_command_acks += command_acks_deleted;
+
+            if state_events_deleted < MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS as usize
+                && command_acks_deleted < MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS as usize
+            {
+                break;
+            }
+        }
+
+        if reclaim_mode == EventRetentionReclaimMode::Startup
+            && report.deleted_rows() >= MOBILE_EVENT_RETENTION_RECLAIM_DELETED_ROWS_THRESHOLD
+        {
+            report.reclaim = reclaim_mobile_event_store_space_if_worthwhile(&connection)?;
+        }
+
+        Ok(report)
     }
 
     pub fn mobile_command_ack(
@@ -724,9 +794,6 @@ create index if not exists mobile_state_event_log_entity_seq
         } else {
             MobileCommandReservationResult::Reserved(record)
         };
-        if inserted > 0 {
-            prune_mobile_command_log_if_due(&transaction, transaction.last_insert_rowid())?;
-        }
         transaction.commit()?;
         Ok(result)
     }
@@ -1247,9 +1314,6 @@ fn insert_mobile_state_event(
             .unwrap_or_else(|| connection.last_insert_rowid()),
         _ => connection.last_insert_rowid(),
     };
-    if inserted > 0 {
-        prune_mobile_state_event_log_if_due(connection, seq)?;
-    }
     Ok(MobileStateEventRecord {
         seq,
         entity_id: input.entity_id.clone(),
@@ -1265,65 +1329,98 @@ fn insert_mobile_state_event(
     })
 }
 
-/// Opportunistically prunes `mobile_state_event_log` (and, in lockstep, the small
-/// `mobile_session_mini_replacements` marker table that references its `seq` values) once the
-/// log crosses `MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS`. Runs only every `PRUNE_TRIGGER - RETENTION`
-/// rows (checked via `latest_seq % ...`) so most writes pay a single cheap `max(seq)` lookup
-/// instead of a `count(*)` scan. Keeps the newest `MOBILE_STATE_EVENT_RETENTION_ROWS` rows, which
-/// comfortably covers the gRPC resume/replay window (see the module-level retention comment).
-fn prune_mobile_state_event_log_if_due(connection: &Connection, latest_seq: i64) -> Result<()> {
-    let prune_check_interval =
-        MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - MOBILE_STATE_EVENT_RETENTION_ROWS;
-    if prune_check_interval <= 0 || latest_seq % prune_check_interval != 0 {
-        return Ok(());
-    }
-    if latest_seq < MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS {
-        return Ok(());
-    }
-    let floor_seq = latest_seq - MOBILE_STATE_EVENT_RETENTION_ROWS;
-    connection.execute(
-        "delete from mobile_state_event_log where seq <= ?1",
-        params![floor_seq],
+fn prune_mobile_state_event_log_batch(
+    connection: &mut Connection,
+    cutoff_ms: i64,
+) -> Result<usize> {
+    let transaction = connection.transaction()?;
+    let deleted = transaction.execute(
+        "with ranked as (
+           select seq,
+                  created_at_ms,
+                  row_number() over (
+                    partition by entity_id
+                    order by seq desc
+                  ) as entity_rank
+           from mobile_state_event_log
+         ),
+         candidates as (
+           select seq
+           from ranked
+           where entity_rank > 1
+             and (
+               created_at_ms < ?1
+               or entity_rank > ?2
+             )
+           order by seq asc
+           limit ?3
+         )
+         delete from mobile_state_event_log
+         where seq in (select seq from candidates)",
+        params![
+            cutoff_ms,
+            MOBILE_STATE_EVENT_ENTITY_RETENTION_ROWS,
+            MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS,
+        ],
     )?;
-    connection.execute(
-        "delete from mobile_session_mini_replacements where seq <= ?1",
-        params![floor_seq],
+    transaction.execute(
+        "delete from mobile_session_mini_replacements
+         where not exists (
+           select 1
+           from mobile_state_event_log events
+           where events.seq = mobile_session_mini_replacements.seq
+         )",
+        [],
     )?;
-    Ok(())
+    transaction.commit()?;
+    Ok(deleted)
 }
 
-/// Opportunistically prunes `mobile_command_log`, the append-only idempotency ledger for
-/// mobile command acks, once it crosses `MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS`. Dedupe is
-/// keyed by `(command_kind, client_mutation_id)`, not by row age, so pruning the oldest acks
-/// only risks turning a very stale retry into a fresh (non-idempotent) command — acceptable
-/// given clients are not expected to replay mutations from `MOBILE_COMMAND_LOG_RETENTION_ROWS`
-/// commands ago. `last_insert_rowid` is a monotonically increasing per-table counter (this
-/// table has no dedicated `seq` column), so checking it modulo the prune interval is
-/// equivalent to "every N inserts" without a `count(*)` scan on every write.
-fn prune_mobile_command_log_if_due(connection: &Connection, last_insert_rowid: i64) -> Result<()> {
-    let prune_check_interval =
-        MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS - MOBILE_COMMAND_LOG_RETENTION_ROWS;
-    if prune_check_interval <= 0 || last_insert_rowid % prune_check_interval != 0 {
-        return Ok(());
-    }
-    let row_count: i64 =
-        connection.query_row("select count(*) from mobile_command_log", [], |row| {
-            row.get(0)
-        })?;
-    if row_count < MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS {
-        return Ok(());
-    }
-    let excess_rows = row_count - MOBILE_COMMAND_LOG_RETENTION_ROWS;
-    connection.execute(
+fn prune_mobile_command_log_batch(connection: &mut Connection, cutoff_ms: i64) -> Result<usize> {
+    let command_cutoff_ms = cutoff_ms.saturating_add(
+        MOBILE_STATE_EVENT_RETENTION_AGE_MS.saturating_sub(MOBILE_COMMAND_ACK_RETENTION_AGE_MS),
+    );
+    let transaction = connection.transaction()?;
+    let deleted = transaction.execute(
         "delete from mobile_command_log
          where rowid in (
-           select rowid from mobile_command_log
+           select rowid
+           from mobile_command_log
+           where created_at_ms < ?1
            order by created_at_ms asc, rowid asc
-           limit ?1
+           limit ?2
          )",
-        params![excess_rows],
+        params![command_cutoff_ms, MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS],
     )?;
-    Ok(())
+    transaction.commit()?;
+    Ok(deleted)
+}
+
+fn reclaim_mobile_event_store_space_if_worthwhile(
+    connection: &Connection,
+) -> Result<EventRetentionReclaimReport> {
+    let freelist_pages = sqlite_pragma_i64(connection, "freelist_count")?;
+    if freelist_pages < SQLITE_RECLAIM_FREELIST_MIN_PAGES {
+        return Ok(EventRetentionReclaimReport::Skipped);
+    }
+
+    let auto_vacuum = sqlite_pragma_i64(connection, "auto_vacuum")?;
+    if auto_vacuum == SQLITE_INCREMENTAL_AUTO_VACUUM_MODE {
+        connection.execute_batch(&format!("pragma incremental_vacuum({freelist_pages});"))?;
+        return Ok(EventRetentionReclaimReport::IncrementalVacuum { freelist_pages });
+    }
+
+    // VACUUM rewrites the database and can hold the store longer than serving paths tolerate.
+    // Keep it startup-only, after large prunes, so production can reclaim an old non-incremental
+    // database without adding surprise latency to hot command/replay traffic.
+    connection.execute_batch("vacuum;")?;
+    Ok(EventRetentionReclaimReport::Vacuum { freelist_pages })
+}
+
+fn sqlite_pragma_i64(connection: &Connection, name: &str) -> Result<i64> {
+    connection
+        .query_row(&format!("pragma {name}"), [], |row| row.get(0))
+        .map_err(Into::into)
 }
 
 fn upsert_mobile_session_mini(
@@ -1473,6 +1570,13 @@ fn latest_mobile_session_mini_replacement_event_seq_after(
     connection: &Connection,
     after_seq: i64,
 ) -> Result<Option<i64>> {
+    if after_seq >= 0 {
+        let latest_seq = latest_mobile_state_event_seq(connection)?;
+        let oldest_seq = oldest_mobile_state_event_seq(connection)?;
+        if let Some(gap) = mobile_state_event_gap(after_seq, oldest_seq, latest_seq) {
+            return Err(gap.into());
+        }
+    }
     connection
         .query_row(
             "select max(replacements.seq)
@@ -1731,6 +1835,38 @@ fn latest_mobile_state_event_seq(connection: &Connection) -> Result<i64> {
         .map_err(Into::into)
 }
 
+fn oldest_mobile_state_event_seq(connection: &Connection) -> Result<i64> {
+    connection
+        .query_row(
+            "select coalesce(min(seq), 0) from mobile_state_event_log",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+}
+
+fn mobile_state_event_gap(
+    after_seq: i64,
+    oldest_seq: i64,
+    latest_seq: i64,
+) -> Option<MobileStateEventGap> {
+    if after_seq > latest_seq {
+        return Some(MobileStateEventGap {
+            requested_after_seq: after_seq,
+            latest_seq,
+            oldest_seq,
+        });
+    }
+    if oldest_seq > 0 && after_seq < oldest_seq.saturating_sub(1) {
+        return Some(MobileStateEventGap {
+            requested_after_seq: after_seq,
+            latest_seq,
+            oldest_seq,
+        });
+    }
+    None
+}
+
 fn mobile_command_ack(
     connection: &Connection,
     command_kind: &str,
@@ -1783,11 +1919,11 @@ fn parse_mobile_event_kind(value: &str) -> MobileEventKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        EventStore, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS, MOBILE_COMMAND_LOG_RETENTION_ROWS,
-        MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS, MOBILE_STATE_EVENT_RETENTION_ROWS,
-        MobileEventCursor, MobileStateEventInput, insert_mobile_state_event,
-        mobile_session_mini_content_fingerprint, prune_mobile_command_log_if_due,
-        prune_mobile_state_event_log_if_due,
+        EventRetentionReclaimMode, EventStore, MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS,
+        MOBILE_STATE_EVENT_ENTITY_RETENTION_ROWS, MOBILE_STATE_EVENT_RETENTION_AGE_MS,
+        MobileCommandAckInput, MobileCommandAckResult, MobileEventCursor, MobileStateEventGap,
+        MobileStateEventInput, current_time_millis, insert_mobile_state_event,
+        mobile_session_mini_content_fingerprint,
     };
     use crate::mobile::events::MobileEventKind;
     use rusqlite::{Connection, params};
@@ -1902,59 +2038,140 @@ mod tests {
     }
 
     #[test]
-    fn mobile_state_event_log_is_pruned_once_it_crosses_the_retention_trigger() {
+    fn mobile_state_event_retention_respects_entity_cap_age_cutoff_and_newest_event() {
         let tempdir = tempdir().expect("tempdir");
         let store = EventStore::new(tempdir.path().join("events.sqlite"));
         store.initialize().expect("initialize");
         let connection = Connection::open(store.path()).expect("open events");
+        let now_ms = MOBILE_STATE_EVENT_RETENTION_AGE_MS * 2;
+        let old_ms = now_ms - MOBILE_STATE_EVENT_RETENTION_AGE_MS - 1;
 
-        // Seed rows directly (bypassing the per-row insert helper) so the test stays fast:
-        // only the seq column and a couple of not-null columns matter for this check.
-        seed_mobile_state_event_log_rows(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1);
-        prune_mobile_state_event_log_if_due(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1)
-            .expect("prune check below trigger");
-        assert_eq!(
-            row_count(&connection, "mobile_state_event_log"),
-            MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - 1,
-            "must not prune before crossing the trigger"
+        seed_mobile_state_event_log_rows(
+            &connection,
+            "thread-cap",
+            MOBILE_STATE_EVENT_ENTITY_RETENTION_ROWS + 20,
+            now_ms,
         );
+        seed_mobile_state_event_log_rows(&connection, "thread-old", 3, old_ms);
+        seed_mobile_state_event_log_rows(&connection, "thread-recent-small", 3, now_ms);
 
-        seed_mobile_state_event_log_rows(&connection, 1);
-        prune_mobile_state_event_log_if_due(&connection, MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS)
-            .expect("prune check at trigger");
+        let report = store
+            .prune_mobile_event_retention(now_ms, EventRetentionReclaimMode::Periodic)
+            .expect("prune retention");
         assert_eq!(
-            row_count(&connection, "mobile_state_event_log"),
-            MOBILE_STATE_EVENT_RETENTION_ROWS,
-            "must prune down to the retention floor once the trigger is crossed"
+            report.deleted_mobile_state_events as i64, 22,
+            "must delete rows outside the entity cap and age window"
         );
-
-        let remaining_min_seq: i64 = connection
-            .query_row("select min(seq) from mobile_state_event_log", [], |row| {
-                row.get(0)
-            })
-            .expect("min seq after prune");
         assert_eq!(
-            remaining_min_seq,
-            MOBILE_STATE_EVENT_PRUNE_TRIGGER_ROWS - MOBILE_STATE_EVENT_RETENTION_ROWS + 1,
-            "must keep exactly the newest RETENTION_ROWS rows"
+            row_count_for_entity(&connection, "thread-cap"),
+            MOBILE_STATE_EVENT_ENTITY_RETENTION_ROWS,
+            "must keep only the newest capped rows for a hot entity"
+        );
+        assert_eq!(row_count_for_entity(&connection, "thread-old"), 1);
+        assert_eq!(row_count_for_entity(&connection, "thread-recent-small"), 3);
+
+        let (old_min_seq, old_max_seq) = entity_seq_bounds(&connection, "thread-old");
+        assert_eq!(
+            old_min_seq, old_max_seq,
+            "must keep the newest event even when the whole entity is older than the cutoff"
         );
     }
 
     #[test]
-    fn mobile_command_log_is_pruned_once_it_crosses_the_retention_trigger() {
+    fn mobile_event_retention_keeps_recent_command_ack_idempotency_replay() {
         let tempdir = tempdir().expect("tempdir");
         let store = EventStore::new(tempdir.path().join("events.sqlite"));
         store.initialize().expect("initialize");
         let connection = Connection::open(store.path()).expect("open events");
+        let first = store
+            .record_mobile_command_ack(command_ack_input("sha256:recent", "resumed"))
+            .expect("record recent command ack");
+        let first_record = match first {
+            MobileCommandAckResult::Recorded(record) => record,
+            other => panic!("expected recorded ack, got {other:?}"),
+        };
+        let now_ms = current_time_millis();
+        let old_ms = now_ms - MOBILE_STATE_EVENT_RETENTION_AGE_MS - 1;
+        seed_mobile_command_log_rows(&connection, 5, old_ms);
 
-        seed_mobile_command_log_rows(&connection, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS);
-        prune_mobile_command_log_if_due(&connection, MOBILE_COMMAND_LOG_PRUNE_TRIGGER_ROWS)
-            .expect("prune check at trigger");
+        let report = store
+            .prune_mobile_event_retention(now_ms, EventRetentionReclaimMode::Periodic)
+            .expect("prune retention");
+        assert_eq!(report.deleted_mobile_command_acks, 5);
+
+        let duplicate = store
+            .record_mobile_command_ack(command_ack_input("sha256:recent", "ignored"))
+            .expect("duplicate command ack");
+        let duplicate_record = match duplicate {
+            MobileCommandAckResult::Duplicate(record) => record,
+            other => panic!("expected duplicate ack, got {other:?}"),
+        };
+        assert_eq!(duplicate_record.ack_seq, first_record.ack_seq);
+        assert_eq!(duplicate_record.response_json, first_record.response_json);
         assert_eq!(
-            row_count(&connection, "mobile_command_log"),
-            MOBILE_COMMAND_LOG_RETENTION_ROWS,
-            "must prune down to the retention floor once the trigger is crossed"
+            store
+                .mobile_command_ack("SendSessionPrompt", "retention-command-mutation")
+                .expect("mobile command ack")
+                .expect("recent command ack survives"),
+            first_record
         );
+    }
+
+    #[test]
+    fn mobile_state_events_after_seq_reports_gap_when_requested_seq_was_pruned() {
+        let tempdir = tempdir().expect("tempdir");
+        let store = EventStore::new(tempdir.path().join("events.sqlite"));
+        store.initialize().expect("initialize");
+        let connection = Connection::open(store.path()).expect("open events");
+        let now_ms = MOBILE_STATE_EVENT_RETENTION_AGE_MS * 2;
+        let old_ms = now_ms - MOBILE_STATE_EVENT_RETENTION_AGE_MS - 1;
+        seed_mobile_state_event_log_rows(&connection, "thread-main", 3, old_ms);
+
+        let report = store
+            .prune_mobile_event_retention(now_ms, EventRetentionReclaimMode::Periodic)
+            .expect("prune retention");
+        assert_eq!(report.deleted_mobile_state_events, 2);
+
+        let error = store
+            .mobile_state_events_after_seq(0, 10)
+            .expect_err("after_seq older than retained history must report a gap");
+        let gap = error
+            .downcast_ref::<MobileStateEventGap>()
+            .expect("typed mobile state event gap");
+        assert_eq!(gap.requested_after_seq, 0);
+        assert_eq!(gap.oldest_seq, 3);
+        assert_eq!(gap.latest_seq, 3);
+
+        let replay = store
+            .mobile_state_events_after_seq(2, 10)
+            .expect("replay from retained floor");
+        assert_eq!(
+            replay.iter().map(|record| record.seq).collect::<Vec<_>>(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn mobile_event_retention_batched_delete_terminates_for_thousands_of_events() {
+        let tempdir = tempdir().expect("tempdir");
+        let store = EventStore::new(tempdir.path().join("events.sqlite"));
+        store.initialize().expect("initialize");
+        let connection = Connection::open(store.path()).expect("open events");
+        let now_ms = MOBILE_STATE_EVENT_RETENTION_AGE_MS * 2;
+        let old_ms = now_ms - MOBILE_STATE_EVENT_RETENTION_AGE_MS - 1;
+        let seeded_rows = MOBILE_EVENT_RETENTION_PRUNE_BATCH_ROWS * 3 + 25;
+        seed_mobile_state_event_log_rows(&connection, "thread-batch", seeded_rows, old_ms);
+
+        let report = store
+            .prune_mobile_event_retention(now_ms, EventRetentionReclaimMode::Periodic)
+            .expect("prune retention");
+
+        assert_eq!(
+            report.deleted_mobile_state_events as i64,
+            seeded_rows - 1,
+            "must drain more than one delete batch and keep the newest entity event"
+        );
+        assert_eq!(row_count_for_entity(&connection, "thread-batch"), 1);
     }
 
     #[test]
@@ -2002,22 +2219,53 @@ mod tests {
         );
     }
 
-    fn seed_mobile_state_event_log_rows(connection: &Connection, count: i64) {
+    fn command_ack_input(request_hash: &str, dispatch_kind: &str) -> MobileCommandAckInput {
+        MobileCommandAckInput {
+            command_kind: "SendSessionPrompt".to_owned(),
+            client_mutation_id: "retention-command-mutation".to_owned(),
+            request_hash: request_hash.to_owned(),
+            response_json: serde_json::json!({
+                "accepted": true,
+                "dispatchKind": dispatch_kind,
+            }),
+            state_event: MobileStateEventInput {
+                entity_id: "thread-main".to_owned(),
+                kind: MobileEventKind::SessionChanged,
+                revision: "revision-command-ack".to_owned(),
+                server_time: "2026-06-24T00:00:00Z".to_owned(),
+                payload_json: serde_json::json!({
+                    "threadId": "thread-main",
+                    "detail": "prompt-resumed",
+                }),
+                client_mutation_id: None,
+                command_kind: None,
+                command_request_hash: None,
+                command_response_json: None,
+            },
+        }
+    }
+
+    fn seed_mobile_state_event_log_rows(
+        connection: &Connection,
+        entity_id: &str,
+        count: i64,
+        created_at_ms: i64,
+    ) {
         let transaction_connection = connection.unchecked_transaction().expect("transaction");
-        for _ in 0..count {
+        for index in 0..count {
             transaction_connection
                 .execute(
                     "insert into mobile_state_event_log (
                         entity_id, kind, revision, server_time, payload_json, created_at_ms
-                    ) values ('thread-main', 'session.changed', '', '', '{}', 0)",
-                    [],
+                    ) values (?1, 'session.changed', ?2, '', '{}', ?3)",
+                    params![entity_id, format!("revision-{index}"), created_at_ms],
                 )
                 .expect("seed state event row");
         }
         transaction_connection.commit().expect("commit seed rows");
     }
 
-    fn seed_mobile_command_log_rows(connection: &Connection, count: i64) {
+    fn seed_mobile_command_log_rows(connection: &Connection, count: i64, created_at_ms: i64) {
         let transaction_connection = connection.unchecked_transaction().expect("transaction");
         for index in 0..count {
             transaction_connection
@@ -2025,19 +2273,31 @@ mod tests {
                     "insert into mobile_command_log (
                         command_kind, client_mutation_id, request_hash, ack_seq, response_json,
                         created_at_ms
-                    ) values ('SendSessionPrompt', ?1, 'hash', 0, '{}', ?2)",
-                    params![format!("mutation-{index}"), index],
+                    ) values ('SendSessionPrompt', ?1, 'hash', 1, '{}', ?2)",
+                    params![format!("old-mutation-{index}"), created_at_ms],
                 )
                 .expect("seed command log row");
         }
         transaction_connection.commit().expect("commit seed rows");
     }
 
-    fn row_count(connection: &Connection, table_name: &str) -> i64 {
+    fn row_count_for_entity(connection: &Connection, entity_id: &str) -> i64 {
         connection
-            .query_row(&format!("select count(*) from {table_name}"), [], |row| {
-                row.get(0)
-            })
-            .expect("row count")
+            .query_row(
+                "select count(*) from mobile_state_event_log where entity_id = ?1",
+                [entity_id],
+                |row| row.get(0),
+            )
+            .expect("entity row count")
+    }
+
+    fn entity_seq_bounds(connection: &Connection, entity_id: &str) -> (i64, i64) {
+        connection
+            .query_row(
+                "select min(seq), max(seq) from mobile_state_event_log where entity_id = ?1",
+                [entity_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("entity seq bounds")
     }
 }
