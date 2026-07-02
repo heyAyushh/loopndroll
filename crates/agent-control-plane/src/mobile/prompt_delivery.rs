@@ -63,6 +63,7 @@ const DISPATCH_QUEUED: &str = "queued";
 const DISPATCH_RESUMED: &str = "resumed";
 const PROMPT_INTENT_QUEUE: &str = "queue";
 const PROMPT_INTENT_STEER: &str = "steer";
+pub(crate) const DETAIL_PROMPT_DELIVERY_FAILED: &str = "prompt-delivery-failed";
 const STEER_UNAVAILABLE_FOR_HOOK_REASON: &str =
     "steering is unavailable for hook-only sessions; choose Queue to send after the current run";
 
@@ -557,7 +558,7 @@ fn emit_prompt_delivery_failed(
     emit_mobile_session_changed(
         control_plane,
         Some(thread_id),
-        Some("prompt-delivery-failed"),
+        Some(DETAIL_PROMPT_DELIVERY_FAILED),
     );
 }
 

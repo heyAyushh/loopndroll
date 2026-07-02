@@ -2,7 +2,7 @@ use serde::Serialize;
 use tonic::Status;
 
 use crate::control_plane::ControlPlane;
-use crate::control_plane::reducer::{projected_session_state_from_minis, session_state_for_thread};
+use crate::control_plane::reducer::session_state_for_thread;
 use crate::control_plane::session_fsm::{
     SessionCommand, SessionMode, SessionReject, SessionRejectCode, SessionState,
     next as next_session_state,
@@ -1190,11 +1190,6 @@ fn ensure_session_fsm_allows(
         .map_err(RealtimeCommandError::SessionRejected)
 }
 
-/// Resolves the FSM state for a thread, preferring the minis projection (the common case, and
-/// the current source of truth once it exists — see `session_state_for_thread`) and only
-/// falling back to a full per-entity event fold when no projection covers this thread yet.
-/// Avoids loading and folding the entire unbounded event history for the entity on every
-/// command when the cheap minis lookup already answers the question.
 fn current_session_fsm_state(
     control_plane: &ControlPlane,
     thread_id: &str,
@@ -1204,11 +1199,6 @@ fn current_session_fsm_state(
         .store()
         .mobile_session_minis_for_session(thread_id)
         .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
-    if let Some(projected_state) =
-        projected_session_state_from_minis(&minis, thread_id, assistant_surface)
-    {
-        return Ok(projected_state);
-    }
     let events = control_plane
         .store()
         .mobile_state_events_for_entity(thread_id)
@@ -1638,5 +1628,149 @@ fn mobile_session_status(error: MobileSessionError) -> Status {
         MobileSessionError::Store(_)
         | MobileSessionError::Filesystem(_)
         | MobileSessionError::TimeFormat(_) => Status::internal(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+    use crate::events::{MobileSessionMiniProjectionInput, MobileStateEventInput};
+    use crate::mobile::events::MobileEventKind;
+    use crate::mobile::prompt_delivery::DETAIL_PROMPT_DELIVERY_FAILED;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn realtime_gate_allows_retry_after_prompt_delivery_failure() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let control_plane = test_control_plane(&temp_dir);
+        let thread_id = "thread-realtime-delivery-failure";
+        seed_active_session_mini(&control_plane, thread_id);
+
+        record_prompt_accepted(&control_plane, thread_id, "cmid-first");
+        assert!(matches!(
+            current_session_fsm_state(&control_plane, thread_id, Some("codex"))
+                .expect("current state after accepted prompt"),
+            SessionState::Dispatched { .. }
+        ));
+        let busy = ensure_session_fsm_allows(
+            &control_plane,
+            thread_id,
+            Some("codex"),
+            SessionCommand::SendPrompt {
+                client_mutation_id: "cmid-before-failure".to_owned(),
+            },
+        )
+        .expect_err("accepted prompt should keep the gate busy before delivery settles");
+        assert!(matches!(
+            busy,
+            RealtimeCommandError::SessionRejected(SessionReject {
+                code: SessionRejectCode::SessionBusy,
+                ..
+            })
+        ));
+
+        record_prompt_delivery_failed(&control_plane, thread_id);
+        assert_eq!(
+            current_session_fsm_state(&control_plane, thread_id, Some("codex"))
+                .expect("current state after failed delivery"),
+            SessionState::ModeArmed {
+                mode: SessionMode::Infinite
+            }
+        );
+        ensure_session_fsm_allows(
+            &control_plane,
+            thread_id,
+            Some("codex"),
+            SessionCommand::SendPrompt {
+                client_mutation_id: "cmid-retry".to_owned(),
+            },
+        )
+        .expect("delivery failure should allow a retry");
+    }
+
+    fn seed_active_session_mini(control_plane: &ControlPlane, thread_id: &str) {
+        control_plane
+            .store()
+            .upsert_mobile_session_mini(
+                MobileSessionMiniProjectionInput {
+                    session_id: thread_id.to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    body_json: serde_json::json!({
+                        "sessionId": thread_id,
+                        "assistantSurface": "codex",
+                        "effectiveMode": "infinite",
+                        "lifecycle": "active",
+                        "status": "active",
+                        "canSendPrompt": true,
+                    }),
+                },
+                0,
+                "rev-0",
+            )
+            .expect("seed mini");
+    }
+
+    fn record_prompt_accepted(
+        control_plane: &ControlPlane,
+        thread_id: &str,
+        client_mutation_id: &str,
+    ) {
+        control_plane
+            .store()
+            .record_mobile_state_event(MobileStateEventInput {
+                entity_id: thread_id.to_owned(),
+                kind: MobileEventKind::SessionChanged,
+                revision: "rev-prompt".to_owned(),
+                server_time: "now".to_owned(),
+                payload_json: serde_json::json!({
+                    "threadId": thread_id,
+                    "detail": "command-ack",
+                }),
+                client_mutation_id: Some(client_mutation_id.to_owned()),
+                command_kind: Some(COMMAND_KIND_SEND_SESSION_PROMPT.to_owned()),
+                command_request_hash: Some(format!("hash-{client_mutation_id}")),
+                command_response_json: Some(serde_json::json!({
+                    "threadId": thread_id,
+                    "dispatchKind": "accepted",
+                    "entityId": thread_id,
+                    "revision": "rev-prompt",
+                    "serverTime": "now",
+                })),
+            })
+            .expect("record accepted prompt");
+    }
+
+    fn record_prompt_delivery_failed(control_plane: &ControlPlane, thread_id: &str) {
+        control_plane
+            .store()
+            .record_mobile_state_event(MobileStateEventInput {
+                entity_id: thread_id.to_owned(),
+                kind: MobileEventKind::SessionChanged,
+                revision: "rev-failed".to_owned(),
+                server_time: "now".to_owned(),
+                payload_json: serde_json::json!({
+                    "threadId": thread_id,
+                    "detail": DETAIL_PROMPT_DELIVERY_FAILED,
+                }),
+                client_mutation_id: None,
+                command_kind: None,
+                command_request_hash: None,
+                command_response_json: None,
+            })
+            .expect("record failed delivery");
+    }
+
+    fn test_control_plane(temp_dir: &TempDir) -> ControlPlane {
+        ControlPlane::new(ControlPlaneConfig {
+            codex_home: temp_dir.path().join(".codex"),
+            codex_executable: None,
+            grok_home: temp_dir.path().join(".grok"),
+            store_path: temp_dir.path().join("control-plane.sqlite"),
+            hook_command: None,
+            home_path: temp_dir.path().to_path_buf(),
+            zed_process_commands: None,
+        })
     }
 }
