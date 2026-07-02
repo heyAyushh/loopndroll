@@ -823,7 +823,7 @@ impl ControlPlane {
             return;
         };
         let control_plane = self.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_from_any_thread(move || {
             let _permit = permit;
             if let Err(error) = control_plane.reconcile_mobile_session_mini_projection() {
                 eprintln!("mobile session mini reconcile failed: {error}");
@@ -843,7 +843,7 @@ impl ControlPlane {
             return;
         };
         let control_plane = self.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_from_any_thread(move || {
             let _permit = permit;
             match control_plane.reconcile_mobile_session_mini_projection() {
                 Ok(_) => control_plane
@@ -2087,6 +2087,26 @@ impl ControlPlane {
                 .map(|session| session.thread_id),
         );
         Ok(thread_ids)
+    }
+}
+
+/// Callers include bare OS threads (e.g. the prompt-delivery worker), where
+/// `tokio::task::spawn_blocking` panics with "no reactor running". Prompt
+/// delivery must never die because a projection reconcile was scheduled from
+/// the wrong thread, so fall back to a plain thread outside a runtime.
+fn spawn_blocking_from_any_thread(work: impl FnOnce() + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn_blocking(work);
+        }
+        Err(_) => {
+            if let Err(error) = std::thread::Builder::new()
+                .name("looper-session-mini-reconcile".to_owned())
+                .spawn(work)
+            {
+                eprintln!("session mini reconcile worker failed to start: {error}");
+            }
+        }
     }
 }
 

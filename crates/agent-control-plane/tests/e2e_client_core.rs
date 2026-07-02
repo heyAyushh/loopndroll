@@ -286,7 +286,10 @@ async fn prompt_delivery_failed_event_does_not_wedge_follow_up_prompt() {
     wait_for_prompt_ack_and_empty_outbox(&runtime, &first.client_mutation_id).await;
 
     harness.emit_prompt_delivery_failed_event(Some(PRESET_INFINITE), DELIVERY_FAILED_TITLE);
-    wait_for_session_title(&runtime, DELIVERY_FAILED_TITLE).await;
+    // Wait on the server-side FSM gate rather than a projected title: the
+    // session-mini reconciler can legitimately regenerate minis from source
+    // truth and overwrite the marker title without affecting the gate.
+    wait_for_server_fsm_to_allow_prompt(&harness.control_plane).await;
 
     let follow_up = runtime
         .send_prompt(
@@ -674,6 +677,39 @@ async fn wait_for_snapshot(
         "timed out waiting for client-core snapshot; last snapshot: {:?}",
         last_snapshot
     );
+}
+
+/// Polls the same FSM resolution the realtime command gate uses until a new
+/// prompt would be accepted for the e2e thread. Immune to session-mini
+/// reconciler rewrites, which only affect projected presentation fields.
+async fn wait_for_server_fsm_to_allow_prompt(control_plane: &ControlPlane) {
+    use agent_control_plane::control_plane::reducer::session_state_for_thread;
+    use agent_control_plane::control_plane::session_fsm::{SessionCommand, next};
+
+    for _ in 0..POLL_ATTEMPTS {
+        let minis = control_plane
+            .store()
+            .mobile_session_minis_for_session(THREAD_ID)
+            .expect("session minis for fsm wait");
+        let events = control_plane
+            .store()
+            .mobile_state_events_for_entity(THREAD_ID)
+            .expect("state events for fsm wait");
+        let state =
+            session_state_for_thread(&events, &minis, THREAD_ID, Some(ASSISTANT_SURFACE));
+        if next(
+            state,
+            SessionCommand::SendPrompt {
+                client_mutation_id: "fsm-wait-probe".to_owned(),
+            },
+        )
+        .is_ok()
+        {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!("timed out waiting for server FSM to accept a follow-up prompt");
 }
 
 async fn wait_for_queued_prompt_count(control_plane: &ControlPlane, expected_count: i64) {
