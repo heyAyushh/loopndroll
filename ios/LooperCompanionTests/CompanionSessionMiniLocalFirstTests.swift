@@ -2017,7 +2017,7 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         let streamUpdate = ClientMobileSnapshotStreamUpdate(
             hasSnapshot: false,
-            snapshotJson: "",
+            snapshot: Self.networkSnapshot().clientCoreSnapshot,
             syncReason: CompanionSessionMiniSyncReason.textChunk,
             shouldStop: false,
             latestSeq: 22,

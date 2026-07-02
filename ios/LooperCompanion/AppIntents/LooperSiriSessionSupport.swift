@@ -701,31 +701,13 @@ private enum LooperSiriSessionEntityProjectionCodec {
         _ snapshot: MobileSnapshot,
         surfaces: [CompanionAssistantSurface]
     ) -> ClientSiriSessionEntityProjection? {
-        guard let snapshotJSON = encode(snapshot) else {
-            return nil
-        }
         do {
             return try reduceSiriSessionEntities(
-                snapshotJson: snapshotJSON,
+                snapshot: snapshot.clientCoreSnapshot,
                 assistantSurfaceOrder: surfaces.map(\.rawValue)
             )
         } catch {
             CompanionDiagnostics.record("siri:entity-projection-failed error=\(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            guard let json = String(data: data, encoding: .utf8) else {
-                CompanionDiagnostics.record("siri:entity-projection-non-utf8")
-                return nil
-            }
-
-            return json
-        } catch {
-            CompanionDiagnostics.record("siri:entity-projection-encode-failed error=\(error.localizedDescription)")
             return nil
         }
     }

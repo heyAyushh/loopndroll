@@ -852,6 +852,13 @@ private enum SnapshotDecodingDefault {
     static let globalScope = "global"
 }
 
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 struct HostSummary: Codable, Sendable {
     var id: String
     var name: String
@@ -2159,12 +2166,9 @@ private enum SessionFreshnessOrderProjectionCodec {
     static func projectFreshnessOrder(_ sessions: [SessionSummary])
         -> ClientSessionFreshnessOrderProjection?
     {
-        guard let sessionsJson = encode(sessions) else {
-            return nil
-        }
         do {
             return try reduceSessionFreshnessOrder(
-                sessionsJson: sessionsJson
+                sessions: sessions.map(\.clientCoreSession)
             )
         } catch {
             CompanionDiagnostics.record("session-freshness:projection-failed error=\(error.localizedDescription)")
@@ -2189,21 +2193,6 @@ private enum SessionFreshnessOrderProjectionCodec {
             projectedSessions.append(sessions[sessionIndex])
         }
         return projectedSessions
-    }
-
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            guard let json = String(data: data, encoding: .utf8) else {
-                CompanionDiagnostics.record("session-freshness:projection-non-utf8")
-                return nil
-            }
-
-            return json
-        } catch {
-            CompanionDiagnostics.record("session-freshness:projection-encode-failed error=\(error.localizedDescription)")
-            return nil
-        }
     }
 }
 
@@ -2614,6 +2603,649 @@ struct MobileSnapshot: Codable, Sendable {
     }
 }
 
+extension MobileSnapshot {
+    init(clientCore snapshot: ClientMobileSnapshot) {
+        self.init(
+            revision: snapshot.hasRevision ? snapshot.revision : nil,
+            host: HostSummary(clientCore: snapshot.host),
+            globalSettings: GlobalSettings(clientCore: snapshot.globalSettings),
+            sessions: snapshot.sessions.map(SessionSummary.init(clientCore:)),
+            surfaceSessions: Dictionary(
+                uniqueKeysWithValues: snapshot.surfaceSessions.map {
+                    ($0.surface, $0.sessions.map(SessionSummary.init(clientCore:)))
+                }
+            ),
+            notifications: snapshot.notifications.map(NotificationDestination.init(clientCore:)),
+            completionChecks: snapshot.completionChecks.map(CompletionCheckSummary.init(clientCore:)),
+            workStatus: MobileWorkStatusSummary(clientCore: snapshot.workStatus),
+            devinDesktop: snapshot.hasDevinDesktop
+                ? DevinDesktopStatus(clientCore: snapshot.devinDesktop)
+                : nil,
+            grokBuild: snapshot.hasGrokBuild ? GrokBuildStatus(clientCore: snapshot.grokBuild) : nil
+        )
+    }
+
+    var clientCoreSnapshot: ClientMobileSnapshot {
+        ClientMobileSnapshot(
+            revision: revision ?? "",
+            hasRevision: revision != nil,
+            host: host.clientCoreHost,
+            globalSettings: globalSettings.clientCoreGlobalSettings,
+            sessions: sessions.map(\.clientCoreSession),
+            surfaceSessions: surfaceSessions.map {
+                ClientMobileSurfaceSessions(
+                    surface: $0.key,
+                    sessions: $0.value.map(\.clientCoreSession)
+                )
+            },
+            notifications: notifications.map(\.clientCoreNotificationDestination),
+            completionChecks: completionChecks.map(\.clientCoreCompletionCheckSummary),
+            workStatus: workStatus.clientCoreWorkStatus,
+            devinDesktop: devinDesktop?.clientCoreDevinDesktopStatus ?? .empty,
+            hasDevinDesktop: devinDesktop != nil,
+            grokBuild: grokBuild?.clientCoreGrokBuildStatus ?? .empty,
+            hasGrokBuild: grokBuild != nil
+        )
+    }
+}
+
+private extension ClientMobileDevinDesktopStatus {
+    static let empty = ClientMobileDevinDesktopStatus(
+        running: false,
+        installed: false,
+        acpAvailable: false,
+        registryExists: false,
+        registryAgentCount: 0,
+        enabledAgentCount: 0,
+        preferredAgentIds: [],
+        sessionCount: 0,
+        activeSessionCount: 0
+    )
+}
+
+private extension ClientMobileGrokBuildStatus {
+    static let empty = ClientMobileGrokBuildStatus(
+        hooks: ClientMobileGrokBuildHookStatus(
+            health: "",
+            owner: "",
+            registeredEvents: [],
+            hooksPath: "",
+            hasHooksPath: false
+        ),
+        sessionCount: 0,
+        activeSessionCount: 0
+    )
+}
+
+private extension ClientMobileSessionGoal {
+    static let empty = ClientMobileSessionGoal(
+        id: "",
+        title: "",
+        status: "",
+        lifecycle: "",
+        running: false,
+        tokenBudget: 0,
+        hasTokenBudget: false,
+        tokensUsed: 0,
+        hasTokensUsed: false,
+        timeUsedSeconds: 0,
+        hasTimeUsedSeconds: false,
+        updatedAtMs: 0,
+        hasUpdatedAtMs: false
+    )
+}
+
+private extension ClientMobileSessionMetadata {
+    static let empty = ClientMobileSessionMetadata(
+        kind: SessionKind.instantChat.rawValue,
+        source: "unknown",
+        sourceDisplayName: "Unknown",
+        assistantKind: "",
+        hasAssistantKind: false,
+        originator: "",
+        hasOriginator: false,
+        projectName: "",
+        hasProjectName: false,
+        projectPath: "",
+        hasProjectPath: false,
+        taskKind: SessionTaskKind.unknown.rawValue,
+        transcriptAvailable: false,
+        gitRepository: .empty,
+        hasGitRepository: false,
+        pullRequestUrl: "",
+        hasPullRequestUrl: false,
+        supportsSubagents: false,
+        spawn: .empty,
+        hasSpawn: false,
+        installedPlugins: [],
+        sources: [],
+        tags: []
+    )
+}
+
+private extension ClientMobileGitRepositoryMetadata {
+    static let empty = ClientMobileGitRepositoryMetadata(
+        repositoryName: "",
+        repositoryPath: "",
+        remoteUrl: "",
+        hasRemoteUrl: false,
+        branch: "",
+        hasBranch: false,
+        commit: "",
+        hasCommit: false
+    )
+}
+
+private extension ClientMobileSessionSpawnMetadata {
+    static let empty = ClientMobileSessionSpawnMetadata(
+        parentThreadId: "",
+        hasParentThreadId: false,
+        rootThreadId: "",
+        hasRootThreadId: false,
+        children: [],
+        launchKind: "",
+        hasLaunchKind: false
+    )
+}
+
+extension HostSummary {
+    init(clientCore host: ClientMobileHost) {
+        self.init(
+            id: host.id,
+            name: host.name,
+            address: host.address,
+            grpcAddress: host.grpcAddress,
+            grpcAddresses: host.grpcAddresses,
+            isReachable: host.isReachable,
+            lastSyncedAt: host.lastSyncedAt
+        )
+    }
+
+    var clientCoreHost: ClientMobileHost {
+        ClientMobileHost(
+            id: id,
+            name: name,
+            address: address,
+            grpcAddress: grpcAddress,
+            grpcAddresses: grpcAddresses,
+            isReachable: isReachable,
+            lastSyncedAt: lastSyncedAt
+        )
+    }
+}
+
+extension GlobalSettings {
+    init(clientCore settings: ClientMobileGlobalSettings) {
+        self.init(
+            defaultPrompt: settings.defaultPrompt,
+            globalMode: settings.hasGlobalMode ? SessionMode(rawValue: settings.globalMode) : nil,
+            scope: settings.scope,
+            notificationLabel: settings.hasNotificationLabel ? settings.notificationLabel : nil,
+            completionCheckLabel: settings.hasCompletionCheckLabel ? settings.completionCheckLabel : nil,
+            completionCheckWaitForReply: settings.completionCheckWaitForReply,
+            assistantSurface: CompanionAssistantSurface(rawValue: settings.assistantSurface) ?? .defaultSurface,
+            siriDefaultSessionId: settings.hasSiriDefaultSessionId ? settings.siriDefaultSessionId : nil,
+            siriDefaultAssistantSurface: settings.hasSiriDefaultAssistantSurface
+                ? CompanionAssistantSurface(rawValue: settings.siriDefaultAssistantSurface)
+                : nil,
+            siriCurrentSessionId: settings.hasSiriCurrentSessionId ? settings.siriCurrentSessionId : nil,
+            siriCurrentAssistantSurface: settings.hasSiriCurrentAssistantSurface
+                ? CompanionAssistantSurface(rawValue: settings.siriCurrentAssistantSurface)
+                : nil,
+            siriCurrentUpdatedAtMs: settings.hasSiriCurrentUpdatedAtMs
+                ? settings.siriCurrentUpdatedAtMs
+                : nil
+        )
+    }
+
+    var clientCoreGlobalSettings: ClientMobileGlobalSettings {
+        ClientMobileGlobalSettings(
+            defaultPrompt: defaultPrompt,
+            globalMode: globalMode?.rawValue ?? "",
+            hasGlobalMode: globalMode != nil,
+            scope: scope,
+            notificationLabel: notificationLabel ?? "",
+            hasNotificationLabel: notificationLabel != nil,
+            completionCheckLabel: completionCheckLabel ?? "",
+            hasCompletionCheckLabel: completionCheckLabel != nil,
+            completionCheckWaitForReply: completionCheckWaitForReply,
+            assistantSurface: assistantSurface.rawValue,
+            siriDefaultSessionId: siriDefaultSessionId ?? "",
+            hasSiriDefaultSessionId: siriDefaultSessionId != nil,
+            siriDefaultAssistantSurface: siriDefaultAssistantSurface?.rawValue ?? "",
+            hasSiriDefaultAssistantSurface: siriDefaultAssistantSurface != nil,
+            siriCurrentSessionId: siriCurrentSessionId ?? "",
+            hasSiriCurrentSessionId: siriCurrentSessionId != nil,
+            siriCurrentAssistantSurface: siriCurrentAssistantSurface?.rawValue ?? "",
+            hasSiriCurrentAssistantSurface: siriCurrentAssistantSurface != nil,
+            siriCurrentUpdatedAtMs: siriCurrentUpdatedAtMs ?? 0,
+            hasSiriCurrentUpdatedAtMs: siriCurrentUpdatedAtMs != nil
+        )
+    }
+}
+
+extension NotificationDestination {
+    init(clientCore destination: ClientMobileNotificationDestination) {
+        self.init(id: destination.id, label: destination.label, channel: destination.channel)
+    }
+
+    var clientCoreNotificationDestination: ClientMobileNotificationDestination {
+        ClientMobileNotificationDestination(id: id, label: label, channel: channel)
+    }
+}
+
+extension CompletionCheckSummary {
+    init(clientCore check: ClientMobileCompletionCheckSummary) {
+        self.init(id: check.id, label: check.label, commandCount: Int(check.commandCount))
+    }
+
+    var clientCoreCompletionCheckSummary: ClientMobileCompletionCheckSummary {
+        ClientMobileCompletionCheckSummary(
+            id: id,
+            label: label,
+            commandCount: Int64(commandCount)
+        )
+    }
+}
+
+extension InstalledPluginSummary {
+    init(clientCore plugin: ClientMobileInstalledPluginSummary) {
+        self.init(
+            id: plugin.id,
+            name: plugin.name,
+            source: plugin.hasSource ? plugin.source : nil
+        )
+    }
+
+    var clientCoreInstalledPlugin: ClientMobileInstalledPluginSummary {
+        ClientMobileInstalledPluginSummary(
+            id: id,
+            name: name,
+            source: source ?? "",
+            hasSource: source != nil
+        )
+    }
+}
+
+extension SessionGoalSummary {
+    init(clientCore goal: ClientMobileSessionGoal) {
+        self.init(
+            id: goal.id,
+            title: goal.title,
+            status: goal.status,
+            lifecycle: goal.lifecycle,
+            running: goal.running,
+            tokenBudget: goal.hasTokenBudget ? Int(goal.tokenBudget) : nil,
+            tokensUsed: goal.hasTokensUsed ? Int(goal.tokensUsed) : nil,
+            timeUsedSeconds: goal.hasTimeUsedSeconds ? Int(goal.timeUsedSeconds) : nil,
+            updatedAtMs: goal.hasUpdatedAtMs ? goal.updatedAtMs : nil
+        )
+    }
+
+    var clientCoreGoal: ClientMobileSessionGoal {
+        ClientMobileSessionGoal(
+            id: id,
+            title: title,
+            status: status,
+            lifecycle: lifecycle,
+            running: running,
+            tokenBudget: Int64(tokenBudget ?? 0),
+            hasTokenBudget: tokenBudget != nil,
+            tokensUsed: Int64(tokensUsed ?? 0),
+            hasTokensUsed: tokensUsed != nil,
+            timeUsedSeconds: Int64(timeUsedSeconds ?? 0),
+            hasTimeUsedSeconds: timeUsedSeconds != nil,
+            updatedAtMs: updatedAtMs ?? 0,
+            hasUpdatedAtMs: updatedAtMs != nil
+        )
+    }
+}
+
+extension GitRepositoryMetadata {
+    init(clientCore repository: ClientMobileGitRepositoryMetadata) {
+        self.init(
+            repositoryName: repository.repositoryName,
+            repositoryPath: repository.repositoryPath,
+            remoteURL: repository.hasRemoteUrl ? repository.remoteUrl : nil,
+            branch: repository.hasBranch ? repository.branch : nil,
+            commit: repository.hasCommit ? repository.commit : nil
+        )
+    }
+
+    var clientCoreRepository: ClientMobileGitRepositoryMetadata {
+        ClientMobileGitRepositoryMetadata(
+            repositoryName: repositoryName,
+            repositoryPath: repositoryPath,
+            remoteUrl: remoteURL ?? "",
+            hasRemoteUrl: remoteURL != nil,
+            branch: branch ?? "",
+            hasBranch: branch != nil,
+            commit: commit ?? "",
+            hasCommit: commit != nil
+        )
+    }
+}
+
+extension SessionSpawnMetadata {
+    init(clientCore spawn: ClientMobileSessionSpawnMetadata) {
+        self.init(
+            parentThreadId: spawn.hasParentThreadId ? spawn.parentThreadId : nil,
+            rootThreadId: spawn.hasRootThreadId ? spawn.rootThreadId : nil,
+            children: spawn.children,
+            launchKind: spawn.hasLaunchKind ? spawn.launchKind : nil
+        )
+    }
+
+    var clientCoreSpawn: ClientMobileSessionSpawnMetadata {
+        ClientMobileSessionSpawnMetadata(
+            parentThreadId: parentThreadId ?? "",
+            hasParentThreadId: parentThreadId != nil,
+            rootThreadId: rootThreadId ?? "",
+            hasRootThreadId: rootThreadId != nil,
+            children: children,
+            launchKind: launchKind ?? "",
+            hasLaunchKind: launchKind != nil
+        )
+    }
+}
+
+extension SessionSourceReference {
+    init(clientCore source: ClientMobileSessionSourceReference) {
+        self.init(
+            kind: SessionSourceReferenceKind(rawValue: source.kind) ?? .transcript,
+            label: source.label,
+            value: source.value,
+            url: source.hasUrl ? source.url : nil
+        )
+    }
+
+    var clientCoreSource: ClientMobileSessionSourceReference {
+        ClientMobileSessionSourceReference(
+            kind: kind.rawValue,
+            label: label,
+            value: value,
+            url: url ?? "",
+            hasUrl: url != nil
+        )
+    }
+}
+
+extension SessionMetadata {
+    init(clientCore metadata: ClientMobileSessionMetadata) {
+        self.init(
+            kind: SessionKind(rawValue: metadata.kind) ?? .instantChat,
+            source: metadata.source,
+            sourceDisplayName: metadata.sourceDisplayName,
+            assistantKind: metadata.hasAssistantKind ? metadata.assistantKind : nil,
+            originator: metadata.hasOriginator ? metadata.originator : nil,
+            projectName: metadata.hasProjectName ? metadata.projectName : nil,
+            projectPath: metadata.hasProjectPath ? metadata.projectPath : nil,
+            taskKind: SessionTaskKind(rawValue: metadata.taskKind) ?? .unknown,
+            transcriptAvailable: metadata.transcriptAvailable,
+            gitRepository: metadata.hasGitRepository
+                ? GitRepositoryMetadata(clientCore: metadata.gitRepository)
+                : nil,
+            pullRequestURL: metadata.hasPullRequestUrl ? metadata.pullRequestUrl : nil,
+            supportsSubagents: metadata.supportsSubagents,
+            spawn: metadata.hasSpawn ? SessionSpawnMetadata(clientCore: metadata.spawn) : nil,
+            installedPlugins: metadata.installedPlugins.map(InstalledPluginSummary.init(clientCore:)),
+            sources: metadata.sources.map(SessionSourceReference.init(clientCore:)),
+            tags: metadata.tags
+        )
+    }
+
+    var clientCoreMetadata: ClientMobileSessionMetadata {
+        ClientMobileSessionMetadata(
+            kind: kind.rawValue,
+            source: source,
+            sourceDisplayName: sourceDisplayName,
+            assistantKind: assistantKind ?? "",
+            hasAssistantKind: assistantKind != nil,
+            originator: originator ?? "",
+            hasOriginator: originator != nil,
+            projectName: projectName ?? "",
+            hasProjectName: projectName != nil,
+            projectPath: projectPath ?? "",
+            hasProjectPath: projectPath != nil,
+            taskKind: taskKind.rawValue,
+            transcriptAvailable: transcriptAvailable,
+            gitRepository: gitRepository?.clientCoreRepository ?? .empty,
+            hasGitRepository: gitRepository != nil,
+            pullRequestUrl: pullRequestURL ?? "",
+            hasPullRequestUrl: pullRequestURL != nil,
+            supportsSubagents: supportsSubagents,
+            spawn: spawn?.clientCoreSpawn ?? .empty,
+            hasSpawn: spawn != nil,
+            installedPlugins: installedPlugins.map(\.clientCoreInstalledPlugin),
+            sources: sources.map(\.clientCoreSource),
+            tags: tags
+        )
+    }
+}
+
+extension SessionSummary {
+    init(clientCore session: ClientMobileSession) {
+        self.init(
+            id: session.id,
+            ref: session.refId,
+            title: session.title,
+            status: SessionStatus(rawValue: session.status) ?? .stopped,
+            effectiveMode: session.hasEffectiveMode ? SessionMode(rawValue: session.effectiveMode) : nil,
+            lastUpdatedAt: session.lastUpdatedAt,
+            createdAtMs: session.hasCreatedAtMs ? session.createdAtMs : nil,
+            updatedAtMs: session.hasUpdatedAtMs ? session.updatedAtMs : nil,
+            latestMessageAtMs: session.hasLatestMessageAtMs ? session.latestMessageAtMs : nil,
+            lastActivityAtMs: session.hasLastActivityAtMs ? session.lastActivityAtMs : nil,
+            lastActivityAt: session.lastActivityAt,
+            lastMessageAtMs: session.hasLastMessageAtMs ? session.lastMessageAtMs : nil,
+            lastMessageAt: session.hasLastMessageAt ? session.lastMessageAt : nil,
+            assistantPreview: session.hasAssistantPreview ? session.assistantPreview : nil,
+            isArchived: session.isArchived,
+            canSendPrompt: session.canSendPrompt,
+            promptDeliveryUnavailableReason: session.hasPromptDeliveryUnavailableReason
+                ? session.promptDeliveryUnavailableReason
+                : nil,
+            assistantClient: AssistantClient(rawValue: session.assistantClient) ?? .unknown,
+            goal: session.hasGoal ? SessionGoalSummary(clientCore: session.goal) : nil,
+            metadata: SessionMetadata(clientCore: session.metadata)
+        )
+    }
+
+    var clientCoreSession: ClientMobileSession {
+        ClientMobileSession(
+            id: id,
+            refId: ref,
+            title: title,
+            status: status.rawValue,
+            effectiveMode: effectiveMode?.rawValue ?? "",
+            hasEffectiveMode: effectiveMode != nil,
+            lastUpdatedAt: lastUpdatedAt,
+            createdAtMs: createdAtMs ?? 0,
+            hasCreatedAtMs: createdAtMs != nil,
+            updatedAtMs: updatedAtMs ?? 0,
+            hasUpdatedAtMs: updatedAtMs != nil,
+            latestMessageAtMs: latestMessageAtMs ?? 0,
+            hasLatestMessageAtMs: latestMessageAtMs != nil,
+            lastActivityAtMs: lastActivityAtMs ?? 0,
+            hasLastActivityAtMs: lastActivityAtMs != nil,
+            lastActivityAt: lastActivityAt,
+            lastMessageAtMs: lastMessageAtMs ?? 0,
+            hasLastMessageAtMs: lastMessageAtMs != nil,
+            lastMessageAt: lastMessageAt ?? "",
+            hasLastMessageAt: lastMessageAt != nil,
+            assistantPreview: assistantPreview ?? "",
+            hasAssistantPreview: assistantPreview != nil,
+            isArchived: isArchived,
+            canSendPrompt: canSendPrompt,
+            promptDeliveryUnavailableReason: promptDeliveryUnavailableReason ?? "",
+            hasPromptDeliveryUnavailableReason: promptDeliveryUnavailableReason != nil,
+            assistantClient: assistantClient.rawValue,
+            goal: goal?.clientCoreGoal ?? .empty,
+            hasGoal: goal != nil,
+            metadata: metadata.clientCoreMetadata
+        )
+    }
+}
+
+extension MobileWorkStatusGoal {
+    init(clientCore goal: ClientMobileWorkStatusGoal) {
+        self.init(
+            id: goal.id,
+            title: goal.title,
+            status: goal.status,
+            targetThreadId: goal.hasTargetThreadId ? goal.targetThreadId : nil,
+            targetKnown: goal.targetKnown,
+            updatedAtMs: goal.hasUpdatedAtMs ? goal.updatedAtMs : nil,
+            tokensUsed: goal.hasTokensUsed ? Int(goal.tokensUsed) : nil,
+            tokenBudget: goal.hasTokenBudget ? Int(goal.tokenBudget) : nil,
+            timeUsedSeconds: goal.hasTimeUsedSeconds ? Int(goal.timeUsedSeconds) : nil
+        )
+    }
+
+    var clientCoreWorkStatusGoal: ClientMobileWorkStatusGoal {
+        ClientMobileWorkStatusGoal(
+            id: id,
+            title: title,
+            status: status,
+            targetThreadId: targetThreadId ?? "",
+            hasTargetThreadId: targetThreadId != nil,
+            targetKnown: targetKnown,
+            updatedAtMs: updatedAtMs ?? 0,
+            hasUpdatedAtMs: updatedAtMs != nil,
+            tokensUsed: Int64(tokensUsed ?? 0),
+            hasTokensUsed: tokensUsed != nil,
+            tokenBudget: Int64(tokenBudget ?? 0),
+            hasTokenBudget: tokenBudget != nil,
+            timeUsedSeconds: Int64(timeUsedSeconds ?? 0),
+            hasTimeUsedSeconds: timeUsedSeconds != nil
+        )
+    }
+}
+
+extension MobileWorkStatusAutomation {
+    init(clientCore automation: ClientMobileWorkStatusAutomation) {
+        self.init(
+            id: automation.id,
+            kind: automation.kind,
+            name: automation.name,
+            status: automation.status,
+            scheduleSummary: automation.scheduleSummary,
+            targetThreadId: automation.hasTargetThreadId ? automation.targetThreadId : nil,
+            targetKnown: automation.targetKnown,
+            controlPlaneCovered: automation.controlPlaneCovered
+        )
+    }
+
+    var clientCoreWorkStatusAutomation: ClientMobileWorkStatusAutomation {
+        ClientMobileWorkStatusAutomation(
+            id: id,
+            kind: kind,
+            name: name,
+            status: status,
+            scheduleSummary: scheduleSummary,
+            targetThreadId: targetThreadId ?? "",
+            hasTargetThreadId: targetThreadId != nil,
+            targetKnown: targetKnown,
+            controlPlaneCovered: controlPlaneCovered
+        )
+    }
+}
+
+extension MobileWorkStatusSummary {
+    init(clientCore workStatus: ClientMobileWorkStatusSummary) {
+        self.init(
+            goalCount: Int(workStatus.goalCount),
+            runningGoalCount: Int(workStatus.runningGoalCount),
+            automationCount: Int(workStatus.automationCount),
+            activeAutomationCount: Int(workStatus.activeAutomationCount),
+            coveredAutomationCount: Int(workStatus.coveredAutomationCount),
+            runningGoals: workStatus.runningGoals.map(MobileWorkStatusGoal.init(clientCore:)),
+            activeAutomations: workStatus.activeAutomations.map(MobileWorkStatusAutomation.init(clientCore:))
+        )
+    }
+
+    var clientCoreWorkStatus: ClientMobileWorkStatusSummary {
+        ClientMobileWorkStatusSummary(
+            goalCount: Int64(goalCount),
+            runningGoalCount: Int64(runningGoalCount),
+            automationCount: Int64(automationCount),
+            activeAutomationCount: Int64(activeAutomationCount),
+            coveredAutomationCount: Int64(coveredAutomationCount),
+            runningGoals: runningGoals.map(\.clientCoreWorkStatusGoal),
+            activeAutomations: activeAutomations.map(\.clientCoreWorkStatusAutomation)
+        )
+    }
+}
+
+extension GrokBuildHookStatus {
+    init(clientCore hookStatus: ClientMobileGrokBuildHookStatus) {
+        self.init(
+            health: hookStatus.health,
+            owner: hookStatus.owner,
+            registeredEvents: hookStatus.registeredEvents,
+            hooksPath: hookStatus.hasHooksPath ? hookStatus.hooksPath : nil
+        )
+    }
+
+    var clientCoreGrokBuildHookStatus: ClientMobileGrokBuildHookStatus {
+        ClientMobileGrokBuildHookStatus(
+            health: health,
+            owner: owner,
+            registeredEvents: registeredEvents,
+            hooksPath: hooksPath ?? "",
+            hasHooksPath: hooksPath != nil
+        )
+    }
+}
+
+extension GrokBuildStatus {
+    init(clientCore status: ClientMobileGrokBuildStatus) {
+        self.init(
+            hooks: GrokBuildHookStatus(clientCore: status.hooks),
+            sessionCount: Int(status.sessionCount),
+            activeSessionCount: Int(status.activeSessionCount)
+        )
+    }
+
+    var clientCoreGrokBuildStatus: ClientMobileGrokBuildStatus {
+        ClientMobileGrokBuildStatus(
+            hooks: hooks.clientCoreGrokBuildHookStatus,
+            sessionCount: Int64(sessionCount),
+            activeSessionCount: Int64(activeSessionCount)
+        )
+    }
+}
+
+extension DevinDesktopStatus {
+    init(clientCore status: ClientMobileDevinDesktopStatus) {
+        self.init(
+            running: status.running,
+            installed: status.installed,
+            acpAvailable: status.acpAvailable,
+            registryExists: status.registryExists,
+            registryAgentCount: Int(status.registryAgentCount),
+            enabledAgentCount: Int(status.enabledAgentCount),
+            preferredAgentIds: status.preferredAgentIds,
+            sessionCount: Int(status.sessionCount),
+            activeSessionCount: Int(status.activeSessionCount)
+        )
+    }
+
+    var clientCoreDevinDesktopStatus: ClientMobileDevinDesktopStatus {
+        ClientMobileDevinDesktopStatus(
+            running: running,
+            installed: installed,
+            acpAvailable: acpAvailable,
+            registryExists: registryExists,
+            registryAgentCount: Int64(registryAgentCount),
+            enabledAgentCount: Int64(enabledAgentCount),
+            preferredAgentIds: preferredAgentIds,
+            sessionCount: Int64(sessionCount),
+            activeSessionCount: Int64(activeSessionCount)
+        )
+    }
+}
+
 struct SessionIndex: Equatable, Sendable {
     static let empty = SessionIndex(
         allSessions: [],
@@ -2765,31 +3397,13 @@ struct SessionIndex: Equatable, Sendable {
 
 private enum SessionIndexProjectionCodec {
     static func projectSessionIndex(_ snapshot: MobileSnapshot) -> ClientSessionIndexProjection? {
-        guard let snapshotJson = encode(snapshot) else {
-            return nil
-        }
         do {
             return try reduceSessionIndex(
-                snapshotJson: snapshotJson,
+                snapshot: snapshot.clientCoreSnapshot,
                 assistantSurfaceOrder: CompanionAssistantSurface.allCases.map(\.rawValue)
             )
         } catch {
             CompanionDiagnostics.record("session-index:projection-failed error=\(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            guard let json = String(data: data, encoding: .utf8) else {
-                CompanionDiagnostics.record("session-index:projection-non-utf8")
-                return nil
-            }
-
-            return json
-        } catch {
-            CompanionDiagnostics.record("session-index:projection-encode-failed error=\(error.localizedDescription)")
             return nil
         }
     }
@@ -2949,30 +3563,12 @@ private enum SessionSectionsProjectionCodec {
     static func projectSessionSections(_ sessions: [SessionSummary])
         -> ClientSessionSectionsProjection?
     {
-        guard let sessionsJson = encode(sessions) else {
-            return nil
-        }
         do {
             return try reduceSessionSections(
-                sessionsJson: sessionsJson
+                sessions: sessions.map(\.clientCoreSession)
             )
         } catch {
             CompanionDiagnostics.record("session-sections:projection-failed error=\(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    private static func encode<Value: Encodable>(_ value: Value) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            guard let json = String(data: data, encoding: .utf8) else {
-                CompanionDiagnostics.record("session-sections:projection-non-utf8")
-                return nil
-            }
-
-            return json
-        } catch {
-            CompanionDiagnostics.record("session-sections:projection-encode-failed error=\(error.localizedDescription)")
             return nil
         }
     }

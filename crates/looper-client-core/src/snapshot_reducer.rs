@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::ClientCoreError;
+use crate::mobile_snapshot::{ClientMobileSession, ClientMobileSnapshot};
 use looper_session_core::ACTIVE_STATUS;
 
 const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
@@ -16,7 +17,7 @@ const PAUSED_GOAL_STATUS: &str = "paused";
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientSnapshotProjection {
     pub selected_assistant_surface: String,
-    pub visible_snapshot_json: String,
+    pub visible_snapshot: ClientMobileSnapshot,
     pub visible_session_ids: Vec<String>,
     pub session_sections: ClientSessionSectionsProjection,
     pub session_index: ClientSessionIndexProjection,
@@ -25,9 +26,7 @@ pub struct ClientSnapshotProjection {
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientOptimisticModeProjection {
     pub did_update: bool,
-    pub visible_snapshot_json: String,
-    pub visible_detail_json: String,
-    pub has_detail: bool,
+    pub visible_snapshot: ClientMobileSnapshot,
     pub visible_session_ids: Vec<String>,
 }
 
@@ -177,13 +176,13 @@ struct DetailDocument {
 
 #[uniffi::export]
 pub fn reduce_mobile_snapshot_projection(
-    snapshot_json: String,
+    snapshot: ClientMobileSnapshot,
     preferred_assistant_surface: String,
     has_user_selected_assistant_surface: bool,
     current_selected_assistant_surface: String,
     assistant_surface_order: Vec<String>,
 ) -> Result<ClientSnapshotProjection, ClientCoreError> {
-    let snapshot = parse_snapshot(&snapshot_json)?;
+    let snapshot = snapshot_from_mobile(snapshot)?;
     let selected_assistant_surface = selected_assistant_surface(
         &snapshot,
         &preferred_assistant_surface,
@@ -199,13 +198,12 @@ pub fn reduce_mobile_snapshot_projection(
 
 #[uniffi::export]
 pub fn reduce_mobile_snapshot_optimistic_mode(
-    snapshot_json: String,
-    detail_json: String,
+    snapshot: ClientMobileSnapshot,
     session_id: String,
     preset: String,
     selected_assistant_surface: String,
 ) -> Result<ClientOptimisticModeProjection, ClientCoreError> {
-    let mut snapshot = parse_snapshot(&snapshot_json)?;
+    let mut snapshot = snapshot_from_mobile(snapshot)?;
     let mut did_update = false;
 
     update_mode_in_sessions(
@@ -223,7 +221,6 @@ pub fn reduce_mobile_snapshot_optimistic_mode(
         );
     }
 
-    let (visible_detail_json, has_detail) = reduce_detail_mode(detail_json, &preset)?;
     let projection = project_snapshot(
         snapshot,
         selected_assistant_surface,
@@ -231,20 +228,18 @@ pub fn reduce_mobile_snapshot_optimistic_mode(
     )?;
 
     Ok(ClientOptimisticModeProjection {
-        did_update: did_update || has_detail,
-        visible_snapshot_json: projection.visible_snapshot_json,
-        visible_detail_json,
-        has_detail,
+        did_update,
+        visible_snapshot: projection.visible_snapshot,
         visible_session_ids: projection.visible_session_ids,
     })
 }
 
 #[uniffi::export]
 pub fn reduce_mobile_snapshot_detail_cache(
-    visible_snapshot_json: String,
+    visible_snapshot: ClientMobileSnapshot,
     detail_by_session_id_json: String,
 ) -> Result<ClientDetailCacheProjection, ClientCoreError> {
-    let snapshot = parse_snapshot(&visible_snapshot_json)?;
+    let snapshot = snapshot_from_mobile(visible_snapshot)?;
     let mut detail_by_session_id: BTreeMap<String, Value> =
         serde_json::from_str(&detail_by_session_id_json)
             .map_err(|_| ClientCoreError::InvalidDetailJson)?;
@@ -311,19 +306,17 @@ pub fn reduce_assistant_surface_selection(
 
 #[uniffi::export]
 pub fn reduce_session_sections(
-    sessions_json: String,
+    sessions: Vec<ClientMobileSession>,
 ) -> Result<ClientSessionSectionsProjection, ClientCoreError> {
-    let sessions: Vec<SessionDocument> =
-        serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    let sessions = session_documents_from_mobile(sessions)?;
     Ok(project_session_sections(sessions))
 }
 
 #[uniffi::export]
 pub fn reduce_session_freshness_order(
-    sessions_json: String,
+    sessions: Vec<ClientMobileSession>,
 ) -> Result<ClientSessionFreshnessOrderProjection, ClientCoreError> {
-    let sessions: Vec<SessionDocument> =
-        serde_json::from_str(&sessions_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    let sessions = session_documents_from_mobile(sessions)?;
     let mut sortable_sessions = sessions
         .into_iter()
         .enumerate()
@@ -343,19 +336,19 @@ pub fn reduce_session_freshness_order(
 
 #[uniffi::export]
 pub fn reduce_session_index(
-    snapshot_json: String,
+    snapshot: ClientMobileSnapshot,
     assistant_surface_order: Vec<String>,
 ) -> Result<ClientSessionIndexProjection, ClientCoreError> {
-    let snapshot = parse_snapshot(&snapshot_json)?;
+    let snapshot = snapshot_from_mobile(snapshot)?;
     Ok(project_session_index(&snapshot, assistant_surface_order))
 }
 
 #[uniffi::export]
 pub fn reduce_siri_session_entities(
-    snapshot_json: String,
+    snapshot: ClientMobileSnapshot,
     assistant_surface_order: Vec<String>,
 ) -> Result<ClientSiriSessionEntityProjection, ClientCoreError> {
-    let snapshot = parse_snapshot(&snapshot_json)?;
+    let snapshot = snapshot_from_mobile(snapshot)?;
     let candidate_entries = siri_session_candidates(&snapshot, assistant_surface_order);
     let mut entries_by_entity_id = BTreeMap::<(String, String), SortableSessionIndexEntry>::new();
 
@@ -666,7 +659,7 @@ fn project_snapshot(
 
     Ok(ClientSnapshotProjection {
         selected_assistant_surface,
-        visible_snapshot_json: serialize_snapshot(&snapshot)?,
+        visible_snapshot: mobile_from_snapshot(&snapshot)?,
         visible_session_ids,
         session_sections,
         session_index,
@@ -998,12 +991,29 @@ fn sync_detail_mode(detail_object: &mut serde_json::Map<String, Value>, session:
     }
 }
 
-fn parse_snapshot(snapshot_json: &str) -> Result<SnapshotDocument, ClientCoreError> {
-    serde_json::from_str(snapshot_json).map_err(|_| ClientCoreError::InvalidSnapshotJson)
+fn snapshot_from_mobile(
+    snapshot: ClientMobileSnapshot,
+) -> Result<SnapshotDocument, ClientCoreError> {
+    serde_json::from_value(snapshot.to_value()).map_err(|_| ClientCoreError::InvalidSnapshotJson)
 }
 
-fn serialize_snapshot(snapshot: &SnapshotDocument) -> Result<String, ClientCoreError> {
-    serde_json::to_string(snapshot).map_err(|_| ClientCoreError::InvalidSnapshotJson)
+fn mobile_from_snapshot(
+    snapshot: &SnapshotDocument,
+) -> Result<ClientMobileSnapshot, ClientCoreError> {
+    let value = serde_json::to_value(snapshot).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    ClientMobileSnapshot::from_value(value)
+}
+
+fn session_documents_from_mobile(
+    sessions: Vec<ClientMobileSession>,
+) -> Result<Vec<SessionDocument>, ClientCoreError> {
+    sessions
+        .into_iter()
+        .map(|session| {
+            serde_json::from_value(session.to_value())
+                .map_err(|_| ClientCoreError::InvalidSnapshotJson)
+        })
+        .collect()
 }
 
 fn optional_preset(preset: &str) -> Option<String> {
@@ -1035,17 +1045,38 @@ mod tests {
         vec![CODEX.to_owned(), DEVIN.to_owned()]
     }
 
+    fn test_snapshot(global_surface: &str) -> ClientMobileSnapshot {
+        mobile_snapshot_from_json(&snapshot_json(global_surface))
+    }
+
+    fn mobile_snapshot_from_json(snapshot_json: &str) -> ClientMobileSnapshot {
+        let value = serde_json::from_str(snapshot_json).expect("snapshot json");
+        ClientMobileSnapshot::from_value(value).expect("typed mobile snapshot")
+    }
+
+    fn test_snapshot_document(snapshot: &ClientMobileSnapshot) -> SnapshotDocument {
+        serde_json::from_value(snapshot.to_value()).expect("snapshot document")
+    }
+
+    fn test_sessions(sessions_json: String) -> Vec<ClientMobileSession> {
+        serde_json::from_str::<Vec<Value>>(&sessions_json)
+            .expect("sessions json")
+            .iter()
+            .filter_map(ClientMobileSession::from_value)
+            .collect()
+    }
+
     #[test]
     fn snapshot_projection_uses_global_surface_until_user_selects() {
         let projection = reduce_mobile_snapshot_projection(
-            snapshot_json(CODEX),
+            test_snapshot(CODEX),
             String::new(),
             false,
             DEVIN.to_owned(),
             test_surface_order(),
         )
         .expect("project snapshot");
-        let visible = parse_snapshot(&projection.visible_snapshot_json).expect("visible snapshot");
+        let visible = test_snapshot_document(&projection.visible_snapshot);
 
         assert_eq!(projection.selected_assistant_surface, CODEX);
         assert_eq!(projection.visible_session_ids, vec!["codex-thread"]);
@@ -1065,15 +1096,14 @@ mod tests {
     #[test]
     fn snapshot_projection_honors_selected_surface_and_preserves_unknown_fields() {
         let projection = reduce_mobile_snapshot_projection(
-            snapshot_json(CODEX),
+            test_snapshot(CODEX),
             DEVIN.to_owned(),
             true,
             CODEX.to_owned(),
             test_surface_order(),
         )
         .expect("project snapshot");
-        let visible_value: Value =
-            serde_json::from_str(&projection.visible_snapshot_json).expect("json");
+        let visible_value = projection.visible_snapshot.to_value();
 
         assert_eq!(projection.selected_assistant_surface, DEVIN);
         assert_eq!(projection.visible_session_ids, vec![THREAD_ID]);
@@ -1121,7 +1151,7 @@ mod tests {
         let surface_order = vec![CODEX.to_owned(), "claude-code".to_owned(), "zed".to_owned()];
 
         let codex_projection = reduce_mobile_snapshot_projection(
-            snapshot_json.to_owned(),
+            mobile_snapshot_from_json(snapshot_json),
             CODEX.to_owned(),
             true,
             CODEX.to_owned(),
@@ -1129,7 +1159,7 @@ mod tests {
         )
         .expect("project codex snapshot");
         let zed_projection = reduce_mobile_snapshot_projection(
-            snapshot_json.to_owned(),
+            mobile_snapshot_from_json(snapshot_json),
             "zed".to_owned(),
             true,
             CODEX.to_owned(),
@@ -1187,8 +1217,8 @@ mod tests {
 
     #[test]
     fn session_sections_classify_and_sort_in_rust() {
-        let projection =
-            reduce_session_sections(session_sections_json()).expect("project sections");
+        let projection = reduce_session_sections(test_sessions(session_sections_json()))
+            .expect("project sections");
 
         assert_eq!(projection.active_indexes, vec![1, 2, 3, 4, 5]);
         assert_eq!(projection.running_indexes, vec![4]);
@@ -1200,7 +1230,7 @@ mod tests {
 
     #[test]
     fn session_sections_sort_fractional_seconds_before_string_fallback() {
-        let projection = reduce_session_sections(
+        let projection = reduce_session_sections(test_sessions(
             r#"[
                 {
                     "id":"whole",
@@ -1218,7 +1248,7 @@ mod tests {
                 }
             ]"#
             .to_owned(),
-        )
+        ))
         .expect("project sections");
 
         assert_eq!(projection.active_indexes, vec![1, 0]);
@@ -1227,7 +1257,7 @@ mod tests {
 
     #[test]
     fn session_freshness_order_uses_milliseconds_before_strings() {
-        let projection = reduce_session_freshness_order(
+        let projection = reduce_session_freshness_order(test_sessions(
             r#"[
                 {
                     "id":"older",
@@ -1247,7 +1277,7 @@ mod tests {
                 }
             ]"#
             .to_owned(),
-        )
+        ))
         .expect("project freshness order");
 
         assert_eq!(projection.indexes, vec![1, 0]);
@@ -1255,7 +1285,7 @@ mod tests {
 
     #[test]
     fn session_freshness_order_parses_fractional_seconds_and_refs() {
-        let projection = reduce_session_freshness_order(
+        let projection = reduce_session_freshness_order(test_sessions(
             r#"[
                 {
                     "id":"whole",
@@ -1280,7 +1310,7 @@ mod tests {
                 }
             ]"#
             .to_owned(),
-        )
+        ))
         .expect("project freshness order");
 
         assert_eq!(projection.indexes, vec![1, 2, 0]);
@@ -1289,7 +1319,7 @@ mod tests {
     #[test]
     fn session_index_dedupes_sorts_and_reports_best_surface() {
         let projection = reduce_session_index(
-            session_index_json(),
+            mobile_snapshot_from_json(&session_index_json()),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project session index");
@@ -1316,7 +1346,7 @@ mod tests {
     #[test]
     fn session_index_uses_global_sessions_as_surface_fallback() {
         let projection = reduce_session_index(
-            snapshot_json(CODEX),
+            test_snapshot(CODEX),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project session index");
@@ -1343,7 +1373,7 @@ mod tests {
     #[test]
     fn siri_session_entities_keep_surface_entities_and_sort_in_rust() {
         let projection = reduce_siri_session_entities(
-            session_index_json(),
+            mobile_snapshot_from_json(&session_index_json()),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1375,7 +1405,8 @@ mod tests {
     #[test]
     fn siri_session_entities_exclude_archived_sessions() {
         let projection = reduce_siri_session_entities(
-            r#"{
+            mobile_snapshot_from_json(
+                r#"{
                 "revision":"siri-archived",
                 "globalSettings":{"assistantSurface":"codex"},
                 "sessions":[],
@@ -1399,8 +1430,8 @@ mod tests {
                         }
                     ]
                 }
-            }"#
-            .to_owned(),
+            }"#,
+            ),
             vec![CODEX.to_owned()],
         )
         .expect("project siri entities");
@@ -1419,13 +1450,13 @@ mod tests {
     #[test]
     fn siri_session_entities_resolve_current_session_before_default() {
         let projection = reduce_siri_session_entities(
-            siri_resolution_json(
+            mobile_snapshot_from_json(&siri_resolution_json(
                 Some("current-thread"),
                 Some(DEVIN),
                 Some("default-thread"),
                 Some(CODEX),
                 false,
-            ),
+            )),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1451,13 +1482,13 @@ mod tests {
     #[test]
     fn siri_session_entities_fall_back_from_stale_current_to_default() {
         let projection = reduce_siri_session_entities(
-            siri_resolution_json(
+            mobile_snapshot_from_json(&siri_resolution_json(
                 Some("stale-thread"),
                 Some(DEVIN),
                 Some("default-thread"),
                 Some(CODEX),
                 false,
-            ),
+            )),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1477,13 +1508,13 @@ mod tests {
     #[test]
     fn siri_session_entities_infer_unset_current_surface() {
         let projection = reduce_siri_session_entities(
-            siri_resolution_json(
+            mobile_snapshot_from_json(&siri_resolution_json(
                 Some("current-thread"),
                 None,
                 Some("default-thread"),
                 Some(CODEX),
                 false,
-            ),
+            )),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1501,7 +1532,7 @@ mod tests {
     #[test]
     fn siri_session_entities_do_not_choose_arbitrary_latest_session() {
         let projection = reduce_siri_session_entities(
-            siri_resolution_json(None, None, None, None, false),
+            mobile_snapshot_from_json(&siri_resolution_json(None, None, None, None, false)),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1514,13 +1545,13 @@ mod tests {
     #[test]
     fn siri_session_entities_reject_archived_configured_sessions() {
         let projection = reduce_siri_session_entities(
-            siri_resolution_json(
+            mobile_snapshot_from_json(&siri_resolution_json(
                 Some("current-thread"),
                 Some(DEVIN),
                 Some("default-thread"),
                 Some(CODEX),
                 true,
-            ),
+            )),
             vec![CODEX.to_owned(), DEVIN.to_owned()],
         )
         .expect("project siri entities");
@@ -1534,13 +1565,13 @@ mod tests {
     fn siri_session_entities_ignore_blank_configured_session_ids() {
         for blank_session_id in ["", " ", "\n", "\t"] {
             let projection = reduce_siri_session_entities(
-                siri_resolution_json(
+                mobile_snapshot_from_json(&siri_resolution_json(
                     Some(blank_session_id),
                     Some(DEVIN),
                     Some(blank_session_id),
                     Some(CODEX),
                     false,
-                ),
+                )),
                 vec![CODEX.to_owned(), DEVIN.to_owned()],
             )
             .expect("project siri entities");
@@ -1554,46 +1585,38 @@ mod tests {
     #[test]
     fn optimistic_mode_updates_visible_snapshot_and_detail() {
         let projection = reduce_mobile_snapshot_optimistic_mode(
-            snapshot_json(DEVIN),
-            detail_json(Some("await-reply")),
+            test_snapshot(DEVIN),
             THREAD_ID.to_owned(),
             "send".to_owned(),
             DEVIN.to_owned(),
         )
         .expect("optimistic mode");
-        let snapshot = parse_snapshot(&projection.visible_snapshot_json).expect("snapshot");
-        let detail: DetailDocument =
-            serde_json::from_str(&projection.visible_detail_json).expect("detail");
+        let snapshot = test_snapshot_document(&projection.visible_snapshot);
 
         assert!(projection.did_update);
-        assert!(projection.has_detail);
         assert_eq!(snapshot.sessions[0].effective_mode.as_deref(), Some("send"));
-        assert_eq!(detail.effective_mode.as_deref(), Some("send"));
     }
 
     #[test]
     fn optimistic_mode_can_restore_global_default_mode() {
         let projection = reduce_mobile_snapshot_optimistic_mode(
-            snapshot_json(DEVIN),
-            detail_json(Some("send")),
+            test_snapshot(DEVIN),
             THREAD_ID.to_owned(),
             String::new(),
             DEVIN.to_owned(),
         )
         .expect("optimistic mode");
-        let snapshot = parse_snapshot(&projection.visible_snapshot_json).expect("snapshot");
-        let detail: DetailDocument =
-            serde_json::from_str(&projection.visible_detail_json).expect("detail");
+        let snapshot = test_snapshot_document(&projection.visible_snapshot);
 
         assert!(projection.did_update);
         assert_eq!(snapshot.sessions[0].effective_mode, None);
-        assert_eq!(detail.effective_mode, None);
     }
 
     #[test]
     fn optimistic_mode_preserves_goal_payload_fields() {
         let projection = reduce_mobile_snapshot_optimistic_mode(
-            r#"{
+            mobile_snapshot_from_json(
+                r#"{
                 "revision":"rev-goal",
                 "globalSettings":{"assistantSurface":"codex"},
                 "sessions":[{
@@ -1634,16 +1657,14 @@ mod tests {
                         "updatedAtMs":1781596920321
                     }
                 }]}
-            }"#
-            .to_owned(),
-            String::new(),
+            }"#,
+            ),
             "goal-thread".to_owned(),
             "await-reply".to_owned(),
             CODEX.to_owned(),
         )
         .expect("optimistic mode");
-        let snapshot: Value =
-            serde_json::from_str(&projection.visible_snapshot_json).expect("snapshot json");
+        let snapshot = projection.visible_snapshot.to_value();
         let goal = &snapshot["sessions"][0]["goal"];
 
         assert_eq!(goal["title"], "Ship realtime");
@@ -1655,7 +1676,7 @@ mod tests {
     #[test]
     fn detail_cache_filters_and_syncs_visible_session_fields() {
         let projection = reduce_mobile_snapshot_projection(
-            snapshot_json(DEVIN),
+            test_snapshot(DEVIN),
             DEVIN.to_owned(),
             true,
             CODEX.to_owned(),
@@ -1679,7 +1700,7 @@ mod tests {
             }}"#
         );
         let cache_projection =
-            reduce_mobile_snapshot_detail_cache(projection.visible_snapshot_json, detail_cache)
+            reduce_mobile_snapshot_detail_cache(projection.visible_snapshot, detail_cache)
                 .expect("detail cache");
         let details: BTreeMap<String, Value> =
             serde_json::from_str(&cache_projection.detail_by_session_id_json).expect("details");

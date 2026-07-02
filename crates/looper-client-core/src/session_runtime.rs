@@ -8,7 +8,9 @@ use crate::{
         ClientMenuBarSessionMiniLocalSnapshot, ClientMenuSnapshotStreamUpdate,
         reduce_state_minis_menu_snapshot,
     },
-    mobile_snapshot::reduce_state_minis_mobile_snapshot_with_pending_commands,
+    mobile_snapshot::{
+        ClientMobileSnapshot, reduce_state_minis_mobile_snapshot_with_pending_commands,
+    },
     model::{
         ClientCommandAckEnvelope, ClientEndpoint, ClientLocalStateSnapshot,
         ClientLocalStateStreamUpdate, ClientMobileSnapshotStreamUpdate,
@@ -550,7 +552,7 @@ impl LooperClientCoreSessionRuntime {
         if update.has_text_chunk || !update.did_change {
             return Ok(ClientMobileSnapshotStreamUpdate {
                 has_snapshot: false,
-                snapshot_json: String::new(),
+                snapshot: ClientMobileSnapshot::empty(),
                 sync_reason,
                 should_stop,
                 latest_seq,
@@ -571,7 +573,7 @@ impl LooperClientCoreSessionRuntime {
 
         Ok(ClientMobileSnapshotStreamUpdate {
             has_snapshot: projection.has_snapshot,
-            snapshot_json: projection.snapshot_json,
+            snapshot: projection.snapshot,
             sync_reason,
             should_stop,
             latest_seq,
@@ -1038,8 +1040,8 @@ mod tests {
         assert!(update.has_snapshot);
         assert_eq!(update.sync_reason, "delta");
         assert_eq!(update.latest_seq, 7);
-        assert!(update.snapshot_json.contains(r#""id":"thread-main""#));
-        assert!(update.snapshot_json.contains(r#""title":"Cached""#));
+        assert_eq!(update.snapshot.sessions[0].id, "thread-main");
+        assert_eq!(update.snapshot.sessions[0].title, "Cached");
     }
 
     #[test]
@@ -1648,8 +1650,8 @@ mod tests {
         assert_eq!(update.sync_reason, "delta");
         assert!(!update.should_stop);
         assert_eq!(update.latest_seq, 7);
-        assert!(update.snapshot_json.contains(r#""revision":"rev-7""#));
-        assert!(update.snapshot_json.contains(r#""id":"thread-main""#));
+        assert_eq!(update.snapshot.revision, "rev-7");
+        assert_eq!(update.snapshot.sessions[0].id, "thread-main");
         assert!(update.debug_message.is_empty());
     }
 

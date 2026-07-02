@@ -901,7 +901,7 @@ enum G006LocalFirstSelfTest {
         guard projection.hasSnapshot else {
             return nil
         }
-        return try JSONDecoder().decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+        return MobileSnapshot(clientCore: projection.snapshot)
     }
 
     private static func networkSnapshot() -> MobileSnapshot {
