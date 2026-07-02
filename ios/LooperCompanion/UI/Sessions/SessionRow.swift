@@ -13,6 +13,17 @@ struct SessionDetailRoute: Hashable, Identifiable {
 struct SessionRowDisplayItem: Identifiable, Hashable {
     let session: SessionSummary
     let assistantSurface: CompanionAssistantSurface
+    let pendingPromptDelivery: PendingPromptDeliveryPresentation?
+
+    init(
+        session: SessionSummary,
+        assistantSurface: CompanionAssistantSurface,
+        pendingPromptDelivery: PendingPromptDeliveryPresentation? = nil
+    ) {
+        self.session = session
+        self.assistantSurface = assistantSurface
+        self.pendingPromptDelivery = pendingPromptDelivery
+    }
 
     var id: String {
         "\(assistantSurface.rawValue):\(session.id)"
@@ -29,9 +40,31 @@ struct SessionRowDisplayItem: Identifiable, Hashable {
 struct SessionRow: View {
     let session: SessionSummary
     let assistantSurface: CompanionAssistantSurface
+    let pendingPromptDelivery: PendingPromptDeliveryPresentation?
+
+    init(
+        session: SessionSummary,
+        assistantSurface: CompanionAssistantSurface,
+        pendingPromptDelivery: PendingPromptDeliveryPresentation? = nil
+    ) {
+        self.session = session
+        self.assistantSurface = assistantSurface
+        self.pendingPromptDelivery = pendingPromptDelivery
+    }
 
     private var tint: Color {
         CompanionTint.tint(for: session.status)
+    }
+
+    private var pendingPromptTint: Color {
+        switch pendingPromptDelivery?.status {
+        case .some(.sending):
+            return .accentColor
+        case .some(.notDeliveredRetry):
+            return .orange
+        case .none:
+            return .secondary
+        }
     }
 
     private var appEntityIdentifier: EntityIdentifier? {
@@ -121,6 +154,11 @@ struct SessionRow: View {
 
                 if session.metadata.taskKind != .unknown {
                     Label(session.metadata.taskKind.label, systemImage: "tag")
+                }
+
+                if let pendingPromptDelivery {
+                    StatusPill(text: pendingPromptDelivery.label, tint: pendingPromptTint)
+                        .accessibilityIdentifier("session-row.pending-prompt")
                 }
             }
             .font(.footnote)

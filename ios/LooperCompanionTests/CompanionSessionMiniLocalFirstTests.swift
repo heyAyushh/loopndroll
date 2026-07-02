@@ -1633,6 +1633,41 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testPendingPromptDeliveryPresentationMapsRecentAndStaleAttempts() {
+        let store = CompanionSnapshotStateStore()
+        let observedAt = Date(timeIntervalSince1970: 1_000)
+        let pendingPrompt = CompanionSessionMiniPendingCommand(
+            kind: .sendSessionPrompt,
+            clientMutationID: "prompt-1",
+            threadID: Constants.cachedThreadID,
+            assistantSurface: "codex",
+            notificationID: nil,
+            prompt: "continue",
+            attemptCount: 1
+        )
+
+        #expect(store.applyPendingCommands([pendingPrompt], now: observedAt))
+
+        let recent = store.pendingPromptDeliveryPresentation(
+            for: Constants.cachedThreadID,
+            now: observedAt.addingTimeInterval(29)
+        )
+        #expect(recent?.status == .sending)
+        #expect(recent?.label == "Sending…")
+
+        let stale = store.pendingPromptDeliveryPresentation(
+            for: Constants.cachedThreadID,
+            now: observedAt.addingTimeInterval(31)
+        )
+        #expect(stale?.status == .notDeliveredRetry)
+        #expect(stale?.label == "Not delivered — will retry")
+
+        #expect(store.applyPendingCommands([], now: observedAt.addingTimeInterval(32)))
+        #expect(store.pendingPromptDeliveryPresentation(for: Constants.cachedThreadID) == nil)
+    }
+
+    @MainActor
+    @Test
     func testOlderStateMiniCacheCannotReplayAfterVisibleSnapshotReset() async throws {
         let staleSession = Self.sessionSummary(
             id: Constants.cachedThreadID,

@@ -13,10 +13,15 @@ private enum CompanionSnapshotLocalProjectionDefaults {
     static let scope = "global"
 }
 
+private enum PendingPromptDeliveryPolicy {
+    static let staleAttemptAge: TimeInterval = 30
+}
+
 @MainActor
 @Observable
 final class CompanionSnapshotStateStore {
     private var visibleProjectionState = CompanionVisibleProjectionState.empty()
+    private var pendingPromptCommandObservations: [String: PendingPromptCommandObservation] = [:]
 
     var snapshot: MobileSnapshot? {
         visibleProjectionState.snapshot
@@ -71,6 +76,7 @@ final class CompanionSnapshotStateStore {
         canonicalSessionIndex = .empty
         canonicalSessionSections = .empty
         visibleSurfaceProjections = [:]
+        pendingPromptCommandObservations = [:]
         hasUserSelectedAssistantSurface = false
         lastVisibleSnapshotFingerprint = nil
     }
@@ -272,6 +278,58 @@ final class CompanionSnapshotStateStore {
 
     func sessions(for surface: CompanionAssistantSurface) -> [SessionSummary] {
         sourceSnapshotForProjection()?.sessions(for: surface) ?? []
+    }
+
+    @discardableResult
+    func applyPendingCommands(
+        _ pendingCommands: [CompanionSessionMiniPendingCommand],
+        now: Date = Date()
+    ) -> Bool {
+        let activeMutationIDs = Set(pendingCommands.map(\.clientMutationID))
+        var nextObservations = pendingPromptCommandObservations.filter { mutationID, _ in
+            activeMutationIDs.contains(mutationID)
+        }
+
+        for command in pendingCommands {
+            if var observation = nextObservations[command.clientMutationID] {
+                observation.update(with: command, now: now)
+                nextObservations[command.clientMutationID] = observation
+            } else {
+                nextObservations[command.clientMutationID] = PendingPromptCommandObservation(
+                    command: command,
+                    now: now
+                )
+            }
+        }
+
+        guard nextObservations != pendingPromptCommandObservations else {
+            return false
+        }
+        pendingPromptCommandObservations = nextObservations
+        return true
+    }
+
+    func pendingPromptDeliveryPresentation(
+        for sessionID: String,
+        now: Date = Date()
+    ) -> PendingPromptDeliveryPresentation? {
+        pendingPromptCommandObservations.values
+            .filter { observation in
+                observation.command.kind == .sendSessionPrompt &&
+                    observation.command.threadID == sessionID
+            }
+            .max { lhs, rhs in
+                lhs.referenceDate < rhs.referenceDate
+            }
+            .map { observation in
+                let age = now.timeIntervalSince(observation.referenceDate)
+                let status: PendingPromptDeliveryStatus =
+                    observation.command.attemptCount > 0 &&
+                    age >= PendingPromptDeliveryPolicy.staleAttemptAge
+                        ? .notDeliveredRetry
+                        : .sending
+                return PendingPromptDeliveryPresentation(status: status)
+            }
     }
 
     func assistantSurface(containingSessionID sessionID: String) -> CompanionAssistantSurface? {
@@ -736,6 +794,57 @@ private struct VisibleSurfaceProjection {
     let sessionSections: SessionSections
     let sessionIndex: VisibleSessionIndex
     let fingerprint: VisibleSnapshotFingerprint
+}
+
+enum PendingPromptDeliveryStatus: Hashable {
+    case sending
+    case notDeliveredRetry
+
+    var label: String {
+        switch self {
+        case .sending:
+            return "Sending…"
+        case .notDeliveredRetry:
+            return "Not delivered — will retry"
+        }
+    }
+}
+
+struct PendingPromptDeliveryPresentation: Hashable {
+    let status: PendingPromptDeliveryStatus
+
+    var label: String {
+        status.label
+    }
+}
+
+private struct PendingPromptCommandObservation: Equatable {
+    var command: CompanionSessionMiniPendingCommand
+    var firstObservedAt: Date
+    var lastAttemptObservedAt: Date?
+    var attemptCount: Int
+
+    init(command: CompanionSessionMiniPendingCommand, now: Date) {
+        self.command = command
+        firstObservedAt = now
+        lastAttemptObservedAt = command.attemptCount > 0 ? now : nil
+        attemptCount = command.attemptCount
+    }
+
+    mutating func update(with nextCommand: CompanionSessionMiniPendingCommand, now: Date) {
+        command = nextCommand
+        guard attemptCount != nextCommand.attemptCount else {
+            return
+        }
+        attemptCount = nextCommand.attemptCount
+        if nextCommand.attemptCount > 0 {
+            lastAttemptObservedAt = now
+        }
+    }
+
+    var referenceDate: Date {
+        lastAttemptObservedAt ?? firstObservedAt
+    }
 }
 
 private struct VisibleSessionIndex {

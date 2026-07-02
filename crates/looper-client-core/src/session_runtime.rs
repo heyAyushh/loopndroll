@@ -100,6 +100,8 @@ impl LooperClientCoreSessionRuntime {
         if update.did_change && !update.has_text_chunk {
             self.persist_core_snapshot(&update.snapshot)?;
         }
+        self.client_core
+            .spawn_pending_outbox_flush_after_live_transition(self.local_store.clone())?;
         Ok(update)
     }
 
