@@ -178,6 +178,7 @@ pub enum SessionCommand {
     AgentStarted,
     AgentStopped,
     PromptDelivered,
+    PromptDeliveryFailed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +306,7 @@ pub fn next(state: SessionState, command: SessionCommand) -> Result<SessionState
             .cloned()
             .map(|mode| SessionState::AgentRunning { mode })
             .ok_or_else(|| reject_mode_required(state)),
+        SessionCommand::PromptDeliveryFailed => Ok(next_prompt_delivery_failed_state(state)),
     }
 }
 
@@ -444,6 +446,15 @@ fn next_stopped_state(state: SessionState) -> SessionState {
         Some(mode @ SessionMode::CompletionChecks) => SessionState::ChecksRunning { mode },
         Some(mode @ SessionMode::AwaitReply) => SessionState::WaitReply { mode },
         None => SessionState::Done,
+    }
+}
+
+fn next_prompt_delivery_failed_state(state: SessionState) -> SessionState {
+    match state {
+        SessionState::PromptPending { mode, .. } | SessionState::Dispatched { mode, .. } => {
+            SessionState::ModeArmed { mode }
+        }
+        state => state,
     }
 }
 
@@ -613,5 +624,60 @@ mod tests {
                 mode: SessionMode::Infinite
             }
         );
+    }
+
+    #[test]
+    fn prompt_delivery_failed_from_dispatched_rearms_same_mode() {
+        let state = next(
+            SessionState::Dispatched {
+                mode: SessionMode::MaxTurns2,
+                client_mutation_id: Some("cmid-dispatched".to_owned()),
+            },
+            SessionCommand::PromptDeliveryFailed,
+        )
+        .expect("delivery failure should be handled");
+
+        assert_eq!(
+            state,
+            SessionState::ModeArmed {
+                mode: SessionMode::MaxTurns2
+            }
+        );
+    }
+
+    #[test]
+    fn prompt_delivery_failed_from_prompt_pending_rearms_same_mode() {
+        let state = next(
+            SessionState::PromptPending {
+                mode: SessionMode::CompletionChecks,
+                client_mutation_id: "cmid-pending".to_owned(),
+            },
+            SessionCommand::PromptDeliveryFailed,
+        )
+        .expect("delivery failure should be handled");
+
+        assert_eq!(
+            state,
+            SessionState::ModeArmed {
+                mode: SessionMode::CompletionChecks
+            }
+        );
+    }
+
+    #[test]
+    fn prompt_delivery_failed_is_noop_for_settled_states() {
+        for state in [
+            SessionState::AgentRunning {
+                mode: SessionMode::Infinite,
+            },
+            SessionState::Idle,
+            SessionState::Done,
+        ] {
+            assert_eq!(
+                next(state.clone(), SessionCommand::PromptDeliveryFailed)
+                    .expect("delivery failure should be a no-op"),
+                state
+            );
+        }
     }
 }

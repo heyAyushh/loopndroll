@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::events::{MobileSessionMiniRecord, MobileStateEventRecord};
 use crate::mobile::events::MobileEventKind;
+use crate::mobile::prompt_delivery::DETAIL_PROMPT_DELIVERY_FAILED;
 
 use super::session_fsm::{SessionCommand, SessionMode, SessionState, accepted_prompt_state, next};
 
@@ -49,6 +50,9 @@ enum SessionEvent {
     PromptDelivered {
         thread_id: String,
     },
+    PromptDeliveryFailed {
+        thread_id: String,
+    },
 }
 
 pub fn fold_mobile_state_events<'a>(
@@ -71,15 +75,15 @@ pub fn session_state_for_thread(
     thread_id: &str,
     assistant_surface: Option<&str>,
 ) -> SessionState {
-    // The minis projection is the current source of truth once it exists for a session (the
-    // common case); only fold the full event history when there is no projection to consult,
-    // so callers that already know a projection exists can skip loading events at all (see
-    // `ensure_session_fsm_allows` in realtime_commands.rs, which queries minis first and only
-    // falls back to an events query when this returns `None`).
-    if let Some(projected_state) =
-        projected_session_state_from_minis(minis, thread_id, assistant_surface)
+    if let Some((projected_state, projected_seq)) =
+        projected_session_state_with_seq_from_minis(minis, thread_id, assistant_surface)
     {
-        return projected_state;
+        return fold_mobile_state_events_for_thread_after(
+            events,
+            thread_id,
+            projected_seq,
+            projected_state,
+        );
     }
     let reduced = fold_mobile_state_events(events);
     if let Some(state) = reduced.state_for_thread(thread_id) {
@@ -93,6 +97,15 @@ pub fn projected_session_state_from_minis(
     session_id: &str,
     assistant_surface: Option<&str>,
 ) -> Option<SessionState> {
+    projected_session_state_with_seq_from_minis(records, session_id, assistant_surface)
+        .map(|(state, _)| state)
+}
+
+fn projected_session_state_with_seq_from_minis(
+    records: &[MobileSessionMiniRecord],
+    session_id: &str,
+    assistant_surface: Option<&str>,
+) -> Option<(SessionState, i64)> {
     let record = records.iter().find(|record| {
         record.session_id == session_id
             && assistant_surface
@@ -105,11 +118,31 @@ pub fn projected_session_state_from_minis(
         .get("lifecycle")
         .and_then(Value::as_str)
         .or_else(|| body.get("status").and_then(Value::as_str));
-    Some(SessionState::from_projection(
-        effective_mode,
-        lifecycle,
-        None,
+    Some((
+        SessionState::from_projection(effective_mode, lifecycle, None),
+        record.seq,
     ))
+}
+
+fn fold_mobile_state_events_for_thread_after<'a>(
+    events: impl IntoIterator<Item = &'a MobileStateEventRecord>,
+    thread_id: &str,
+    after_seq: i64,
+    initial_state: SessionState,
+) -> SessionState {
+    let mut sessions = BTreeMap::from([(thread_id.to_owned(), initial_state)]);
+    for record in events {
+        if record.seq <= after_seq {
+            continue;
+        }
+        let Some(event) = session_event_from_record(record) else {
+            continue;
+        };
+        if event.thread_id() == thread_id {
+            fold_session_event(&mut sessions, event);
+        }
+    }
+    sessions.remove(thread_id).unwrap_or_default()
 }
 
 fn fold_session_event(sessions: &mut BTreeMap<String, SessionState>, event: SessionEvent) {
@@ -139,6 +172,9 @@ fn fold_session_event(sessions: &mut BTreeMap<String, SessionState>, event: Sess
         SessionEvent::PromptDelivered { .. } => {
             next(previous.clone(), SessionCommand::PromptDelivered).unwrap_or(previous)
         }
+        SessionEvent::PromptDeliveryFailed { .. } => {
+            next(previous.clone(), SessionCommand::PromptDeliveryFailed).unwrap_or(previous)
+        }
     };
     sessions.insert(thread_id, next_state);
 }
@@ -160,7 +196,8 @@ impl SessionEvent {
             | Self::PromptAccepted { thread_id, .. }
             | Self::AgentStarted { thread_id }
             | Self::AgentStopped { thread_id }
-            | Self::PromptDelivered { thread_id } => thread_id,
+            | Self::PromptDelivered { thread_id }
+            | Self::PromptDeliveryFailed { thread_id } => thread_id,
         }
     }
 }
@@ -253,6 +290,9 @@ fn session_event_from_session_detail(
         }
         Some(DETAIL_STOP) => Some(SessionEvent::AgentStopped { thread_id }),
         Some(DETAIL_PROMPT_RESUMED) => Some(SessionEvent::PromptDelivered { thread_id }),
+        Some(DETAIL_PROMPT_DELIVERY_FAILED) => {
+            Some(SessionEvent::PromptDeliveryFailed { thread_id })
+        }
         _ => None,
     }
 }
@@ -396,6 +436,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn prompt_delivery_failure_detail_rearms_accepted_prompt_state() {
+        let events = vec![
+            state_event(
+                1,
+                "thread-1",
+                MobileEventKind::SessionChanged,
+                Some(COMMAND_KIND_SET_SESSION_MODE),
+                Some("cmid-mode"),
+                serde_json::json!({
+                    "threadId": "thread-1",
+                    "preset": "infinite",
+                    "entityId": "thread-1",
+                    "revision": "rev-1",
+                    "serverTime": "now",
+                }),
+            ),
+            state_event(
+                2,
+                "thread-1",
+                MobileEventKind::SessionChanged,
+                Some(COMMAND_KIND_SEND_SESSION_PROMPT),
+                Some("cmid-prompt"),
+                serde_json::json!({
+                    "dispatchKind": "accepted",
+                    "entityId": "thread-1",
+                    "revision": "rev-2",
+                    "serverTime": "now",
+                }),
+            ),
+            session_detail_event(3, "thread-1", DETAIL_PROMPT_DELIVERY_FAILED),
+        ];
+
+        let reduced = fold_mobile_state_events(&events);
+        let state = reduced.sessions["thread-1"].clone();
+
+        assert_eq!(
+            state,
+            SessionState::ModeArmed {
+                mode: SessionMode::Infinite
+            }
+        );
+        assert!(
+            next(
+                state,
+                SessionCommand::SteerPrompt {
+                    client_mutation_id: "cmid-retry".to_owned()
+                },
+            )
+            .is_ok(),
+            "delivery failure should allow an immediate retry"
+        );
+    }
+
     fn state_event(
         seq: i64,
         entity_id: &str,
@@ -419,6 +513,26 @@ mod tests {
             command_kind: command_kind.map(str::to_owned),
             command_request_hash: None,
             command_response_json: command_kind.map(|_| response_json.to_string()),
+            created_at_ms: seq,
+        }
+    }
+
+    fn session_detail_event(seq: i64, entity_id: &str, detail: &str) -> MobileStateEventRecord {
+        MobileStateEventRecord {
+            seq,
+            entity_id: entity_id.to_owned(),
+            kind: MobileEventKind::SessionChanged,
+            revision: format!("rev-{seq}"),
+            server_time: "now".to_owned(),
+            payload_json: serde_json::json!({
+                "threadId": entity_id,
+                "detail": detail,
+            })
+            .to_string(),
+            client_mutation_id: None,
+            command_kind: None,
+            command_request_hash: None,
+            command_response_json: None,
             created_at_ms: seq,
         }
     }
