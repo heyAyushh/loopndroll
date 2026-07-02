@@ -82,3 +82,55 @@ live in exactly those seams.
 
 Extend the harness: steer-while-running, queue-while-stopped, delivery-failure recovery,
 network flap, backgrounding. Transport and UI changes gate on it.
+
+## Accelerated execution plan for Phases 1–3 (one-day target)
+
+Phase 0 landed as five parallel codex jobs (gpt-5.5 xhigh, fast_mode, multi_agent), each
+in its own worktree, reviewed and gated by the orchestrator. Phases 1–3 run the same way
+with these changes, because build/test wall-clock dominates:
+
+### Build/test speed config (do FIRST, ~15 min)
+
+- Dev profile for `agent-control-plane` and `looper-client-core`:
+  `split-debuginfo = "unpacked"` and `debug = "line-tables-only"` (link/dSYM cost drops
+  hard on the large crates).
+- Use `cargo nextest` for suites (per-test parallelism plus automatic flake retries; the
+  isolated_control_plane suite produced 13 load-induced false failures under parallel
+  codex load without it).
+- Keep the shared `CARGO_TARGET_DIR=/Users/ay/.cache/looper-cargo-target`; pre-warm each
+  job worktree with `cargo build --tests` at creation, before codex starts.
+
+### Verification tiers
+
+- Per job: codex runs filtered gates; orchestrator does `cargo check` + line-by-line diff
+  review only.
+- ONE combined gate after all merges: nextest on both crates + e2e suite + one simulator
+  test run + one swift package test. No per-branch full suites.
+- Known pre-existing failures on main (13 tests: grok/devin/claude-code snapshot suites,
+  handoff page, zed routes) are NOT regressions; compare failure sets, don't chase.
+
+### Serial monsters, batched
+
+- UniFFI regen + xcframework rebuild exactly once, after every FFI-surface change merged.
+- iOS simulator boots once at the combined gate.
+
+### Schedule
+
+1. Hour 0–1 — build-speed config, then the Phase 1 CONTRACT job alone (proto: unary
+   command RPCs, session server-stream). Serial on purpose: everything hangs off it; if
+   the contract smells wrong, stop and fix before fanning out.
+2. Hour 1–5 — four parallel codex jobs against the new contract:
+   a. server unary handlers + command executor off the stream loop,
+   b. client-core transport swap (delete ack lease/backlog/flush-timeout machinery),
+   c. quinn tuning (QUIC keep-alive, idle timeout, 0-RTT resume, path migration;
+      also fixes the e2e-documented h3 listener-restart recovery gap),
+   d. Phase 2 wins-only: connection pill grace period + handoff publishing from store
+      changes (defer the CompanionAppModel split).
+3. Hour 5–7 — merge in dependency order (`cargo check` per merge), extend e2e harness and
+   un-ignore the two target-behavior tests (auto-reflush after reconnect, no wedge after
+   delivery failure).
+4. Hour 7–8 — single FFI regen, combined full gate, macOS package + iPhone build once.
+
+Deferred by this plan: CompanionAppModel split (Phase 2 refactor luxury), per-branch
+bisectability. Risk to watch: a contract mistake discovered mid-fan-out cascades; the
+hour-1 review of the contract job is the checkpoint that protects the day.
