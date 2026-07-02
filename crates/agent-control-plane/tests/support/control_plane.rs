@@ -1,6 +1,6 @@
 use std::fs;
 
-use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
+use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -49,11 +49,9 @@ insert into threads values
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some("/usr/bin/false".to_owned()),
-            grok_home: self.temp_dir.path().join(".grok"),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: self.temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(self.temp_dir.path().to_path_buf()),
         })
     }
 }

@@ -290,6 +290,23 @@ pub fn source_status(codex_home: &Path) -> SourceStatus {
 
 pub fn inspect_control_plane(codex_home: &Path) -> ControlPlaneStatus {
     let codex_servers = find_codex_server_processes().unwrap_or_default();
+    inspect_control_plane_with_codex_servers(codex_home, codex_servers)
+}
+
+pub fn inspect_control_plane_with_process_lines(
+    codex_home: &Path,
+    process_lines: &[String],
+) -> ControlPlaneStatus {
+    inspect_control_plane_with_codex_servers(
+        codex_home,
+        inspect_codex_servers_from_process_lines(process_lines),
+    )
+}
+
+fn inspect_control_plane_with_codex_servers(
+    codex_home: &Path,
+    codex_servers: Vec<CodexServerProcess>,
+) -> ControlPlaneStatus {
     ControlPlaneStatus {
         hooks: inspect_hooks(codex_home),
         app_server: codex_servers

@@ -7,7 +7,7 @@ use anyhow::Result;
 use tokio::net::TcpListener;
 
 use crate::claude_code::{is_claude_hook_invocation, parse_claude_hook_payload};
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
 use crate::devin::{is_devin_hook_invocation, parse_devin_hook_payload};
 use crate::grok_build::{
     GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
@@ -227,14 +227,13 @@ async fn run_hook_mode_with_input(
 
 pub fn default_control_plane() -> Result<ControlPlane> {
     let home_path = home_dir();
+    let grok_home = crate::grok_build::default_grok_home(&home_path);
     Ok(ControlPlane::new(ControlPlaneConfig {
         codex_home: default_codex_home(),
         codex_executable: None,
-        grok_home: crate::grok_build::default_grok_home(&home_path),
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),
-        home_path,
-        zed_process_commands: None,
+        host_environment: HostEnvironment::real_with_grok_home(home_path, grok_home),
     }))
 }
 
@@ -400,11 +399,9 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
-            grok_home: temp_dir.path().join(".grok"),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some(TEST_HOOK_COMMAND.to_owned()),
-            home_path: temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),
         });
         let context = HookInvocationContext {
             devin_hook: false,

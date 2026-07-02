@@ -10,7 +10,7 @@ use agent_control_plane::assistant::{
 use agent_control_plane::auth::{
     AuthManager, CloudAuthContract, LinkedIdentityMethod, MemorySecretStore,
 };
-use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
+use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
 use agent_control_plane::events::MobileSessionMiniProjectionInput;
 use agent_control_plane::grpc::proto::{
     ClientFrame, Command, DeleteSessionRequest, HealthRequest, MuteSessionRequest, Resume,
@@ -1079,7 +1079,7 @@ async fn desktop_connections_manage_mobile_pairings_and_codex_rows() {
     fixture.write_config_toml(true);
     fixture.write_devin_next_settings();
     fixture.write_zed_settings();
-    let control_plane = fixture.control_plane_with_running_zed();
+    let control_plane = fixture.control_plane_with_running_zed_and_grok_cli();
     let pairing_token = control_plane
         .mobile_auth_service()
         .issue_pairing_token()
@@ -2090,9 +2090,13 @@ async fn session_mini_projection_advances_seq_on_mode_mutation() {
             .expect("updated mini records"),
     )
     .expect("updated revision");
-    assert_eq!(updated_revision, initial_revision);
+    assert_ne!(updated_revision, initial_revision);
+    assert_eq!(
+        updated["revision"].as_str().expect("updated revision"),
+        updated_revision
+    );
     assert_eq!(updated_session["effectiveMode"], "await-reply");
-    assert_eq!(updated_session["status"], "stopped");
+    assert_eq!(updated_session["status"], "waiting");
 }
 
 #[tokio::test]
@@ -3710,6 +3714,19 @@ async fn mobile_session_controls_are_owned_by_rust() {
     assert_eq!(archived_session["isArchived"], serde_json::json!(true));
     assert_eq!(archived_session["status"], "archived");
 
+    let unarchived_ack = submit_grpc_session_command(
+        control_plane.clone(),
+        &authorization,
+        command::Command::SetSessionArchived(SetSessionArchivedRequest {
+            thread_id: "thread-main".to_owned(),
+            archived: false,
+            client_mutation_id: "mobile-controls-unarchive-before-delete".to_owned(),
+        }),
+    )
+    .await;
+    assert!(unarchived_ack.accepted);
+    prime_state_mini_cache(&control_plane);
+
     let deleted_ack = submit_grpc_session_command(
         control_plane.clone(),
         &authorization,
@@ -4489,10 +4506,9 @@ async fn devin_mobile_prompt_rejects_without_hot_local_devin_delivery_cache() {
 
     assert!(!ack.accepted);
     assert_eq!(ack.error_code, "failed_precondition");
-    assert!(
-        ack.reject_reason
-            .contains("prompt delivery action cache is cold")
-    );
+    assert!(ack.reject_reason.contains(
+        "This Devin Local session must be running before Looper can deliver prompts through hooks."
+    ));
 }
 
 #[tokio::test]
@@ -5391,11 +5407,9 @@ done
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(codex_executable.display().to_string()),
-            grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: self.temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: self.host_environment(Vec::new(), BTreeMap::new()),
         })
     }
 
@@ -5405,16 +5419,47 @@ done
         ])
     }
 
+    fn control_plane_with_running_zed_and_grok_cli(&self) -> ControlPlane {
+        let mut cli_paths = BTreeMap::new();
+        cli_paths.insert(
+            "grok".to_owned(),
+            self.grok_home().join("bin/grok").display().to_string(),
+        );
+        self.control_plane_with_host_inventory(
+            vec!["/Applications/Zed.app/Contents/MacOS/zed --foreground".to_owned()],
+            cli_paths,
+        )
+    }
+
     fn control_plane_with_zed_processes(&self, zed_process_commands: Vec<String>) -> ControlPlane {
+        self.control_plane_with_host_inventory(zed_process_commands, BTreeMap::new())
+    }
+
+    fn control_plane_with_host_inventory(
+        &self,
+        process_commands: Vec<String>,
+        cli_paths: BTreeMap<String, String>,
+    ) -> ControlPlane {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(self.codex_resume_stub().display().to_string()),
-            grok_home: self.grok_home(),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: self.temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(zed_process_commands),
+            host_environment: self.host_environment(process_commands, cli_paths),
         })
+    }
+
+    fn host_environment(
+        &self,
+        process_commands: Vec<String>,
+        cli_paths: BTreeMap<String, String>,
+    ) -> HostEnvironment {
+        HostEnvironment::hermetic_with_grok_home(
+            self.temp_dir.path().to_path_buf(),
+            self.grok_home(),
+        )
+        .with_process_commands(process_commands)
+        .with_assistant_cli_paths(cli_paths)
     }
 
     fn write_devin_next_settings(&self) {

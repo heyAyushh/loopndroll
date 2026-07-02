@@ -568,7 +568,7 @@ mod tests {
         delivery_action_cache_key, invalidate_delivery_action_cache, locked_delivery_action_cache,
         send_non_acp_session_prompt, unique_thread_ids,
     };
-    use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+    use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
     use crate::mobile::session::MobileSessionError;
     use tempfile::TempDir;
 
@@ -695,11 +695,9 @@ mod tests {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
-            grok_home: temp_dir.path().join(".grok"),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: None,
-            home_path: temp_dir.path().to_path_buf(),
-            zed_process_commands: None,
+            host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),
         })
     }
 }

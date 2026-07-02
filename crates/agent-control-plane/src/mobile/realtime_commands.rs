@@ -1633,7 +1633,7 @@ fn mobile_session_status(error: MobileSessionError) -> Status {
 
 #[cfg(test)]
 mod tests {
-    use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+    use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
     use crate::events::{MobileSessionMiniProjectionInput, MobileStateEventInput};
     use crate::mobile::events::MobileEventKind;
     use crate::mobile::prompt_delivery::DETAIL_PROMPT_DELIVERY_FAILED;
@@ -1766,11 +1766,9 @@ mod tests {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
-            grok_home: temp_dir.path().join(".grok"),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: None,
-            home_path: temp_dir.path().to_path_buf(),
-            zed_process_commands: None,
+            host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),
         })
     }
 }
