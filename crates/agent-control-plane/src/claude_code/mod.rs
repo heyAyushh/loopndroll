@@ -95,6 +95,18 @@ pub fn discover_recent_claude_sessions(
     )
 }
 
+pub fn discover_recent_claude_sessions_with_processes(
+    claude_home: &Path,
+    session_limit: usize,
+    process_commands: &[String],
+) -> Result<Vec<ClaudeSessionRecord>> {
+    discover_claude_sessions_with_limit_and_processes(
+        claude_home,
+        Some(session_limit),
+        process_commands,
+    )
+}
+
 pub fn discover_claude_sessions_with_processes(
     claude_home: &Path,
     process_commands: &[String],

@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 
-use crate::control_plane::{ControlPlane, ControlPlaneConfig};
+use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
 use crate::grpc::proto;
 use crate::grpc::proto::looper_realtime_server::{LooperRealtime, LooperRealtimeServer};
 use crate::grpc::proto::{HealthRequest, HealthResponse, SetSessionModeRequest, command};
@@ -381,11 +381,9 @@ insert into threads values
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some("/usr/bin/false".to_owned()),
-            grok_home: self.temp_dir.path().join(".grok"),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: self.temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(self.temp_dir.path().to_path_buf()),
         })
     }
 }

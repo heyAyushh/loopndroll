@@ -4,7 +4,9 @@ use agent_control_plane::events::{
     MobileCommandAckInput, MobileCommandAckResult, MobileCommandReservationResult,
     MobileSessionMiniProjectionInput, MobileStateEventGap, MobileStateEventInput,
 };
-use agent_control_plane::mobile::events::{MobileEvent, MobileEventInput, mobile_event_now};
+use agent_control_plane::mobile::events::{
+    MobileEvent, MobileEventInput, MobileEventRecord, mobile_event_now,
+};
 use prost::Message;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -641,13 +643,17 @@ async fn grpc_commands_return_idempotent_ack_seq() {
         "g004-c002-mode",
     );
     assert_accepted_finality_certificate(&first_mode, "g004-c002-mode");
-    let mode_event_count = mobile_state_event_count(&control_plane);
+    let mode_event_count =
+        mobile_state_event_detail_count(&control_plane, "thread-main", "mode-updated");
     let replayed_mode =
         set_mode_grpc(&mut client, &authorization, "await-reply", "g004-c002-mode").await;
     assert!(replayed_mode.idempotent_replay);
     assert_eq!(replayed_mode.ack_seq, first_mode.ack_seq);
     assert_eq!(replayed_mode.revision, first_mode.revision);
-    assert_eq!(mobile_state_event_count(&control_plane), mode_event_count);
+    assert_eq!(
+        mobile_state_event_detail_count(&control_plane, "thread-main", "mode-updated"),
+        mode_event_count
+    );
 
     let blank_prompt = send_prompt_grpc(&mut client, &authorization, "").await;
     assert!(!blank_prompt.accepted);
@@ -667,12 +673,16 @@ async fn grpc_commands_return_idempotent_ack_seq() {
     );
     assert_accepted_finality_certificate(&first_prompt, "g004-c002-prompt");
     wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
-    let prompt_event_count = mobile_state_event_count(&control_plane);
+    let prompt_event_count =
+        mobile_state_event_detail_count(&control_plane, "thread-main", "prompt-queued");
     let replayed_prompt = send_prompt_grpc(&mut client, &authorization, "g004-c002-prompt").await;
     assert!(replayed_prompt.idempotent_replay);
     assert_eq!(replayed_prompt.ack_seq, first_prompt.ack_seq);
     assert_eq!(replayed_prompt.revision, first_prompt.revision);
-    assert_eq!(mobile_state_event_count(&control_plane), prompt_event_count);
+    assert_eq!(
+        mobile_state_event_detail_count(&control_plane, "thread-main", "prompt-queued"),
+        prompt_event_count
+    );
 
     control_plane
         .store()
@@ -737,6 +747,8 @@ async fn grpc_commands_return_idempotent_ack_seq() {
     assert_eq!(blank_reply.error_code, "invalid_argument");
     assert!(blank_reply.reject_reason.contains("client_mutation_id"));
 
+    let reply_event_count_before =
+        mobile_state_event_detail_count(&control_plane, "thread-main", "prompt-queued");
     let first_reply =
         submit_notification_reply_grpc(&mut client, &authorization, "g004-c002-reply").await;
     assert_command_ack(
@@ -751,13 +763,24 @@ async fn grpc_commands_return_idempotent_ack_seq() {
     );
     assert_accepted_finality_certificate(&first_reply, "g004-c002-reply");
     wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
-    let reply_event_count = mobile_state_event_count(&control_plane);
+    wait_for_mobile_event_detail_count(
+        &control_plane,
+        "thread-main",
+        "prompt-queued",
+        reply_event_count_before + 1,
+    )
+    .await;
+    let reply_event_count =
+        mobile_state_event_detail_count(&control_plane, "thread-main", "prompt-queued");
     let replayed_reply =
         submit_notification_reply_grpc(&mut client, &authorization, "g004-c002-reply").await;
     assert!(replayed_reply.idempotent_replay);
     assert_eq!(replayed_reply.ack_seq, first_reply.ack_seq);
     assert_eq!(replayed_reply.revision, first_reply.revision);
-    assert_eq!(mobile_state_event_count(&control_plane), reply_event_count);
+    assert_eq!(
+        mobile_state_event_detail_count(&control_plane, "thread-main", "prompt-queued"),
+        reply_event_count
+    );
 }
 
 #[tokio::test]
@@ -1206,57 +1229,75 @@ fn grpc_session_hot_loop_rejects_projection_rebuild_calls() {
 }
 
 #[tokio::test]
-async fn grpc_session_hot_loop_drains_compact_frames_while_projection_reconcile_runs() {
+async fn grpc_session_hot_loop_drains_compact_frames_while_snapshot_projection_runs() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     let router = build_router(control_plane.clone());
     let authorization = issue_mobile_authorization_header(&router).await;
     let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
-    let (_sender, mut stream) =
+    let (sender, mut stream) =
         open_live_session_stream(&mut client, &authorization, Vec::new()).await;
+    sender
+        .send(ClientFrame { frame: None })
+        .await
+        .expect("prime live session stream");
+    let readiness_ack = next_session_ack_frame(&mut stream, "T6 stream readiness").await;
+    assert_eq!(readiness_ack.error_code, "empty_client_frame");
 
-    let reconcile_plane = control_plane.clone();
-    let reconcile = tokio::task::spawn_blocking(move || {
+    let projection_plane = control_plane.clone();
+    let projection = tokio::task::spawn_blocking(move || {
         for index in 0..3 {
-            reconcile_plane
-                .force_reconcile_mobile_session_mini_projection(&format!(
-                    "t6-background-reconcile-{index}"
-                ))
-                .map(|_| ())?;
+            let snapshot = projection_plane.desktop_mobile_snapshot()?;
+            anyhow::ensure!(
+                !snapshot.revision.is_empty(),
+                "background snapshot projection {index} returned an empty revision"
+            );
         }
         Ok::<(), anyhow::Error>(())
     });
 
     for index in 0..3 {
         let title = format!("T6 compact stream mini {index}");
-        control_plane.emit_mobile_session_event_with_cached_minis(
-            MobileEventInput {
-                kind: MobileEventKind::SessionChanged,
-                thread_id: Some("thread-main".to_owned()),
+        let record = control_plane
+            .store()
+            .record_mobile_state_event_with_session_mini(
+                state_delta_input(
+                    "thread-main",
+                    &format!("t6-compact-revision-{index}"),
+                    &format!("t6-compact-projection-{index}"),
+                ),
+                MobileSessionMiniProjectionInput {
+                    session_id: "thread-main".to_owned(),
+                    assistant_surface: "codex".to_owned(),
+                    body_json: serde_json::json!({
+                        "id": "thread-main",
+                        "sessionId": "thread-main",
+                        "assistantSurface": "codex",
+                        "status": "running",
+                        "title": title,
+                        "lifecycle": "active",
+                        "replyable": true,
+                        "canSendPrompt": true,
+                        "notificationStatus": {
+                            "enabled": false,
+                            "targetIds": [],
+                            "usesDefault": true,
+                        },
+                    }),
+                },
+            )
+            .expect("record compact session mini event");
+        control_plane
+            .mobile_event_hub()
+            .publish_persisted(MobileEventRecord {
+                event_id: format!("mobile-state:{}", record.seq),
+                event_type: record.kind,
+                thread_id: Some(record.entity_id.clone()),
                 prompt_id: None,
                 detail: Some(format!("t6-compact-projection-{index}")),
-            },
-            vec![MobileSessionMiniProjectionInput {
-                session_id: "thread-main".to_owned(),
-                assistant_surface: "codex".to_owned(),
-                body_json: serde_json::json!({
-                    "id": "thread-main",
-                    "sessionId": "thread-main",
-                    "assistantSurface": "codex",
-                    "status": "running",
-                    "title": title,
-                    "lifecycle": "active",
-                    "replyable": true,
-                    "canSendPrompt": true,
-                    "notificationStatus": {
-                        "enabled": false,
-                        "targetIds": [],
-                        "usesDefault": true,
-                    },
-                }),
-            }],
-        );
+                created_at_ms: record.created_at_ms,
+            });
 
         let delta = next_session_state_delta_matching(
             &mut stream,
@@ -1287,11 +1328,11 @@ async fn grpc_session_hot_loop_drains_compact_frames_while_projection_reconcile_
         assert!(payload.get("recovery").is_none());
     }
 
-    tokio::time::timeout(tokio::time::Duration::from_secs(5), reconcile)
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), projection)
         .await
-        .expect("background projection reconcile should complete")
-        .expect("background projection reconcile join")
-        .expect("background projection reconcile result");
+        .expect("background snapshot projection should complete")
+        .expect("background snapshot projection join")
+        .expect("background snapshot projection result");
 }
 
 #[tokio::test]
@@ -2508,6 +2549,32 @@ fn mobile_state_event_count(control_plane: &ControlPlane) -> usize {
         .len()
 }
 
+fn mobile_state_event_detail_count(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    detail: &str,
+) -> usize {
+    control_plane
+        .store()
+        .mobile_state_events_after_seq(0, 1_000)
+        .expect("mobile state events")
+        .iter()
+        .filter(|event| {
+            event.entity_id == thread_id
+                && serde_json::from_str::<serde_json::Value>(&event.payload_json)
+                    .ok()
+                    .and_then(|payload| {
+                        payload
+                            .get("detail")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .as_deref()
+                    == Some(detail)
+        })
+        .count()
+}
+
 async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &str, detail: &str) {
     for _ in 0..PROMPT_DELIVERY_WAIT_ATTEMPTS {
         let found = control_plane
@@ -2537,6 +2604,28 @@ async fn wait_for_mobile_event_detail(control_plane: &ControlPlane, thread_id: &
         .await;
     }
     panic!("timed out waiting for {detail} event for {thread_id}");
+}
+
+async fn wait_for_mobile_event_detail_count(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+    detail: &str,
+    expected_count: usize,
+) {
+    let mut observed_count = 0;
+    for _ in 0..PROMPT_DELIVERY_WAIT_ATTEMPTS {
+        observed_count = mobile_state_event_detail_count(control_plane, thread_id, detail);
+        if observed_count >= expected_count {
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            PROMPT_DELIVERY_WAIT_INTERVAL_MILLIS,
+        ))
+        .await;
+    }
+    panic!(
+        "timed out waiting for {expected_count} {detail} events for {thread_id}; observed {observed_count}"
+    );
 }
 
 async fn wait_for_queued_prompt_count(

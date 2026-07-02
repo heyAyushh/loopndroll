@@ -11,7 +11,7 @@ pub(super) async fn handoff_session_page(
     Path(thread_id): Path<String>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let snapshot = match control_plane.desktop_menu_snapshot() {
+    let snapshot = match control_plane.desktop_handoff_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => {
             return (

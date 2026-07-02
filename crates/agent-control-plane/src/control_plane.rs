@@ -23,19 +23,22 @@ use crate::acp::runtime::{
 };
 use crate::acp::targets::AcpTarget;
 use crate::assistant::{
-    AssistantAdapterCapability, AssistantKind, adapter_capabilities, static_adapter_capabilities,
+    AssistantAdapterCapability, AssistantKind, adapter_capabilities,
+    discover_assistant_adapters_from_sources, static_adapter_capabilities,
 };
 use crate::automations::{AutomationSummary, read_automations};
 use crate::claude_code::{
     ClaudeHookOwner, ClaudeHookStatus, ClaudeSessionRecord, claude_session_to_desktop_thread,
-    default_claude_home, discover_claude_sessions, discover_recent_claude_sessions,
-    inspect_claude_hooks, register_owned_claude_hooks, unregister_owned_claude_hooks,
+    default_claude_home, discover_claude_sessions_with_processes,
+    discover_recent_claude_sessions_with_processes, inspect_claude_hooks,
+    register_owned_claude_hooks, unregister_owned_claude_hooks,
 };
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
     SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, ThreadRevisionRecord,
-    capabilities_for_state_thread, discover_sources, inspect_control_plane, inspect_hooks,
-    read_snapshot_state_with_thread_limit, read_state, read_thread_revision_state, source_status,
+    capabilities_for_state_thread, discover_sources, inspect_control_plane_with_process_lines,
+    inspect_hooks, read_snapshot_state_with_thread_limit, read_state, read_thread_revision_state,
+    source_status,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::content_slices::{
@@ -51,7 +54,7 @@ use crate::devin::{
     devin_session_to_desktop_thread, devin_session_to_thread_record,
     discover_devin_sessions_with_previews, discover_devin_sessions_without_previews,
     discover_recent_devin_sessions, discover_recent_devin_sessions_with_previews,
-    inspect_devin_desktop_for_home, inspect_devin_hooks, install_looper_acp_agent_for_home,
+    inspect_devin_desktop_with_processes, inspect_devin_hooks, install_looper_acp_agent_for_home,
     register_owned_devin_hooks, unregister_owned_devin_hooks,
 };
 use crate::events::{
@@ -60,7 +63,7 @@ use crate::events::{
 };
 use crate::goals::{GoalSummary, ThreadGoalSummary, goal_for_thread, read_goals};
 use crate::grok_build::{
-    GrokHookOwner, GrokHookStatus, GrokSessionRecord, discover_grok_sessions,
+    GrokHookOwner, GrokHookStatus, GrokSessionRecord, default_grok_home, discover_grok_sessions,
     grok_session_to_desktop_thread, inspect_grok_hooks, register_owned_grok_hooks,
     unregister_owned_grok_hooks,
 };
@@ -83,8 +86,8 @@ use crate::sync_manifest::SyncManifest;
 use crate::telegram::TelegramService;
 use crate::transcript_preview::transcript_preview_for_path_fast;
 use crate::zed::{
-    ZED_CLIENT_ID, ZED_CLIENT_NAME, ZedStatus, inspect_zed_for_home,
-    inspect_zed_for_home_with_processes, install_looper_zed_acp_agent_for_home, zed_acp_targets,
+    ZED_CLIENT_ID, ZED_CLIENT_NAME, ZedStatus, inspect_zed_for_home_with_processes,
+    install_looper_zed_acp_agent_for_home, zed_acp_targets,
 };
 
 mod acp_hosts;
@@ -106,6 +109,8 @@ const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(300);
 const SESSION_MINI_PROJECTION_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const HOST_PROCESS_COMMAND: &str = "/bin/ps";
+const HOST_PROCESS_COMMAND_ARGS: &[&str] = &["-axo", "command="];
 const BOUNDED_SNAPSHOT_STALE_HEALTH: &str = "stale";
 const CODEX_HOOKS_CONNECTION_ID: &str = "codex-hooks";
 const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
@@ -142,7 +147,7 @@ impl SnapshotInspectionMode {
     }
 
     fn discovers_live_external_sessions(self) -> bool {
-        self == Self::Live
+        matches!(self, Self::Live | Self::Mobile)
     }
 }
 
@@ -186,14 +191,107 @@ impl HookMutationTarget {
 }
 
 #[derive(Clone, Debug)]
+pub struct HostEnvironment {
+    home_path: PathBuf,
+    grok_home: PathBuf,
+    process_commands: HostProcessCommandSource,
+    assistant_cli_paths: HostAssistantCliPathSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HostProcessCommandSource {
+    Real,
+    Fixed(Vec<String>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HostAssistantCliPathSource {
+    Real,
+    Fixed(BTreeMap<String, String>),
+}
+
+impl HostEnvironment {
+    pub fn real(home_path: PathBuf) -> Self {
+        let grok_home = default_grok_home(&home_path);
+        Self::real_with_grok_home(home_path, grok_home)
+    }
+
+    pub fn real_with_grok_home(home_path: PathBuf, grok_home: PathBuf) -> Self {
+        Self {
+            home_path,
+            grok_home,
+            process_commands: HostProcessCommandSource::Real,
+            assistant_cli_paths: HostAssistantCliPathSource::Real,
+        }
+    }
+
+    pub fn hermetic(home_path: PathBuf) -> Self {
+        let grok_home = default_grok_home(&home_path);
+        Self::hermetic_with_grok_home(home_path, grok_home)
+    }
+
+    pub fn hermetic_with_grok_home(home_path: PathBuf, grok_home: PathBuf) -> Self {
+        Self {
+            home_path,
+            grok_home,
+            process_commands: HostProcessCommandSource::Fixed(Vec::new()),
+            assistant_cli_paths: HostAssistantCliPathSource::Fixed(BTreeMap::new()),
+        }
+    }
+
+    pub fn with_process_commands(mut self, process_commands: Vec<String>) -> Self {
+        self.process_commands = HostProcessCommandSource::Fixed(process_commands);
+        self
+    }
+
+    pub fn with_assistant_cli_paths(mut self, cli_paths: BTreeMap<String, String>) -> Self {
+        self.assistant_cli_paths = HostAssistantCliPathSource::Fixed(cli_paths);
+        self
+    }
+
+    fn home_path(&self) -> &PathBuf {
+        &self.home_path
+    }
+
+    fn grok_home(&self) -> &PathBuf {
+        &self.grok_home
+    }
+
+    fn claude_home(&self) -> PathBuf {
+        default_claude_home(&self.home_path)
+    }
+
+    fn process_commands(&self) -> Vec<String> {
+        match &self.process_commands {
+            HostProcessCommandSource::Real => current_process_commands(),
+            HostProcessCommandSource::Fixed(process_commands) => process_commands.clone(),
+        }
+    }
+
+    fn assistant_adapters(&self) -> Vec<AssistantAdapterCapability> {
+        match (&self.process_commands, &self.assistant_cli_paths) {
+            (HostProcessCommandSource::Real, HostAssistantCliPathSource::Real) => {
+                adapter_capabilities()
+            }
+            _ => {
+                let process_commands = self.process_commands();
+                let cli_paths = match &self.assistant_cli_paths {
+                    HostAssistantCliPathSource::Real => BTreeMap::new(),
+                    HostAssistantCliPathSource::Fixed(cli_paths) => cli_paths.clone(),
+                };
+                discover_assistant_adapters_from_sources(&process_commands, &cli_paths)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ControlPlaneConfig {
     pub codex_home: PathBuf,
     pub codex_executable: Option<String>,
-    pub grok_home: PathBuf,
     pub store_path: PathBuf,
     pub hook_command: Option<String>,
-    pub home_path: PathBuf,
-    pub zed_process_commands: Option<Vec<String>>,
+    pub host_environment: HostEnvironment,
 }
 
 #[derive(Clone)]
@@ -593,6 +691,39 @@ impl ControlPlane {
         &self.config.store_path
     }
 
+    fn home_path(&self) -> &PathBuf {
+        self.config.host_environment.home_path()
+    }
+
+    fn process_commands(&self) -> Vec<String> {
+        self.config.host_environment.process_commands()
+    }
+
+    fn assistant_adapters(&self) -> Vec<AssistantAdapterCapability> {
+        self.config.host_environment.assistant_adapters()
+    }
+
+    fn inspect_control_plane_status(&self) -> ControlPlaneStatus {
+        inspect_control_plane_with_process_lines(&self.config.codex_home, &self.process_commands())
+    }
+
+    fn inspect_devin_desktop_status(&self) -> DevinDesktopStatus {
+        inspect_devin_desktop_with_processes(self.home_path(), &self.process_commands())
+    }
+
+    fn claude_sessions(&self, thread_limit: Option<usize>) -> Result<Vec<ClaudeSessionRecord>> {
+        let claude_home = self.claude_home();
+        let process_commands = self.process_commands();
+        match thread_limit {
+            Some(limit) => discover_recent_claude_sessions_with_processes(
+                &claude_home,
+                limit,
+                &process_commands,
+            ),
+            None => discover_claude_sessions_with_processes(&claude_home, &process_commands),
+        }
+    }
+
     pub fn mobile_event_hub(&self) -> &MobileEventHub {
         &self.mobile_events
     }
@@ -984,7 +1115,7 @@ impl ControlPlane {
             })
             .collect::<Vec<_>>();
         thread_signature.sort();
-        let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
+        let grok_sessions = discover_grok_sessions(self.grok_home()).unwrap_or_default();
         let mut grok_signature = grok_sessions
             .iter()
             .take(DESKTOP_MENU_THREAD_LIMIT)
@@ -1053,11 +1184,9 @@ impl ControlPlane {
             .filter(|session| session.running)
             .count();
         let devin_active_thread_count = devin_discovery.active_count;
-        let claude_sessions = discover_recent_claude_sessions(
-            &default_claude_home(&self.config.home_path),
-            DESKTOP_MENU_THREAD_LIMIT,
-        )
-        .unwrap_or_default();
+        let claude_sessions = self
+            .claude_sessions(Some(DESKTOP_MENU_THREAD_LIMIT))
+            .unwrap_or_default();
         let mut claude_signature = claude_sessions
             .iter()
             .take(DESKTOP_MENU_THREAD_LIMIT)
@@ -1182,11 +1311,11 @@ impl ControlPlane {
     }
 
     pub fn grok_home(&self) -> &PathBuf {
-        &self.config.grok_home
+        self.config.host_environment.grok_home()
     }
 
     pub fn claude_home(&self) -> PathBuf {
-        default_claude_home(&self.config.home_path)
+        self.config.host_environment.claude_home()
     }
 
     pub fn store(&self) -> &EventStore {
@@ -1239,7 +1368,7 @@ impl ControlPlane {
 
     fn devin_desktop_connections(&self) -> Vec<ManagedConnection> {
         let status = self.cached_devin_desktop_status();
-        let hook_status = inspect_devin_hooks(&self.config.home_path);
+        let hook_status = inspect_devin_hooks(self.home_path());
         let mut connections = status
             .installations
             .iter()
@@ -1251,8 +1380,8 @@ impl ControlPlane {
     }
 
     fn grok_build_connections(&self) -> Vec<ManagedConnection> {
-        let hook_status = inspect_grok_hooks(&self.config.grok_home);
-        let mut connections = grok_build_cli_connections_from_adapters(&adapter_capabilities());
+        let hook_status = inspect_grok_hooks(self.grok_home());
+        let mut connections = grok_build_cli_connections_from_adapters(&self.assistant_adapters());
         connections.push(grok_hook_connection(&hook_status));
         connections
     }
@@ -1272,7 +1401,7 @@ impl ControlPlane {
     }
 
     pub fn status(&self) -> ControlPlaneStatus {
-        inspect_control_plane(&self.config.codex_home)
+        self.inspect_control_plane_status()
     }
 
     fn snapshot_status(&self, inspection_mode: SnapshotInspectionMode) -> ControlPlaneStatus {
@@ -1292,7 +1421,7 @@ impl ControlPlane {
         self.response_cache
             .devin_desktop_status
             .get_or_refresh_infallible(DESKTOP_MENU_INSPECTION_CACHE_TTL, || {
-                inspect_devin_desktop_for_home(&self.config.home_path)
+                self.inspect_devin_desktop_status()
             })
     }
 
@@ -1305,12 +1434,7 @@ impl ControlPlane {
     }
 
     fn inspect_zed_status(&self) -> ZedStatus {
-        match self.config.zed_process_commands.as_deref() {
-            Some(process_commands) => {
-                inspect_zed_for_home_with_processes(&self.config.home_path, process_commands)
-            }
-            None => inspect_zed_for_home(&self.config.home_path),
-        }
+        inspect_zed_for_home_with_processes(self.home_path(), &self.process_commands())
     }
 
     pub fn codex_servers_response(&self) -> CodexServersResponse {
@@ -1364,21 +1488,21 @@ impl ControlPlane {
         let state = read_state(&self.config.codex_home)?;
         let mut threads = state.threads;
         threads.extend(
-            discover_devin_sessions_without_previews(&self.config.home_path)
+            discover_devin_sessions_without_previews(self.home_path())
                 .unwrap_or_default()
                 .sessions
                 .iter()
                 .map(devin_session_to_thread_record),
         );
         threads.extend(
-            discover_grok_sessions(&self.config.grok_home)
+            discover_grok_sessions(self.grok_home())
                 .unwrap_or_default()
                 .iter()
                 .map(grok_session_to_desktop_thread)
                 .map(|thread| desktop_thread_to_thread_record(&thread)),
         );
         threads.extend(
-            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+            self.claude_sessions(None)
                 .unwrap_or_default()
                 .iter()
                 .map(claude_session_to_desktop_thread)
@@ -1402,7 +1526,7 @@ impl ControlPlane {
 
     pub fn assistant_adapters_response(&self) -> AssistantAdaptersResponse {
         AssistantAdaptersResponse {
-            adapters: adapter_capabilities(),
+            adapters: self.assistant_adapters(),
         }
     }
 
@@ -1414,7 +1538,7 @@ impl ControlPlane {
 
     pub fn devin_desktop_response(&self) -> DevinDesktopResponse {
         DevinDesktopResponse {
-            status: inspect_devin_desktop_for_home(&self.config.home_path),
+            status: self.inspect_devin_desktop_status(),
         }
     }
 
@@ -1425,7 +1549,7 @@ impl ControlPlane {
     }
 
     fn acp_targets(&self) -> Vec<AcpTarget> {
-        let devin_status = inspect_devin_desktop_for_home(&self.config.home_path);
+        let devin_status = self.inspect_devin_desktop_status();
         let zed_status = self.inspect_zed_status();
         let mut targets = devin_acp_targets(&devin_status);
         targets.extend(zed_acp_targets(&zed_status));
@@ -1445,8 +1569,8 @@ impl ControlPlane {
 
     pub fn unregister_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
-            + unregister_owned_devin_hooks(&self.config.home_path)?
-            + unregister_owned_grok_hooks(&self.config.grok_home)?
+            + unregister_owned_devin_hooks(self.home_path())?
+            + unregister_owned_grok_hooks(self.grok_home())?
             + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.set_hooks_auto_registration(false)?;
         self.response_cache.invalidate_desktop_menu_surfaces();
@@ -1466,8 +1590,8 @@ impl ControlPlane {
             .as_deref()
             .unwrap_or("agent-control-plane --hook --managed-by looper");
         let codex_change = register_owned_hooks(&self.config.codex_home, hook_command)?;
-        let devin_change = register_owned_devin_hooks(&self.config.home_path, hook_command)?;
-        let grok_change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
+        let devin_change = register_owned_devin_hooks(self.home_path(), hook_command)?;
+        let grok_change = register_owned_grok_hooks(self.grok_home(), hook_command)?;
         let claude_change = register_owned_claude_hooks(&self.claude_home(), hook_command)?;
         let settings = self.store.set_hooks_auto_registration(true)?;
         self.response_cache.invalidate_desktop_menu_surfaces();
@@ -1501,11 +1625,11 @@ impl ControlPlane {
                 (change.removed_handlers, change.installed_handlers)
             }
             HookMutationTarget::Devin => {
-                let change = register_owned_devin_hooks(&self.config.home_path, hook_command)?;
+                let change = register_owned_devin_hooks(self.home_path(), hook_command)?;
                 (change.removed_handlers, change.installed_handlers)
             }
             HookMutationTarget::GrokBuild => {
-                let change = register_owned_grok_hooks(&self.config.grok_home, hook_command)?;
+                let change = register_owned_grok_hooks(self.grok_home(), hook_command)?;
                 (change.removed_handlers, change.installed_handlers)
             }
             HookMutationTarget::ClaudeCode => {
@@ -1542,8 +1666,8 @@ impl ControlPlane {
 
     pub fn unregister_live_hooks(&self) -> Result<HookMutationResponse> {
         let removed_handlers = unregister_owned_hooks(&self.config.codex_home)?
-            + unregister_owned_devin_hooks(&self.config.home_path)?
-            + unregister_owned_grok_hooks(&self.config.grok_home)?
+            + unregister_owned_devin_hooks(self.home_path())?
+            + unregister_owned_grok_hooks(self.grok_home())?
             + unregister_owned_claude_hooks(&self.claude_home())?;
         let settings = self.store.service_settings()?;
         self.response_cache.invalidate_desktop_menu_surfaces();
@@ -1575,8 +1699,8 @@ impl ControlPlane {
     fn unregister_owned_hooks_for_target(&self, target: HookMutationTarget) -> Result<usize> {
         match target {
             HookMutationTarget::Codex => unregister_owned_hooks(&self.config.codex_home),
-            HookMutationTarget::Devin => unregister_owned_devin_hooks(&self.config.home_path),
-            HookMutationTarget::GrokBuild => unregister_owned_grok_hooks(&self.config.grok_home),
+            HookMutationTarget::Devin => unregister_owned_devin_hooks(self.home_path()),
+            HookMutationTarget::GrokBuild => unregister_owned_grok_hooks(self.grok_home()),
             HookMutationTarget::ClaudeCode => unregister_owned_claude_hooks(&self.claude_home()),
         }
     }
@@ -1605,7 +1729,7 @@ impl ControlPlane {
             return Ok(capabilities_for_state_thread(&state, thread_id));
         }
 
-        if let Some(session) = discover_devin_sessions_without_previews(&self.config.home_path)
+        if let Some(session) = discover_devin_sessions_without_previews(self.home_path())
             .unwrap_or_default()
             .sessions
             .into_iter()
@@ -1638,7 +1762,7 @@ impl ControlPlane {
             return Ok(zed_acp_runtime_session_capabilities(&session));
         }
 
-        if let Some(session) = discover_grok_sessions(&self.config.grok_home)
+        if let Some(session) = discover_grok_sessions(self.grok_home())
             .unwrap_or_default()
             .into_iter()
             .find(|session| session.session_id == thread_id)
@@ -1646,11 +1770,11 @@ impl ControlPlane {
             return Ok(grok_session_to_desktop_thread(&session).capabilities);
         }
 
-        if let Some(session) =
-            discover_claude_sessions(&default_claude_home(&self.config.home_path))
-                .unwrap_or_default()
-                .into_iter()
-                .find(|session| session.thread_id == thread_id || session.session_id == thread_id)
+        if let Some(session) = self
+            .claude_sessions(None)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|session| session.thread_id == thread_id || session.session_id == thread_id)
         {
             return Ok(claude_session_to_desktop_thread(&session).capabilities);
         }
@@ -1745,13 +1869,24 @@ impl ControlPlane {
         )
     }
 
-    pub fn desktop_mobile_snapshot(&self) -> Result<DesktopSnapshot> {
+    pub(crate) fn desktop_handoff_snapshot(&self) -> Result<DesktopSnapshot> {
         self.desktop_snapshot_with_limits(
+            Some(DESKTOP_MENU_THREAD_LIMIT),
+            DESKTOP_MENU_COMPACTION_LIMIT,
+            DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
+            SnapshotInspectionMode::Live,
+        )
+    }
+
+    pub fn desktop_mobile_snapshot(&self) -> Result<DesktopSnapshot> {
+        let mut snapshot = self.desktop_snapshot_with_limits(
             Some(DESKTOP_SNAPSHOT_THREAD_LIMIT),
             DESKTOP_MENU_COMPACTION_LIMIT,
             DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT,
             SnapshotInspectionMode::Mobile,
-        )
+        )?;
+        snapshot.revision = self.mobile_snapshot_revision()?;
+        Ok(snapshot)
     }
 
     fn desktop_snapshot_with_limits(
@@ -1786,7 +1921,7 @@ impl ControlPlane {
         let external_sessions = self.external_sessions_for_snapshot(
             thread_limit,
             inspection_mode,
-            include_diagnostic_details,
+            include_transcript_previews,
         );
         let SnapshotExternalSessions {
             grok_sessions,
@@ -1905,7 +2040,7 @@ impl ControlPlane {
         let assistant_adapters = if prune_diagnostic_details {
             static_adapter_capabilities()
         } else {
-            adapter_capabilities()
+            self.assistant_adapters()
         };
         let (devin_desktop, zed) = self.desktop_snapshot_inspections(inspection_mode);
         let mut acp_targets = devin_acp_targets(&devin_desktop);
@@ -1960,7 +2095,7 @@ impl ControlPlane {
     ) -> (DevinDesktopStatus, ZedStatus) {
         match inspection_mode {
             SnapshotInspectionMode::Live => (
-                inspect_devin_desktop_for_home(&self.config.home_path),
+                self.inspect_devin_desktop_status(),
                 self.inspect_zed_status(),
             ),
             SnapshotInspectionMode::CachedMenu | SnapshotInspectionMode::Mobile => {
@@ -2014,12 +2149,7 @@ impl ControlPlane {
         &self,
         thread_limit: Option<usize>,
     ) -> Vec<ClaudeSessionRecord> {
-        let claude_home = default_claude_home(&self.config.home_path);
-        match thread_limit {
-            Some(limit) => discover_recent_claude_sessions(&claude_home, limit),
-            None => discover_claude_sessions(&claude_home),
-        }
-        .unwrap_or_default()
+        self.claude_sessions(thread_limit).unwrap_or_default()
     }
 
     fn external_sessions_for_snapshot(
@@ -2032,9 +2162,9 @@ impl ControlPlane {
             return SnapshotExternalSessions::stale();
         }
 
-        let grok_sessions = discover_grok_sessions(&self.config.grok_home).unwrap_or_default();
+        let grok_sessions = discover_grok_sessions(self.grok_home()).unwrap_or_default();
         let grok_build = GrokBuildStatus {
-            hooks: inspect_grok_hooks(&self.config.grok_home),
+            hooks: inspect_grok_hooks(self.grok_home()),
             session_count: grok_sessions.len(),
             active_session_count: grok_sessions
                 .iter()
@@ -2060,20 +2190,20 @@ impl ControlPlane {
     ) -> DevinSessionDiscovery {
         match (thread_limit, include_assistant_previews) {
             (Some(limit), true) => {
-                discover_recent_devin_sessions_with_previews(&self.config.home_path, limit)
+                discover_recent_devin_sessions_with_previews(self.home_path(), limit)
                     .unwrap_or_else(|_| empty_devin_session_discovery())
             }
-            (Some(limit), false) => discover_recent_devin_sessions(&self.config.home_path, limit)
+            (Some(limit), false) => discover_recent_devin_sessions(self.home_path(), limit)
                 .unwrap_or_else(|_| empty_devin_session_discovery()),
-            (None, true) => discover_devin_sessions_with_previews(&self.config.home_path)
+            (None, true) => discover_devin_sessions_with_previews(self.home_path())
                 .unwrap_or_else(|_| empty_devin_session_discovery()),
-            (None, false) => discover_devin_sessions_without_previews(&self.config.home_path)
+            (None, false) => discover_devin_sessions_without_previews(self.home_path())
                 .unwrap_or_else(|_| empty_devin_session_discovery()),
         }
     }
 
     fn recent_devin_sessions_for_snapshot(&self, limit: usize) -> DevinSessionDiscovery {
-        discover_recent_devin_sessions(&self.config.home_path, limit)
+        discover_recent_devin_sessions(self.home_path(), limit)
             .unwrap_or_else(|_| empty_devin_session_discovery())
     }
 
@@ -2081,26 +2211,41 @@ impl ControlPlane {
         let state = read_state(&self.config.codex_home)?;
         let mut thread_ids = known_thread_ids(&state.threads);
         thread_ids.extend(
-            discover_devin_sessions_without_previews(&self.config.home_path)
+            discover_devin_sessions_without_previews(self.home_path())
                 .unwrap_or_default()
                 .sessions
                 .into_iter()
                 .map(|session| session.thread_id),
         );
         thread_ids.extend(
-            discover_grok_sessions(&self.config.grok_home)
+            discover_grok_sessions(self.grok_home())
                 .unwrap_or_default()
                 .into_iter()
                 .map(|session| session.session_id),
         );
         thread_ids.extend(
-            discover_claude_sessions(&default_claude_home(&self.config.home_path))
+            self.claude_sessions(None)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|session| session.thread_id),
         );
         Ok(thread_ids)
     }
+}
+
+fn current_process_commands() -> Vec<String> {
+    let output = std::process::Command::new(HOST_PROCESS_COMMAND)
+        .args(HOST_PROCESS_COMMAND_ARGS)
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Callers include bare OS threads (e.g. the prompt-delivery worker), where
@@ -2973,7 +3118,7 @@ mod tests {
 
     #[test]
     fn mobile_snapshot_mode_uses_bounded_cached_recovery_contract() {
-        assert!(!SnapshotInspectionMode::Mobile.discovers_live_external_sessions());
+        assert!(SnapshotInspectionMode::Mobile.discovers_live_external_sessions());
         assert!(!SnapshotInspectionMode::CachedMenu.discovers_live_external_sessions());
         assert!(SnapshotInspectionMode::Live.discovers_live_external_sessions());
         assert!(SnapshotInspectionMode::Mobile.includes_transcript_previews());
@@ -3008,11 +3153,9 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
-            grok_home: fixture_dir.path().join(".grok"),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
-            home_path: fixture_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(fixture_dir.path().to_path_buf()),
         });
 
         let status = control_plane.snapshot_status(SnapshotInspectionMode::Mobile);
@@ -3164,11 +3307,9 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
-            grok_home: fixture_dir.path().join(".grok"),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
-            home_path: fixture_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(fixture_dir.path().to_path_buf()),
         });
 
         let connections = control_plane

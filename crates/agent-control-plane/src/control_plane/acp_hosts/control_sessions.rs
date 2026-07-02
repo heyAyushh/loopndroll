@@ -3,7 +3,7 @@ use super::super::*;
 impl ControlPlane {
     pub fn devin_acp_bridge_response(&self) -> DevinAcpBridgeResponse {
         DevinAcpBridgeResponse {
-            bridge: inspect_devin_desktop_for_home(&self.config.home_path).acp_bridge,
+            bridge: self.inspect_devin_desktop_status().acp_bridge,
             runtime: self.devin_acp_runtime.status(),
         }
     }
@@ -12,7 +12,7 @@ impl ControlPlane {
         &self,
         agent_id: Option<&str>,
     ) -> DevinAcpBridgeProbeResponse {
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
+        let status = self.inspect_devin_desktop_status();
         DevinAcpBridgeProbeResponse {
             probe: build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id),
             bridge: status.acp_bridge,
@@ -22,10 +22,10 @@ impl ControlPlane {
 
     pub fn install_devin_acp_bridge_response(&self) -> Result<DevinAcpInstallResponse> {
         let install = install_looper_acp_agent_for_home(
-            &self.config.home_path,
+            self.home_path(),
             &crate::runtime::default_server_base_url(),
         )?;
-        let status = inspect_devin_desktop_for_home(&self.config.home_path);
+        let status = self.inspect_devin_desktop_status();
         self.response_cache.invalidate_desktop_menu_surfaces();
         Ok(DevinAcpInstallResponse {
             install,

@@ -65,7 +65,7 @@ impl ControlPlane {
         let provider = self.acp_client_host_provider(client_id)?;
         Some(match provider {
             AcpClientHostProvider::Devin => {
-                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let status = self.inspect_devin_desktop_status();
                 let probe =
                     build_acp_bridge_probe(&status.installations, &status.acp_registry, agent_id);
                 let runtime = self.devin_acp_runtime.status();
@@ -108,10 +108,10 @@ impl ControlPlane {
         let response = Some(match provider {
             AcpClientHostProvider::Devin => {
                 let install = install_looper_acp_agent_for_home(
-                    &self.config.home_path,
+                    self.home_path(),
                     &crate::runtime::default_server_base_url(),
                 )?;
-                let status = inspect_devin_desktop_for_home(&self.config.home_path);
+                let status = self.inspect_devin_desktop_status();
                 let runtime = self.devin_acp_runtime.status();
                 let sessions = self
                     .recent_devin_sessions_for_snapshot(ACP_CLIENT_HOST_SESSION_LIMIT)
@@ -122,7 +122,7 @@ impl ControlPlane {
                 }
             }
             AcpClientHostProvider::Zed => {
-                let install = install_looper_zed_acp_agent_for_home(&self.config.home_path)?;
+                let install = install_looper_zed_acp_agent_for_home(self.home_path())?;
                 let status = self.inspect_zed_status();
                 let runtime = self.zed_acp_runtime.status();
                 AcpClientHostInstallResponse {

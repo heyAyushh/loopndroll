@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig};
+use agent_control_plane::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
 use agent_control_plane::events::{MobileSessionMiniProjectionInput, MobileStateEventInput};
 use agent_control_plane::grpc::proto::{self, looper_realtime_server::LooperRealtime};
 use agent_control_plane::http::build_router;
@@ -666,11 +666,9 @@ impl E2eHarness {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home,
             codex_executable: Some(codex_executable),
-            grok_home: temp_dir.path().join(".grok"),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
-            home_path: temp_dir.path().to_path_buf(),
-            zed_process_commands: Some(Vec::new()),
+            host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),
         });
         Self::from_control_plane(None, Some(temp_dir), control_plane).await
     }
