@@ -23,11 +23,15 @@ use support::mobile_auth::issue_mobile_authorization_header;
 const THREAD_ID: &str = "thread-main";
 const ASSISTANT_SURFACE: &str = "codex";
 const PRESET_AWAIT_REPLY: &str = "await-reply";
+const PRESET_INFINITE: &str = "infinite";
 const PROMPT_TEXT: &str = "Continue from e2e harness.";
+const FOLLOW_UP_PROMPT_TEXT: &str = "Follow up after failed delivery.";
 const INITIAL_TITLE: &str = "E2E initial session";
 const STREAM_DOWN_TITLE: &str = "E2E delta while h3 down";
 const H2_STREAM_DOWN_TITLE: &str = "E2E delta while h2 down";
+const DELIVERY_FAILED_TITLE: &str = "E2E prompt delivery failed";
 const BEARER_PREFIX: &str = "Bearer ";
+const PROMPT_DELIVERY_FAILED_DETAIL: &str = "prompt-delivery-failed";
 const POLL_ATTEMPTS: usize = 160;
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -211,12 +215,95 @@ async fn client_core_falls_back_to_h2_when_h3_endpoint_is_dead() {
 }
 
 #[tokio::test]
-#[ignore = "target behavior: restored prompt outbox should auto-flush after reconnect without another user action"]
-async fn prompt_enqueued_while_stream_down_delivers_after_reconnect_without_user_action() {}
+async fn prompt_enqueued_while_stream_down_delivers_after_reconnect_without_user_action() {
+    let harness = E2eHarness::new().await;
+    harness.seed_hook_session(Some(PRESET_AWAIT_REPLY), INITIAL_TITLE);
+
+    let http = harness.spawn_http().await;
+    let h2 = RestartableH2::spawn(harness.control_plane.clone(), None).await;
+    let runtime = harness.runtime("prompt-while-stream-down.json");
+    start_runtime(
+        &runtime,
+        vec![h2_endpoint(h2.address, &http.base_url(), false)],
+        &harness.bearer_token,
+    );
+    wait_for_transport(&runtime, ClientEndpointTransport::H2).await;
+    wait_for_session_title(&runtime, INITIAL_TITLE).await;
+
+    let h2_address = h2.abort().await;
+    let prompt = runtime
+        .send_prompt(
+            THREAD_ID.to_owned(),
+            PROMPT_TEXT.to_owned(),
+            ASSISTANT_SURFACE.to_owned(),
+            "queue".to_owned(),
+        )
+        .await
+        .expect("prompt should enqueue locally while stream is down");
+    assert!(prompt.accepted);
+    let local = runtime.local_snapshot().expect("local snapshot");
+    assert_eq!(
+        local.pending_commands.len(),
+        1,
+        "prompt must remain durable until reconnect flushes it"
+    );
+
+    let restarted_h2 = RestartableH2::spawn(harness.control_plane.clone(), Some(h2_address)).await;
+
+    wait_for_prompt_ack_and_empty_outbox(&runtime, &prompt.client_mutation_id).await;
+    wait_for_queued_prompt_count(&harness.control_plane, QUEUED_PROMPT_COUNT).await;
+
+    stop_runtime(runtime).await;
+    restarted_h2.abort().await;
+    http.shutdown().await;
+}
 
 #[tokio::test]
-#[ignore = "target behavior: prompt-delivery-failed must clear command lifecycle so follow-up prompts are not session_busy"]
-async fn prompt_delivery_failed_event_does_not_wedge_follow_up_prompt() {}
+async fn prompt_delivery_failed_event_does_not_wedge_follow_up_prompt() {
+    let harness = E2eHarness::new().await;
+    harness.seed_hook_session(Some(PRESET_INFINITE), INITIAL_TITLE);
+
+    let http = harness.spawn_http().await;
+    let h2 = spawn_h2_client(harness.control_plane.clone()).await;
+    let runtime = harness.runtime("prompt-delivery-failed-follow-up.json");
+    start_runtime(
+        &runtime,
+        h2_only_endpoints(&h2, &http),
+        &harness.bearer_token,
+    );
+    wait_for_session_title(&runtime, INITIAL_TITLE).await;
+
+    let first = runtime
+        .send_prompt(
+            THREAD_ID.to_owned(),
+            PROMPT_TEXT.to_owned(),
+            ASSISTANT_SURFACE.to_owned(),
+            "queue".to_owned(),
+        )
+        .await
+        .expect("first prompt should enqueue locally");
+    assert!(first.accepted);
+    wait_for_prompt_ack_and_empty_outbox(&runtime, &first.client_mutation_id).await;
+
+    harness.emit_prompt_delivery_failed_event(Some(PRESET_INFINITE), DELIVERY_FAILED_TITLE);
+    wait_for_session_title(&runtime, DELIVERY_FAILED_TITLE).await;
+
+    let follow_up = runtime
+        .send_prompt(
+            THREAD_ID.to_owned(),
+            FOLLOW_UP_PROMPT_TEXT.to_owned(),
+            ASSISTANT_SURFACE.to_owned(),
+            "queue".to_owned(),
+        )
+        .await
+        .expect("follow-up prompt should enqueue locally after delivery failure");
+    assert!(follow_up.accepted);
+    wait_for_prompt_ack_and_empty_outbox(&runtime, &follow_up.client_mutation_id).await;
+
+    stop_runtime(runtime).await;
+    h2.shutdown().await;
+    http.shutdown().await;
+}
 
 struct E2eHarness {
     _fixture: TestControlPlaneFixture,
@@ -268,6 +355,19 @@ impl E2eHarness {
                     thread_id: Some(THREAD_ID.to_owned()),
                     prompt_id: None,
                     detail: Some(title.to_owned()),
+                },
+                vec![session_mini_projection_input(preset, title)],
+            );
+    }
+
+    fn emit_prompt_delivery_failed_event(&self, preset: Option<&str>, title: &str) {
+        self.control_plane
+            .emit_mobile_session_event_with_cached_minis(
+                MobileEventInput {
+                    kind: MobileEventKind::SessionChanged,
+                    thread_id: Some(THREAD_ID.to_owned()),
+                    prompt_id: None,
+                    detail: Some(PROMPT_DELIVERY_FAILED_DETAIL.to_owned()),
                 },
                 vec![session_mini_projection_input(preset, title)],
             );

@@ -13,7 +13,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request as TonicRequest, metadata::MetadataValue, transport::Endpoint};
+use tonic::{
+    Request as TonicRequest,
+    metadata::MetadataValue,
+    transport::{Channel, Endpoint},
+};
 use tonic_h3::quinn::H3QuinnConnector;
 use tonic_h3::quinn::h3_quinn::quinn::{
     ClientConfig, IdleTimeout, TransportConfig, crypto::rustls::QuicClientConfig,
@@ -56,6 +60,10 @@ const STATE_MINI_STREAM_FALLBACK_RACE_DELAY: Duration = Duration::from_millis(25
 const STATE_MINI_RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const STATE_MINI_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 const STATE_MINI_RECONNECT_BACKOFF_MULTIPLIER: u32 = 2;
+#[cfg(not(test))]
+const SESSION_COMMAND_RPC_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const SESSION_COMMAND_RPC_TIMEOUT: Duration = Duration::from_millis(50);
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const MAX_STATE_MINI_SNAPSHOT_BYTES: usize = 512 * 1024;
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
@@ -88,6 +96,7 @@ pub(crate) enum StateMiniStreamEvent {
     Heartbeat {
         latest_seq: i64,
         server_time: String,
+        command_submitter: Option<SessionCommandSubmitter>,
         endpoint_url: String,
         endpoint_transport: ClientEndpointTransport,
         fallback_reason: String,
@@ -104,6 +113,360 @@ pub(crate) enum StateMiniStreamEvent {
         endpoint_transport: ClientEndpointTransport,
         fallback_reason: String,
     },
+}
+
+type H2RealtimeClient = proto::looper_realtime_client::LooperRealtimeClient<Channel>;
+type H3RealtimeClient =
+    proto::looper_realtime_client::LooperRealtimeClient<tonic_h3::H3Channel<H3QuinnConnector>>;
+
+#[derive(Clone)]
+pub(crate) enum SessionCommandSubmitter {
+    H2 {
+        client: Arc<tokio::sync::Mutex<H2RealtimeClient>>,
+        bearer_token: String,
+        mobile_session_header: String,
+    },
+    H3 {
+        client: Arc<tokio::sync::Mutex<H3RealtimeClient>>,
+        bearer_token: String,
+        mobile_session_header: String,
+    },
+    #[cfg(test)]
+    Test {
+        sender: mpsc::Sender<TestSessionCommandSubmission>,
+    },
+}
+
+impl std::fmt::Debug for SessionCommandSubmitter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::H2 { .. } => formatter.write_str("SessionCommandSubmitter::H2"),
+            Self::H3 { .. } => formatter.write_str("SessionCommandSubmitter::H3"),
+            #[cfg(test)]
+            Self::Test { .. } => formatter.write_str("SessionCommandSubmitter::Test"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SessionCommandSubmitError {
+    UnaryUnavailable,
+    Failed(ClientCoreError),
+}
+
+impl From<ClientCoreError> for SessionCommandSubmitError {
+    fn from(error: ClientCoreError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestSessionCommandSubmission {
+    pub(crate) frame: OutboundSessionFrame,
+    pub(crate) response: tokio::sync::oneshot::Sender<Result<ClientCommandAck, ClientCoreError>>,
+}
+
+impl SessionCommandSubmitter {
+    fn h2(channel: Channel, bearer_token: String, mobile_session_header: String) -> Self {
+        Self::H2 {
+            client: Arc::new(tokio::sync::Mutex::new(
+                proto::looper_realtime_client::LooperRealtimeClient::new(channel),
+            )),
+            bearer_token,
+            mobile_session_header,
+        }
+    }
+
+    fn h3(client: H3RealtimeClient, bearer_token: String, mobile_session_header: String) -> Self {
+        Self::H3 {
+            client: Arc::new(tokio::sync::Mutex::new(client)),
+            bearer_token,
+            mobile_session_header,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(sender: mpsc::Sender<TestSessionCommandSubmission>) -> Self {
+        Self::Test { sender }
+    }
+
+    pub(crate) async fn submit(
+        &self,
+        frame: OutboundSessionFrame,
+    ) -> Result<ClientCommandAck, SessionCommandSubmitError> {
+        match self {
+            Self::H2 {
+                client,
+                bearer_token,
+                mobile_session_header,
+            } => {
+                let mut client = client.lock().await;
+                submit_unary_command_h2(&mut client, frame, bearer_token, mobile_session_header)
+                    .await
+            }
+            Self::H3 {
+                client,
+                bearer_token,
+                mobile_session_header,
+            } => {
+                let mut client = client.lock().await;
+                submit_unary_command_h3(&mut client, frame, bearer_token, mobile_session_header)
+                    .await
+            }
+            #[cfg(test)]
+            Self::Test { sender } => {
+                let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+                sender
+                    .send(TestSessionCommandSubmission {
+                        frame,
+                        response: response_sender,
+                    })
+                    .await
+                    .map_err(|_| {
+                        SessionCommandSubmitError::Failed(
+                            ClientCoreError::SessionCommandTransportFailed,
+                        )
+                    })?;
+                tokio::time::timeout(SESSION_COMMAND_RPC_TIMEOUT, response_receiver)
+                    .await
+                    .map_err(|_| {
+                        SessionCommandSubmitError::Failed(
+                            ClientCoreError::SessionCommandAckTimedOut,
+                        )
+                    })?
+                    .map_err(|_| {
+                        SessionCommandSubmitError::Failed(
+                            ClientCoreError::SessionCommandTransportFailed,
+                        )
+                    })?
+                    .map_err(SessionCommandSubmitError::Failed)
+            }
+        }
+    }
+}
+
+async fn submit_unary_command_h2(
+    client: &mut H2RealtimeClient,
+    frame: OutboundSessionFrame,
+    bearer_token: &str,
+    mobile_session_header: &str,
+) -> Result<ClientCommandAck, SessionCommandSubmitError> {
+    match command(frame).map_err(SessionCommandSubmitError::Failed)? {
+        proto::command::Command::SetSessionMode(request) => {
+            unary_ack(client.set_session_mode(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SendSessionPrompt(request) => {
+            unary_ack(client.send_session_prompt(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SubmitNotificationReply(request) => {
+            unary_ack(client.submit_notification_reply(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSiriCurrentSession(request) => {
+            unary_ack(client.set_siri_current_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSiriDefaultSession(request) => {
+            unary_ack(client.set_siri_default_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SaveDefaultPrompt(request) => {
+            unary_ack(client.save_default_prompt(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetDefaultNotificationTargets(request) => {
+            unary_ack(client.set_default_notification_targets(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSessionArchived(request) => {
+            unary_ack(client.set_session_archived(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::DeleteSession(request) => {
+            unary_ack(client.delete_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::MuteSession(request) => {
+            unary_ack(client.mute_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        _ => Err(SessionCommandSubmitError::Failed(
+            ClientCoreError::UnsupportedCommand,
+        )),
+    }
+}
+
+async fn submit_unary_command_h3(
+    client: &mut H3RealtimeClient,
+    frame: OutboundSessionFrame,
+    bearer_token: &str,
+    mobile_session_header: &str,
+) -> Result<ClientCommandAck, SessionCommandSubmitError> {
+    match command(frame).map_err(SessionCommandSubmitError::Failed)? {
+        proto::command::Command::SetSessionMode(request) => {
+            unary_ack(client.set_session_mode(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SendSessionPrompt(request) => {
+            unary_ack(client.send_session_prompt(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SubmitNotificationReply(request) => {
+            unary_ack(client.submit_notification_reply(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSiriCurrentSession(request) => {
+            unary_ack(client.set_siri_current_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSiriDefaultSession(request) => {
+            unary_ack(client.set_siri_default_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SaveDefaultPrompt(request) => {
+            unary_ack(client.save_default_prompt(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetDefaultNotificationTargets(request) => {
+            unary_ack(client.set_default_notification_targets(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::SetSessionArchived(request) => {
+            unary_ack(client.set_session_archived(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::DeleteSession(request) => {
+            unary_ack(client.delete_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        proto::command::Command::MuteSession(request) => {
+            unary_ack(client.mute_session(unary_request(
+                request,
+                bearer_token,
+                mobile_session_header,
+            )?))
+            .await
+        }
+        _ => Err(SessionCommandSubmitError::Failed(
+            ClientCoreError::UnsupportedCommand,
+        )),
+    }
+}
+
+fn unary_request<T>(
+    request: T,
+    bearer_token: &str,
+    mobile_session_header: &str,
+) -> Result<TonicRequest<T>, SessionCommandSubmitError> {
+    let mut request = TonicRequest::new(request);
+    apply_metadata(
+        request.metadata_mut(),
+        &bearer_token,
+        &mobile_session_header,
+    )
+    .map_err(SessionCommandSubmitError::Failed)?;
+    Ok(request)
+}
+
+async fn unary_ack(
+    request: impl std::future::Future<
+        Output = Result<tonic::Response<proto::CommandAck>, tonic::Status>,
+    >,
+) -> Result<ClientCommandAck, SessionCommandSubmitError> {
+    let response = tokio::time::timeout(SESSION_COMMAND_RPC_TIMEOUT, request)
+        .await
+        .map_err(|_| SessionCommandSubmitError::Failed(ClientCoreError::SessionCommandAckTimedOut))?
+        .map_err(unary_status_error)?;
+    Ok(client_command_ack(response.into_inner()))
+}
+
+fn unary_status_error(status: tonic::Status) -> SessionCommandSubmitError {
+    match status.code() {
+        tonic::Code::Unimplemented => SessionCommandSubmitError::UnaryUnavailable,
+        tonic::Code::DeadlineExceeded => {
+            SessionCommandSubmitError::Failed(ClientCoreError::SessionCommandAckTimedOut)
+        }
+        _ => SessionCommandSubmitError::Failed(ClientCoreError::SessionCommandTransportFailed),
+    }
 }
 
 #[derive(Debug)]
@@ -447,6 +810,7 @@ fn state_mini_recovery_required_error_with_endpoint(
 struct OpenStateMiniSession {
     stream: tonic::Streaming<proto::ServerFrame>,
     request_sender: mpsc::Sender<proto::ClientFrame>,
+    command_submitter: SessionCommandSubmitter,
     endpoint_url: String,
     endpoint_transport: ClientEndpointTransport,
     fallback_reason: String,
@@ -485,6 +849,7 @@ async fn run_state_mini_stream_session(
                 let OpenStateMiniSession {
                     stream,
                     request_sender,
+                    command_submitter,
                     endpoint_url,
                     endpoint_transport,
                     fallback_reason,
@@ -493,6 +858,7 @@ async fn run_state_mini_stream_session(
                 return drive_state_mini_stream_session(
                     stream,
                     request_sender,
+                    command_submitter,
                     commands,
                     events,
                     command_acks,
@@ -664,17 +1030,23 @@ async fn open_h2_state_mini_stream_candidate(
         .keep_alive_timeout(STATE_MINI_H2_KEEP_ALIVE_TIMEOUT)
         .keep_alive_while_idle(true)
         .tcp_keepalive(Some(STATE_MINI_H2_KEEP_ALIVE_INTERVAL));
-    let mut client = proto::looper_realtime_client::LooperRealtimeClient::connect(channel_endpoint)
+    let channel = channel_endpoint
+        .connect()
         .await
         .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
+    let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel.clone());
     let (request_sender, request_receiver) = mpsc::channel(64);
     request_sender
         .send(resume_client_frame(after_seq))
         .await
         .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
     let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header)
-        .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
+    apply_metadata(
+        request.metadata_mut(),
+        &bearer_token,
+        &mobile_session_header,
+    )
+    .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
 
     let response = client.session(request).await.map_err(|status| {
         if status.code() == tonic::Code::OutOfRange {
@@ -687,6 +1059,11 @@ async fn open_h2_state_mini_stream_candidate(
     Ok(OpenStateMiniSession {
         stream: response.into_inner(),
         request_sender,
+        command_submitter: SessionCommandSubmitter::h2(
+            channel,
+            bearer_token,
+            mobile_session_header,
+        ),
         endpoint_url,
         endpoint_transport: ClientEndpointTransport::H2,
         fallback_reason,
@@ -733,16 +1110,19 @@ async fn open_h3_state_mini_stream_candidate(
             )
         })?;
     let mut request = TonicRequest::new(ReceiverStream::new(request_receiver));
-    apply_metadata(request.metadata_mut(), bearer_token, mobile_session_header).map_err(
-        |error| {
-            state_mini_transport_error_with_endpoint(
-                after_seq,
-                error.to_string(),
-                ClientEndpointTransport::H3,
-                String::new(),
-            )
-        },
-    )?;
+    apply_metadata(
+        request.metadata_mut(),
+        &bearer_token,
+        &mobile_session_header,
+    )
+    .map_err(|error| {
+        state_mini_transport_error_with_endpoint(
+            after_seq,
+            error.to_string(),
+            ClientEndpointTransport::H3,
+            String::new(),
+        )
+    })?;
 
     let response = tokio::time::timeout(STATE_MINI_STREAM_CONNECT_TIMEOUT, client.session(request))
         .await
@@ -775,6 +1155,7 @@ async fn open_h3_state_mini_stream_candidate(
     Ok(OpenStateMiniSession {
         stream: response.into_inner(),
         request_sender,
+        command_submitter: SessionCommandSubmitter::h3(client, bearer_token, mobile_session_header),
         endpoint_url,
         endpoint_transport: ClientEndpointTransport::H3,
         fallback_reason: String::new(),
@@ -784,6 +1165,7 @@ async fn open_h3_state_mini_stream_candidate(
 async fn drive_state_mini_stream_session(
     mut stream: tonic::Streaming<proto::ServerFrame>,
     request_sender: mpsc::Sender<proto::ClientFrame>,
+    command_submitter: SessionCommandSubmitter,
     commands: &mut mpsc::Receiver<OutboundSessionFrame>,
     events: mpsc::Sender<StateMiniStreamEvent>,
     command_acks: mpsc::Sender<ClientCommandAck>,
@@ -797,6 +1179,7 @@ async fn drive_state_mini_stream_session(
         .send(StateMiniStreamEvent::Heartbeat {
             latest_seq,
             server_time: String::new(),
+            command_submitter: Some(command_submitter),
             endpoint_url: endpoint_url.clone(),
             endpoint_transport,
             fallback_reason: fallback_reason.clone(),
@@ -880,6 +1263,9 @@ async fn drive_state_mini_stream_session(
 
                 match frame.frame {
                     Some(proto::server_frame::Frame::Ack(ack)) => {
+                        // Unary command RPCs are the normal client-core path; stream ACKs
+                        // stay wired only so old stream-command servers can drain the
+                        // durable outbox until that compatibility path is removed.
                         latest_seq = state_mini_data_cursor_after_ack(latest_seq, ack.ack_seq);
                         let ack = client_command_ack(ack);
                         command_acks
@@ -934,6 +1320,7 @@ async fn drive_state_mini_stream_session(
                             .send(StateMiniStreamEvent::Heartbeat {
                                 latest_seq: heartbeat.latest_seq,
                                 server_time: heartbeat.server_time,
+                                command_submitter: None,
                                 endpoint_url: endpoint_url.clone(),
                                 endpoint_transport,
                                 fallback_reason: fallback_reason.clone(),
@@ -1282,8 +1669,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn apply_metadata(
     metadata: &mut tonic::metadata::MetadataMap,
-    bearer_token: String,
-    mobile_session_header: String,
+    bearer_token: &str,
+    mobile_session_header: &str,
 ) -> Result<(), ClientCoreError> {
     if !bearer_token.trim().is_empty() {
         let value = format!("{BEARER_PREFIX}{bearer_token}");
@@ -2804,6 +3191,90 @@ mod tests {
         session_count: Arc<Mutex<usize>>,
     }
 
+    macro_rules! unimplemented_unary_command {
+        ($name:ident, $request:ty) => {
+            fn $name<'life0, 'async_trait>(
+                &'life0 self,
+                _request: tonic::Request<$request>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<tonic::Response<proto::CommandAck>, tonic::Status>,
+                        > + Send
+                        + 'async_trait,
+                >,
+            >
+            where
+                'life0: 'async_trait,
+                Self: Sync + 'async_trait,
+            {
+                Box::pin(async { Err(tonic::Status::unimplemented("test service stream-only")) })
+            }
+        };
+    }
+
+    macro_rules! impl_unimplemented_unary_commands_lowered {
+        () => {
+            unimplemented_unary_command!(set_session_mode, proto::SetSessionModeRequest);
+            unimplemented_unary_command!(send_session_prompt, proto::SendSessionPromptRequest);
+            unimplemented_unary_command!(
+                submit_notification_reply,
+                proto::SubmitNotificationReplyRequest
+            );
+            unimplemented_unary_command!(
+                set_siri_current_session,
+                proto::SetSiriCurrentSessionRequest
+            );
+            unimplemented_unary_command!(
+                set_siri_default_session,
+                proto::SetSiriDefaultSessionRequest
+            );
+            unimplemented_unary_command!(save_default_prompt, proto::SaveDefaultPromptRequest);
+            unimplemented_unary_command!(set_session_archived, proto::SetSessionArchivedRequest);
+            unimplemented_unary_command!(delete_session, proto::DeleteSessionRequest);
+            unimplemented_unary_command!(mute_session, proto::MuteSessionRequest);
+            unimplemented_unary_command!(set_scope, proto::SetScopeRequest);
+            unimplemented_unary_command!(set_global_preset, proto::SetGlobalPresetRequest);
+            unimplemented_unary_command!(
+                set_global_notification,
+                proto::SetGlobalNotificationRequest
+            );
+            unimplemented_unary_command!(
+                set_default_notification_targets,
+                proto::SetDefaultNotificationTargetsRequest
+            );
+            unimplemented_unary_command!(
+                set_global_completion_check,
+                proto::SetGlobalCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                upsert_notification_route,
+                proto::UpsertNotificationRouteRequest
+            );
+            unimplemented_unary_command!(
+                delete_notification_route,
+                proto::DeleteNotificationRouteRequest
+            );
+            unimplemented_unary_command!(
+                upsert_completion_check,
+                proto::UpsertCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                delete_completion_check,
+                proto::DeleteCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                set_session_notifications,
+                proto::SetSessionNotificationsRequest
+            );
+            unimplemented_unary_command!(
+                set_session_completion_check,
+                proto::SetSessionCompletionCheckRequest
+            );
+            unimplemented_unary_command!(set_assistant_surface, proto::SetAssistantSurfaceRequest);
+        };
+    }
+
     #[tonic::async_trait]
     impl proto::looper_realtime_server::LooperRealtime for FailThenAckRealtimeSessionService {
         type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
@@ -2895,6 +3366,8 @@ mod tests {
             });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands_lowered!();
     }
 
     async fn reserve_dead_udp_url() -> String {
@@ -3002,6 +3475,8 @@ mod tests {
             });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands_lowered!();
     }
 
     fn test_outbound_command(client_mutation_id: &str, after_seq: i64) -> OutboundSessionFrame {

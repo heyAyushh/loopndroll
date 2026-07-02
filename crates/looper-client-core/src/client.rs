@@ -27,7 +27,10 @@ use crate::model::{
     STATE_MINI_REPLACEMENT_KIND,
 };
 use crate::session_transport::{RecoveredStateMiniSnapshot, fetch_state_mini_snapshot};
-use crate::session_transport::{StateMiniStreamEvent, command_metadata, run_state_mini_stream};
+use crate::session_transport::{
+    SessionCommandSubmitError, SessionCommandSubmitter, StateMiniStreamEvent, command_metadata,
+    run_state_mini_stream,
+};
 #[cfg(test)]
 use crate::state_mini::validate_state_mini_delta;
 use crate::state_mini::{
@@ -44,17 +47,17 @@ use crate::transport::validate_endpoint_url;
 
 const INITIAL_SEQUENCE: i64 = 0;
 const EMPTY_SEQUENCE: i64 = 0;
-const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+const STREAM_COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
 const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
 #[cfg(not(test))]
 const COMMAND_FLUSH_BACKSTOP_INTERVAL: Duration = Duration::from_secs(15);
 #[cfg(test)]
 const COMMAND_FLUSH_BACKSTOP_INTERVAL: Duration = Duration::from_millis(50);
-const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
+const STREAM_COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
 const RECENT_COMMAND_ACK_LIMIT: usize = 16;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
-const COMMAND_ACK_BACKLOG_OVERFLOW_ERROR: &str =
+const STREAM_COMMAND_ACK_BACKLOG_OVERFLOW_ERROR: &str =
     "command ack backlog overflowed; oldest unmatched ack was dropped";
 
 #[derive(Debug, Default)]
@@ -122,6 +125,7 @@ struct ClientCoreStream {
     receiver: Option<mpsc::Receiver<StateMiniStreamEvent>>,
     command_sender: mpsc::Sender<OutboundSessionFrame>,
     command_ack_receiver: Option<mpsc::Receiver<ClientCommandAck>>,
+    command_submitter: Option<SessionCommandSubmitter>,
     identity: ClientCoreStreamIdentity,
 }
 
@@ -751,11 +755,17 @@ impl LooperClientCore {
             .map(command_metadata)
             .collect::<Result<Vec<_>, _>>()?;
         let submitted_frames = frames.clone();
-        let expected_ack_count = expected_client_mutation_ids.len();
-        self.send_session_commands(frames).await?;
-        let acks = self
-            .recv_command_acks(expected_client_mutation_ids, expected_ack_count)
-            .await?;
+        let acks = match self.submit_unary_session_commands(frames).await {
+            Ok(acks) => acks,
+            Err(SessionCommandSubmitError::UnaryUnavailable) => {
+                self.submit_stream_session_commands(
+                    submitted_frames.clone(),
+                    expected_client_mutation_ids,
+                )
+                .await?
+            }
+            Err(SessionCommandSubmitError::Failed(error)) => return Err(error),
+        };
         let response = build_command_batch_response(command_metadata, acks)?;
 
         let mut state = self.lock_state()?;
@@ -1162,6 +1172,7 @@ impl LooperClientCore {
             receiver: Some(receiver),
             command_sender,
             command_ack_receiver: Some(command_ack_receiver),
+            command_submitter: None,
             identity,
         });
         Ok(state.snapshot())
@@ -1242,6 +1253,38 @@ impl LooperClientCore {
         Ok(())
     }
 
+    async fn submit_unary_session_commands(
+        &self,
+        frames: Vec<OutboundSessionFrame>,
+    ) -> Result<Vec<ClientCommandAck>, SessionCommandSubmitError> {
+        let Some(submitter) = self.command_submitter()? else {
+            return Err(SessionCommandSubmitError::UnaryUnavailable);
+        };
+        let mut acks = Vec::with_capacity(frames.len());
+        for frame in frames {
+            acks.push(submitter.submit(frame).await?);
+        }
+        Ok(acks)
+    }
+
+    async fn submit_stream_session_commands(
+        &self,
+        frames: Vec<OutboundSessionFrame>,
+        expected_client_mutation_ids: Vec<String>,
+    ) -> Result<Vec<ClientCommandAck>, ClientCoreError> {
+        let expected_ack_count = expected_client_mutation_ids.len();
+        self.send_session_commands(frames).await?;
+        self.recv_command_acks(expected_client_mutation_ids, expected_ack_count)
+            .await
+    }
+
+    fn command_submitter(&self) -> Result<Option<SessionCommandSubmitter>, ClientCoreError> {
+        Ok(self
+            .lock_stream()?
+            .as_ref()
+            .and_then(|stream| stream.command_submitter.clone()))
+    }
+
     fn command_sender(&self) -> Result<mpsc::Sender<OutboundSessionFrame>, ClientCoreError> {
         self.lock_stream()?
             .as_ref()
@@ -1266,7 +1309,7 @@ impl LooperClientCore {
         }
 
         let mut lease = self.take_command_ack_receiver_lease()?;
-        let result = tokio::time::timeout(COMMAND_ACK_TIMEOUT, async {
+        let result = tokio::time::timeout(STREAM_COMMAND_ACK_TIMEOUT, async {
             while acks.len() < expected_ack_count {
                 let ack = lease
                     .recv()
@@ -1352,13 +1395,13 @@ impl LooperClientCore {
             return Ok(());
         }
         state.command_ack_backlog.push(ack);
-        if state.command_ack_backlog.len() > COMMAND_ACK_BACKLOG_LIMIT {
+        if state.command_ack_backlog.len() > STREAM_COMMAND_ACK_BACKLOG_LIMIT {
             state.command_ack_backlog.remove(0);
             // Surface the overflow instead of silently discarding an unmatched ack: a
             // caller waiting on that mutation id would otherwise time out with no clue
             // why. This does not fail the current call; it just annotates the next
             // snapshot so Swift-side diagnostics can pick it up.
-            state.last_error = COMMAND_ACK_BACKLOG_OVERFLOW_ERROR.to_owned();
+            state.last_error = STREAM_COMMAND_ACK_BACKLOG_OVERFLOW_ERROR.to_owned();
         }
         Ok(())
     }
@@ -1744,10 +1787,16 @@ impl LooperClientCore {
                 StateMiniStreamEvent::Heartbeat {
                     latest_seq,
                     server_time,
+                    command_submitter,
                     endpoint_url,
                     endpoint_transport,
                     fallback_reason,
                 } => {
+                    if let Some(command_submitter) = command_submitter {
+                        if let Some(stream) = self.lock_stream()?.as_mut() {
+                            stream.command_submitter = Some(command_submitter);
+                        }
+                    }
                     state.phase = ConnectionPhase::Ready;
                     let did_change = false;
                     update_server_time_if_newer(&mut state.server_time, server_time);
@@ -2786,6 +2835,7 @@ fn default_prompt_intent() -> String {
 mod tests {
     use super::*;
     use crate::model::ClientCommandAckEnvelope;
+    use crate::session_transport::{SessionCommandSubmitter, TestSessionCommandSubmission};
     use std::{path::PathBuf, sync::Arc};
 
     const ENDPOINT_PRIMARY: &str = "http://127.0.0.1:8765";
@@ -2831,6 +2881,7 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
+            command_submitter: None,
             identity,
         });
         drop(events_sender);
@@ -2866,6 +2917,7 @@ mod tests {
             receiver: Some(events_receiver),
             command_sender: commands_sender,
             command_ack_receiver: Some(acks_receiver),
+            command_submitter: None,
             identity,
         });
     }
@@ -3108,6 +3160,7 @@ mod tests {
             .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
                 latest_seq: 12,
                 server_time: SERVER_TIME.to_owned(),
+                command_submitter: None,
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
                 endpoint_transport: ClientEndpointTransport::H2,
                 fallback_reason: String::new(),
@@ -3137,6 +3190,7 @@ mod tests {
         core.apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
             latest_seq: 12,
             server_time: SERVER_TIME.to_owned(),
+            command_submitter: None,
             endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
             endpoint_transport: ClientEndpointTransport::H2,
             fallback_reason: String::new(),
@@ -3593,6 +3647,106 @@ mod tests {
     }
 
     #[test]
+    fn unary_retry_after_timeout_reuses_mutation_id_and_drains_idempotent_ack() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("unary-timeout-idempotent-retry");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "queue".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+        store
+            .enqueue_send_prompt_command(
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "queue".to_owned(),
+                "cmid-prompt".to_owned(),
+            )
+            .expect("persist prompt");
+        store
+            .mark_attempted("cmid-prompt".to_owned())
+            .expect("mark initial attempt");
+        let (_commands_receiver, _acks_sender) = install_test_session_stream(&core);
+        let (submission_sender, mut submission_receiver) =
+            mpsc::channel::<TestSessionCommandSubmission>(2);
+        core.lock_stream()
+            .expect("stream lock")
+            .as_mut()
+            .expect("stream")
+            .command_submitter = Some(SessionCommandSubmitter::test(submission_sender));
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let store_for_responder = store.clone();
+            let responder = tokio::spawn(async move {
+                let first = submission_receiver
+                    .recv()
+                    .await
+                    .expect("first unary submit");
+                assert_eq!(first.frame.client_mutation_id, "cmid-prompt");
+                assert_eq!(
+                    first.frame.command_kind,
+                    ClientCommandKind::SendSessionPrompt
+                );
+                assert_eq!(
+                    store_for_responder
+                        .snapshot()
+                        .expect("pending after first submit")
+                        .pending_commands
+                        .len(),
+                    1
+                );
+                let _hold_first_response_open_until_timeout = first.response;
+
+                let second = submission_receiver
+                    .recv()
+                    .await
+                    .expect("retry unary submit");
+                assert_eq!(second.frame.client_mutation_id, "cmid-prompt");
+                assert_eq!(
+                    second.frame.command_kind,
+                    ClientCommandKind::SendSessionPrompt
+                );
+                assert_eq!(
+                    store_for_responder
+                        .snapshot()
+                        .expect("pending after retry submit")
+                        .pending_commands
+                        .len(),
+                    1
+                );
+                let mut ack = accepted_ack("cmid-prompt", 45, "rev-45");
+                ack.idempotent_replay = true;
+                second.response.send(Ok(ack)).expect("send retry ack");
+            });
+
+            core.flush_pending_outbox_with_retries(
+                store.clone(),
+                vec!["cmid-prompt".to_owned()],
+                false,
+            )
+            .await
+            .expect("flush retries after unary timeout");
+            responder.await.expect("responder task");
+        });
+
+        let local_snapshot = store.snapshot().expect("local snapshot");
+        assert!(local_snapshot.pending_commands.is_empty());
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 0);
+        assert_eq!(snapshot.latest_seq, 45);
+        assert_eq!(snapshot.revision, "rev-45");
+        assert_eq!(snapshot.recent_command_acks.len(), 1);
+        assert!(snapshot.recent_command_acks[0].idempotent_replay);
+    }
+
+    #[test]
     fn stream_recovery_reflushes_pending_outbox_without_new_command() {
         let core = LooperClientCore::new();
         let store_path = temp_store_path("stream-recovery-reflush");
@@ -3639,6 +3793,7 @@ mod tests {
             core.apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
                 latest_seq: 44,
                 server_time: "2026-06-25T00:00:44Z".to_owned(),
+                command_submitter: None,
                 endpoint_url: ENDPOINT_PRIMARY.to_owned(),
                 endpoint_transport: ClientEndpointTransport::H2,
                 fallback_reason: String::new(),
@@ -3828,6 +3983,7 @@ mod tests {
             .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
                 latest_seq: 43,
                 server_time: "2026-06-25T00:00:43Z".to_owned(),
+                command_submitter: None,
                 endpoint_url: ENDPOINT_PRIMARY.to_owned(),
                 endpoint_transport: ClientEndpointTransport::H2,
                 fallback_reason: String::new(),
@@ -4440,6 +4596,7 @@ mod tests {
             .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
                 latest_seq: 99,
                 server_time: "2026-06-25T00:00:99Z".to_owned(),
+                command_submitter: None,
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
                 endpoint_transport: ClientEndpointTransport::H2,
                 fallback_reason: String::new(),
@@ -4622,6 +4779,7 @@ mod tests {
             .apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
                 latest_seq: 11,
                 server_time: SERVER_TIME.to_owned(),
+                command_submitter: None,
                 endpoint_url: ENDPOINT_LAST_GOOD.to_owned(),
                 endpoint_transport: ClientEndpointTransport::H2,
                 fallback_reason: String::new(),
