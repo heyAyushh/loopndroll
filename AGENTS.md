@@ -46,16 +46,23 @@ looper/
 | --- | --- | --- | --- | --- |
 | `ControlPlane` | Rust struct | `crates/agent-control-plane/src/control_plane.rs:162` | central | SQLite-backed state owner for sessions, hooks, mobile state, events, settings. |
 | `run_server` | Rust function | `crates/agent-control-plane/src/runtime.rs` | 1 caller | Server/hook runtime entry behind `looper-server` and wrapper binary. |
-| `CompanionAppModel` | Swift class | `ios/LooperCompanion/App/CompanionAppModel.swift:24` | central | iPhone snapshot, connectivity, realtime, search, Siri/open-url state. |
+| `CompanionAppModel` | Swift class | `ios/LooperCompanion/App/CompanionAppModel.swift` | facade | Observable facade over the focused components below; keep its public API stable for views. |
+| `CompanionConnectionController` | Swift class | `ios/LooperCompanion/App/CompanionConnectionController.swift` | central | Stream lifecycle, NWPathMonitor, connection revision, realtime freshness, reconnect state. |
+| `CompanionCommandDispatcher` | Swift class | `ios/LooperCompanion/App/CompanionCommandDispatcher.swift` | central | Session commands, optimistic projections, error mapping. |
+| `CompanionPushCoordinator` | Swift class | `ios/LooperCompanion/App/CompanionPushCoordinator.swift` | support | Push registration, notification status, reply-outbox drain wiring. |
 | `loadSnapshot` | Swift method | `ios/LooperCompanion/App/CompanionAppModel.swift` | 6 callers | Main iPhone refresh path; keep concurrency and revision guards intact. |
 | `LooperClientCoreSessionRuntime` | Rust UniFFI object | `crates/looper-client-core/src/session_runtime.rs` | shared | Starts state-mini sync, persists local snapshots, and exposes command intents to Swift. |
+| `FreshH3QuinnConnector` | Rust struct | `crates/looper-client-core/src/session_transport.rs` | transport | Fresh-dial h3 connector with 0-RTT attempt; survives server restarts on the same port. |
+| `MenuBarStorePrimaryMenuState` | Swift class | `macos/LooperMenuBar/Sources/LooperMenuBarCore/MenuBarStorePrimaryMenuState.swift` | central | macOS menu truth from session-mini store updates with debounced rebuilds. |
 | `BundledControlPlaneService` | Swift class | `macos/LooperMenuBar/Sources/LooperMenuBarCore/LooperLifecycleCoordinator.swift:21` | lifecycle | Starts/stops embedded Rust server and filters launch env. |
 | `LooperClientCoreSessionManager` | Swift wrapper | `swift/LooperClientCore/Sources/LooperClientCore/LooperClientCoreSessionManager.swift:3` | shared | Thin wrapper over Rust client-core Session commands and state-mini stream lifecycle. |
 
 ## CONVENTIONS
 
 - Rust is the backend and control-plane source of truth. Do not add core backend, auth, mobile API, hook, notification, or session-control behavior outside `crates/agent-control-plane`.
-- Keep macOS, iOS, and TUI surfaces as clients of Rust control-plane APIs: HTTP only for health/bootstrap, Session gRPC through Rust client-core for commands/state.
+- Keep macOS, iOS, and TUI surfaces as clients of Rust control-plane APIs: HTTP only for health/bootstrap and slow enrichment. Commands go over unary gRPC RPCs (ack = response); state deltas, text chunks, and heartbeats ride the Session server-stream. The stream command path exists only as old-server fallback — do not add new command kinds to it.
+- Hot Swift↔Rust FFI calls are typed UniFFI records; do not add new JSON-string parameters or returns to the client-core FFI surface for per-action or per-update paths.
+- Connection presentation derives from data freshness (grace windows), never directly from transport lifecycle events; stream teardown/restart must not flip UI state while local data is fresh.
 - For cross-surface realtime/state regressions, use `.agents/skills/looper-realtime-cutter/SKILL.md` before editing: read `docs/architecture/decisions.md`, check Codex sqlite plus device local store truth, split bounded cutters, and run full gates/install only at acceptance.
 - For iOS assistant switcher or session command bugs, use `.agents/skills/ios-session-sync-debugging/SKILL.md`: Rust/LooperClientCore stays the source of truth, iOS command ordering belongs in a sync engine/client manager, and `CompanionAppModel` stays presenter/view-state coordinator.
 - For observable iOS app work, use `.agents/skills/ios-browser-simulator-proof/SKILL.md` first: XcodeBuildMCP runs the app in Simulator, `serve-sim` mirrors the exact simulator, and the Codex in-app Browser is the proof surface. Pair visible Browser interactions with `scripts/ios-diagnostics.sh oslog` for behavior logs and `perf-loop`/xctrace only when runtime performance evidence is needed. Physical iPhone install is secondary for device-only behavior, continuity, signing, APNs, or explicit phone-install requests.
@@ -118,3 +125,7 @@ bash scripts/release-macos.sh
 - Reusable iOS Browser proof lives in `.agents/skills/ios-browser-simulator-proof/SKILL.md`; this is the primary app-observation workflow before physical phone install.
 - Reusable iOS diagnostics live in `.agents/skills/ios-perf-diagnostics/SKILL.md`; globally installed wrappers are expected at `~/.local/bin/oslog-live`, `~/.local/bin/lldb-trap`, and `~/.local/bin/perf-loop`. Keep capture artifacts under `build/ios-diagnostics/` and keep ETTrace wiring temporary unless explicitly requested.
 - The canonical main checkout is `/Users/ay/Documents/looper`; this worktree may be ahead of it.
+- Real end-to-end coverage lives in `crates/agent-control-plane/tests/e2e_client_core.rs` (real server + real client-core over h3/h2 loopback, helpers under `tests/support/`). Transport, command, and reconnect changes gate on it; extend it rather than adding mock-only coverage.
+- The client-core local store persists in two tiers: pending commands synchronously (durability behind "accepted"), state/text-chunk data debounced on a persister thread, split across a hot state-minis file and a capped session-details file. Do not reintroduce whole-store writes under the state mutex.
+- The server event store is retention-pruned (per-entity cap + age cutoff, startup + periodic). Resumes past pruned history route through the OutOfRange/seq_gap recovery path — never silent loss.
+- When running parallel agents across worktrees whose branches differ in `proto/` or `build.rs` inputs, give each its own `CARGO_TARGET_DIR`; a shared target dir clobbers generated proto code between builds and produces phantom trait-mismatch compile errors.
