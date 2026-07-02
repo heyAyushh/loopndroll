@@ -592,8 +592,10 @@ mod tests {
     fn transcript_preview_skips_injected_user_records_for_first_prompt() {
         let tempdir = tempdir().expect("tempdir");
         let transcript_path = tempdir.path().join("injected-user-records.jsonl");
-        let instructions =
-            user_record_at("# AGENTS.md instructions for /repo body", "2026-06-16T08:00:00Z");
+        let instructions = user_record_at(
+            "# AGENTS.md instructions for /repo body",
+            "2026-06-16T08:00:00Z",
+        );
         let skill = user_record_at("<skill> body of a skill", "2026-06-16T08:00:01Z");
         let real_prompt = user_record_at("real prompt", "2026-06-16T08:00:02Z");
         let aborted = user_record_at(
