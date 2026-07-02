@@ -161,6 +161,8 @@ final class CompanionAppModel {
     var realtimeServerTime: String?
     var realtimeLatestSeq: Int64 = 0
     var realtimeStreamIsLive = false
+    @ObservationIgnored var lastRealtimeDataAt: Date?
+    var realtimeReconnectInProgress = false
     private(set) var isAwaitingRouteSessionProof = false
     var localNotificationStatus: UNAuthorizationStatus = .notDetermined
     var remotePushRegistration: RemotePushRegistrationResponse?
@@ -327,7 +329,7 @@ final class CompanionAppModel {
 
     func stopSessionRuntimeSync() {
         sessionMiniController.stopSync()
-        markSessionStreamStopped()
+        markSessionStreamStopped(reconnectInProgress: false)
     }
 
     private func startNetworkPathMonitoringIfNeeded() {
@@ -373,10 +375,13 @@ final class CompanionAppModel {
 
     private func stopSessionRuntimeSyncForRestart() {
         sessionMiniController.stopSync()
-        markSessionStreamStopped()
+        markSessionStreamStopped(reconnectInProgress: true)
     }
 
     func startSessionRuntimeSyncIfNeeded() {
+        if !realtimeStreamIsLive {
+            realtimeReconnectInProgress = true
+        }
         sessionMiniController.startSyncIfNeeded(
             connectionRevision: connectionRevision
         ) { [weak self] update, connectionRevision in
@@ -477,7 +482,8 @@ final class CompanionAppModel {
         serverTime: String,
         latestSeq: Int64,
         isLive: Bool,
-        endpointURL: URL?
+        endpointURL: URL?,
+        recordedAt: Date = Date()
     ) -> Bool {
         guard latestSeq >= realtimeLatestSeq || Self.isStreamRestartLiveness(
             latestSeq: latestSeq,
@@ -490,6 +496,9 @@ final class CompanionAppModel {
         }
 
         var didChange = false
+        if isLive {
+            lastRealtimeDataAt = recordedAt
+        }
         if !serverTime.isEmpty {
             if realtimeServerTime != serverTime {
                 realtimeServerTime = serverTime
@@ -504,6 +513,11 @@ final class CompanionAppModel {
         }
         if realtimeStreamIsLive != isLive {
             realtimeStreamIsLive = isLive
+            didChange = true
+        }
+        let nextReconnectInProgress = isLive ? false : sessionMiniController.isSyncing
+        if realtimeReconnectInProgress != nextReconnectInProgress {
+            realtimeReconnectInProgress = nextReconnectInProgress
             didChange = true
         }
         let nextRouteBaseURL = isLive ? endpointURL : nil
@@ -583,6 +597,8 @@ final class CompanionAppModel {
         realtimeServerTime = nil
         realtimeLatestSeq = 0
         realtimeStreamIsLive = false
+        lastRealtimeDataAt = nil
+        realtimeReconnectInProgress = false
         connectionState = .connecting
         pendingOpenSessionID = nil
         errorMessage = nil
@@ -610,7 +626,7 @@ final class CompanionAppModel {
         errorMessage = nil
         serverHealth = nil
         reachedBaseURL = nil
-        markSessionStreamStopped()
+        markSessionStreamStopped(reconnectInProgress: true)
         didAttemptForegroundSessionMiniRecovery = false
 
         restartSessionRuntimeSyncForRouteChange()
@@ -2193,9 +2209,10 @@ final class CompanionAppModel {
         CompanionDiagnostics.record("connection:local-cache-ready reason=\(reason)")
     }
 
-    private func markSessionStreamStopped() {
+    private func markSessionStreamStopped(reconnectInProgress: Bool) {
         realtimeStreamIsLive = false
         activeSessionRouteBaseURL = nil
+        realtimeReconnectInProgress = reconnectInProgress
         if connectionState == .connected {
             connectionState = .connecting
         }

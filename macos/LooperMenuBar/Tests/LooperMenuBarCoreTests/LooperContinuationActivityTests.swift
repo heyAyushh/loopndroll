@@ -211,6 +211,59 @@ struct LooperContinuationActivityTests {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    @MainActor
+    @Test
+    func storeUpdateTriggersDebouncedContinuationRepublish() async throws {
+        let recorder = ContinuationActivityPublishRecorder()
+        let publisher = LooperContinuationActivityStorePublisher(
+            debounceDuration: .milliseconds(20),
+            publish: recorder.publish
+        )
+        let firstSnapshot = try continuationMiniSnapshot(
+            latestSeq: 501,
+            sessionID: "thread-first",
+            title: "First local truth"
+        )
+        let secondSnapshot = try continuationMiniSnapshot(
+            latestSeq: 502,
+            sessionID: "thread-second",
+            title: "Second local truth"
+        )
+
+        publisher.schedulePublish(from: firstSnapshot, handoffBaseURL: nil)
+        publisher.schedulePublish(from: secondSnapshot, handoffBaseURL: nil)
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(recorder.descriptors.map(\.title) == ["Second local truth"])
+        #expect(
+            recorder.descriptors.map {
+                $0.userInfo[LooperContinuationActivity.UserInfoKey.sessionID]
+            } == ["thread-second"]
+        )
+    }
+
+    @Test
+    func refreshFailureWithSessionMiniSnapshotKeepsSessionDescriptor() throws {
+        let snapshot = try continuationMiniSnapshot(
+            latestSeq: 503,
+            sessionID: "thread-local",
+            title: "Local handoff truth"
+        )
+
+        let descriptor = LooperContinuationActivityStoreTruth.descriptorForRefreshFailure(
+            latestSessionMiniSnapshot: snapshot,
+            fallbackDescriptor: LooperContinuationActivityBuilder.genericDescriptor(),
+            handoffBaseURL: nil
+        )
+
+        #expect(descriptor.title == "Local handoff truth")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.kind] == "session")
+        #expect(
+            descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] ==
+                "thread-local"
+        )
+    }
+
     @Test
     func storesHandoffHoldPreference() {
         let suiteName = "dev.looper.tests.handoff-hold.stored"
@@ -585,6 +638,86 @@ struct LooperContinuationActivityTests {
             payloadJSON: String(decoding: data, as: UTF8.self)
         )
     }
+}
+
+@MainActor
+private final class ContinuationActivityPublishRecorder: @unchecked Sendable {
+    var descriptors: [LooperContinuationActivityDescriptor] = []
+
+    func publish(_ descriptor: LooperContinuationActivityDescriptor) {
+        descriptors.append(descriptor)
+    }
+}
+
+private func continuationMiniSnapshot(
+    latestSeq: Int64,
+    sessionID: String,
+    title: String
+) throws -> MenuBarSessionMiniLocalSnapshot {
+    let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LooperContinuationActivityTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent(MenuBarSessionRuntime.defaultFileName)
+    let payload = TestContinuationActivityMiniPayload(
+        id: sessionID,
+        sessionId: sessionID,
+        ref: "S\(latestSeq)",
+        title: title,
+        status: "active",
+        canSendPrompt: true,
+        replyable: true,
+        queueCount: 0,
+        lifecycle: "active",
+        isArchived: false,
+        metadata: TestContinuationActivityMiniMetadata(
+            projectName: "looper",
+            projectPath: "/Users/test/looper"
+        ),
+        lastActivityAtMs: latestSeq,
+        updatedAtMs: latestSeq
+    )
+    let payloadData = try JSONEncoder().encode(payload)
+    let cache: [String: Any] = [
+        "latestSeq": latestSeq,
+        "sessions": [
+            [
+                "sessionId": sessionID,
+                "assistantSurface": "codex",
+                "seq": latestSeq,
+                "revision": "rev-\(latestSeq)",
+                "payloadJson": String(decoding: payloadData, as: UTF8.self),
+            ],
+        ],
+        "pendingCommands": [],
+        "serverTime": "",
+    ]
+    let data = try JSONSerialization.data(withJSONObject: cache, options: [.sortedKeys])
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try data.write(to: fileURL, options: .atomic)
+    return try MenuBarSessionRuntime(fileURL: fileURL).cachedSnapshot()
+}
+
+private struct TestContinuationActivityMiniPayload: Encodable {
+    let id: String
+    let sessionId: String
+    let ref: String
+    let title: String
+    let status: String
+    let canSendPrompt: Bool
+    let replyable: Bool
+    let queueCount: Int
+    let lifecycle: String
+    let isArchived: Bool
+    let metadata: TestContinuationActivityMiniMetadata
+    let lastActivityAtMs: Int64
+    let updatedAtMs: Int64
+}
+
+private struct TestContinuationActivityMiniMetadata: Encodable {
+    let projectName: String
+    let projectPath: String
 }
 
 private struct TestContinuationMiniFixture: Equatable, Sendable {

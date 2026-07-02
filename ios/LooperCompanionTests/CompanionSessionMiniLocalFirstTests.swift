@@ -17,6 +17,7 @@ struct CompanionSessionMiniLocalFirstTests {
         static let fallbackThreadID = "fallback-thread"
         static let timestamp = "2026-06-24T00:00:00Z"
         static let heartbeatTimestamp = "2026-06-24T00:00:15Z"
+        static let realtimeFreshnessRecordedAt = Date(timeIntervalSinceReferenceDate: 1_000)
         static let preAckLocalPaintProbeNanoseconds: UInt64 = 20_000_000
         static let delayedModeDrainProbeNanoseconds: UInt64 = 300_000_000
         static let slowQuickActionHandlerNanoseconds: UInt64 = 250_000_000
@@ -1341,6 +1342,144 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testFreshRealtimeDataPresentsConnectionAsLive() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 14, revision: "mini-revision-14"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = try #require(URL(string: "http://192.168.2.10:8766"))
+        let recordedAt = Constants.realtimeFreshnessRecordedAt
+
+        _ = model.applyRealtimeStreamLiveness(
+            serverTime: Constants.heartbeatTimestamp,
+            latestSeq: 14,
+            isLive: true,
+            endpointURL: route,
+            recordedAt: recordedAt
+        )
+
+        let presentation = model.viewState.connectionStatusPresentation(
+            now: recordedAt.addingTimeInterval(
+                CompanionConnectionFreshnessPolicy.liveGraceWindow - 1
+            )
+        )
+        #expect(presentation.status == .live)
+        #expect(presentation.label == "Live")
+    }
+
+    @MainActor
+    @Test
+    func testStaleRealtimeDataPresentsReconnectingAfterGrace() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 14,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 14, revision: "mini-revision-14"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = try #require(URL(string: "http://192.168.2.10:8766"))
+        let recordedAt = Constants.realtimeFreshnessRecordedAt
+
+        _ = model.applyRealtimeStreamLiveness(
+            serverTime: Constants.heartbeatTimestamp,
+            latestSeq: 14,
+            isLive: true,
+            endpointURL: route,
+            recordedAt: recordedAt
+        )
+        model.connectionState = .connecting
+        model.realtimeStreamIsLive = false
+        model.realtimeReconnectInProgress = true
+
+        let reconnecting = model.viewState.connectionStatusPresentation(
+            now: recordedAt.addingTimeInterval(
+                CompanionConnectionFreshnessPolicy.liveGraceWindow + 1
+            )
+        )
+        let offline = model.viewState.connectionStatusPresentation(
+            now: recordedAt.addingTimeInterval(
+                CompanionConnectionFreshnessPolicy.offlineWindow + 1
+            )
+        )
+
+        #expect(reconnecting.status == .reconnecting)
+        #expect(reconnecting.label == "Reconnecting")
+        #expect(offline.status == .offline)
+        #expect(offline.label == "Offline")
+    }
+
+    @MainActor
+    @Test
+    func testStreamTeardownKeepsFreshConnectionPresentationLive() async throws {
+        let cachedSession = Self.sessionSummary(
+            id: Constants.cachedThreadID,
+            title: "Cached Mini",
+            ref: "C1",
+            status: .active
+        )
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 15,
+            records: [
+                Self.miniRecord(session: cachedSession, seq: 15, revision: "mini-revision-15"),
+            ]
+        )
+        let service = SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: service),
+            sessionRuntime: runtime
+        )
+        let route = try #require(URL(string: "http://192.168.2.10:8766"))
+        let recordedAt = Constants.realtimeFreshnessRecordedAt
+
+        _ = model.applyRealtimeStreamLiveness(
+            serverTime: Constants.heartbeatTimestamp,
+            latestSeq: 15,
+            isLive: true,
+            endpointURL: route,
+            recordedAt: recordedAt
+        )
+        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+        _ = model.applyRealtimeStreamLiveness(
+            serverTime: restart.serverTime,
+            latestSeq: restart.latestSeq,
+            isLive: restart.isLive,
+            endpointURL: restart.endpointURL
+        )
+
+        let presentation = model.viewState.connectionStatusPresentation(
+            now: recordedAt.addingTimeInterval(1)
+        )
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.connectionState == .connecting)
+        #expect(presentation.status == .live)
+        #expect(presentation.label == "Live")
+    }
+
+    @MainActor
+    @Test
     func testStaleLivenessCannotResurrectConnectedState() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1836,7 +1975,7 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(!model.realtimeStreamIsLive)
         #expect(model.activeConnectionRouteBaseURL == nil)
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Cached Mini")
-        #expect(model.viewState.connectivityStatusLabel == "Connecting")
+        #expect(model.viewState.connectivityStatusLabel == "Local")
         #expect(service.loadSnapshotCallCount == 0)
     }
 
