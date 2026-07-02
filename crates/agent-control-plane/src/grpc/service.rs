@@ -85,7 +85,7 @@ impl LooperRealtimeService {
         authorize_mobile_api_request_from_peer(
             &self.control_plane,
             request.metadata(),
-            self.peer_addr_override.or_else(|| request.remote_addr()),
+            request.remote_addr(),
         )?;
         let control_plane = self.control_plane.clone();
         let request = request.into_inner();
