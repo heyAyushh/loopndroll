@@ -15,12 +15,8 @@ async fn local_session_command_h3() {
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
-    let grpc_address = reserve_local_tcp_address().await;
-    let http = spawn_http(
-        control_plane.clone(),
-        http_address_for_grpc_address(grpc_address),
-    )
-    .await;
+    let (http_listener, grpc_address) = reserve_http_listener_with_grpc_address().await;
+    let http = spawn_http(control_plane.clone(), http_listener).await;
     let http_base_url = format!("http://{}", http.address);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let h3 = crate::grpc::spawn_h3_server(control_plane.clone(), grpc_address, async {
@@ -72,12 +68,8 @@ async fn local_session_command_h3_keeps_stream_open_for_followup_frame() {
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
-    let grpc_address = reserve_local_tcp_address().await;
-    let http = spawn_http(
-        control_plane.clone(),
-        http_address_for_grpc_address(grpc_address),
-    )
-    .await;
+    let (http_listener, grpc_address) = reserve_http_listener_with_grpc_address().await;
+    let http = spawn_http(control_plane.clone(), http_listener).await;
     let http_base_url = format!("http://{}", http.address);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let h3 = crate::grpc::spawn_h3_server(control_plane.clone(), grpc_address, async {

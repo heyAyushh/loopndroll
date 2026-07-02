@@ -28,15 +28,27 @@ pub(super) fn set_session_mode_command(
     }
 }
 
-pub(super) async fn reserve_local_tcp_address() -> SocketAddr {
-    let listener =
-        tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .await
-            .expect("reserve local TCP address");
-    let address = listener.local_addr().expect("reserved TCP address");
-    drop(listener);
-    assert!(address.port() > 0, "reserved gRPC port must be nonzero");
-    address
+/// Reserve the linked port pair the local transport derives: an HTTP TCP
+/// listener plus the adjacent gRPC address (HTTP port + offset). The HTTP
+/// listener stays bound until handed to `spawn_http`, so no other process
+/// can take that port in between; the gRPC side is probed on UDP because
+/// the local H3 server listens on QUIC. Retries until both ports are free.
+pub(super) async fn reserve_http_listener_with_grpc_address()
+-> (tokio::net::TcpListener, SocketAddr) {
+    loop {
+        let listener =
+            tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+                .await
+                .expect("bind HTTP listener");
+        let http_address = listener.local_addr().expect("HTTP listener address");
+        let Some(grpc_port) = http_address.port().checked_add(DEFAULT_GRPC_PORT_OFFSET) else {
+            continue;
+        };
+        let grpc_address = SocketAddr::new(http_address.ip(), grpc_port);
+        if tokio::net::UdpSocket::bind(grpc_address).await.is_ok() {
+            return (listener, grpc_address);
+        }
+    }
 }
 
 pub(super) async fn spawn_h2(control_plane: ControlPlane) -> SpawnedH2 {
@@ -60,10 +72,10 @@ pub(super) async fn spawn_h2(control_plane: ControlPlane) -> SpawnedH2 {
     }
 }
 
-pub(super) async fn spawn_http(control_plane: ControlPlane, address: SocketAddr) -> SpawnedHttp {
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .expect("bind HTTP listener");
+pub(super) async fn spawn_http(
+    control_plane: ControlPlane,
+    listener: tokio::net::TcpListener,
+) -> SpawnedHttp {
     let address = listener.local_addr().expect("HTTP listener address");
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let server_task = tokio::spawn(async move {
