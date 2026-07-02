@@ -29,7 +29,14 @@ pub use menu_snapshot::{
     reduce_state_minis_menu_snapshot,
 };
 pub use mobile_snapshot::{
-    ClientMobileSnapshotProjection, reduce_state_minis_mobile_snapshot,
+    ClientMobileCompletionCheckSummary, ClientMobileDevinDesktopStatus,
+    ClientMobileGitRepositoryMetadata, ClientMobileGlobalSettings, ClientMobileGrokBuildHookStatus,
+    ClientMobileGrokBuildStatus, ClientMobileHost, ClientMobileInstalledPluginSummary,
+    ClientMobileNotificationDestination, ClientMobileSession, ClientMobileSessionGoal,
+    ClientMobileSessionMetadata, ClientMobileSessionSourceReference,
+    ClientMobileSessionSpawnMetadata, ClientMobileSnapshot, ClientMobileSnapshotProjection,
+    ClientMobileSurfaceSessions, ClientMobileWorkStatusAutomation, ClientMobileWorkStatusGoal,
+    ClientMobileWorkStatusSummary, reduce_state_minis_mobile_snapshot,
     reduce_state_minis_mobile_snapshot_with_pending_commands,
 };
 pub use model::{

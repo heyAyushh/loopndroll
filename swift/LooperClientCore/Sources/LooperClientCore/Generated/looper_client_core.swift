@@ -2221,15 +2221,1317 @@ public func FfiConverterTypeClientMenuSnapshotStreamUpdate_lower(_ value: Client
 }
 
 
-public struct ClientMobileSnapshotProjection: Equatable, Hashable {
-    public var hasSnapshot: Bool
-    public var snapshotJson: String
+public struct ClientMobileCompletionCheckSummary: Equatable, Hashable {
+    public var id: String
+    public var label: String
+    public var commandCount: Int64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(hasSnapshot: Bool, snapshotJson: String) {
+    public init(id: String, label: String, commandCount: Int64) {
+        self.id = id
+        self.label = label
+        self.commandCount = commandCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileCompletionCheckSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileCompletionCheckSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileCompletionCheckSummary {
+        return
+            try ClientMobileCompletionCheckSummary(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                commandCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileCompletionCheckSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterInt64.write(value.commandCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileCompletionCheckSummary_lift(_ buf: RustBuffer) throws -> ClientMobileCompletionCheckSummary {
+    return try FfiConverterTypeClientMobileCompletionCheckSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileCompletionCheckSummary_lower(_ value: ClientMobileCompletionCheckSummary) -> RustBuffer {
+    return FfiConverterTypeClientMobileCompletionCheckSummary.lower(value)
+}
+
+
+public struct ClientMobileDevinDesktopStatus: Equatable, Hashable {
+    public var running: Bool
+    public var installed: Bool
+    public var acpAvailable: Bool
+    public var registryExists: Bool
+    public var registryAgentCount: Int64
+    public var enabledAgentCount: Int64
+    public var preferredAgentIds: [String]
+    public var sessionCount: Int64
+    public var activeSessionCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(running: Bool, installed: Bool, acpAvailable: Bool, registryExists: Bool, registryAgentCount: Int64, enabledAgentCount: Int64, preferredAgentIds: [String], sessionCount: Int64, activeSessionCount: Int64) {
+        self.running = running
+        self.installed = installed
+        self.acpAvailable = acpAvailable
+        self.registryExists = registryExists
+        self.registryAgentCount = registryAgentCount
+        self.enabledAgentCount = enabledAgentCount
+        self.preferredAgentIds = preferredAgentIds
+        self.sessionCount = sessionCount
+        self.activeSessionCount = activeSessionCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileDevinDesktopStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileDevinDesktopStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileDevinDesktopStatus {
+        return
+            try ClientMobileDevinDesktopStatus(
+                running: FfiConverterBool.read(from: &buf),
+                installed: FfiConverterBool.read(from: &buf),
+                acpAvailable: FfiConverterBool.read(from: &buf),
+                registryExists: FfiConverterBool.read(from: &buf),
+                registryAgentCount: FfiConverterInt64.read(from: &buf),
+                enabledAgentCount: FfiConverterInt64.read(from: &buf),
+                preferredAgentIds: FfiConverterSequenceString.read(from: &buf),
+                sessionCount: FfiConverterInt64.read(from: &buf),
+                activeSessionCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileDevinDesktopStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.running, into: &buf)
+        FfiConverterBool.write(value.installed, into: &buf)
+        FfiConverterBool.write(value.acpAvailable, into: &buf)
+        FfiConverterBool.write(value.registryExists, into: &buf)
+        FfiConverterInt64.write(value.registryAgentCount, into: &buf)
+        FfiConverterInt64.write(value.enabledAgentCount, into: &buf)
+        FfiConverterSequenceString.write(value.preferredAgentIds, into: &buf)
+        FfiConverterInt64.write(value.sessionCount, into: &buf)
+        FfiConverterInt64.write(value.activeSessionCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileDevinDesktopStatus_lift(_ buf: RustBuffer) throws -> ClientMobileDevinDesktopStatus {
+    return try FfiConverterTypeClientMobileDevinDesktopStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileDevinDesktopStatus_lower(_ value: ClientMobileDevinDesktopStatus) -> RustBuffer {
+    return FfiConverterTypeClientMobileDevinDesktopStatus.lower(value)
+}
+
+
+public struct ClientMobileGitRepositoryMetadata: Equatable, Hashable {
+    public var repositoryName: String
+    public var repositoryPath: String
+    public var remoteUrl: String
+    public var hasRemoteUrl: Bool
+    public var branch: String
+    public var hasBranch: Bool
+    public var commit: String
+    public var hasCommit: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(repositoryName: String, repositoryPath: String, remoteUrl: String, hasRemoteUrl: Bool, branch: String, hasBranch: Bool, commit: String, hasCommit: Bool) {
+        self.repositoryName = repositoryName
+        self.repositoryPath = repositoryPath
+        self.remoteUrl = remoteUrl
+        self.hasRemoteUrl = hasRemoteUrl
+        self.branch = branch
+        self.hasBranch = hasBranch
+        self.commit = commit
+        self.hasCommit = hasCommit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileGitRepositoryMetadata: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileGitRepositoryMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileGitRepositoryMetadata {
+        return
+            try ClientMobileGitRepositoryMetadata(
+                repositoryName: FfiConverterString.read(from: &buf),
+                repositoryPath: FfiConverterString.read(from: &buf),
+                remoteUrl: FfiConverterString.read(from: &buf),
+                hasRemoteUrl: FfiConverterBool.read(from: &buf),
+                branch: FfiConverterString.read(from: &buf),
+                hasBranch: FfiConverterBool.read(from: &buf),
+                commit: FfiConverterString.read(from: &buf),
+                hasCommit: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileGitRepositoryMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repositoryName, into: &buf)
+        FfiConverterString.write(value.repositoryPath, into: &buf)
+        FfiConverterString.write(value.remoteUrl, into: &buf)
+        FfiConverterBool.write(value.hasRemoteUrl, into: &buf)
+        FfiConverterString.write(value.branch, into: &buf)
+        FfiConverterBool.write(value.hasBranch, into: &buf)
+        FfiConverterString.write(value.commit, into: &buf)
+        FfiConverterBool.write(value.hasCommit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGitRepositoryMetadata_lift(_ buf: RustBuffer) throws -> ClientMobileGitRepositoryMetadata {
+    return try FfiConverterTypeClientMobileGitRepositoryMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGitRepositoryMetadata_lower(_ value: ClientMobileGitRepositoryMetadata) -> RustBuffer {
+    return FfiConverterTypeClientMobileGitRepositoryMetadata.lower(value)
+}
+
+
+public struct ClientMobileGlobalSettings: Equatable, Hashable {
+    public var defaultPrompt: String
+    public var globalMode: String
+    public var hasGlobalMode: Bool
+    public var scope: String
+    public var notificationLabel: String
+    public var hasNotificationLabel: Bool
+    public var completionCheckLabel: String
+    public var hasCompletionCheckLabel: Bool
+    public var completionCheckWaitForReply: Bool
+    public var assistantSurface: String
+    public var siriDefaultSessionId: String
+    public var hasSiriDefaultSessionId: Bool
+    public var siriDefaultAssistantSurface: String
+    public var hasSiriDefaultAssistantSurface: Bool
+    public var siriCurrentSessionId: String
+    public var hasSiriCurrentSessionId: Bool
+    public var siriCurrentAssistantSurface: String
+    public var hasSiriCurrentAssistantSurface: Bool
+    public var siriCurrentUpdatedAtMs: Int64
+    public var hasSiriCurrentUpdatedAtMs: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(defaultPrompt: String, globalMode: String, hasGlobalMode: Bool, scope: String, notificationLabel: String, hasNotificationLabel: Bool, completionCheckLabel: String, hasCompletionCheckLabel: Bool, completionCheckWaitForReply: Bool, assistantSurface: String, siriDefaultSessionId: String, hasSiriDefaultSessionId: Bool, siriDefaultAssistantSurface: String, hasSiriDefaultAssistantSurface: Bool, siriCurrentSessionId: String, hasSiriCurrentSessionId: Bool, siriCurrentAssistantSurface: String, hasSiriCurrentAssistantSurface: Bool, siriCurrentUpdatedAtMs: Int64, hasSiriCurrentUpdatedAtMs: Bool) {
+        self.defaultPrompt = defaultPrompt
+        self.globalMode = globalMode
+        self.hasGlobalMode = hasGlobalMode
+        self.scope = scope
+        self.notificationLabel = notificationLabel
+        self.hasNotificationLabel = hasNotificationLabel
+        self.completionCheckLabel = completionCheckLabel
+        self.hasCompletionCheckLabel = hasCompletionCheckLabel
+        self.completionCheckWaitForReply = completionCheckWaitForReply
+        self.assistantSurface = assistantSurface
+        self.siriDefaultSessionId = siriDefaultSessionId
+        self.hasSiriDefaultSessionId = hasSiriDefaultSessionId
+        self.siriDefaultAssistantSurface = siriDefaultAssistantSurface
+        self.hasSiriDefaultAssistantSurface = hasSiriDefaultAssistantSurface
+        self.siriCurrentSessionId = siriCurrentSessionId
+        self.hasSiriCurrentSessionId = hasSiriCurrentSessionId
+        self.siriCurrentAssistantSurface = siriCurrentAssistantSurface
+        self.hasSiriCurrentAssistantSurface = hasSiriCurrentAssistantSurface
+        self.siriCurrentUpdatedAtMs = siriCurrentUpdatedAtMs
+        self.hasSiriCurrentUpdatedAtMs = hasSiriCurrentUpdatedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileGlobalSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileGlobalSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileGlobalSettings {
+        return
+            try ClientMobileGlobalSettings(
+                defaultPrompt: FfiConverterString.read(from: &buf),
+                globalMode: FfiConverterString.read(from: &buf),
+                hasGlobalMode: FfiConverterBool.read(from: &buf),
+                scope: FfiConverterString.read(from: &buf),
+                notificationLabel: FfiConverterString.read(from: &buf),
+                hasNotificationLabel: FfiConverterBool.read(from: &buf),
+                completionCheckLabel: FfiConverterString.read(from: &buf),
+                hasCompletionCheckLabel: FfiConverterBool.read(from: &buf),
+                completionCheckWaitForReply: FfiConverterBool.read(from: &buf),
+                assistantSurface: FfiConverterString.read(from: &buf),
+                siriDefaultSessionId: FfiConverterString.read(from: &buf),
+                hasSiriDefaultSessionId: FfiConverterBool.read(from: &buf),
+                siriDefaultAssistantSurface: FfiConverterString.read(from: &buf),
+                hasSiriDefaultAssistantSurface: FfiConverterBool.read(from: &buf),
+                siriCurrentSessionId: FfiConverterString.read(from: &buf),
+                hasSiriCurrentSessionId: FfiConverterBool.read(from: &buf),
+                siriCurrentAssistantSurface: FfiConverterString.read(from: &buf),
+                hasSiriCurrentAssistantSurface: FfiConverterBool.read(from: &buf),
+                siriCurrentUpdatedAtMs: FfiConverterInt64.read(from: &buf),
+                hasSiriCurrentUpdatedAtMs: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileGlobalSettings, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.defaultPrompt, into: &buf)
+        FfiConverterString.write(value.globalMode, into: &buf)
+        FfiConverterBool.write(value.hasGlobalMode, into: &buf)
+        FfiConverterString.write(value.scope, into: &buf)
+        FfiConverterString.write(value.notificationLabel, into: &buf)
+        FfiConverterBool.write(value.hasNotificationLabel, into: &buf)
+        FfiConverterString.write(value.completionCheckLabel, into: &buf)
+        FfiConverterBool.write(value.hasCompletionCheckLabel, into: &buf)
+        FfiConverterBool.write(value.completionCheckWaitForReply, into: &buf)
+        FfiConverterString.write(value.assistantSurface, into: &buf)
+        FfiConverterString.write(value.siriDefaultSessionId, into: &buf)
+        FfiConverterBool.write(value.hasSiriDefaultSessionId, into: &buf)
+        FfiConverterString.write(value.siriDefaultAssistantSurface, into: &buf)
+        FfiConverterBool.write(value.hasSiriDefaultAssistantSurface, into: &buf)
+        FfiConverterString.write(value.siriCurrentSessionId, into: &buf)
+        FfiConverterBool.write(value.hasSiriCurrentSessionId, into: &buf)
+        FfiConverterString.write(value.siriCurrentAssistantSurface, into: &buf)
+        FfiConverterBool.write(value.hasSiriCurrentAssistantSurface, into: &buf)
+        FfiConverterInt64.write(value.siriCurrentUpdatedAtMs, into: &buf)
+        FfiConverterBool.write(value.hasSiriCurrentUpdatedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGlobalSettings_lift(_ buf: RustBuffer) throws -> ClientMobileGlobalSettings {
+    return try FfiConverterTypeClientMobileGlobalSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGlobalSettings_lower(_ value: ClientMobileGlobalSettings) -> RustBuffer {
+    return FfiConverterTypeClientMobileGlobalSettings.lower(value)
+}
+
+
+public struct ClientMobileGrokBuildHookStatus: Equatable, Hashable {
+    public var health: String
+    public var owner: String
+    public var registeredEvents: [String]
+    public var hooksPath: String
+    public var hasHooksPath: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(health: String, owner: String, registeredEvents: [String], hooksPath: String, hasHooksPath: Bool) {
+        self.health = health
+        self.owner = owner
+        self.registeredEvents = registeredEvents
+        self.hooksPath = hooksPath
+        self.hasHooksPath = hasHooksPath
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileGrokBuildHookStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileGrokBuildHookStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileGrokBuildHookStatus {
+        return
+            try ClientMobileGrokBuildHookStatus(
+                health: FfiConverterString.read(from: &buf),
+                owner: FfiConverterString.read(from: &buf),
+                registeredEvents: FfiConverterSequenceString.read(from: &buf),
+                hooksPath: FfiConverterString.read(from: &buf),
+                hasHooksPath: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileGrokBuildHookStatus, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.health, into: &buf)
+        FfiConverterString.write(value.owner, into: &buf)
+        FfiConverterSequenceString.write(value.registeredEvents, into: &buf)
+        FfiConverterString.write(value.hooksPath, into: &buf)
+        FfiConverterBool.write(value.hasHooksPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGrokBuildHookStatus_lift(_ buf: RustBuffer) throws -> ClientMobileGrokBuildHookStatus {
+    return try FfiConverterTypeClientMobileGrokBuildHookStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGrokBuildHookStatus_lower(_ value: ClientMobileGrokBuildHookStatus) -> RustBuffer {
+    return FfiConverterTypeClientMobileGrokBuildHookStatus.lower(value)
+}
+
+
+public struct ClientMobileGrokBuildStatus: Equatable, Hashable {
+    public var hooks: ClientMobileGrokBuildHookStatus
+    public var sessionCount: Int64
+    public var activeSessionCount: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hooks: ClientMobileGrokBuildHookStatus, sessionCount: Int64, activeSessionCount: Int64) {
+        self.hooks = hooks
+        self.sessionCount = sessionCount
+        self.activeSessionCount = activeSessionCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileGrokBuildStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileGrokBuildStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileGrokBuildStatus {
+        return
+            try ClientMobileGrokBuildStatus(
+                hooks: FfiConverterTypeClientMobileGrokBuildHookStatus.read(from: &buf),
+                sessionCount: FfiConverterInt64.read(from: &buf),
+                activeSessionCount: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileGrokBuildStatus, into buf: inout [UInt8]) {
+        FfiConverterTypeClientMobileGrokBuildHookStatus.write(value.hooks, into: &buf)
+        FfiConverterInt64.write(value.sessionCount, into: &buf)
+        FfiConverterInt64.write(value.activeSessionCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGrokBuildStatus_lift(_ buf: RustBuffer) throws -> ClientMobileGrokBuildStatus {
+    return try FfiConverterTypeClientMobileGrokBuildStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileGrokBuildStatus_lower(_ value: ClientMobileGrokBuildStatus) -> RustBuffer {
+    return FfiConverterTypeClientMobileGrokBuildStatus.lower(value)
+}
+
+
+public struct ClientMobileHost: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var address: String
+    public var grpcAddress: String
+    public var grpcAddresses: [String]
+    public var isReachable: Bool
+    public var lastSyncedAt: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, address: String, grpcAddress: String, grpcAddresses: [String], isReachable: Bool, lastSyncedAt: String) {
+        self.id = id
+        self.name = name
+        self.address = address
+        self.grpcAddress = grpcAddress
+        self.grpcAddresses = grpcAddresses
+        self.isReachable = isReachable
+        self.lastSyncedAt = lastSyncedAt
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileHost: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileHost {
+        return
+            try ClientMobileHost(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                address: FfiConverterString.read(from: &buf),
+                grpcAddress: FfiConverterString.read(from: &buf),
+                grpcAddresses: FfiConverterSequenceString.read(from: &buf),
+                isReachable: FfiConverterBool.read(from: &buf),
+                lastSyncedAt: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileHost, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.address, into: &buf)
+        FfiConverterString.write(value.grpcAddress, into: &buf)
+        FfiConverterSequenceString.write(value.grpcAddresses, into: &buf)
+        FfiConverterBool.write(value.isReachable, into: &buf)
+        FfiConverterString.write(value.lastSyncedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileHost_lift(_ buf: RustBuffer) throws -> ClientMobileHost {
+    return try FfiConverterTypeClientMobileHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileHost_lower(_ value: ClientMobileHost) -> RustBuffer {
+    return FfiConverterTypeClientMobileHost.lower(value)
+}
+
+
+public struct ClientMobileInstalledPluginSummary: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var source: String
+    public var hasSource: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, source: String, hasSource: Bool) {
+        self.id = id
+        self.name = name
+        self.source = source
+        self.hasSource = hasSource
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileInstalledPluginSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileInstalledPluginSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileInstalledPluginSummary {
+        return
+            try ClientMobileInstalledPluginSummary(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                hasSource: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileInstalledPluginSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterBool.write(value.hasSource, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileInstalledPluginSummary_lift(_ buf: RustBuffer) throws -> ClientMobileInstalledPluginSummary {
+    return try FfiConverterTypeClientMobileInstalledPluginSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileInstalledPluginSummary_lower(_ value: ClientMobileInstalledPluginSummary) -> RustBuffer {
+    return FfiConverterTypeClientMobileInstalledPluginSummary.lower(value)
+}
+
+
+public struct ClientMobileNotificationDestination: Equatable, Hashable {
+    public var id: String
+    public var label: String
+    public var channel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, channel: String) {
+        self.id = id
+        self.label = label
+        self.channel = channel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileNotificationDestination: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileNotificationDestination: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileNotificationDestination {
+        return
+            try ClientMobileNotificationDestination(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                channel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileNotificationDestination, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.channel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileNotificationDestination_lift(_ buf: RustBuffer) throws -> ClientMobileNotificationDestination {
+    return try FfiConverterTypeClientMobileNotificationDestination.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileNotificationDestination_lower(_ value: ClientMobileNotificationDestination) -> RustBuffer {
+    return FfiConverterTypeClientMobileNotificationDestination.lower(value)
+}
+
+
+public struct ClientMobileSession: Equatable, Hashable {
+    public var id: String
+    public var refId: String
+    public var title: String
+    public var status: String
+    public var effectiveMode: String
+    public var hasEffectiveMode: Bool
+    public var lastUpdatedAt: String
+    public var createdAtMs: Int64
+    public var hasCreatedAtMs: Bool
+    public var updatedAtMs: Int64
+    public var hasUpdatedAtMs: Bool
+    public var latestMessageAtMs: Int64
+    public var hasLatestMessageAtMs: Bool
+    public var lastActivityAtMs: Int64
+    public var hasLastActivityAtMs: Bool
+    public var lastActivityAt: String
+    public var lastMessageAtMs: Int64
+    public var hasLastMessageAtMs: Bool
+    public var lastMessageAt: String
+    public var hasLastMessageAt: Bool
+    public var assistantPreview: String
+    public var hasAssistantPreview: Bool
+    public var isArchived: Bool
+    public var canSendPrompt: Bool
+    public var promptDeliveryUnavailableReason: String
+    public var hasPromptDeliveryUnavailableReason: Bool
+    public var assistantClient: String
+    public var goal: ClientMobileSessionGoal
+    public var hasGoal: Bool
+    public var metadata: ClientMobileSessionMetadata
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, refId: String, title: String, status: String, effectiveMode: String, hasEffectiveMode: Bool, lastUpdatedAt: String, createdAtMs: Int64, hasCreatedAtMs: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool, latestMessageAtMs: Int64, hasLatestMessageAtMs: Bool, lastActivityAtMs: Int64, hasLastActivityAtMs: Bool, lastActivityAt: String, lastMessageAtMs: Int64, hasLastMessageAtMs: Bool, lastMessageAt: String, hasLastMessageAt: Bool, assistantPreview: String, hasAssistantPreview: Bool, isArchived: Bool, canSendPrompt: Bool, promptDeliveryUnavailableReason: String, hasPromptDeliveryUnavailableReason: Bool, assistantClient: String, goal: ClientMobileSessionGoal, hasGoal: Bool, metadata: ClientMobileSessionMetadata) {
+        self.id = id
+        self.refId = refId
+        self.title = title
+        self.status = status
+        self.effectiveMode = effectiveMode
+        self.hasEffectiveMode = hasEffectiveMode
+        self.lastUpdatedAt = lastUpdatedAt
+        self.createdAtMs = createdAtMs
+        self.hasCreatedAtMs = hasCreatedAtMs
+        self.updatedAtMs = updatedAtMs
+        self.hasUpdatedAtMs = hasUpdatedAtMs
+        self.latestMessageAtMs = latestMessageAtMs
+        self.hasLatestMessageAtMs = hasLatestMessageAtMs
+        self.lastActivityAtMs = lastActivityAtMs
+        self.hasLastActivityAtMs = hasLastActivityAtMs
+        self.lastActivityAt = lastActivityAt
+        self.lastMessageAtMs = lastMessageAtMs
+        self.hasLastMessageAtMs = hasLastMessageAtMs
+        self.lastMessageAt = lastMessageAt
+        self.hasLastMessageAt = hasLastMessageAt
+        self.assistantPreview = assistantPreview
+        self.hasAssistantPreview = hasAssistantPreview
+        self.isArchived = isArchived
+        self.canSendPrompt = canSendPrompt
+        self.promptDeliveryUnavailableReason = promptDeliveryUnavailableReason
+        self.hasPromptDeliveryUnavailableReason = hasPromptDeliveryUnavailableReason
+        self.assistantClient = assistantClient
+        self.goal = goal
+        self.hasGoal = hasGoal
+        self.metadata = metadata
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSession: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSession: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSession {
+        return
+            try ClientMobileSession(
+                id: FfiConverterString.read(from: &buf),
+                refId: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                effectiveMode: FfiConverterString.read(from: &buf),
+                hasEffectiveMode: FfiConverterBool.read(from: &buf),
+                lastUpdatedAt: FfiConverterString.read(from: &buf),
+                createdAtMs: FfiConverterInt64.read(from: &buf),
+                hasCreatedAtMs: FfiConverterBool.read(from: &buf),
+                updatedAtMs: FfiConverterInt64.read(from: &buf),
+                hasUpdatedAtMs: FfiConverterBool.read(from: &buf),
+                latestMessageAtMs: FfiConverterInt64.read(from: &buf),
+                hasLatestMessageAtMs: FfiConverterBool.read(from: &buf),
+                lastActivityAtMs: FfiConverterInt64.read(from: &buf),
+                hasLastActivityAtMs: FfiConverterBool.read(from: &buf),
+                lastActivityAt: FfiConverterString.read(from: &buf),
+                lastMessageAtMs: FfiConverterInt64.read(from: &buf),
+                hasLastMessageAtMs: FfiConverterBool.read(from: &buf),
+                lastMessageAt: FfiConverterString.read(from: &buf),
+                hasLastMessageAt: FfiConverterBool.read(from: &buf),
+                assistantPreview: FfiConverterString.read(from: &buf),
+                hasAssistantPreview: FfiConverterBool.read(from: &buf),
+                isArchived: FfiConverterBool.read(from: &buf),
+                canSendPrompt: FfiConverterBool.read(from: &buf),
+                promptDeliveryUnavailableReason: FfiConverterString.read(from: &buf),
+                hasPromptDeliveryUnavailableReason: FfiConverterBool.read(from: &buf),
+                assistantClient: FfiConverterString.read(from: &buf),
+                goal: FfiConverterTypeClientMobileSessionGoal.read(from: &buf),
+                hasGoal: FfiConverterBool.read(from: &buf),
+                metadata: FfiConverterTypeClientMobileSessionMetadata.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSession, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.refId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.effectiveMode, into: &buf)
+        FfiConverterBool.write(value.hasEffectiveMode, into: &buf)
+        FfiConverterString.write(value.lastUpdatedAt, into: &buf)
+        FfiConverterInt64.write(value.createdAtMs, into: &buf)
+        FfiConverterBool.write(value.hasCreatedAtMs, into: &buf)
+        FfiConverterInt64.write(value.updatedAtMs, into: &buf)
+        FfiConverterBool.write(value.hasUpdatedAtMs, into: &buf)
+        FfiConverterInt64.write(value.latestMessageAtMs, into: &buf)
+        FfiConverterBool.write(value.hasLatestMessageAtMs, into: &buf)
+        FfiConverterInt64.write(value.lastActivityAtMs, into: &buf)
+        FfiConverterBool.write(value.hasLastActivityAtMs, into: &buf)
+        FfiConverterString.write(value.lastActivityAt, into: &buf)
+        FfiConverterInt64.write(value.lastMessageAtMs, into: &buf)
+        FfiConverterBool.write(value.hasLastMessageAtMs, into: &buf)
+        FfiConverterString.write(value.lastMessageAt, into: &buf)
+        FfiConverterBool.write(value.hasLastMessageAt, into: &buf)
+        FfiConverterString.write(value.assistantPreview, into: &buf)
+        FfiConverterBool.write(value.hasAssistantPreview, into: &buf)
+        FfiConverterBool.write(value.isArchived, into: &buf)
+        FfiConverterBool.write(value.canSendPrompt, into: &buf)
+        FfiConverterString.write(value.promptDeliveryUnavailableReason, into: &buf)
+        FfiConverterBool.write(value.hasPromptDeliveryUnavailableReason, into: &buf)
+        FfiConverterString.write(value.assistantClient, into: &buf)
+        FfiConverterTypeClientMobileSessionGoal.write(value.goal, into: &buf)
+        FfiConverterBool.write(value.hasGoal, into: &buf)
+        FfiConverterTypeClientMobileSessionMetadata.write(value.metadata, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSession_lift(_ buf: RustBuffer) throws -> ClientMobileSession {
+    return try FfiConverterTypeClientMobileSession.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSession_lower(_ value: ClientMobileSession) -> RustBuffer {
+    return FfiConverterTypeClientMobileSession.lower(value)
+}
+
+
+public struct ClientMobileSessionGoal: Equatable, Hashable {
+    public var id: String
+    public var title: String
+    public var status: String
+    public var lifecycle: String
+    public var running: Bool
+    public var tokenBudget: Int64
+    public var hasTokenBudget: Bool
+    public var tokensUsed: Int64
+    public var hasTokensUsed: Bool
+    public var timeUsedSeconds: Int64
+    public var hasTimeUsedSeconds: Bool
+    public var updatedAtMs: Int64
+    public var hasUpdatedAtMs: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, status: String, lifecycle: String, running: Bool, tokenBudget: Int64, hasTokenBudget: Bool, tokensUsed: Int64, hasTokensUsed: Bool, timeUsedSeconds: Int64, hasTimeUsedSeconds: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.lifecycle = lifecycle
+        self.running = running
+        self.tokenBudget = tokenBudget
+        self.hasTokenBudget = hasTokenBudget
+        self.tokensUsed = tokensUsed
+        self.hasTokensUsed = hasTokensUsed
+        self.timeUsedSeconds = timeUsedSeconds
+        self.hasTimeUsedSeconds = hasTimeUsedSeconds
+        self.updatedAtMs = updatedAtMs
+        self.hasUpdatedAtMs = hasUpdatedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSessionGoal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSessionGoal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSessionGoal {
+        return
+            try ClientMobileSessionGoal(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                lifecycle: FfiConverterString.read(from: &buf),
+                running: FfiConverterBool.read(from: &buf),
+                tokenBudget: FfiConverterInt64.read(from: &buf),
+                hasTokenBudget: FfiConverterBool.read(from: &buf),
+                tokensUsed: FfiConverterInt64.read(from: &buf),
+                hasTokensUsed: FfiConverterBool.read(from: &buf),
+                timeUsedSeconds: FfiConverterInt64.read(from: &buf),
+                hasTimeUsedSeconds: FfiConverterBool.read(from: &buf),
+                updatedAtMs: FfiConverterInt64.read(from: &buf),
+                hasUpdatedAtMs: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSessionGoal, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.lifecycle, into: &buf)
+        FfiConverterBool.write(value.running, into: &buf)
+        FfiConverterInt64.write(value.tokenBudget, into: &buf)
+        FfiConverterBool.write(value.hasTokenBudget, into: &buf)
+        FfiConverterInt64.write(value.tokensUsed, into: &buf)
+        FfiConverterBool.write(value.hasTokensUsed, into: &buf)
+        FfiConverterInt64.write(value.timeUsedSeconds, into: &buf)
+        FfiConverterBool.write(value.hasTimeUsedSeconds, into: &buf)
+        FfiConverterInt64.write(value.updatedAtMs, into: &buf)
+        FfiConverterBool.write(value.hasUpdatedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionGoal_lift(_ buf: RustBuffer) throws -> ClientMobileSessionGoal {
+    return try FfiConverterTypeClientMobileSessionGoal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionGoal_lower(_ value: ClientMobileSessionGoal) -> RustBuffer {
+    return FfiConverterTypeClientMobileSessionGoal.lower(value)
+}
+
+
+public struct ClientMobileSessionMetadata: Equatable, Hashable {
+    public var kind: String
+    public var source: String
+    public var sourceDisplayName: String
+    public var assistantKind: String
+    public var hasAssistantKind: Bool
+    public var originator: String
+    public var hasOriginator: Bool
+    public var projectName: String
+    public var hasProjectName: Bool
+    public var projectPath: String
+    public var hasProjectPath: Bool
+    public var taskKind: String
+    public var transcriptAvailable: Bool
+    public var gitRepository: ClientMobileGitRepositoryMetadata
+    public var hasGitRepository: Bool
+    public var pullRequestUrl: String
+    public var hasPullRequestUrl: Bool
+    public var supportsSubagents: Bool
+    public var spawn: ClientMobileSessionSpawnMetadata
+    public var hasSpawn: Bool
+    public var installedPlugins: [ClientMobileInstalledPluginSummary]
+    public var sources: [ClientMobileSessionSourceReference]
+    public var tags: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, source: String, sourceDisplayName: String, assistantKind: String, hasAssistantKind: Bool, originator: String, hasOriginator: Bool, projectName: String, hasProjectName: Bool, projectPath: String, hasProjectPath: Bool, taskKind: String, transcriptAvailable: Bool, gitRepository: ClientMobileGitRepositoryMetadata, hasGitRepository: Bool, pullRequestUrl: String, hasPullRequestUrl: Bool, supportsSubagents: Bool, spawn: ClientMobileSessionSpawnMetadata, hasSpawn: Bool, installedPlugins: [ClientMobileInstalledPluginSummary], sources: [ClientMobileSessionSourceReference], tags: [String]) {
+        self.kind = kind
+        self.source = source
+        self.sourceDisplayName = sourceDisplayName
+        self.assistantKind = assistantKind
+        self.hasAssistantKind = hasAssistantKind
+        self.originator = originator
+        self.hasOriginator = hasOriginator
+        self.projectName = projectName
+        self.hasProjectName = hasProjectName
+        self.projectPath = projectPath
+        self.hasProjectPath = hasProjectPath
+        self.taskKind = taskKind
+        self.transcriptAvailable = transcriptAvailable
+        self.gitRepository = gitRepository
+        self.hasGitRepository = hasGitRepository
+        self.pullRequestUrl = pullRequestUrl
+        self.hasPullRequestUrl = hasPullRequestUrl
+        self.supportsSubagents = supportsSubagents
+        self.spawn = spawn
+        self.hasSpawn = hasSpawn
+        self.installedPlugins = installedPlugins
+        self.sources = sources
+        self.tags = tags
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSessionMetadata: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSessionMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSessionMetadata {
+        return
+            try ClientMobileSessionMetadata(
+                kind: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                sourceDisplayName: FfiConverterString.read(from: &buf),
+                assistantKind: FfiConverterString.read(from: &buf),
+                hasAssistantKind: FfiConverterBool.read(from: &buf),
+                originator: FfiConverterString.read(from: &buf),
+                hasOriginator: FfiConverterBool.read(from: &buf),
+                projectName: FfiConverterString.read(from: &buf),
+                hasProjectName: FfiConverterBool.read(from: &buf),
+                projectPath: FfiConverterString.read(from: &buf),
+                hasProjectPath: FfiConverterBool.read(from: &buf),
+                taskKind: FfiConverterString.read(from: &buf),
+                transcriptAvailable: FfiConverterBool.read(from: &buf),
+                gitRepository: FfiConverterTypeClientMobileGitRepositoryMetadata.read(from: &buf),
+                hasGitRepository: FfiConverterBool.read(from: &buf),
+                pullRequestUrl: FfiConverterString.read(from: &buf),
+                hasPullRequestUrl: FfiConverterBool.read(from: &buf),
+                supportsSubagents: FfiConverterBool.read(from: &buf),
+                spawn: FfiConverterTypeClientMobileSessionSpawnMetadata.read(from: &buf),
+                hasSpawn: FfiConverterBool.read(from: &buf),
+                installedPlugins: FfiConverterSequenceTypeClientMobileInstalledPluginSummary.read(from: &buf),
+                sources: FfiConverterSequenceTypeClientMobileSessionSourceReference.read(from: &buf),
+                tags: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSessionMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.sourceDisplayName, into: &buf)
+        FfiConverterString.write(value.assistantKind, into: &buf)
+        FfiConverterBool.write(value.hasAssistantKind, into: &buf)
+        FfiConverterString.write(value.originator, into: &buf)
+        FfiConverterBool.write(value.hasOriginator, into: &buf)
+        FfiConverterString.write(value.projectName, into: &buf)
+        FfiConverterBool.write(value.hasProjectName, into: &buf)
+        FfiConverterString.write(value.projectPath, into: &buf)
+        FfiConverterBool.write(value.hasProjectPath, into: &buf)
+        FfiConverterString.write(value.taskKind, into: &buf)
+        FfiConverterBool.write(value.transcriptAvailable, into: &buf)
+        FfiConverterTypeClientMobileGitRepositoryMetadata.write(value.gitRepository, into: &buf)
+        FfiConverterBool.write(value.hasGitRepository, into: &buf)
+        FfiConverterString.write(value.pullRequestUrl, into: &buf)
+        FfiConverterBool.write(value.hasPullRequestUrl, into: &buf)
+        FfiConverterBool.write(value.supportsSubagents, into: &buf)
+        FfiConverterTypeClientMobileSessionSpawnMetadata.write(value.spawn, into: &buf)
+        FfiConverterBool.write(value.hasSpawn, into: &buf)
+        FfiConverterSequenceTypeClientMobileInstalledPluginSummary.write(value.installedPlugins, into: &buf)
+        FfiConverterSequenceTypeClientMobileSessionSourceReference.write(value.sources, into: &buf)
+        FfiConverterSequenceString.write(value.tags, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionMetadata_lift(_ buf: RustBuffer) throws -> ClientMobileSessionMetadata {
+    return try FfiConverterTypeClientMobileSessionMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionMetadata_lower(_ value: ClientMobileSessionMetadata) -> RustBuffer {
+    return FfiConverterTypeClientMobileSessionMetadata.lower(value)
+}
+
+
+public struct ClientMobileSessionSourceReference: Equatable, Hashable {
+    public var kind: String
+    public var label: String
+    public var value: String
+    public var url: String
+    public var hasUrl: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, label: String, value: String, url: String, hasUrl: Bool) {
+        self.kind = kind
+        self.label = label
+        self.value = value
+        self.url = url
+        self.hasUrl = hasUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSessionSourceReference: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSessionSourceReference: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSessionSourceReference {
+        return
+            try ClientMobileSessionSourceReference(
+                kind: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf),
+                hasUrl: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSessionSourceReference, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterBool.write(value.hasUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionSourceReference_lift(_ buf: RustBuffer) throws -> ClientMobileSessionSourceReference {
+    return try FfiConverterTypeClientMobileSessionSourceReference.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionSourceReference_lower(_ value: ClientMobileSessionSourceReference) -> RustBuffer {
+    return FfiConverterTypeClientMobileSessionSourceReference.lower(value)
+}
+
+
+public struct ClientMobileSessionSpawnMetadata: Equatable, Hashable {
+    public var parentThreadId: String
+    public var hasParentThreadId: Bool
+    public var rootThreadId: String
+    public var hasRootThreadId: Bool
+    public var children: [String]
+    public var launchKind: String
+    public var hasLaunchKind: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(parentThreadId: String, hasParentThreadId: Bool, rootThreadId: String, hasRootThreadId: Bool, children: [String], launchKind: String, hasLaunchKind: Bool) {
+        self.parentThreadId = parentThreadId
+        self.hasParentThreadId = hasParentThreadId
+        self.rootThreadId = rootThreadId
+        self.hasRootThreadId = hasRootThreadId
+        self.children = children
+        self.launchKind = launchKind
+        self.hasLaunchKind = hasLaunchKind
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSessionSpawnMetadata: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSessionSpawnMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSessionSpawnMetadata {
+        return
+            try ClientMobileSessionSpawnMetadata(
+                parentThreadId: FfiConverterString.read(from: &buf),
+                hasParentThreadId: FfiConverterBool.read(from: &buf),
+                rootThreadId: FfiConverterString.read(from: &buf),
+                hasRootThreadId: FfiConverterBool.read(from: &buf),
+                children: FfiConverterSequenceString.read(from: &buf),
+                launchKind: FfiConverterString.read(from: &buf),
+                hasLaunchKind: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSessionSpawnMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.parentThreadId, into: &buf)
+        FfiConverterBool.write(value.hasParentThreadId, into: &buf)
+        FfiConverterString.write(value.rootThreadId, into: &buf)
+        FfiConverterBool.write(value.hasRootThreadId, into: &buf)
+        FfiConverterSequenceString.write(value.children, into: &buf)
+        FfiConverterString.write(value.launchKind, into: &buf)
+        FfiConverterBool.write(value.hasLaunchKind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionSpawnMetadata_lift(_ buf: RustBuffer) throws -> ClientMobileSessionSpawnMetadata {
+    return try FfiConverterTypeClientMobileSessionSpawnMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSessionSpawnMetadata_lower(_ value: ClientMobileSessionSpawnMetadata) -> RustBuffer {
+    return FfiConverterTypeClientMobileSessionSpawnMetadata.lower(value)
+}
+
+
+public struct ClientMobileSnapshot: Equatable, Hashable {
+    public var revision: String
+    public var hasRevision: Bool
+    public var host: ClientMobileHost
+    public var globalSettings: ClientMobileGlobalSettings
+    public var sessions: [ClientMobileSession]
+    public var surfaceSessions: [ClientMobileSurfaceSessions]
+    public var notifications: [ClientMobileNotificationDestination]
+    public var completionChecks: [ClientMobileCompletionCheckSummary]
+    public var workStatus: ClientMobileWorkStatusSummary
+    public var devinDesktop: ClientMobileDevinDesktopStatus
+    public var hasDevinDesktop: Bool
+    public var grokBuild: ClientMobileGrokBuildStatus
+    public var hasGrokBuild: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: String, hasRevision: Bool, host: ClientMobileHost, globalSettings: ClientMobileGlobalSettings, sessions: [ClientMobileSession], surfaceSessions: [ClientMobileSurfaceSessions], notifications: [ClientMobileNotificationDestination], completionChecks: [ClientMobileCompletionCheckSummary], workStatus: ClientMobileWorkStatusSummary, devinDesktop: ClientMobileDevinDesktopStatus, hasDevinDesktop: Bool, grokBuild: ClientMobileGrokBuildStatus, hasGrokBuild: Bool) {
+        self.revision = revision
+        self.hasRevision = hasRevision
+        self.host = host
+        self.globalSettings = globalSettings
+        self.sessions = sessions
+        self.surfaceSessions = surfaceSessions
+        self.notifications = notifications
+        self.completionChecks = completionChecks
+        self.workStatus = workStatus
+        self.devinDesktop = devinDesktop
+        self.hasDevinDesktop = hasDevinDesktop
+        self.grokBuild = grokBuild
+        self.hasGrokBuild = hasGrokBuild
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSnapshot {
+        return
+            try ClientMobileSnapshot(
+                revision: FfiConverterString.read(from: &buf),
+                hasRevision: FfiConverterBool.read(from: &buf),
+                host: FfiConverterTypeClientMobileHost.read(from: &buf),
+                globalSettings: FfiConverterTypeClientMobileGlobalSettings.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientMobileSession.read(from: &buf),
+                surfaceSessions: FfiConverterSequenceTypeClientMobileSurfaceSessions.read(from: &buf),
+                notifications: FfiConverterSequenceTypeClientMobileNotificationDestination.read(from: &buf),
+                completionChecks: FfiConverterSequenceTypeClientMobileCompletionCheckSummary.read(from: &buf),
+                workStatus: FfiConverterTypeClientMobileWorkStatusSummary.read(from: &buf),
+                devinDesktop: FfiConverterTypeClientMobileDevinDesktopStatus.read(from: &buf),
+                hasDevinDesktop: FfiConverterBool.read(from: &buf),
+                grokBuild: FfiConverterTypeClientMobileGrokBuildStatus.read(from: &buf),
+                hasGrokBuild: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.revision, into: &buf)
+        FfiConverterBool.write(value.hasRevision, into: &buf)
+        FfiConverterTypeClientMobileHost.write(value.host, into: &buf)
+        FfiConverterTypeClientMobileGlobalSettings.write(value.globalSettings, into: &buf)
+        FfiConverterSequenceTypeClientMobileSession.write(value.sessions, into: &buf)
+        FfiConverterSequenceTypeClientMobileSurfaceSessions.write(value.surfaceSessions, into: &buf)
+        FfiConverterSequenceTypeClientMobileNotificationDestination.write(value.notifications, into: &buf)
+        FfiConverterSequenceTypeClientMobileCompletionCheckSummary.write(value.completionChecks, into: &buf)
+        FfiConverterTypeClientMobileWorkStatusSummary.write(value.workStatus, into: &buf)
+        FfiConverterTypeClientMobileDevinDesktopStatus.write(value.devinDesktop, into: &buf)
+        FfiConverterBool.write(value.hasDevinDesktop, into: &buf)
+        FfiConverterTypeClientMobileGrokBuildStatus.write(value.grokBuild, into: &buf)
+        FfiConverterBool.write(value.hasGrokBuild, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshot_lift(_ buf: RustBuffer) throws -> ClientMobileSnapshot {
+    return try FfiConverterTypeClientMobileSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSnapshot_lower(_ value: ClientMobileSnapshot) -> RustBuffer {
+    return FfiConverterTypeClientMobileSnapshot.lower(value)
+}
+
+
+public struct ClientMobileSnapshotProjection: Equatable, Hashable {
+    public var hasSnapshot: Bool
+    public var snapshot: ClientMobileSnapshot
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hasSnapshot: Bool, snapshot: ClientMobileSnapshot) {
         self.hasSnapshot = hasSnapshot
-        self.snapshotJson = snapshotJson
+        self.snapshot = snapshot
     }
 
 
@@ -2249,13 +3551,13 @@ public struct FfiConverterTypeClientMobileSnapshotProjection: FfiConverterRustBu
         return
             try ClientMobileSnapshotProjection(
                 hasSnapshot: FfiConverterBool.read(from: &buf),
-                snapshotJson: FfiConverterString.read(from: &buf)
+                snapshot: FfiConverterTypeClientMobileSnapshot.read(from: &buf)
         )
     }
 
     public static func write(_ value: ClientMobileSnapshotProjection, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.hasSnapshot, into: &buf)
-        FfiConverterString.write(value.snapshotJson, into: &buf)
+        FfiConverterTypeClientMobileSnapshot.write(value.snapshot, into: &buf)
     }
 }
 
@@ -2277,7 +3579,7 @@ public func FfiConverterTypeClientMobileSnapshotProjection_lower(_ value: Client
 
 public struct ClientMobileSnapshotStreamUpdate: Equatable, Hashable {
     public var hasSnapshot: Bool
-    public var snapshotJson: String
+    public var snapshot: ClientMobileSnapshot
     public var syncReason: String
     public var shouldStop: Bool
     public var latestSeq: Int64
@@ -2289,9 +3591,9 @@ public struct ClientMobileSnapshotStreamUpdate: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(hasSnapshot: Bool, snapshotJson: String, syncReason: String, shouldStop: Bool, latestSeq: Int64, serverTime: String, errorDescription: String, debugMessage: String, hasTextChunk: Bool, textChunk: ClientTextChunk) {
+    public init(hasSnapshot: Bool, snapshot: ClientMobileSnapshot, syncReason: String, shouldStop: Bool, latestSeq: Int64, serverTime: String, errorDescription: String, debugMessage: String, hasTextChunk: Bool, textChunk: ClientTextChunk) {
         self.hasSnapshot = hasSnapshot
-        self.snapshotJson = snapshotJson
+        self.snapshot = snapshot
         self.syncReason = syncReason
         self.shouldStop = shouldStop
         self.latestSeq = latestSeq
@@ -2319,7 +3621,7 @@ public struct FfiConverterTypeClientMobileSnapshotStreamUpdate: FfiConverterRust
         return
             try ClientMobileSnapshotStreamUpdate(
                 hasSnapshot: FfiConverterBool.read(from: &buf),
-                snapshotJson: FfiConverterString.read(from: &buf),
+                snapshot: FfiConverterTypeClientMobileSnapshot.read(from: &buf),
                 syncReason: FfiConverterString.read(from: &buf),
                 shouldStop: FfiConverterBool.read(from: &buf),
                 latestSeq: FfiConverterInt64.read(from: &buf),
@@ -2333,7 +3635,7 @@ public struct FfiConverterTypeClientMobileSnapshotStreamUpdate: FfiConverterRust
 
     public static func write(_ value: ClientMobileSnapshotStreamUpdate, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.hasSnapshot, into: &buf)
-        FfiConverterString.write(value.snapshotJson, into: &buf)
+        FfiConverterTypeClientMobileSnapshot.write(value.snapshot, into: &buf)
         FfiConverterString.write(value.syncReason, into: &buf)
         FfiConverterBool.write(value.shouldStop, into: &buf)
         FfiConverterInt64.write(value.latestSeq, into: &buf)
@@ -2358,6 +3660,318 @@ public func FfiConverterTypeClientMobileSnapshotStreamUpdate_lift(_ buf: RustBuf
 #endif
 public func FfiConverterTypeClientMobileSnapshotStreamUpdate_lower(_ value: ClientMobileSnapshotStreamUpdate) -> RustBuffer {
     return FfiConverterTypeClientMobileSnapshotStreamUpdate.lower(value)
+}
+
+
+public struct ClientMobileSurfaceSessions: Equatable, Hashable {
+    public var surface: String
+    public var sessions: [ClientMobileSession]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(surface: String, sessions: [ClientMobileSession]) {
+        self.surface = surface
+        self.sessions = sessions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileSurfaceSessions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileSurfaceSessions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileSurfaceSessions {
+        return
+            try ClientMobileSurfaceSessions(
+                surface: FfiConverterString.read(from: &buf),
+                sessions: FfiConverterSequenceTypeClientMobileSession.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileSurfaceSessions, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.surface, into: &buf)
+        FfiConverterSequenceTypeClientMobileSession.write(value.sessions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSurfaceSessions_lift(_ buf: RustBuffer) throws -> ClientMobileSurfaceSessions {
+    return try FfiConverterTypeClientMobileSurfaceSessions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileSurfaceSessions_lower(_ value: ClientMobileSurfaceSessions) -> RustBuffer {
+    return FfiConverterTypeClientMobileSurfaceSessions.lower(value)
+}
+
+
+public struct ClientMobileWorkStatusAutomation: Equatable, Hashable {
+    public var id: String
+    public var kind: String
+    public var name: String
+    public var status: String
+    public var scheduleSummary: String
+    public var targetThreadId: String
+    public var hasTargetThreadId: Bool
+    public var targetKnown: Bool
+    public var controlPlaneCovered: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, name: String, status: String, scheduleSummary: String, targetThreadId: String, hasTargetThreadId: Bool, targetKnown: Bool, controlPlaneCovered: Bool) {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.status = status
+        self.scheduleSummary = scheduleSummary
+        self.targetThreadId = targetThreadId
+        self.hasTargetThreadId = hasTargetThreadId
+        self.targetKnown = targetKnown
+        self.controlPlaneCovered = controlPlaneCovered
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileWorkStatusAutomation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileWorkStatusAutomation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileWorkStatusAutomation {
+        return
+            try ClientMobileWorkStatusAutomation(
+                id: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                scheduleSummary: FfiConverterString.read(from: &buf),
+                targetThreadId: FfiConverterString.read(from: &buf),
+                hasTargetThreadId: FfiConverterBool.read(from: &buf),
+                targetKnown: FfiConverterBool.read(from: &buf),
+                controlPlaneCovered: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileWorkStatusAutomation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.scheduleSummary, into: &buf)
+        FfiConverterString.write(value.targetThreadId, into: &buf)
+        FfiConverterBool.write(value.hasTargetThreadId, into: &buf)
+        FfiConverterBool.write(value.targetKnown, into: &buf)
+        FfiConverterBool.write(value.controlPlaneCovered, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusAutomation_lift(_ buf: RustBuffer) throws -> ClientMobileWorkStatusAutomation {
+    return try FfiConverterTypeClientMobileWorkStatusAutomation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusAutomation_lower(_ value: ClientMobileWorkStatusAutomation) -> RustBuffer {
+    return FfiConverterTypeClientMobileWorkStatusAutomation.lower(value)
+}
+
+
+public struct ClientMobileWorkStatusGoal: Equatable, Hashable {
+    public var id: String
+    public var title: String
+    public var status: String
+    public var targetThreadId: String
+    public var hasTargetThreadId: Bool
+    public var targetKnown: Bool
+    public var updatedAtMs: Int64
+    public var hasUpdatedAtMs: Bool
+    public var tokensUsed: Int64
+    public var hasTokensUsed: Bool
+    public var tokenBudget: Int64
+    public var hasTokenBudget: Bool
+    public var timeUsedSeconds: Int64
+    public var hasTimeUsedSeconds: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, status: String, targetThreadId: String, hasTargetThreadId: Bool, targetKnown: Bool, updatedAtMs: Int64, hasUpdatedAtMs: Bool, tokensUsed: Int64, hasTokensUsed: Bool, tokenBudget: Int64, hasTokenBudget: Bool, timeUsedSeconds: Int64, hasTimeUsedSeconds: Bool) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.targetThreadId = targetThreadId
+        self.hasTargetThreadId = hasTargetThreadId
+        self.targetKnown = targetKnown
+        self.updatedAtMs = updatedAtMs
+        self.hasUpdatedAtMs = hasUpdatedAtMs
+        self.tokensUsed = tokensUsed
+        self.hasTokensUsed = hasTokensUsed
+        self.tokenBudget = tokenBudget
+        self.hasTokenBudget = hasTokenBudget
+        self.timeUsedSeconds = timeUsedSeconds
+        self.hasTimeUsedSeconds = hasTimeUsedSeconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileWorkStatusGoal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileWorkStatusGoal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileWorkStatusGoal {
+        return
+            try ClientMobileWorkStatusGoal(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                targetThreadId: FfiConverterString.read(from: &buf),
+                hasTargetThreadId: FfiConverterBool.read(from: &buf),
+                targetKnown: FfiConverterBool.read(from: &buf),
+                updatedAtMs: FfiConverterInt64.read(from: &buf),
+                hasUpdatedAtMs: FfiConverterBool.read(from: &buf),
+                tokensUsed: FfiConverterInt64.read(from: &buf),
+                hasTokensUsed: FfiConverterBool.read(from: &buf),
+                tokenBudget: FfiConverterInt64.read(from: &buf),
+                hasTokenBudget: FfiConverterBool.read(from: &buf),
+                timeUsedSeconds: FfiConverterInt64.read(from: &buf),
+                hasTimeUsedSeconds: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileWorkStatusGoal, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.targetThreadId, into: &buf)
+        FfiConverterBool.write(value.hasTargetThreadId, into: &buf)
+        FfiConverterBool.write(value.targetKnown, into: &buf)
+        FfiConverterInt64.write(value.updatedAtMs, into: &buf)
+        FfiConverterBool.write(value.hasUpdatedAtMs, into: &buf)
+        FfiConverterInt64.write(value.tokensUsed, into: &buf)
+        FfiConverterBool.write(value.hasTokensUsed, into: &buf)
+        FfiConverterInt64.write(value.tokenBudget, into: &buf)
+        FfiConverterBool.write(value.hasTokenBudget, into: &buf)
+        FfiConverterInt64.write(value.timeUsedSeconds, into: &buf)
+        FfiConverterBool.write(value.hasTimeUsedSeconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusGoal_lift(_ buf: RustBuffer) throws -> ClientMobileWorkStatusGoal {
+    return try FfiConverterTypeClientMobileWorkStatusGoal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusGoal_lower(_ value: ClientMobileWorkStatusGoal) -> RustBuffer {
+    return FfiConverterTypeClientMobileWorkStatusGoal.lower(value)
+}
+
+
+public struct ClientMobileWorkStatusSummary: Equatable, Hashable {
+    public var goalCount: Int64
+    public var runningGoalCount: Int64
+    public var automationCount: Int64
+    public var activeAutomationCount: Int64
+    public var coveredAutomationCount: Int64
+    public var runningGoals: [ClientMobileWorkStatusGoal]
+    public var activeAutomations: [ClientMobileWorkStatusAutomation]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(goalCount: Int64, runningGoalCount: Int64, automationCount: Int64, activeAutomationCount: Int64, coveredAutomationCount: Int64, runningGoals: [ClientMobileWorkStatusGoal], activeAutomations: [ClientMobileWorkStatusAutomation]) {
+        self.goalCount = goalCount
+        self.runningGoalCount = runningGoalCount
+        self.automationCount = automationCount
+        self.activeAutomationCount = activeAutomationCount
+        self.coveredAutomationCount = coveredAutomationCount
+        self.runningGoals = runningGoals
+        self.activeAutomations = activeAutomations
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClientMobileWorkStatusSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClientMobileWorkStatusSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClientMobileWorkStatusSummary {
+        return
+            try ClientMobileWorkStatusSummary(
+                goalCount: FfiConverterInt64.read(from: &buf),
+                runningGoalCount: FfiConverterInt64.read(from: &buf),
+                automationCount: FfiConverterInt64.read(from: &buf),
+                activeAutomationCount: FfiConverterInt64.read(from: &buf),
+                coveredAutomationCount: FfiConverterInt64.read(from: &buf),
+                runningGoals: FfiConverterSequenceTypeClientMobileWorkStatusGoal.read(from: &buf),
+                activeAutomations: FfiConverterSequenceTypeClientMobileWorkStatusAutomation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClientMobileWorkStatusSummary, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.goalCount, into: &buf)
+        FfiConverterInt64.write(value.runningGoalCount, into: &buf)
+        FfiConverterInt64.write(value.automationCount, into: &buf)
+        FfiConverterInt64.write(value.activeAutomationCount, into: &buf)
+        FfiConverterInt64.write(value.coveredAutomationCount, into: &buf)
+        FfiConverterSequenceTypeClientMobileWorkStatusGoal.write(value.runningGoals, into: &buf)
+        FfiConverterSequenceTypeClientMobileWorkStatusAutomation.write(value.activeAutomations, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusSummary_lift(_ buf: RustBuffer) throws -> ClientMobileWorkStatusSummary {
+    return try FfiConverterTypeClientMobileWorkStatusSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClientMobileWorkStatusSummary_lower(_ value: ClientMobileWorkStatusSummary) -> RustBuffer {
+    return FfiConverterTypeClientMobileWorkStatusSummary.lower(value)
 }
 
 
@@ -2503,18 +4117,14 @@ public func FfiConverterTypeClientNotificationReplyPersistResult_lower(_ value: 
 
 public struct ClientOptimisticModeProjection: Equatable, Hashable {
     public var didUpdate: Bool
-    public var visibleSnapshotJson: String
-    public var visibleDetailJson: String
-    public var hasDetail: Bool
+    public var visibleSnapshot: ClientMobileSnapshot
     public var visibleSessionIds: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(didUpdate: Bool, visibleSnapshotJson: String, visibleDetailJson: String, hasDetail: Bool, visibleSessionIds: [String]) {
+    public init(didUpdate: Bool, visibleSnapshot: ClientMobileSnapshot, visibleSessionIds: [String]) {
         self.didUpdate = didUpdate
-        self.visibleSnapshotJson = visibleSnapshotJson
-        self.visibleDetailJson = visibleDetailJson
-        self.hasDetail = hasDetail
+        self.visibleSnapshot = visibleSnapshot
         self.visibleSessionIds = visibleSessionIds
     }
 
@@ -2535,18 +4145,14 @@ public struct FfiConverterTypeClientOptimisticModeProjection: FfiConverterRustBu
         return
             try ClientOptimisticModeProjection(
                 didUpdate: FfiConverterBool.read(from: &buf),
-                visibleSnapshotJson: FfiConverterString.read(from: &buf),
-                visibleDetailJson: FfiConverterString.read(from: &buf),
-                hasDetail: FfiConverterBool.read(from: &buf),
+                visibleSnapshot: FfiConverterTypeClientMobileSnapshot.read(from: &buf),
                 visibleSessionIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
     public static func write(_ value: ClientOptimisticModeProjection, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.didUpdate, into: &buf)
-        FfiConverterString.write(value.visibleSnapshotJson, into: &buf)
-        FfiConverterString.write(value.visibleDetailJson, into: &buf)
-        FfiConverterBool.write(value.hasDetail, into: &buf)
+        FfiConverterTypeClientMobileSnapshot.write(value.visibleSnapshot, into: &buf)
         FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
     }
 }
@@ -3387,16 +4993,16 @@ public func FfiConverterTypeClientSnapshotLoadFailureProjection_lower(_ value: C
 
 public struct ClientSnapshotProjection: Equatable, Hashable {
     public var selectedAssistantSurface: String
-    public var visibleSnapshotJson: String
+    public var visibleSnapshot: ClientMobileSnapshot
     public var visibleSessionIds: [String]
     public var sessionSections: ClientSessionSectionsProjection
     public var sessionIndex: ClientSessionIndexProjection
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(selectedAssistantSurface: String, visibleSnapshotJson: String, visibleSessionIds: [String], sessionSections: ClientSessionSectionsProjection, sessionIndex: ClientSessionIndexProjection) {
+    public init(selectedAssistantSurface: String, visibleSnapshot: ClientMobileSnapshot, visibleSessionIds: [String], sessionSections: ClientSessionSectionsProjection, sessionIndex: ClientSessionIndexProjection) {
         self.selectedAssistantSurface = selectedAssistantSurface
-        self.visibleSnapshotJson = visibleSnapshotJson
+        self.visibleSnapshot = visibleSnapshot
         self.visibleSessionIds = visibleSessionIds
         self.sessionSections = sessionSections
         self.sessionIndex = sessionIndex
@@ -3419,7 +5025,7 @@ public struct FfiConverterTypeClientSnapshotProjection: FfiConverterRustBuffer {
         return
             try ClientSnapshotProjection(
                 selectedAssistantSurface: FfiConverterString.read(from: &buf),
-                visibleSnapshotJson: FfiConverterString.read(from: &buf),
+                visibleSnapshot: FfiConverterTypeClientMobileSnapshot.read(from: &buf),
                 visibleSessionIds: FfiConverterSequenceString.read(from: &buf),
                 sessionSections: FfiConverterTypeClientSessionSectionsProjection.read(from: &buf),
                 sessionIndex: FfiConverterTypeClientSessionIndexProjection.read(from: &buf)
@@ -3428,7 +5034,7 @@ public struct FfiConverterTypeClientSnapshotProjection: FfiConverterRustBuffer {
 
     public static func write(_ value: ClientSnapshotProjection, into buf: inout [UInt8]) {
         FfiConverterString.write(value.selectedAssistantSurface, into: &buf)
-        FfiConverterString.write(value.visibleSnapshotJson, into: &buf)
+        FfiConverterTypeClientMobileSnapshot.write(value.visibleSnapshot, into: &buf)
         FfiConverterSequenceString.write(value.visibleSessionIds, into: &buf)
         FfiConverterTypeClientSessionSectionsProjection.write(value.sessionSections, into: &buf)
         FfiConverterTypeClientSessionIndexProjection.write(value.sessionIndex, into: &buf)
@@ -4936,6 +6542,206 @@ fileprivate struct FfiConverterSequenceTypeClientMenuBarSessionMiniPendingComman
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClientMobileCompletionCheckSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileCompletionCheckSummary]
+
+    public static func write(_ value: [ClientMobileCompletionCheckSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileCompletionCheckSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileCompletionCheckSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileCompletionCheckSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileCompletionCheckSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileInstalledPluginSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileInstalledPluginSummary]
+
+    public static func write(_ value: [ClientMobileInstalledPluginSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileInstalledPluginSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileInstalledPluginSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileInstalledPluginSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileInstalledPluginSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileNotificationDestination: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileNotificationDestination]
+
+    public static func write(_ value: [ClientMobileNotificationDestination], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileNotificationDestination.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileNotificationDestination] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileNotificationDestination]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileNotificationDestination.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileSession: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileSession]
+
+    public static func write(_ value: [ClientMobileSession], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileSession.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileSession] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileSession]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileSession.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileSessionSourceReference: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileSessionSourceReference]
+
+    public static func write(_ value: [ClientMobileSessionSourceReference], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileSessionSourceReference.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileSessionSourceReference] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileSessionSourceReference]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileSessionSourceReference.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileSurfaceSessions: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileSurfaceSessions]
+
+    public static func write(_ value: [ClientMobileSurfaceSessions], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileSurfaceSessions.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileSurfaceSessions] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileSurfaceSessions]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileSurfaceSessions.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileWorkStatusAutomation: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileWorkStatusAutomation]
+
+    public static func write(_ value: [ClientMobileWorkStatusAutomation], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileWorkStatusAutomation.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileWorkStatusAutomation] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileWorkStatusAutomation]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileWorkStatusAutomation.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeClientMobileWorkStatusGoal: FfiConverterRustBuffer {
+    typealias SwiftType = [ClientMobileWorkStatusGoal]
+
+    public static func write(_ value: [ClientMobileWorkStatusGoal], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClientMobileWorkStatusGoal.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClientMobileWorkStatusGoal] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClientMobileWorkStatusGoal]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClientMobileWorkStatusGoal.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClientPendingCommand: FfiConverterRustBuffer {
     typealias SwiftType = [ClientPendingCommand]
 
@@ -5169,29 +6975,28 @@ public func reduceAssistantSurfaceSelection(currentSelectedAssistantSurface: Str
     )
 })
 }
-public func reduceMobileSnapshotDetailCache(visibleSnapshotJson: String, detailBySessionIdJson: String)throws  -> ClientDetailCacheProjection  {
+public func reduceMobileSnapshotDetailCache(visibleSnapshot: ClientMobileSnapshot, detailBySessionIdJson: String)throws  -> ClientDetailCacheProjection  {
     return try  FfiConverterTypeClientDetailCacheProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_detail_cache(
-        FfiConverterString.lower(visibleSnapshotJson),
+        FfiConverterTypeClientMobileSnapshot_lower(visibleSnapshot),
         FfiConverterString.lower(detailBySessionIdJson),$0
     )
 })
 }
-public func reduceMobileSnapshotOptimisticMode(snapshotJson: String, detailJson: String, sessionId: String, preset: String, selectedAssistantSurface: String)throws  -> ClientOptimisticModeProjection  {
+public func reduceMobileSnapshotOptimisticMode(snapshot: ClientMobileSnapshot, sessionId: String, preset: String, selectedAssistantSurface: String)throws  -> ClientOptimisticModeProjection  {
     return try  FfiConverterTypeClientOptimisticModeProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_optimistic_mode(
-        FfiConverterString.lower(snapshotJson),
-        FfiConverterString.lower(detailJson),
+        FfiConverterTypeClientMobileSnapshot_lower(snapshot),
         FfiConverterString.lower(sessionId),
         FfiConverterString.lower(preset),
         FfiConverterString.lower(selectedAssistantSurface),$0
     )
 })
 }
-public func reduceMobileSnapshotProjection(snapshotJson: String, preferredAssistantSurface: String, hasUserSelectedAssistantSurface: Bool, currentSelectedAssistantSurface: String, assistantSurfaceOrder: [String])throws  -> ClientSnapshotProjection  {
+public func reduceMobileSnapshotProjection(snapshot: ClientMobileSnapshot, preferredAssistantSurface: String, hasUserSelectedAssistantSurface: Bool, currentSelectedAssistantSurface: String, assistantSurfaceOrder: [String])throws  -> ClientSnapshotProjection  {
     return try  FfiConverterTypeClientSnapshotProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_mobile_snapshot_projection(
-        FfiConverterString.lower(snapshotJson),
+        FfiConverterTypeClientMobileSnapshot_lower(snapshot),
         FfiConverterString.lower(preferredAssistantSurface),
         FfiConverterBool.lower(hasUserSelectedAssistantSurface),
         FfiConverterString.lower(currentSelectedAssistantSurface),
@@ -5207,32 +7012,32 @@ public func reduceSessionDetailOptimisticMode(detailJson: String, preset: String
     )
 })
 }
-public func reduceSessionFreshnessOrder(sessionsJson: String)throws  -> ClientSessionFreshnessOrderProjection  {
+public func reduceSessionFreshnessOrder(sessions: [ClientMobileSession])throws  -> ClientSessionFreshnessOrderProjection  {
     return try  FfiConverterTypeClientSessionFreshnessOrderProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_session_freshness_order(
-        FfiConverterString.lower(sessionsJson),$0
+        FfiConverterSequenceTypeClientMobileSession.lower(sessions),$0
     )
 })
 }
-public func reduceSessionIndex(snapshotJson: String, assistantSurfaceOrder: [String])throws  -> ClientSessionIndexProjection  {
+public func reduceSessionIndex(snapshot: ClientMobileSnapshot, assistantSurfaceOrder: [String])throws  -> ClientSessionIndexProjection  {
     return try  FfiConverterTypeClientSessionIndexProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_session_index(
-        FfiConverterString.lower(snapshotJson),
+        FfiConverterTypeClientMobileSnapshot_lower(snapshot),
         FfiConverterSequenceString.lower(assistantSurfaceOrder),$0
     )
 })
 }
-public func reduceSessionSections(sessionsJson: String)throws  -> ClientSessionSectionsProjection  {
+public func reduceSessionSections(sessions: [ClientMobileSession])throws  -> ClientSessionSectionsProjection  {
     return try  FfiConverterTypeClientSessionSectionsProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_session_sections(
-        FfiConverterString.lower(sessionsJson),$0
+        FfiConverterSequenceTypeClientMobileSession.lower(sessions),$0
     )
 })
 }
-public func reduceSiriSessionEntities(snapshotJson: String, assistantSurfaceOrder: [String])throws  -> ClientSiriSessionEntityProjection  {
+public func reduceSiriSessionEntities(snapshot: ClientMobileSnapshot, assistantSurfaceOrder: [String])throws  -> ClientSiriSessionEntityProjection  {
     return try  FfiConverterTypeClientSiriSessionEntityProjection_lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
     uniffi_looper_client_core_fn_func_reduce_siri_session_entities(
-        FfiConverterString.lower(snapshotJson),
+        FfiConverterTypeClientMobileSnapshot_lower(snapshot),
         FfiConverterSequenceString.lower(assistantSurfaceOrder),$0
     )
 })
@@ -5280,28 +7085,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_func_reduce_assistant_surface_selection() != 17067) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_detail_cache() != 30029) {
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_detail_cache() != 19840) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_optimistic_mode() != 25243) {
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_optimistic_mode() != 41689) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_projection() != 54026) {
+    if (uniffi_looper_client_core_checksum_func_reduce_mobile_snapshot_projection() != 46895) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_session_detail_optimistic_mode() != 61705) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_session_freshness_order() != 44887) {
+    if (uniffi_looper_client_core_checksum_func_reduce_session_freshness_order() != 63839) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_session_index() != 6913) {
+    if (uniffi_looper_client_core_checksum_func_reduce_session_index() != 65304) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_session_sections() != 8605) {
+    if (uniffi_looper_client_core_checksum_func_reduce_session_sections() != 35752) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_siri_session_entities() != 51113) {
+    if (uniffi_looper_client_core_checksum_func_reduce_siri_session_entities() != 38430) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_delete_session() != 20715) {

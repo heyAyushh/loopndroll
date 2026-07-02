@@ -112,10 +112,12 @@ struct LooperClientCoreTests {
         )
 
         #expect(projection.hasSnapshot)
-        #expect(projection.snapshotJson.contains(#""revision":"rev-9""#))
-        #expect(projection.snapshotJson.contains(#""lastSyncedAt":"\#(serverTime)""#))
-        #expect(projection.snapshotJson.contains(#""id":"thread-1""#))
-        #expect(projection.snapshotJson.contains(#""title":"current""#))
+        #expect(projection.snapshot.hasRevision)
+        #expect(projection.snapshot.revision == "rev-9")
+        #expect(projection.snapshot.host.lastSyncedAt == serverTime)
+        #expect(projection.snapshot.sessions.contains { session in
+            session.id == threadID && session.title == "current"
+        })
     }
 
     @Test
@@ -139,14 +141,16 @@ struct LooperClientCoreTests {
             ],
             serverTime: serverTime
         )
-        let snapshot = try decodedSnapshot(projection.snapshotJson)
-        let sessions = try #require(snapshot["sessions"] as? [[String: Any]])
-        let globalSettings = try #require(snapshot["globalSettings"] as? [String: Any])
+        let session = try #require(projection.snapshot.sessions.first)
+        let globalSettings = projection.snapshot.globalSettings
 
         #expect(projection.hasSnapshot)
-        #expect(sessions.first?["effectiveMode"] as? String == "max-turns-2")
-        #expect(globalSettings["siriCurrentSessionId"] as? String == threadID)
-        #expect(globalSettings["siriCurrentAssistantSurface"] as? String == "codex")
+        #expect(session.hasEffectiveMode)
+        #expect(session.effectiveMode == "max-turns-2")
+        #expect(globalSettings.hasSiriCurrentSessionId)
+        #expect(globalSettings.siriCurrentSessionId == threadID)
+        #expect(globalSettings.hasSiriCurrentAssistantSurface)
+        #expect(globalSettings.siriCurrentAssistantSurface == "codex")
     }
 
     @Test
@@ -165,18 +169,16 @@ struct LooperClientCoreTests {
             ],
             serverTime: serverTime
         )
-        let snapshot = try decodedSnapshot(projection.snapshotJson)
-        let surfaceSessions = try #require(
-            snapshot["surfaceSessions"] as? [String: [[String: Any]]]
+        let codexSessions = try #require(
+            projection.snapshot.surfaceSessions.first { $0.surface == "codex" }?.sessions
         )
-        let codexSessions = try #require(surfaceSessions["codex"])
 
         #expect(projection.hasSnapshot)
-        #expect(snapshot["sessions"] as? [[String: Any]] != nil)
-        #expect(surfaceSessions["cursor"] == nil)
+        #expect(!projection.snapshot.sessions.isEmpty)
+        #expect(projection.snapshot.surfaceSessions.first { $0.surface == "cursor" } == nil)
         #expect(codexSessions.count == 2)
-        #expect(codexSessions[0]["id"] as? String == "thread-cursor")
-        #expect(codexSessions[0]["assistantClient"] as? String == "cursor")
+        #expect(codexSessions[0].id == "thread-cursor")
+        #expect(codexSessions[0].assistantClient == "cursor")
     }
 
     @Test
@@ -210,7 +212,7 @@ struct LooperClientCoreTests {
         )
 
         let siriProjection = try reduceSiriSessionEntities(
-            snapshotJson: projection.snapshotJson,
+            snapshot: projection.snapshot,
             assistantSurfaceOrder: ["codex", "devin", "grok-build"]
         )
 
@@ -284,11 +286,6 @@ struct LooperClientCoreTests {
             archived: false,
             attemptCount: 0
         )
-    }
-
-    private func decodedSnapshot(_ snapshotJson: String) throws -> [String: Any] {
-        let data = try #require(snapshotJson.data(using: .utf8))
-        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     private func temporarySessionManager() throws -> LooperClientCoreSessionManager {

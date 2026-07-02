@@ -151,7 +151,6 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
     static let defaultFileName = "looper-realtime-state-minis.json"
 
     fileprivate unowned let sessionManager: LooperClientCoreSessionManager
-    private let decoder = JSONDecoder()
 
     fileprivate init(sessionManager: LooperClientCoreSessionManager) {
         self.sessionManager = sessionManager
@@ -192,7 +191,7 @@ private final class CompanionSessionMiniLocalStore: @unchecked Sendable {
             return nil
         }
 
-        let snapshot = try decoder.decode(MobileSnapshot.self, from: Data(projection.snapshotJson.utf8))
+        let snapshot = MobileSnapshot(clientCore: projection.snapshot)
         guard !Self.containsCorruptFallbackSession(snapshot) else {
             CompanionDiagnostics.record(
                 "session-mini:cache-corrupt-skip sessions=\(snapshot.sessions.count)"
@@ -226,7 +225,6 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     static let defaultFileName = CompanionSessionMiniLocalStore.defaultFileName
 
     private let localStore: CompanionSessionMiniLocalStore
-    private let decoder = JSONDecoder()
     private let sessionManager: LooperClientCoreSessionManager
     private let startConfigurationLock = NSLock()
     private var startConfiguration: CompanionSessionRuntimeStartConfiguration?
@@ -416,23 +414,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             )
         }
 
-        let snapshotData = Data(streamUpdate.snapshotJson.utf8)
-        let snapshot: MobileSnapshot
-        do {
-            snapshot = try decoder.decode(MobileSnapshot.self, from: snapshotData)
-        } catch {
-            let debugMessage = Self.joinDebugMessages(
-                streamUpdate.debugMessage,
-                "session-mini:mobile-snapshot-decode-failed error=\(error.localizedDescription)"
-            )
-            CompanionDiagnostics.record(debugMessage)
-            return CompanionClientCoreMobileSnapshotStreamResult(
-                update: nil,
-                liveness: livenessUpdate,
-                shouldStop: streamUpdate.shouldStop,
-                debugMessage: debugMessage
-            )
-        }
+        let snapshot = MobileSnapshot(clientCore: streamUpdate.snapshot)
         return CompanionClientCoreMobileSnapshotStreamResult(
             update: CompanionSessionMiniSyncUpdate(
                 reason: streamUpdate.syncReason,

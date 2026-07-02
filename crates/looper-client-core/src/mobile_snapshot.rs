@@ -27,7 +27,268 @@ const CODEX_SURFACE_ASSISTANT_CLIENTS: [&str; 4] = [
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientMobileSnapshotProjection {
     pub has_snapshot: bool,
-    pub snapshot_json: String,
+    pub snapshot: ClientMobileSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSnapshot {
+    pub revision: String,
+    pub has_revision: bool,
+    pub host: ClientMobileHost,
+    pub global_settings: ClientMobileGlobalSettings,
+    pub sessions: Vec<ClientMobileSession>,
+    pub surface_sessions: Vec<ClientMobileSurfaceSessions>,
+    pub notifications: Vec<ClientMobileNotificationDestination>,
+    pub completion_checks: Vec<ClientMobileCompletionCheckSummary>,
+    pub work_status: ClientMobileWorkStatusSummary,
+    pub devin_desktop: ClientMobileDevinDesktopStatus,
+    pub has_devin_desktop: bool,
+    pub grok_build: ClientMobileGrokBuildStatus,
+    pub has_grok_build: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileHost {
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    pub grpc_address: String,
+    pub grpc_addresses: Vec<String>,
+    pub is_reachable: bool,
+    pub last_synced_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileGlobalSettings {
+    pub default_prompt: String,
+    pub global_mode: String,
+    pub has_global_mode: bool,
+    pub scope: String,
+    pub notification_label: String,
+    pub has_notification_label: bool,
+    pub completion_check_label: String,
+    pub has_completion_check_label: bool,
+    pub completion_check_wait_for_reply: bool,
+    pub assistant_surface: String,
+    pub siri_default_session_id: String,
+    pub has_siri_default_session_id: bool,
+    pub siri_default_assistant_surface: String,
+    pub has_siri_default_assistant_surface: bool,
+    pub siri_current_session_id: String,
+    pub has_siri_current_session_id: bool,
+    pub siri_current_assistant_surface: String,
+    pub has_siri_current_assistant_surface: bool,
+    pub siri_current_updated_at_ms: i64,
+    pub has_siri_current_updated_at_ms: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSurfaceSessions {
+    pub surface: String,
+    pub sessions: Vec<ClientMobileSession>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSession {
+    pub id: String,
+    pub ref_id: String,
+    pub title: String,
+    pub status: String,
+    pub effective_mode: String,
+    pub has_effective_mode: bool,
+    pub last_updated_at: String,
+    pub created_at_ms: i64,
+    pub has_created_at_ms: bool,
+    pub updated_at_ms: i64,
+    pub has_updated_at_ms: bool,
+    pub latest_message_at_ms: i64,
+    pub has_latest_message_at_ms: bool,
+    pub last_activity_at_ms: i64,
+    pub has_last_activity_at_ms: bool,
+    pub last_activity_at: String,
+    pub last_message_at_ms: i64,
+    pub has_last_message_at_ms: bool,
+    pub last_message_at: String,
+    pub has_last_message_at: bool,
+    pub assistant_preview: String,
+    pub has_assistant_preview: bool,
+    pub is_archived: bool,
+    pub can_send_prompt: bool,
+    pub prompt_delivery_unavailable_reason: String,
+    pub has_prompt_delivery_unavailable_reason: bool,
+    pub assistant_client: String,
+    pub goal: ClientMobileSessionGoal,
+    pub has_goal: bool,
+    pub metadata: ClientMobileSessionMetadata,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSessionGoal {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub lifecycle: String,
+    pub running: bool,
+    pub token_budget: i64,
+    pub has_token_budget: bool,
+    pub tokens_used: i64,
+    pub has_tokens_used: bool,
+    pub time_used_seconds: i64,
+    pub has_time_used_seconds: bool,
+    pub updated_at_ms: i64,
+    pub has_updated_at_ms: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSessionMetadata {
+    pub kind: String,
+    pub source: String,
+    pub source_display_name: String,
+    pub assistant_kind: String,
+    pub has_assistant_kind: bool,
+    pub originator: String,
+    pub has_originator: bool,
+    pub project_name: String,
+    pub has_project_name: bool,
+    pub project_path: String,
+    pub has_project_path: bool,
+    pub task_kind: String,
+    pub transcript_available: bool,
+    pub git_repository: ClientMobileGitRepositoryMetadata,
+    pub has_git_repository: bool,
+    pub pull_request_url: String,
+    pub has_pull_request_url: bool,
+    pub supports_subagents: bool,
+    pub spawn: ClientMobileSessionSpawnMetadata,
+    pub has_spawn: bool,
+    pub installed_plugins: Vec<ClientMobileInstalledPluginSummary>,
+    pub sources: Vec<ClientMobileSessionSourceReference>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileGitRepositoryMetadata {
+    pub repository_name: String,
+    pub repository_path: String,
+    pub remote_url: String,
+    pub has_remote_url: bool,
+    pub branch: String,
+    pub has_branch: bool,
+    pub commit: String,
+    pub has_commit: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSessionSpawnMetadata {
+    pub parent_thread_id: String,
+    pub has_parent_thread_id: bool,
+    pub root_thread_id: String,
+    pub has_root_thread_id: bool,
+    pub children: Vec<String>,
+    pub launch_kind: String,
+    pub has_launch_kind: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileInstalledPluginSummary {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub has_source: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileSessionSourceReference {
+    pub kind: String,
+    pub label: String,
+    pub value: String,
+    pub url: String,
+    pub has_url: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileNotificationDestination {
+    pub id: String,
+    pub label: String,
+    pub channel: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileCompletionCheckSummary {
+    pub id: String,
+    pub label: String,
+    pub command_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileWorkStatusSummary {
+    pub goal_count: i64,
+    pub running_goal_count: i64,
+    pub automation_count: i64,
+    pub active_automation_count: i64,
+    pub covered_automation_count: i64,
+    pub running_goals: Vec<ClientMobileWorkStatusGoal>,
+    pub active_automations: Vec<ClientMobileWorkStatusAutomation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileWorkStatusGoal {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub target_thread_id: String,
+    pub has_target_thread_id: bool,
+    pub target_known: bool,
+    pub updated_at_ms: i64,
+    pub has_updated_at_ms: bool,
+    pub tokens_used: i64,
+    pub has_tokens_used: bool,
+    pub token_budget: i64,
+    pub has_token_budget: bool,
+    pub time_used_seconds: i64,
+    pub has_time_used_seconds: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileWorkStatusAutomation {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub status: String,
+    pub schedule_summary: String,
+    pub target_thread_id: String,
+    pub has_target_thread_id: bool,
+    pub target_known: bool,
+    pub control_plane_covered: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileDevinDesktopStatus {
+    pub running: bool,
+    pub installed: bool,
+    pub acp_available: bool,
+    pub registry_exists: bool,
+    pub registry_agent_count: i64,
+    pub enabled_agent_count: i64,
+    pub preferred_agent_ids: Vec<String>,
+    pub session_count: i64,
+    pub active_session_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileGrokBuildStatus {
+    pub hooks: ClientMobileGrokBuildHookStatus,
+    pub session_count: i64,
+    pub active_session_count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct ClientMobileGrokBuildHookStatus {
+    pub health: String,
+    pub owner: String,
+    pub registered_events: Vec<String>,
+    pub hooks_path: String,
+    pub has_hooks_path: bool,
 }
 
 #[uniffi::export]
@@ -40,7 +301,7 @@ pub fn reduce_state_minis_mobile_snapshot(
     if sessions.is_empty() {
         return Ok(ClientMobileSnapshotProjection {
             has_snapshot: false,
-            snapshot_json: String::new(),
+            snapshot: ClientMobileSnapshot::empty(),
         });
     }
 
@@ -91,11 +352,9 @@ pub fn reduce_state_minis_mobile_snapshot(
         "completionChecks": [],
     });
 
-    let snapshot_json =
-        serde_json::to_string(&snapshot).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
     Ok(ClientMobileSnapshotProjection {
         has_snapshot: true,
-        snapshot_json,
+        snapshot: ClientMobileSnapshot::from_value(snapshot)?,
     })
 }
 
@@ -111,11 +370,9 @@ pub fn reduce_state_minis_mobile_snapshot_with_pending_commands(
         return Ok(projection);
     }
 
-    let mut snapshot = serde_json::from_str::<Value>(&projection.snapshot_json)
-        .map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    let mut snapshot = projection.snapshot.to_value();
     apply_pending_commands(&mut snapshot, &pending_commands);
-    projection.snapshot_json =
-        serde_json::to_string(&snapshot).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
+    projection.snapshot = ClientMobileSnapshot::from_value(snapshot)?;
     Ok(projection)
 }
 
@@ -520,6 +777,1268 @@ fn fallback_assistant_client(client: &str) -> &str {
     }
 }
 
+impl ClientMobileSnapshot {
+    pub(crate) fn empty() -> Self {
+        Self {
+            revision: String::new(),
+            has_revision: false,
+            host: ClientMobileHost::empty(),
+            global_settings: ClientMobileGlobalSettings::empty(),
+            sessions: Vec::new(),
+            surface_sessions: Vec::new(),
+            notifications: Vec::new(),
+            completion_checks: Vec::new(),
+            work_status: ClientMobileWorkStatusSummary::empty(),
+            devin_desktop: ClientMobileDevinDesktopStatus::empty(),
+            has_devin_desktop: false,
+            grok_build: ClientMobileGrokBuildStatus::empty(),
+            has_grok_build: false,
+        }
+    }
+
+    pub(crate) fn from_value(value: Value) -> Result<Self, ClientCoreError> {
+        let object = value
+            .as_object()
+            .ok_or(ClientCoreError::InvalidSnapshotJson)?;
+        let revision = object_string(object, "revision");
+        let host = object
+            .get("host")
+            .and_then(Value::as_object)
+            .map(ClientMobileHost::from_object)
+            .unwrap_or_else(ClientMobileHost::empty);
+        let global_settings = object
+            .get("globalSettings")
+            .and_then(Value::as_object)
+            .map(ClientMobileGlobalSettings::from_object)
+            .unwrap_or_else(ClientMobileGlobalSettings::empty);
+        let sessions = object_array(object, "sessions")
+            .into_iter()
+            .filter_map(ClientMobileSession::from_value)
+            .collect::<Vec<_>>();
+        let surface_sessions = object
+            .get("surfaceSessions")
+            .and_then(Value::as_object)
+            .map(|surfaces| {
+                surfaces
+                    .iter()
+                    .map(|(surface, sessions)| ClientMobileSurfaceSessions {
+                        surface: surface.clone(),
+                        sessions: sessions
+                            .as_array()
+                            .map(|sessions| {
+                                sessions
+                                    .iter()
+                                    .filter_map(ClientMobileSession::from_value)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let notifications = object_array(object, "notifications")
+            .into_iter()
+            .filter_map(ClientMobileNotificationDestination::from_value)
+            .collect::<Vec<_>>();
+        let completion_checks = object_array(object, "completionChecks")
+            .into_iter()
+            .filter_map(ClientMobileCompletionCheckSummary::from_value)
+            .collect::<Vec<_>>();
+        let work_status = object
+            .get("workStatus")
+            .and_then(Value::as_object)
+            .map(ClientMobileWorkStatusSummary::from_object)
+            .unwrap_or_else(ClientMobileWorkStatusSummary::empty);
+        let devin_desktop = object
+            .get("devinDesktop")
+            .and_then(Value::as_object)
+            .map(ClientMobileDevinDesktopStatus::from_object);
+        let grok_build = object
+            .get("grokBuild")
+            .and_then(Value::as_object)
+            .map(ClientMobileGrokBuildStatus::from_object);
+
+        Ok(Self {
+            revision: revision.clone().unwrap_or_default(),
+            has_revision: revision.is_some(),
+            host,
+            global_settings,
+            sessions,
+            surface_sessions,
+            notifications,
+            completion_checks,
+            work_status,
+            devin_desktop: devin_desktop
+                .clone()
+                .unwrap_or_else(ClientMobileDevinDesktopStatus::empty),
+            has_devin_desktop: devin_desktop.is_some(),
+            grok_build: grok_build
+                .clone()
+                .unwrap_or_else(ClientMobileGrokBuildStatus::empty),
+            has_grok_build: grok_build.is_some(),
+        })
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        insert_optional_string(&mut object, "revision", self.has_revision, &self.revision);
+        object.insert("host".to_owned(), self.host.to_value());
+        object.insert("globalSettings".to_owned(), self.global_settings.to_value());
+        object.insert(
+            "sessions".to_owned(),
+            Value::Array(
+                self.sessions
+                    .iter()
+                    .map(ClientMobileSession::to_value)
+                    .collect(),
+            ),
+        );
+        let surface_sessions = self
+            .surface_sessions
+            .iter()
+            .map(|surface| {
+                (
+                    surface.surface.clone(),
+                    Value::Array(
+                        surface
+                            .sessions
+                            .iter()
+                            .map(ClientMobileSession::to_value)
+                            .collect(),
+                    ),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        object.insert(
+            "surfaceSessions".to_owned(),
+            Value::Object(surface_sessions),
+        );
+        object.insert(
+            "notifications".to_owned(),
+            Value::Array(
+                self.notifications
+                    .iter()
+                    .map(ClientMobileNotificationDestination::to_value)
+                    .collect(),
+            ),
+        );
+        object.insert(
+            "completionChecks".to_owned(),
+            Value::Array(
+                self.completion_checks
+                    .iter()
+                    .map(ClientMobileCompletionCheckSummary::to_value)
+                    .collect(),
+            ),
+        );
+        object.insert("workStatus".to_owned(), self.work_status.to_value());
+        if self.has_devin_desktop {
+            object.insert("devinDesktop".to_owned(), self.devin_desktop.to_value());
+        }
+        if self.has_grok_build {
+            object.insert("grokBuild".to_owned(), self.grok_build.to_value());
+        }
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileHost {
+    fn empty() -> Self {
+        Self {
+            id: "rust-control-plane".to_owned(),
+            name: HOST_NAME.to_owned(),
+            address: String::new(),
+            grpc_address: String::new(),
+            grpc_addresses: Vec::new(),
+            is_reachable: false,
+            last_synced_at: String::new(),
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            id: object_string(object, "id").unwrap_or_else(|| "rust-control-plane".to_owned()),
+            name: object_string(object, "name").unwrap_or_else(|| HOST_NAME.to_owned()),
+            address: object_string(object, "address").unwrap_or_default(),
+            grpc_address: object_string(object, "grpcAddress").unwrap_or_default(),
+            grpc_addresses: object_string_array(object, "grpcAddresses"),
+            is_reachable: object_bool(object, "isReachable").unwrap_or(false),
+            last_synced_at: object_string(object, "lastSyncedAt").unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        json!({
+            "id": self.id,
+            "name": self.name,
+            "address": self.address,
+            "grpcAddress": self.grpc_address,
+            "grpcAddresses": self.grpc_addresses,
+            "isReachable": self.is_reachable,
+            "lastSyncedAt": self.last_synced_at,
+        })
+    }
+}
+
+impl ClientMobileGlobalSettings {
+    fn empty() -> Self {
+        Self {
+            default_prompt: String::new(),
+            global_mode: String::new(),
+            has_global_mode: false,
+            scope: GLOBAL_SCOPE.to_owned(),
+            notification_label: String::new(),
+            has_notification_label: false,
+            completion_check_label: String::new(),
+            has_completion_check_label: false,
+            completion_check_wait_for_reply: false,
+            assistant_surface: DEFAULT_ASSISTANT_SURFACE.to_owned(),
+            siri_default_session_id: String::new(),
+            has_siri_default_session_id: false,
+            siri_default_assistant_surface: String::new(),
+            has_siri_default_assistant_surface: false,
+            siri_current_session_id: String::new(),
+            has_siri_current_session_id: false,
+            siri_current_assistant_surface: String::new(),
+            has_siri_current_assistant_surface: false,
+            siri_current_updated_at_ms: 0,
+            has_siri_current_updated_at_ms: false,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let global_mode = object_string(object, "globalMode");
+        let notification_label = object_string(object, "notificationLabel");
+        let completion_check_label = object_string(object, "completionCheckLabel");
+        let siri_default_session_id = object_string(object, "siriDefaultSessionId");
+        let siri_default_assistant_surface = object_string(object, "siriDefaultAssistantSurface");
+        let siri_current_session_id = object_string(object, "siriCurrentSessionId");
+        let siri_current_assistant_surface = object_string(object, "siriCurrentAssistantSurface");
+        let siri_current_updated_at_ms = object_i64(object, "siriCurrentUpdatedAtMs");
+
+        Self {
+            default_prompt: object_string(object, "defaultPrompt").unwrap_or_default(),
+            global_mode: global_mode.clone().unwrap_or_default(),
+            has_global_mode: global_mode.is_some(),
+            scope: object_string(object, "scope").unwrap_or_else(|| GLOBAL_SCOPE.to_owned()),
+            notification_label: notification_label.clone().unwrap_or_default(),
+            has_notification_label: notification_label.is_some(),
+            completion_check_label: completion_check_label.clone().unwrap_or_default(),
+            has_completion_check_label: completion_check_label.is_some(),
+            completion_check_wait_for_reply: object_bool(object, "completionCheckWaitForReply")
+                .unwrap_or(false),
+            assistant_surface: object_string(object, "assistantSurface")
+                .unwrap_or_else(|| DEFAULT_ASSISTANT_SURFACE.to_owned()),
+            siri_default_session_id: siri_default_session_id.clone().unwrap_or_default(),
+            has_siri_default_session_id: siri_default_session_id.is_some(),
+            siri_default_assistant_surface: siri_default_assistant_surface
+                .clone()
+                .unwrap_or_default(),
+            has_siri_default_assistant_surface: siri_default_assistant_surface.is_some(),
+            siri_current_session_id: siri_current_session_id.clone().unwrap_or_default(),
+            has_siri_current_session_id: siri_current_session_id.is_some(),
+            siri_current_assistant_surface: siri_current_assistant_surface
+                .clone()
+                .unwrap_or_default(),
+            has_siri_current_assistant_surface: siri_current_assistant_surface.is_some(),
+            siri_current_updated_at_ms: siri_current_updated_at_ms.unwrap_or_default(),
+            has_siri_current_updated_at_ms: siri_current_updated_at_ms.is_some(),
+        }
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "defaultPrompt".to_owned(),
+            Value::String(self.default_prompt.clone()),
+        );
+        insert_optional_string(
+            &mut object,
+            "globalMode",
+            self.has_global_mode,
+            &self.global_mode,
+        );
+        object.insert("scope".to_owned(), Value::String(self.scope.clone()));
+        insert_optional_string(
+            &mut object,
+            "notificationLabel",
+            self.has_notification_label,
+            &self.notification_label,
+        );
+        insert_optional_string(
+            &mut object,
+            "completionCheckLabel",
+            self.has_completion_check_label,
+            &self.completion_check_label,
+        );
+        object.insert(
+            "completionCheckWaitForReply".to_owned(),
+            Value::Bool(self.completion_check_wait_for_reply),
+        );
+        object.insert(
+            "assistantSurface".to_owned(),
+            Value::String(self.assistant_surface.clone()),
+        );
+        insert_optional_string(
+            &mut object,
+            "siriDefaultSessionId",
+            self.has_siri_default_session_id,
+            &self.siri_default_session_id,
+        );
+        insert_optional_string(
+            &mut object,
+            "siriDefaultAssistantSurface",
+            self.has_siri_default_assistant_surface,
+            &self.siri_default_assistant_surface,
+        );
+        insert_optional_string(
+            &mut object,
+            "siriCurrentSessionId",
+            self.has_siri_current_session_id,
+            &self.siri_current_session_id,
+        );
+        insert_optional_string(
+            &mut object,
+            "siriCurrentAssistantSurface",
+            self.has_siri_current_assistant_surface,
+            &self.siri_current_assistant_surface,
+        );
+        insert_optional_i64(
+            &mut object,
+            "siriCurrentUpdatedAtMs",
+            self.has_siri_current_updated_at_ms,
+            self.siri_current_updated_at_ms,
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileSession {
+    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let effective_mode = object_string(object, "effectiveMode");
+        let created_at_ms = object_i64(object, "createdAtMs");
+        let updated_at_ms = object_i64(object, "updatedAtMs");
+        let latest_message_at_ms = object_i64(object, "latestMessageAtMs");
+        let last_activity_at_ms = object_i64(object, "lastActivityAtMs");
+        let last_message_at_ms = object_i64(object, "lastMessageAtMs");
+        let last_message_at = object_string(object, "lastMessageAt");
+        let assistant_preview = object_string(object, "assistantPreview");
+        let prompt_delivery_unavailable_reason =
+            object_string(object, "promptDeliveryUnavailableReason");
+        let goal = object
+            .get("goal")
+            .or_else(|| object.get("blockedGoal"))
+            .and_then(Value::as_object)
+            .map(ClientMobileSessionGoal::from_object);
+        let metadata = object
+            .get("metadata")
+            .and_then(Value::as_object)
+            .map(ClientMobileSessionMetadata::from_object)
+            .unwrap_or_else(ClientMobileSessionMetadata::empty);
+        let status =
+            object_string(object, "status").unwrap_or_else(|| DEFAULT_SESSION_STATUS.to_owned());
+
+        Some(Self {
+            id: object_string(object, "id")
+                .or_else(|| object_string(object, "sessionId"))
+                .unwrap_or_default(),
+            ref_id: object_string(object, "ref").unwrap_or_default(),
+            title: object_string(object, "title").unwrap_or_default(),
+            status: status.clone(),
+            effective_mode: effective_mode.clone().unwrap_or_default(),
+            has_effective_mode: effective_mode.is_some(),
+            last_updated_at: object_string(object, "lastUpdatedAt").unwrap_or_default(),
+            created_at_ms: created_at_ms.unwrap_or_default(),
+            has_created_at_ms: created_at_ms.is_some(),
+            updated_at_ms: updated_at_ms.unwrap_or_default(),
+            has_updated_at_ms: updated_at_ms.is_some(),
+            latest_message_at_ms: latest_message_at_ms.unwrap_or_default(),
+            has_latest_message_at_ms: latest_message_at_ms.is_some(),
+            last_activity_at_ms: last_activity_at_ms.unwrap_or_default(),
+            has_last_activity_at_ms: last_activity_at_ms.is_some(),
+            last_activity_at: object_string(object, "lastActivityAt").unwrap_or_default(),
+            last_message_at_ms: last_message_at_ms.unwrap_or_default(),
+            has_last_message_at_ms: last_message_at_ms.is_some(),
+            last_message_at: last_message_at.clone().unwrap_or_default(),
+            has_last_message_at: last_message_at.is_some(),
+            assistant_preview: assistant_preview.clone().unwrap_or_default(),
+            has_assistant_preview: assistant_preview.is_some(),
+            is_archived: object_bool(object, "isArchived")
+                .unwrap_or_else(|| status == STATUS_ARCHIVED),
+            can_send_prompt: object_bool(object, "canSendPrompt").unwrap_or(true),
+            prompt_delivery_unavailable_reason: prompt_delivery_unavailable_reason
+                .clone()
+                .unwrap_or_default(),
+            has_prompt_delivery_unavailable_reason: prompt_delivery_unavailable_reason.is_some(),
+            assistant_client: object_string(object, "assistantClient")
+                .or_else(|| object_string(object, "assistantSurface"))
+                .unwrap_or_else(|| DEFAULT_ASSISTANT_SURFACE.to_owned()),
+            goal: goal.clone().unwrap_or_else(ClientMobileSessionGoal::empty),
+            has_goal: goal.is_some(),
+            metadata,
+        })
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".to_owned(), Value::String(self.id.clone()));
+        object.insert("sessionId".to_owned(), Value::String(self.id.clone()));
+        object.insert("ref".to_owned(), Value::String(self.ref_id.clone()));
+        object.insert("title".to_owned(), Value::String(self.title.clone()));
+        object.insert("status".to_owned(), Value::String(self.status.clone()));
+        insert_optional_string(
+            &mut object,
+            "effectiveMode",
+            self.has_effective_mode,
+            &self.effective_mode,
+        );
+        object.insert(
+            "lastUpdatedAt".to_owned(),
+            Value::String(self.last_updated_at.clone()),
+        );
+        insert_optional_i64(
+            &mut object,
+            "createdAtMs",
+            self.has_created_at_ms,
+            self.created_at_ms,
+        );
+        insert_optional_i64(
+            &mut object,
+            "updatedAtMs",
+            self.has_updated_at_ms,
+            self.updated_at_ms,
+        );
+        insert_optional_i64(
+            &mut object,
+            "latestMessageAtMs",
+            self.has_latest_message_at_ms,
+            self.latest_message_at_ms,
+        );
+        insert_optional_i64(
+            &mut object,
+            "lastActivityAtMs",
+            self.has_last_activity_at_ms,
+            self.last_activity_at_ms,
+        );
+        object.insert(
+            "lastActivityAt".to_owned(),
+            Value::String(self.last_activity_at.clone()),
+        );
+        insert_optional_i64(
+            &mut object,
+            "lastMessageAtMs",
+            self.has_last_message_at_ms,
+            self.last_message_at_ms,
+        );
+        insert_optional_string(
+            &mut object,
+            "lastMessageAt",
+            self.has_last_message_at,
+            &self.last_message_at,
+        );
+        insert_optional_string(
+            &mut object,
+            "assistantPreview",
+            self.has_assistant_preview,
+            &self.assistant_preview,
+        );
+        object.insert("isArchived".to_owned(), Value::Bool(self.is_archived));
+        object.insert(
+            "canSendPrompt".to_owned(),
+            Value::Bool(self.can_send_prompt),
+        );
+        insert_optional_string(
+            &mut object,
+            "promptDeliveryUnavailableReason",
+            self.has_prompt_delivery_unavailable_reason,
+            &self.prompt_delivery_unavailable_reason,
+        );
+        object.insert(
+            "assistantClient".to_owned(),
+            Value::String(self.assistant_client.clone()),
+        );
+        object.insert(
+            "assistantSurface".to_owned(),
+            Value::String(self.assistant_client.clone()),
+        );
+        if self.has_goal {
+            object.insert("goal".to_owned(), self.goal.to_value());
+        }
+        object.insert("metadata".to_owned(), self.metadata.to_value());
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileSessionGoal {
+    fn empty() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            status: String::new(),
+            lifecycle: String::new(),
+            running: false,
+            token_budget: 0,
+            has_token_budget: false,
+            tokens_used: 0,
+            has_tokens_used: false,
+            time_used_seconds: 0,
+            has_time_used_seconds: false,
+            updated_at_ms: 0,
+            has_updated_at_ms: false,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let token_budget = object_i64(object, "tokenBudget");
+        let tokens_used = object_i64(object, "tokensUsed");
+        let time_used_seconds = object_i64(object, "timeUsedSeconds");
+        let updated_at_ms = object_i64(object, "updatedAtMs");
+        let status = object_string(object, "status")
+            .or_else(|| object_string(object, "reason"))
+            .unwrap_or_default();
+        Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            title: object_string(object, "title").unwrap_or_default(),
+            lifecycle: object_string(object, "lifecycle").unwrap_or_else(|| status.clone()),
+            status,
+            running: object_bool(object, "running").unwrap_or(false),
+            token_budget: token_budget.unwrap_or_default(),
+            has_token_budget: token_budget.is_some(),
+            tokens_used: tokens_used.unwrap_or_default(),
+            has_tokens_used: tokens_used.is_some(),
+            time_used_seconds: time_used_seconds.unwrap_or_default(),
+            has_time_used_seconds: time_used_seconds.is_some(),
+            updated_at_ms: updated_at_ms.unwrap_or_default(),
+            has_updated_at_ms: updated_at_ms.is_some(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".to_owned(), Value::String(self.id.clone()));
+        object.insert("title".to_owned(), Value::String(self.title.clone()));
+        object.insert("status".to_owned(), Value::String(self.status.clone()));
+        object.insert(
+            "lifecycle".to_owned(),
+            Value::String(self.lifecycle.clone()),
+        );
+        object.insert("running".to_owned(), Value::Bool(self.running));
+        insert_optional_i64(
+            &mut object,
+            "tokenBudget",
+            self.has_token_budget,
+            self.token_budget,
+        );
+        insert_optional_i64(
+            &mut object,
+            "tokensUsed",
+            self.has_tokens_used,
+            self.tokens_used,
+        );
+        insert_optional_i64(
+            &mut object,
+            "timeUsedSeconds",
+            self.has_time_used_seconds,
+            self.time_used_seconds,
+        );
+        insert_optional_i64(
+            &mut object,
+            "updatedAtMs",
+            self.has_updated_at_ms,
+            self.updated_at_ms,
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileSessionMetadata {
+    fn empty() -> Self {
+        Self {
+            kind: "instantChat".to_owned(),
+            source: "unknown".to_owned(),
+            source_display_name: "Unknown".to_owned(),
+            assistant_kind: String::new(),
+            has_assistant_kind: false,
+            originator: String::new(),
+            has_originator: false,
+            project_name: String::new(),
+            has_project_name: false,
+            project_path: String::new(),
+            has_project_path: false,
+            task_kind: "unknown".to_owned(),
+            transcript_available: false,
+            git_repository: ClientMobileGitRepositoryMetadata::empty(),
+            has_git_repository: false,
+            pull_request_url: String::new(),
+            has_pull_request_url: false,
+            supports_subagents: false,
+            spawn: ClientMobileSessionSpawnMetadata::empty(),
+            has_spawn: false,
+            installed_plugins: Vec::new(),
+            sources: Vec::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let assistant_kind = object_string(object, "assistantKind");
+        let originator = object_string(object, "originator");
+        let project_name = object_string(object, "projectName");
+        let project_path = object_string(object, "projectPath");
+        let git_repository = object
+            .get("gitRepository")
+            .and_then(Value::as_object)
+            .map(ClientMobileGitRepositoryMetadata::from_object);
+        let pull_request_url = object_string(object, "pullRequestURL");
+        let spawn = object
+            .get("spawn")
+            .and_then(Value::as_object)
+            .map(ClientMobileSessionSpawnMetadata::from_object);
+        Self {
+            kind: object_string(object, "kind").unwrap_or_else(|| "instantChat".to_owned()),
+            source: object_string(object, "source").unwrap_or_else(|| "unknown".to_owned()),
+            source_display_name: object_string(object, "sourceDisplayName")
+                .unwrap_or_else(|| "Unknown".to_owned()),
+            assistant_kind: assistant_kind.clone().unwrap_or_default(),
+            has_assistant_kind: assistant_kind.is_some(),
+            originator: originator.clone().unwrap_or_default(),
+            has_originator: originator.is_some(),
+            project_name: project_name.clone().unwrap_or_default(),
+            has_project_name: project_name.is_some(),
+            project_path: project_path.clone().unwrap_or_default(),
+            has_project_path: project_path.is_some(),
+            task_kind: object_string(object, "taskKind").unwrap_or_else(|| "unknown".to_owned()),
+            transcript_available: object_bool(object, "transcriptAvailable").unwrap_or(false),
+            git_repository: git_repository
+                .clone()
+                .unwrap_or_else(ClientMobileGitRepositoryMetadata::empty),
+            has_git_repository: git_repository.is_some(),
+            pull_request_url: pull_request_url.clone().unwrap_or_default(),
+            has_pull_request_url: pull_request_url.is_some(),
+            supports_subagents: object_bool(object, "supportsSubagents").unwrap_or(false),
+            spawn: spawn
+                .clone()
+                .unwrap_or_else(ClientMobileSessionSpawnMetadata::empty),
+            has_spawn: spawn.is_some(),
+            installed_plugins: object_array(object, "installedPlugins")
+                .into_iter()
+                .filter_map(ClientMobileInstalledPluginSummary::from_value)
+                .collect(),
+            sources: object_array(object, "sources")
+                .into_iter()
+                .filter_map(ClientMobileSessionSourceReference::from_value)
+                .collect(),
+            tags: object_string_array(object, "tags"),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("kind".to_owned(), Value::String(self.kind.clone()));
+        object.insert("source".to_owned(), Value::String(self.source.clone()));
+        object.insert(
+            "sourceDisplayName".to_owned(),
+            Value::String(self.source_display_name.clone()),
+        );
+        insert_optional_string(
+            &mut object,
+            "assistantKind",
+            self.has_assistant_kind,
+            &self.assistant_kind,
+        );
+        insert_optional_string(
+            &mut object,
+            "originator",
+            self.has_originator,
+            &self.originator,
+        );
+        insert_optional_string(
+            &mut object,
+            "projectName",
+            self.has_project_name,
+            &self.project_name,
+        );
+        insert_optional_string(
+            &mut object,
+            "projectPath",
+            self.has_project_path,
+            &self.project_path,
+        );
+        object.insert("taskKind".to_owned(), Value::String(self.task_kind.clone()));
+        object.insert(
+            "transcriptAvailable".to_owned(),
+            Value::Bool(self.transcript_available),
+        );
+        if self.has_git_repository {
+            object.insert("gitRepository".to_owned(), self.git_repository.to_value());
+        }
+        insert_optional_string(
+            &mut object,
+            "pullRequestURL",
+            self.has_pull_request_url,
+            &self.pull_request_url,
+        );
+        object.insert(
+            "supportsSubagents".to_owned(),
+            Value::Bool(self.supports_subagents),
+        );
+        if self.has_spawn {
+            object.insert("spawn".to_owned(), self.spawn.to_value());
+        }
+        object.insert(
+            "installedPlugins".to_owned(),
+            Value::Array(
+                self.installed_plugins
+                    .iter()
+                    .map(ClientMobileInstalledPluginSummary::to_value)
+                    .collect(),
+            ),
+        );
+        object.insert(
+            "sources".to_owned(),
+            Value::Array(
+                self.sources
+                    .iter()
+                    .map(ClientMobileSessionSourceReference::to_value)
+                    .collect(),
+            ),
+        );
+        object.insert(
+            "tags".to_owned(),
+            Value::Array(self.tags.iter().cloned().map(Value::String).collect()),
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileGitRepositoryMetadata {
+    fn empty() -> Self {
+        Self {
+            repository_name: String::new(),
+            repository_path: String::new(),
+            remote_url: String::new(),
+            has_remote_url: false,
+            branch: String::new(),
+            has_branch: false,
+            commit: String::new(),
+            has_commit: false,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let remote_url = object_string(object, "remoteURL");
+        let branch = object_string(object, "branch");
+        let commit = object_string(object, "commit");
+        Self {
+            repository_name: object_string(object, "repositoryName").unwrap_or_default(),
+            repository_path: object_string(object, "repositoryPath").unwrap_or_default(),
+            remote_url: remote_url.clone().unwrap_or_default(),
+            has_remote_url: remote_url.is_some(),
+            branch: branch.clone().unwrap_or_default(),
+            has_branch: branch.is_some(),
+            commit: commit.clone().unwrap_or_default(),
+            has_commit: commit.is_some(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "repositoryName".to_owned(),
+            Value::String(self.repository_name.clone()),
+        );
+        object.insert(
+            "repositoryPath".to_owned(),
+            Value::String(self.repository_path.clone()),
+        );
+        insert_optional_string(
+            &mut object,
+            "remoteURL",
+            self.has_remote_url,
+            &self.remote_url,
+        );
+        insert_optional_string(&mut object, "branch", self.has_branch, &self.branch);
+        insert_optional_string(&mut object, "commit", self.has_commit, &self.commit);
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileSessionSpawnMetadata {
+    fn empty() -> Self {
+        Self {
+            parent_thread_id: String::new(),
+            has_parent_thread_id: false,
+            root_thread_id: String::new(),
+            has_root_thread_id: false,
+            children: Vec::new(),
+            launch_kind: String::new(),
+            has_launch_kind: false,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let parent_thread_id = object_string(object, "parentThreadId");
+        let root_thread_id = object_string(object, "rootThreadId");
+        let launch_kind = object_string(object, "launchKind");
+        Self {
+            parent_thread_id: parent_thread_id.clone().unwrap_or_default(),
+            has_parent_thread_id: parent_thread_id.is_some(),
+            root_thread_id: root_thread_id.clone().unwrap_or_default(),
+            has_root_thread_id: root_thread_id.is_some(),
+            children: object_string_array(object, "children"),
+            launch_kind: launch_kind.clone().unwrap_or_default(),
+            has_launch_kind: launch_kind.is_some(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        insert_optional_string(
+            &mut object,
+            "parentThreadId",
+            self.has_parent_thread_id,
+            &self.parent_thread_id,
+        );
+        insert_optional_string(
+            &mut object,
+            "rootThreadId",
+            self.has_root_thread_id,
+            &self.root_thread_id,
+        );
+        object.insert(
+            "children".to_owned(),
+            Value::Array(self.children.iter().cloned().map(Value::String).collect()),
+        );
+        insert_optional_string(
+            &mut object,
+            "launchKind",
+            self.has_launch_kind,
+            &self.launch_kind,
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileInstalledPluginSummary {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let source = object_string(object, "source");
+        Some(Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            name: object_string(object, "name").unwrap_or_default(),
+            source: source.clone().unwrap_or_default(),
+            has_source: source.is_some(),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".to_owned(), Value::String(self.id.clone()));
+        object.insert("name".to_owned(), Value::String(self.name.clone()));
+        insert_optional_string(&mut object, "source", self.has_source, &self.source);
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileSessionSourceReference {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let url = object_string(object, "url");
+        Some(Self {
+            kind: object_string(object, "kind").unwrap_or_default(),
+            label: object_string(object, "label").unwrap_or_default(),
+            value: object_string(object, "value").unwrap_or_default(),
+            url: url.clone().unwrap_or_default(),
+            has_url: url.is_some(),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("kind".to_owned(), Value::String(self.kind.clone()));
+        object.insert("label".to_owned(), Value::String(self.label.clone()));
+        object.insert("value".to_owned(), Value::String(self.value.clone()));
+        insert_optional_string(&mut object, "url", self.has_url, &self.url);
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileNotificationDestination {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        Some(Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            label: object_string(object, "label").unwrap_or_default(),
+            channel: object_string(object, "channel").unwrap_or_default(),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "id": self.id,
+            "label": self.label,
+            "channel": self.channel,
+        })
+    }
+}
+
+impl ClientMobileCompletionCheckSummary {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        Some(Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            label: object_string(object, "label").unwrap_or_default(),
+            command_count: object_i64(object, "commandCount").unwrap_or_default(),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "id": self.id,
+            "label": self.label,
+            "commandCount": self.command_count,
+        })
+    }
+}
+
+impl ClientMobileWorkStatusSummary {
+    fn empty() -> Self {
+        Self {
+            goal_count: 0,
+            running_goal_count: 0,
+            automation_count: 0,
+            active_automation_count: 0,
+            covered_automation_count: 0,
+            running_goals: Vec::new(),
+            active_automations: Vec::new(),
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            goal_count: object_i64(object, "goalCount").unwrap_or_default(),
+            running_goal_count: object_i64(object, "runningGoalCount").unwrap_or_default(),
+            automation_count: object_i64(object, "automationCount").unwrap_or_default(),
+            active_automation_count: object_i64(object, "activeAutomationCount")
+                .unwrap_or_default(),
+            covered_automation_count: object_i64(object, "coveredAutomationCount")
+                .unwrap_or_default(),
+            running_goals: object_array(object, "runningGoals")
+                .into_iter()
+                .filter_map(ClientMobileWorkStatusGoal::from_value)
+                .collect(),
+            active_automations: object_array(object, "activeAutomations")
+                .into_iter()
+                .filter_map(ClientMobileWorkStatusAutomation::from_value)
+                .collect(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "goalCount": self.goal_count,
+            "runningGoalCount": self.running_goal_count,
+            "automationCount": self.automation_count,
+            "activeAutomationCount": self.active_automation_count,
+            "coveredAutomationCount": self.covered_automation_count,
+            "runningGoals": self.running_goals.iter().map(ClientMobileWorkStatusGoal::to_value).collect::<Vec<_>>(),
+            "activeAutomations": self.active_automations.iter().map(ClientMobileWorkStatusAutomation::to_value).collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl ClientMobileWorkStatusGoal {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let target_thread_id = object_string(object, "targetThreadId");
+        let updated_at_ms = object_i64(object, "updatedAtMs");
+        let tokens_used = object_i64(object, "tokensUsed");
+        let token_budget = object_i64(object, "tokenBudget");
+        let time_used_seconds = object_i64(object, "timeUsedSeconds");
+        Some(Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            title: object_string(object, "title").unwrap_or_default(),
+            status: object_string(object, "status").unwrap_or_default(),
+            target_thread_id: target_thread_id.clone().unwrap_or_default(),
+            has_target_thread_id: target_thread_id.is_some(),
+            target_known: object_bool(object, "targetKnown").unwrap_or(false),
+            updated_at_ms: updated_at_ms.unwrap_or_default(),
+            has_updated_at_ms: updated_at_ms.is_some(),
+            tokens_used: tokens_used.unwrap_or_default(),
+            has_tokens_used: tokens_used.is_some(),
+            token_budget: token_budget.unwrap_or_default(),
+            has_token_budget: token_budget.is_some(),
+            time_used_seconds: time_used_seconds.unwrap_or_default(),
+            has_time_used_seconds: time_used_seconds.is_some(),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".to_owned(), Value::String(self.id.clone()));
+        object.insert("title".to_owned(), Value::String(self.title.clone()));
+        object.insert("status".to_owned(), Value::String(self.status.clone()));
+        insert_optional_string(
+            &mut object,
+            "targetThreadId",
+            self.has_target_thread_id,
+            &self.target_thread_id,
+        );
+        object.insert("targetKnown".to_owned(), Value::Bool(self.target_known));
+        insert_optional_i64(
+            &mut object,
+            "updatedAtMs",
+            self.has_updated_at_ms,
+            self.updated_at_ms,
+        );
+        insert_optional_i64(
+            &mut object,
+            "tokensUsed",
+            self.has_tokens_used,
+            self.tokens_used,
+        );
+        insert_optional_i64(
+            &mut object,
+            "tokenBudget",
+            self.has_token_budget,
+            self.token_budget,
+        );
+        insert_optional_i64(
+            &mut object,
+            "timeUsedSeconds",
+            self.has_time_used_seconds,
+            self.time_used_seconds,
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileWorkStatusAutomation {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let target_thread_id = object_string(object, "targetThreadId");
+        Some(Self {
+            id: object_string(object, "id").unwrap_or_default(),
+            kind: object_string(object, "kind").unwrap_or_default(),
+            name: object_string(object, "name").unwrap_or_default(),
+            status: object_string(object, "status").unwrap_or_default(),
+            schedule_summary: object_string(object, "scheduleSummary").unwrap_or_default(),
+            target_thread_id: target_thread_id.clone().unwrap_or_default(),
+            has_target_thread_id: target_thread_id.is_some(),
+            target_known: object_bool(object, "targetKnown").unwrap_or(false),
+            control_plane_covered: object_bool(object, "controlPlaneCovered").unwrap_or(false),
+        })
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".to_owned(), Value::String(self.id.clone()));
+        object.insert("kind".to_owned(), Value::String(self.kind.clone()));
+        object.insert("name".to_owned(), Value::String(self.name.clone()));
+        object.insert("status".to_owned(), Value::String(self.status.clone()));
+        object.insert(
+            "scheduleSummary".to_owned(),
+            Value::String(self.schedule_summary.clone()),
+        );
+        insert_optional_string(
+            &mut object,
+            "targetThreadId",
+            self.has_target_thread_id,
+            &self.target_thread_id,
+        );
+        object.insert("targetKnown".to_owned(), Value::Bool(self.target_known));
+        object.insert(
+            "controlPlaneCovered".to_owned(),
+            Value::Bool(self.control_plane_covered),
+        );
+        Value::Object(object)
+    }
+}
+
+impl ClientMobileDevinDesktopStatus {
+    fn empty() -> Self {
+        Self {
+            running: false,
+            installed: false,
+            acp_available: false,
+            registry_exists: false,
+            registry_agent_count: 0,
+            enabled_agent_count: 0,
+            preferred_agent_ids: Vec::new(),
+            session_count: 0,
+            active_session_count: 0,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            running: object_bool(object, "running").unwrap_or(false),
+            installed: object_bool(object, "installed").unwrap_or(false),
+            acp_available: object_bool(object, "acpAvailable").unwrap_or(false),
+            registry_exists: object_bool(object, "registryExists").unwrap_or(false),
+            registry_agent_count: object_i64(object, "registryAgentCount").unwrap_or_default(),
+            enabled_agent_count: object_i64(object, "enabledAgentCount").unwrap_or_default(),
+            preferred_agent_ids: object_string_array(object, "preferredAgentIds"),
+            session_count: object_i64(object, "sessionCount").unwrap_or_default(),
+            active_session_count: object_i64(object, "activeSessionCount").unwrap_or_default(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "running": self.running,
+            "installed": self.installed,
+            "acpAvailable": self.acp_available,
+            "registryExists": self.registry_exists,
+            "registryAgentCount": self.registry_agent_count,
+            "enabledAgentCount": self.enabled_agent_count,
+            "preferredAgentIds": self.preferred_agent_ids,
+            "sessionCount": self.session_count,
+            "activeSessionCount": self.active_session_count,
+        })
+    }
+}
+
+impl ClientMobileGrokBuildStatus {
+    fn empty() -> Self {
+        Self {
+            hooks: ClientMobileGrokBuildHookStatus::empty(),
+            session_count: 0,
+            active_session_count: 0,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        Self {
+            hooks: object
+                .get("hooks")
+                .and_then(Value::as_object)
+                .map(ClientMobileGrokBuildHookStatus::from_object)
+                .unwrap_or_else(ClientMobileGrokBuildHookStatus::empty),
+            session_count: object_i64(object, "sessionCount").unwrap_or_default(),
+            active_session_count: object_i64(object, "activeSessionCount").unwrap_or_default(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "hooks": self.hooks.to_value(),
+            "sessionCount": self.session_count,
+            "activeSessionCount": self.active_session_count,
+        })
+    }
+}
+
+impl ClientMobileGrokBuildHookStatus {
+    fn empty() -> Self {
+        Self {
+            health: String::new(),
+            owner: String::new(),
+            registered_events: Vec::new(),
+            hooks_path: String::new(),
+            has_hooks_path: false,
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, Value>) -> Self {
+        let hooks_path = object_string(object, "hooksPath");
+        Self {
+            health: object_string(object, "health").unwrap_or_default(),
+            owner: object_string(object, "owner").unwrap_or_default(),
+            registered_events: object_string_array(object, "registeredEvents"),
+            hooks_path: hooks_path.clone().unwrap_or_default(),
+            has_hooks_path: hooks_path.is_some(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("health".to_owned(), Value::String(self.health.clone()));
+        object.insert("owner".to_owned(), Value::String(self.owner.clone()));
+        object.insert(
+            "registeredEvents".to_owned(),
+            Value::Array(
+                self.registered_events
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+        insert_optional_string(
+            &mut object,
+            "hooksPath",
+            self.has_hooks_path,
+            &self.hooks_path,
+        );
+        Value::Object(object)
+    }
+}
+
+fn object_array<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> Vec<&'a Value> {
+    object
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| values.iter().collect())
+        .unwrap_or_default()
+}
+
+fn object_string(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn object_string_array(object: &serde_json::Map<String, Value>, key: &str) -> Vec<String> {
+    object
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn object_bool(object: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
+    object.get(key).and_then(Value::as_bool)
+}
+
+fn object_i64(object: &serde_json::Map<String, Value>, key: &str) -> Option<i64> {
+    object.get(key).and_then(Value::as_i64)
+}
+
+fn insert_optional_string(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    has_value: bool,
+    value: &str,
+) {
+    if has_value {
+        object.insert(key.to_owned(), Value::String(value.to_owned()));
+    }
+}
+
+fn insert_optional_i64(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    has_value: bool,
+    value: i64,
+) {
+    if has_value {
+        object.insert(key.to_owned(), Value::Number(value.into()));
+    }
+}
+
 fn selected_surface(sessions: &[(&ClientStateMini, Value)]) -> String {
     if let Some(surface) = selected_surface_from_revision(sessions) {
         return surface;
@@ -645,7 +2164,7 @@ mod tests {
             reduce_state_minis_mobile_snapshot(0, vec![], String::new()).expect("empty projection");
 
         assert!(!projection.has_snapshot);
-        assert!(projection.snapshot_json.is_empty());
+        assert!(projection.snapshot.sessions.is_empty());
     }
 
     #[test]
@@ -673,7 +2192,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
 
         assert!(projection.has_snapshot);
         assert_eq!(snapshot["revision"], "rev-12");
@@ -702,7 +2221,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
 
         assert!(projection.has_snapshot);
         assert_eq!(
@@ -734,7 +2253,7 @@ mod tests {
             String::new(),
         )
         .expect("projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let session_ids = snapshot["sessions"]
             .as_array()
             .expect("sessions")
@@ -760,7 +2279,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let codex_sessions = snapshot["surfaceSessions"]["codex"]
             .as_array()
             .expect("codex surface sessions");
@@ -805,7 +2324,7 @@ mod tests {
             String::new(),
         )
         .expect("projection skips invalid mini");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
 
         assert!(projection.has_snapshot);
         assert_eq!(snapshot["sessions"].as_array().expect("sessions").len(), 1);
@@ -829,7 +2348,7 @@ mod tests {
         .expect("projection");
 
         assert!(!projection.has_snapshot);
-        assert!(projection.snapshot_json.is_empty());
+        assert!(projection.snapshot.sessions.is_empty());
     }
 
     #[test]
@@ -851,7 +2370,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("compact projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let session = &snapshot["sessions"][0];
 
         assert!(projection.has_snapshot);
@@ -884,7 +2403,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("pending assistant surface projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let visible_session_ids = snapshot["sessions"]
             .as_array()
             .expect("visible sessions")
@@ -927,7 +2446,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("pending projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let session = &snapshot["sessions"][0];
 
         assert!(projection.has_snapshot);
@@ -964,7 +2483,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("pending delete projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let session_ids = snapshot["surfaceSessions"]["codex"]
             .as_array()
             .expect("codex sessions")
@@ -1007,7 +2526,7 @@ mod tests {
             SERVER_TIME.to_owned(),
         )
         .expect("partial git metadata projection");
-        let snapshot: Value = serde_json::from_str(&projection.snapshot_json).expect("snapshot");
+        let snapshot: Value = projection.snapshot.to_value();
         let repository = &snapshot["sessions"][0]["metadata"]["gitRepository"];
 
         assert!(projection.has_snapshot);

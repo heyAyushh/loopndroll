@@ -416,19 +416,16 @@ final class CompanionCommandDispatcher {
             return false
         }
         do {
-            let snapshotJSON = try Self.encodeMobileSnapshot(sourceSnapshot)
             let projection = try reduceMobileSnapshotOptimisticMode(
-                snapshotJson: snapshotJSON,
-                detailJson: "",
+                snapshot: sourceSnapshot.clientCoreSnapshot,
                 sessionId: sessionID,
                 preset: preset?.rawValue ?? "",
                 selectedAssistantSurface: delegate.commandDispatcherSnapshotState.selectedAssistantSurface.rawValue
             )
-            guard projection.didUpdate,
-                  let visibleSnapshot = Self.decodeMobileSnapshot(projection.visibleSnapshotJson)
-            else {
+            guard projection.didUpdate else {
                 return false
             }
+            let visibleSnapshot = MobileSnapshot(clientCore: projection.visibleSnapshot)
             delegate.commandDispatcherSnapshotState.applyOptimisticVisibleSnapshot(
                 visibleSnapshot,
                 selectedSurface: delegate.commandDispatcherSnapshotState.selectedAssistantSurface
@@ -635,18 +632,6 @@ final class CompanionCommandDispatcher {
             return .offline
         }
         return state
-    }
-
-    private static func encodeMobileSnapshot(_ snapshot: MobileSnapshot) throws -> String {
-        let data = try JSONEncoder().encode(snapshot)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw HTTPCompanionServiceError.invalidResponse
-        }
-        return json
-    }
-
-    private static func decodeMobileSnapshot(_ json: String) -> MobileSnapshot? {
-        try? JSONDecoder().decode(MobileSnapshot.self, from: Data(json.utf8))
     }
 
     private static func nonEmptyText(_ value: String?) -> String? {

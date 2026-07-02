@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::mobile_snapshot::ClientMobileSnapshot;
+
 pub(crate) const STATE_MINI_REPLACEMENT_KIND: &str = "state_mini_replacement";
 pub(crate) const STATE_MINI_REPLACEMENT_COMPLETE_KIND: &str = "state_mini_replacement_complete";
 pub(crate) const STATE_MINI_BATCH_COMPLETE_KIND: &str = "session_mini_batch_complete";
@@ -374,7 +376,7 @@ pub struct ClientLocalStateStreamUpdate {
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientMobileSnapshotStreamUpdate {
     pub has_snapshot: bool,
-    pub snapshot_json: String,
+    pub snapshot: ClientMobileSnapshot,
     pub sync_reason: String,
     pub should_stop: bool,
     pub latest_seq: i64,
