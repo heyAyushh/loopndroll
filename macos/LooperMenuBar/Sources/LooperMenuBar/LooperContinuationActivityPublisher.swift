@@ -86,12 +86,6 @@ final class LooperContinuationActivityPublisher {
 
     @discardableResult
     func requestFocusAssistedActivation() -> Bool {
-        guard isHandoffSupported else {
-            deactivateFocusAssist()
-            refreshCurrentActivity(allowsIdleActivation: false)
-            return false
-        }
-
         activateFocusAssist(reason: "hotkey")
         return republishCurrentActivity(presentation: .activateApplication)
     }
@@ -114,7 +108,7 @@ final class LooperContinuationActivityPublisher {
         configure(activity, with: descriptor)
         let presentation = presentationForRefresh()
         activityOwner.publish(activity, descriptor: descriptor, presentation: presentation)
-        logPublishedActivity(activity, descriptor: descriptor)
+        logPublishedActivity(activity, descriptor: descriptor, presentation: presentation)
 
         currentActivity = activity
         currentDescriptor = descriptor
@@ -167,7 +161,13 @@ final class LooperContinuationActivityPublisher {
         }
         let presentation = presentationForRefresh(allowsIdleActivation: allowsIdleActivation)
         activityOwner.refreshCurrentActivity(presentation: presentation)
-        logger.debug("handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public)")
+        logger.debug(
+            """
+            handoff activity refreshed host=\(self.activityOwner.hostDescription, privacy: .public) \
+            presentation=\(presentation.logName, privacy: .public) \
+            current=\(presentation.publishesCurrentHandoffLogValue, privacy: .public)
+            """
+        )
     }
 
     private func republishCurrentActivity(presentation: LooperContinuationPresentation) -> Bool {
@@ -180,18 +180,13 @@ final class LooperContinuationActivityPublisher {
         let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
         configure(activity, with: currentDescriptor)
         activityOwner.publish(activity, descriptor: currentDescriptor, presentation: presentation)
-        logPublishedActivity(activity, descriptor: currentDescriptor)
+        logPublishedActivity(activity, descriptor: currentDescriptor, presentation: presentation)
         currentActivity = activity
         startCurrentActivityRefreshLoop()
         return true
     }
 
     private func presentationForRefresh(allowsIdleActivation: Bool = true) -> LooperContinuationPresentation {
-        guard isHandoffSupported else {
-            deactivateFocusAssist()
-            return .inactive
-        }
-
         let hadFocusAssistedLease = focusAssistedActivationLease.expiresAt != nil
         if focusAssistedActivationLease.isActive() {
             guard activityOwner.canMaintainCurrentHandoffPresentation else {
@@ -205,6 +200,9 @@ final class LooperContinuationActivityPublisher {
 
         if hadFocusAssistedLease {
             markIdleFocusAssistSuppressedUntilUserInput()
+        }
+        guard isHandoffSupported else {
+            return .currentNonActivating
         }
         guard allowsIdleActivation, shouldActivateForIdleFocusAssist() else {
             return .currentNonActivating
@@ -312,21 +310,26 @@ final class LooperContinuationActivityPublisher {
         activity.keywords = activityKeywords(for: descriptor)
         activity.contentAttributeSet = contentAttributeSet(for: descriptor)
         activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
+        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
     }
 
     private func logPublishedActivity(
         _ activity: NSUserActivity,
-        descriptor: LooperContinuationActivityDescriptor
+        descriptor: LooperContinuationActivityDescriptor,
+        presentation: LooperContinuationPresentation
     ) {
         let kind = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.kind] ?? Logging.missingValue
         let sessionID = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] ?? Logging.missingValue
         let activityTarget = activity.targetContentIdentifier ?? Logging.missingValue
+        let supported = isHandoffSupported ? "true" : "false"
         logger.info(
             """
             handoff activity published kind=\(kind, privacy: .public) \
             session=\(sessionID, privacy: .public) \
             host=\(self.activityOwner.hostDescription, privacy: .public) \
+            supported=\(supported, privacy: .public) \
+            presentation=\(presentation.logName, privacy: .public) \
+            current=\(presentation.publishesCurrentHandoffLogValue, privacy: .public) \
             activityTarget=\(activityTarget, privacy: .public) \
             sessionTarget=\(descriptor.targetContentIdentifier, privacy: .public)
             """
@@ -404,6 +407,23 @@ private enum LooperContinuationPresentation {
             true
         case .inactive:
             false
+        }
+    }
+
+    var publishesCurrentHandoffLogValue: String {
+        publishesCurrentHandoff ? "true" : "false"
+    }
+
+    var logName: String {
+        switch self {
+        case .inactive:
+            "inactive"
+        case .currentNonActivating:
+            "currentNonActivating"
+        case .maintainFocusAssisted:
+            "maintainFocusAssisted"
+        case .activateApplication:
+            "activateApplication"
         }
     }
 
@@ -591,7 +611,7 @@ private final class LooperContinuationActivityPanelOwner {
         with descriptor: LooperContinuationActivityDescriptor
     ) {
         activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
+        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
         activity.targetContentIdentifier = descriptor.targetContentIdentifier
         activity.webpageURL = descriptor.webpageURL
     }
@@ -933,7 +953,7 @@ private final class LooperContinuationActivityPanelViewController: NSViewControl
         .filter { !$0.isEmpty }
         .joined(separator: " - ")
         activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = Set(descriptor.userInfo.keys)
+        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
         activity.targetContentIdentifier = descriptor.targetContentIdentifier
         activity.webpageURL = descriptor.webpageURL
         activity.isEligibleForHandoff = true
@@ -1292,5 +1312,19 @@ private struct LooperContinuationActivityGlassPanelView: View {
 private extension String {
     var nilIfEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+private func looperRequiredUserInfoKeys(
+    for descriptor: LooperContinuationActivityDescriptor
+) -> Set<String> {
+    [
+        LooperContinuationActivity.UserInfoKey.assistantSurface,
+        LooperContinuationActivity.UserInfoKey.sessionID,
+        LooperContinuationActivity.UserInfoKey.handoffWebpageURL,
+    ].reduce(into: Set<String>()) { keys, key in
+        if descriptor.userInfo[key] != nil {
+            keys.insert(key)
+        }
     }
 }

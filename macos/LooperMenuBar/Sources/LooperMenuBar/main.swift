@@ -22,6 +22,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let threadMenuTitleCharacterLimit = 38
     static let detachServerOnQuitKey = "detachServerOnQuit"
     static let sessionMiniMenuRebuildDebounce: Duration = .milliseconds(500)
+    static let continuationRefreshInterval: Duration = .seconds(20)
     static let httpMenuEnrichmentRefreshInterval: Duration = .seconds(60)
     // Mirrors MobileRouteReadinessState's HTTP health freshness window: cached
     // HTTP menu enrichment older than this is dropped instead of rendered as
@@ -77,6 +78,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       restoreSessionMiniIfMissing: false
     )
   }
+  private var continuationRefreshTask: Task<Void, Never>?
   private var menuEnrichmentRefreshTask: Task<Void, Never>?
   private var sessionMiniSyncTask: Task<Void, Never>?
   private var sessionMiniSyncGeneration = 0
@@ -87,6 +89,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private var mobileState: DesktopMobileStateResponse?
   private var pushDevices: DesktopPushDevicesResponse?
   private var devinProbe: DevinAcpBridgeProbe?
+  private let continuationLogger = Logger(
+    subsystem: "dev.looper.app.menubar",
+    category: "handoff-continuation"
+  )
   private let handoffHotkeyController = HandoffHotkeyController()
   private let diagnosticsWindowController = LooperDiagnosticsWindowController()
   private lazy var desktopNotifications = LooperDesktopNotificationCenter(
@@ -122,6 +128,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     continuationPublisher.focusAssistHoldDuration = handoffHoldDuration
     installStatusItem()
     continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
+    startContinuationRefreshLoop()
     startMenuEnrichmentRefreshLoop()
     installHandoffHotkey()
     desktopNotifications.start()
@@ -140,6 +147,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    continuationRefreshTask?.cancel()
     menuEnrichmentRefreshTask?.cancel()
     sessionMiniMenuRebuildDebouncer.cancel()
     continuationStorePublisher.cancel()
@@ -177,6 +185,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   func menuWillOpen(_ menu: NSMenu) {
     replaceMenuWithWarmStore()
+    Task {
+      await refreshContinuationActivity()
+    }
   }
 
   private func installStatusItem() {
@@ -265,6 +276,16 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
+  private func startContinuationRefreshLoop() {
+    continuationRefreshTask?.cancel()
+    continuationRefreshTask = Task { [weak self] in
+      while !Task.isCancelled {
+        await self?.refreshContinuationActivity()
+        try? await Task.sleep(for: Layout.continuationRefreshInterval)
+      }
+    }
+  }
+
   private func refreshContinuationActivity() async {
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let sessionMiniSnapshot {
@@ -349,10 +370,24 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func openContinuationActivity(_ activity: NSUserActivity) async {
     guard let target = await continuationOpenTarget(for: activity) else {
+      continuationLogger.error(
+        "handoff continuation ignored activityType=\(activity.activityType, privacy: .public) reason=no-open-target"
+      )
       return
     }
 
-    _ = openThread(target)
+    let opened = openThread(target)
+    let openedValue = opened ? "true" : "false"
+    let codexTarget = target.codexURL?.absoluteString ?? "none"
+    let fallbackTarget = target.firstLocalFallbackURL?.absoluteString ?? "none"
+    continuationLogger.info(
+      """
+      handoff continuation open session=\(target.threadId, privacy: .public) \
+      codexTarget=\(codexTarget, privacy: .public) \
+      fallbackTarget=\(fallbackTarget, privacy: .public) \
+      opened=\(openedValue, privacy: .public)
+      """
+    )
   }
 
   private func continuationOpenTarget(for activity: NSUserActivity) async -> LooperThreadOpenTarget?
@@ -360,9 +395,25 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     guard let threadID = LooperContinuationActivity.sessionID(from: activity) else {
       return nil
     }
+    let assistantSurface = LooperContinuationActivity.assistantSurface(from: activity)
+    let assistantSurfaceLogValue = assistantSurface ?? "unknown"
+    let targetContentIdentifier = activity.targetContentIdentifier ?? "none"
+    let webpageURL = activity.webpageURL?.absoluteString ?? "none"
+    continuationLogger.info(
+      """
+      handoff continuation received session=\(threadID, privacy: .public) \
+      assistantSurface=\(assistantSurfaceLogValue, privacy: .public) \
+      targetContentIdentifier=\(targetContentIdentifier, privacy: .public) \
+      webpageURL=\(webpageURL, privacy: .public)
+      """
+    )
 
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
-    if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
+    if let target = openTarget(
+      for: threadID,
+      sessionMiniSnapshot: sessionMiniSnapshot,
+      assistantSurface: assistantSurface
+    ) {
       return target
     }
 
@@ -373,10 +424,20 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       fallback: result.sessionMiniSnapshot ?? sessionMiniSnapshot
     )
     if let snapshot = result.snapshot {
-      return openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: snapshot)
+      return openTarget(
+        for: threadID,
+        sessionMiniSnapshot: latestSessionMiniSnapshot,
+        snapshot: snapshot,
+        assistantSurface: assistantSurface
+      )
     }
 
-    return openTarget(for: threadID, sessionMiniSnapshot: latestSessionMiniSnapshot, snapshot: nil)
+    return openTarget(
+      for: threadID,
+      sessionMiniSnapshot: latestSessionMiniSnapshot,
+      snapshot: nil,
+      assistantSurface: assistantSurface
+    )
   }
 
   private func shouldDeliverMacOSNotification(for session: MenuBarSessionMini) -> Bool {
@@ -478,9 +539,14 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func openTarget(
     for threadID: String,
     sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
-    snapshot: DesktopSnapshotResponse?
+    snapshot: DesktopSnapshotResponse?,
+    assistantSurface: String? = nil
   ) -> LooperThreadOpenTarget {
-    if let target = openTarget(for: threadID, sessionMiniSnapshot: sessionMiniSnapshot) {
+    if let target = openTarget(
+      for: threadID,
+      sessionMiniSnapshot: sessionMiniSnapshot,
+      assistantSurface: assistantSurface
+    ) {
       guard let thread = snapshot?.threads.first(where: { $0.threadId == threadID }) else {
         return target
       }
@@ -488,7 +554,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         threadId: target.threadId,
         transcriptPath: thread.transcriptPath,
         workingDirectory: target.projectURL?.path ?? thread.cwd,
-        agentPath: thread.capabilities.agentPath
+        agentPath: thread.capabilities.agentPath,
+        assistantSurface: assistantSurface
       )
     }
 
@@ -497,20 +564,23 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         threadId: thread.threadId,
         transcriptPath: thread.transcriptPath,
         workingDirectory: thread.cwd,
-        agentPath: thread.capabilities.agentPath
+        agentPath: thread.capabilities.agentPath,
+        assistantSurface: assistantSurface
       )
     }
 
     return LooperThreadOpenTarget(
       threadId: threadID,
       transcriptPath: nil,
-      workingDirectory: nil
+      workingDirectory: nil,
+      assistantSurface: assistantSurface
     )
   }
 
   private func openTarget(
     for threadID: String,
-    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
+    sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
+    assistantSurface: String? = nil
   ) -> LooperThreadOpenTarget? {
     guard let session = sessionMiniSnapshot?.sessions.first(where: { $0.sessionID == threadID }) else {
       return nil
@@ -519,7 +589,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     return LooperThreadOpenTarget(
       threadId: session.sessionID,
       transcriptPath: nil,
-      workingDirectory: session.projectPath
+      workingDirectory: session.projectPath,
+      assistantSurface: assistantSurface ?? session.assistantSurface
     )
   }
 
@@ -1701,13 +1772,6 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func handleHandoffHotkey() {
-    guard !continuationPublisher.requestFocusAssistedActivation() else {
-      Task {
-        await refreshContinuationActivity()
-      }
-      return
-    }
-
     Task {
       await refreshContinuationActivity()
       continuationPublisher.requestFocusAssistedActivation()

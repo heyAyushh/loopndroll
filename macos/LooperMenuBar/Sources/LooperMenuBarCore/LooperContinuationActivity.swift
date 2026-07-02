@@ -6,6 +6,7 @@ public enum LooperContinuationActivity {
     fileprivate static let sessionTargetContentIdentifierPrefix = "looper.session."
 
     public enum UserInfoKey {
+        public static let assistantSurface = "assistantSurface"
         public static let kind = "kind"
         public static let sessionID = "sessionID"
         public static let sessionTitle = "sessionTitle"
@@ -16,7 +17,7 @@ public enum LooperContinuationActivity {
     }
 
     public static func isSupportedActivityType(_ activityType: String) -> Bool {
-        activityType == Self.activityType
+        activityType == Self.activityType || activityType == NSUserActivityTypeBrowsingWeb
     }
 
     public static func sessionID(from activity: NSUserActivity) -> String? {
@@ -24,19 +25,38 @@ public enum LooperContinuationActivity {
             return nil
         }
 
+        if activity.activityType == NSUserActivityTypeBrowsingWeb {
+            return sessionIDFromHandoffWebpageURL(activity.webpageURL)
+                ?? sessionIDFromHandoffWebpageURL(
+                    (activity.userInfo?[UserInfoKey.handoffWebpageURL] as? String).flatMap(URL.init(string:))
+                )
+        }
+
         if let sessionID = normalizedString(activity.userInfo?[UserInfoKey.sessionID] as? String) {
             return sessionID
         }
 
-        guard let targetContentIdentifier = normalizedString(activity.targetContentIdentifier),
-              targetContentIdentifier.hasPrefix(sessionTargetContentIdentifierPrefix)
-        else {
+        if let targetContentIdentifier = normalizedString(activity.targetContentIdentifier),
+           targetContentIdentifier.hasPrefix(sessionTargetContentIdentifierPrefix),
+           let sessionID = normalizedString(
+               String(targetContentIdentifier.dropFirst(sessionTargetContentIdentifierPrefix.count))
+           )
+        {
+            return sessionID
+        }
+
+        return sessionIDFromHandoffWebpageURL(activity.webpageURL)
+            ?? sessionIDFromHandoffWebpageURL(
+                (activity.userInfo?[UserInfoKey.handoffWebpageURL] as? String).flatMap(URL.init(string:))
+            )
+    }
+
+    public static func assistantSurface(from activity: NSUserActivity) -> String? {
+        guard isSupportedActivityType(activity.activityType) else {
             return nil
         }
 
-        return normalizedString(
-            String(targetContentIdentifier.dropFirst(sessionTargetContentIdentifierPrefix.count))
-        )
+        return normalizedString(activity.userInfo?[UserInfoKey.assistantSurface] as? String)
     }
 
     private static func normalizedString(_ value: String?) -> String? {
@@ -45,6 +65,25 @@ public enum LooperContinuationActivity {
             return nil
         }
         return trimmedValue
+    }
+
+    private static func sessionIDFromHandoffWebpageURL(_ url: URL?) -> String? {
+        guard let url else {
+            return nil
+        }
+
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        guard let handoffIndex = pathComponents.lastIndex(of: LooperContinuationActivityBuilder.handoffPathComponent),
+              pathComponents.count > handoffIndex + 2,
+              pathComponents[handoffIndex + 1] == LooperContinuationActivityBuilder.sessionsPathComponent
+        else {
+            return nil
+        }
+
+        return pathComponents[(handoffIndex + 2)...]
+            .joined(separator: "/")
+            .removingPercentEncoding
+            .flatMap(normalizedString)
     }
 }
 
@@ -157,8 +196,8 @@ public enum LooperContinuationActivityBuilder {
     private static let genericActivityTitle = "looper"
     private static let genericTargetContentIdentifier = "looper"
     private static let pathSeparator = "/"
-    private static let handoffPathComponent = "handoff"
-    private static let sessionsPathComponent = "sessions"
+    fileprivate static let handoffPathComponent = "handoff"
+    fileprivate static let sessionsPathComponent = "sessions"
     private static let pathSegmentReservedCharacters = CharacterSet(charactersIn: "/")
     private static let pathSegmentAllowedCharacters = CharacterSet.urlPathAllowed
         .subtracting(pathSegmentReservedCharacters)
@@ -221,6 +260,7 @@ public enum LooperContinuationActivityBuilder {
             LooperContinuationActivity.UserInfoKey.sessionID: session.sessionID,
             LooperContinuationActivity.UserInfoKey.sessionTitle: title,
             LooperContinuationActivity.UserInfoKey.sessionSubtitle: subtitle,
+            LooperContinuationActivity.UserInfoKey.assistantSurface: session.assistantSurface,
         ]
 
         if let updatedAtMs = session.updatedAtMs ?? session.lastActivityAtMs {

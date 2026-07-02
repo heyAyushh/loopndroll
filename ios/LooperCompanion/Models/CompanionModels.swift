@@ -16,6 +16,7 @@ enum LooperContinuationActivity {
     }
 
     private enum UserInfoKey {
+        static let assistantSurface = "assistantSurface"
         static let handoffWebpageURL = "handoffWebpageURL"
         static let sessionID = "sessionID"
     }
@@ -56,6 +57,7 @@ enum LooperContinuationActivity {
         }
 
         var userInfo = [
+            UserInfoKey.assistantSurface: assistantSurface.rawValue,
             UserInfoKey.sessionID: normalizedSessionID
         ]
         if let handoffWebpageURL = handoffWebpageURL(
@@ -68,6 +70,7 @@ enum LooperContinuationActivity {
             activity.webpageURL = nil
         }
         activity.userInfo = userInfo
+        activity.requiredUserInfoKeys = Set(userInfo.keys)
         activity.targetContentIdentifier = "\(TargetContentIdentifier.sessionPrefix)\(normalizedSessionID)"
         activity.persistentIdentifier = activity.targetContentIdentifier
         if #available(iOS 18.2, macOS 15.2, watchOS 11.2, tvOS 18.2, visionOS 2.2, *) {

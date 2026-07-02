@@ -507,6 +507,22 @@ struct LooperContinuationActivityTests {
     }
 
     @Test
+    func miniDescriptorCarriesAssistantSurfaceForReverseHandoff() throws {
+        let descriptor = LooperContinuationActivityBuilder.descriptor(
+            from: try continuationMiniSnapshot(
+                latestSeq: 900,
+                sessionID: "thread-main",
+                title: "Main",
+                assistantSurface: "claude-code"
+            ),
+            handoffBaseURL: URL(string: "http://192.168.1.4:8765")
+        )
+
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] == "thread-main")
+        #expect(descriptor.userInfo[LooperContinuationActivity.UserInfoKey.assistantSurface] == "claude-code")
+    }
+
+    @Test
     func encodesSlashSeparatedSessionIDsInHandoffURL() throws {
         let descriptor = LooperContinuationActivityBuilder.descriptor(
             from: desktopSnapshot(threads: [
@@ -542,6 +558,46 @@ struct LooperContinuationActivityTests {
         activity.targetContentIdentifier = "looper.session.thread-target"
 
         #expect(LooperContinuationActivity.sessionID(from: activity) == "thread-target")
+    }
+
+    @Test
+    func extractsSessionIDAndAssistantSurfaceFromReverseHandoffActivity() {
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        activity.userInfo = [
+            LooperContinuationActivity.UserInfoKey.assistantSurface: "claude-code",
+            LooperContinuationActivity.UserInfoKey.sessionID: "thread-main",
+        ]
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == "thread-main")
+        #expect(LooperContinuationActivity.assistantSurface(from: activity) == "claude-code")
+    }
+
+    @Test
+    func extractsSessionIDFromHandoffWebpageURL() {
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        activity.webpageURL = URL(
+            string: "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
+        )
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == "acp/devin-cli/brindle-cadet")
+    }
+
+    @Test
+    func extractsSessionIDFromBrowsingHandoffWebpageURL() {
+        let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        activity.webpageURL = URL(
+            string: "http://192.168.1.4:8765/handoff/sessions/acp%2Fdevin-cli%2Fbrindle-cadet"
+        )
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == "acp/devin-cli/brindle-cadet")
+    }
+
+    @Test
+    func rejectsBrowsingWebpageURLWithoutLooperHandoffSession() {
+        let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        activity.webpageURL = URL(string: "https://example.com/anything-else")
+
+        #expect(LooperContinuationActivity.sessionID(from: activity) == nil)
     }
 
     @Test
@@ -735,7 +791,8 @@ private final class ContinuationActivityPublishRecorder: @unchecked Sendable {
 private func continuationMiniSnapshot(
     latestSeq: Int64,
     sessionID: String,
-    title: String
+    title: String,
+    assistantSurface: String = "codex"
 ) throws -> MenuBarSessionMiniLocalSnapshot {
     let fileURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("LooperContinuationActivityTests-\(UUID().uuidString)", isDirectory: true)
@@ -764,7 +821,7 @@ private func continuationMiniSnapshot(
         "sessions": [
             [
                 "sessionId": sessionID,
-                "assistantSurface": "codex",
+                "assistantSurface": assistantSurface,
                 "seq": latestSeq,
                 "revision": "rev-\(latestSeq)",
                 "payloadJson": String(decoding: payloadData, as: UTF8.self),

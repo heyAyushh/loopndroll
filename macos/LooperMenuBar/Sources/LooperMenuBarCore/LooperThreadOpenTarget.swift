@@ -10,14 +10,16 @@ public struct LooperThreadOpenTarget: Equatable, Sendable {
         threadId: String,
         transcriptPath: String?,
         workingDirectory: String?,
-        agentPath: String? = nil
+        agentPath: String? = nil,
+        assistantSurface: String? = nil
     ) {
         self.threadId = threadId
         let usesExternalAssistantSession = Self.isExternalAssistantSession(
             threadId: threadId,
             transcriptPath: transcriptPath,
             workingDirectory: workingDirectory,
-            agentPath: agentPath
+            agentPath: agentPath,
+            assistantSurface: assistantSurface
         )
         self.codexURL = usesExternalAssistantSession ? nil : Self.codexThreadURL(for: threadId)
         self.transcriptURL = Self.fileURL(from: transcriptPath, isDirectory: false)
@@ -60,17 +62,30 @@ public struct LooperThreadOpenTarget: Equatable, Sendable {
         threadId: String,
         transcriptPath: String?,
         workingDirectory: String?,
-        agentPath: String? = nil
+        agentPath: String? = nil,
+        assistantSurface: String? = nil
     ) -> Bool {
+        if let assistantSurface = normalizedAssistantSurface(assistantSurface),
+           !codexCompatibleAssistantSurfaces.contains(assistantSurface)
+        {
+            return true
+        }
+
         let needles = [
             "/.grok/",
+            "/.zed/",
             ".grok/sessions",
+            ".zed/sessions",
+            ".claude/",
+            "claude-code",
+            "claudefordesktop",
             "grok agent",
             "grok-build",
             "devin:devin-cli:",
             "devin:devin-cloud:",
             "acp/devin-cli/",
             "acp/devin-cloud/",
+            "zed-agent-servers",
             "/library/application support/devin/",
             "/library/application support/devin - next/",
             "devin-desktop",
@@ -80,6 +95,17 @@ public struct LooperThreadOpenTarget: Equatable, Sendable {
             .contains { haystack in
                 needles.contains { haystack.contains($0) }
             }
+    }
+
+    private static let codexCompatibleAssistantSurfaces: Set<String> = [
+        "codex",
+        "cursor",
+        "openclaw",
+        "super-engineering",
+    ]
+
+    private static func normalizedAssistantSurface(_ value: String?) -> String? {
+        normalizedString(value)?.lowercased()
     }
 
     private enum DeepLink {

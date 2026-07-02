@@ -31,6 +31,8 @@ resolve_macos_provisioning_profile() {
   fi
 
   local expected_application_identifier="$MACOS_APPLICATION_IDENTIFIER"
+  local wildcard_application_identifier="${CODE_SIGN_TEAM_ID}.*"
+  local wildcard_profile=""
   local profile
   for profile in "${MACOS_PROVISIONING_PROFILE_DIR}"/*.provisionprofile; do
     [[ -f "$profile" ]] || continue
@@ -49,7 +51,14 @@ resolve_macos_provisioning_profile() {
       printf '%s\n' "$profile"
       return
     fi
+    if [[ -z "$wildcard_profile" && "$application_identifier" == "$wildcard_application_identifier" ]]; then
+      wildcard_profile="$profile"
+    fi
   done
+
+  if [[ -n "$wildcard_profile" ]]; then
+    printf '%s\n' "$wildcard_profile"
+  fi
 }
 
 profile_application_identifier() {
@@ -68,20 +77,41 @@ extract_macos_profile_entitlements() {
 
   security cms -D -i "$provisioning_profile" |
     plutil -extract Entitlements xml1 -o "$output_path" -
+
+  normalize_macos_profile_entitlements "$output_path"
+}
+
+normalize_macos_profile_entitlements() {
+  local entitlements_path="$1"
+  local wildcard_application_identifier="${CODE_SIGN_TEAM_ID}.*"
+  local application_identifier
+  application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$entitlements_path" 2>/dev/null || true)"
+
+  if [[ "$application_identifier" == "$wildcard_application_identifier" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :com.apple.application-identifier ${MACOS_APPLICATION_IDENTIFIER}" "$entitlements_path"
+  fi
+
+  local keychain_access_group
+  keychain_access_group="$(/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' "$entitlements_path" 2>/dev/null || true)"
+  if [[ "$keychain_access_group" == "$wildcard_application_identifier" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :keychain-access-groups:0 ${MACOS_APPLICATION_IDENTIFIER}" "$entitlements_path"
+  fi
 }
 
 validate_macos_provisioning_profile() {
   local provisioning_profile="$1"
   local application_identifier
   application_identifier="$(profile_application_identifier "$provisioning_profile")"
-  if [[ "$application_identifier" != "$MACOS_APPLICATION_IDENTIFIER" ]]; then
-    fail "macOS provisioning profile application-identifier=${application_identifier:-unknown}; expected ${MACOS_APPLICATION_IDENTIFIER}"
+  local wildcard_application_identifier="${CODE_SIGN_TEAM_ID}.*"
+  if [[ "$application_identifier" != "$MACOS_APPLICATION_IDENTIFIER" &&
+        "$application_identifier" != "$wildcard_application_identifier" ]]; then
+    fail "macOS provisioning profile application-identifier=${application_identifier:-unknown}; expected ${MACOS_APPLICATION_IDENTIFIER} or ${wildcard_application_identifier}"
   fi
 }
 
 APP_NAME="looper"
-BUNDLE_ID="dev.looper.app.menubar"
-LEGACY_BUNDLE_IDS=("dev.looper.app.ios")
+BUNDLE_ID="dev.looper.app.ios"
+LEGACY_BUNDLE_IDS=("dev.looper.app.menubar")
 CONTINUATION_ACTIVITY_TYPE="dev.looper.app.continue-session"
 CODE_SIGN_TEAM_ID="${LOOPER_MACOS_TEAM_ID:-Z5454ZPPUX}"
 MACOS_APPLICATION_IDENTIFIER="${CODE_SIGN_TEAM_ID}.${BUNDLE_ID}"
@@ -190,12 +220,12 @@ plutil -insert CFBundlePackageType -string APPL "$plist_path"
 plutil -insert CFBundleShortVersionString -string "$version" "$plist_path"
 plutil -insert CFBundleVersion -string "$(git rev-list --count HEAD)" "$plist_path"
 plutil -insert LSMinimumSystemVersion -string "$MACOS_MINIMUM_SYSTEM_VERSION" "$plist_path"
-plutil -insert LSUIElement -bool YES "$plist_path"
 plutil -insert NSHighResolutionCapable -bool YES "$plist_path"
 plutil -insert NSAppleEventsUsageDescription -string "Looper uses Apple Events only when you ask it to control supported desktop apps." "$plist_path"
 plutil -insert NSLocalNetworkUsageDescription -string "Looper uses the local network so the iPhone companion can reach this Mac." "$plist_path"
 plutil -insert NSUserActivityTypes -array "$plist_path"
 plutil -insert NSUserActivityTypes.0 -string "$CONTINUATION_ACTIVITY_TYPE" "$plist_path"
+plutil -insert NSUserActivityTypes.1 -string "NSUserActivityTypeBrowsingWeb" "$plist_path"
 
 codesign_entitlements_args=()
 if [[ "$CODE_SIGN_IDENTITY" != "-" && "$ENABLE_MACOS_ENTITLEMENTS" != "0" ]]; then

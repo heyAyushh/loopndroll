@@ -76,20 +76,20 @@ targets:
         CFBundleDisplayName: looper
         CFBundleName: looper
         CFBundleIconFile: AppIcon
-        LSUIElement: true
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         NSAppleEventsUsageDescription: Looper uses Apple Events only when you ask it to control supported desktop apps.
         NSLocalNetworkUsageDescription: Looper uses the local network so the iPhone companion can reach this Mac.
         NSUserActivityTypes:
           - dev.looper.app.continue-session
+          - NSUserActivityTypeBrowsingWeb
     entitlements:
       path: Generated/LooperMenuBar.entitlements
       properties:
         com.apple.developer.team-identifier: Z5454ZPPUX
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.menubar
+        PRODUCT_BUNDLE_IDENTIFIER: dev.looper.app.ios
         PRODUCT_NAME: LooperMenuBar
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: Apple Development

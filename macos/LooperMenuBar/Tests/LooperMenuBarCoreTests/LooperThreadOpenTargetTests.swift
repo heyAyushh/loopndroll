@@ -85,4 +85,29 @@ struct LooperThreadOpenTargetTests {
         #expect(target.transcriptURL?.path == "/Users/test/Library/Application Support/Devin - Next/User/acp-events/event.ndjson")
         #expect(target.firstLocalFallbackURL == target.transcriptURL)
     }
+
+    @Test
+    func skipsCodexDeepLinkForReverseHandoffNonCodexSurface() {
+        let target = LooperThreadOpenTarget(
+            threadId: "thread-main",
+            transcriptPath: nil,
+            workingDirectory: "/Users/test/project",
+            assistantSurface: "claude-code"
+        )
+
+        #expect(target.codexURL == nil)
+        #expect(target.firstLocalFallbackURL == target.projectURL)
+    }
+
+    @Test
+    func keepsCodexDeepLinkForReverseHandoffCodexSurface() {
+        let target = LooperThreadOpenTarget(
+            threadId: "thread-main",
+            transcriptPath: nil,
+            workingDirectory: "/Users/test/project",
+            assistantSurface: "codex"
+        )
+
+        #expect(target.codexURL?.absoluteString == "codex://threads/thread-main")
+    }
 }
