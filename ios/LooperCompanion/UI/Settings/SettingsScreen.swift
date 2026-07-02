@@ -98,6 +98,9 @@ struct SettingsScreen: View {
         Form {
             connectionSection
                 .id(SettingsSearchTarget.connection)
+            macLinkSection
+            localNetworkSection
+            tailscaleSection
             continuePromptSection
                 .id(SettingsSearchTarget.continuePrompt)
             quickActionsSection
@@ -141,6 +144,9 @@ struct SettingsScreen: View {
         }
     }
 
+    // Connection state and routing only; pairing actions, local network,
+    // and Tailscale each get their own native grouped section so the
+    // explanatory copy can live in footers instead of inline footnotes.
     private var connectionSection: some View {
         Section {
             LabeledContent("Status", value: model.viewState.connectivityStatusLabel)
@@ -164,43 +170,15 @@ struct SettingsScreen: View {
                     Label("Current Route", systemImage: "network")
                 }
             }
-
+        } header: {
+            Text("Connection")
+        } footer: {
             Text(connectionRoutePreference.wrappedValue.settingsDetail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        }
+    }
 
-            Toggle(
-                isOn: Binding(
-                    get: { localNetworkAccess.status.isToggleOn },
-                    set: { isEnabled in
-                        updateLocalNetworkAccess(isEnabled)
-                    }
-                )
-            ) {
-                Label("Local Network Access", systemImage: localNetworkAccess.status.symbolName)
-            }
-            .disabled(localNetworkAccess.isChecking)
-            .accessibilityIdentifier("settings.local-network-access")
-
-            Text(localNetworkAccess.status.summary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if localNetworkAccess.isChecking {
-                ProgressView("Checking Local Network")
-            }
-
-            if localNetworkAccess.status.canOpenAppSettings {
-                Button {
-                    localNetworkAccess.openAppSettings()
-                } label: {
-                    Label("Open iOS Settings", systemImage: "gear")
-                }
-                .accessibilityIdentifier("settings.open-ios-settings")
-            }
-
-            tailscaleRows
-
+    private var macLinkSection: some View {
+        Section {
             TextField("Enter device code", text: $draftConnectionCode)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -247,7 +225,7 @@ struct SettingsScreen: View {
                     .foregroundStyle(.red)
             }
         } header: {
-            Text("Connection")
+            Text("Mac Link")
         } footer: {
             Text("Scan the Mac orb or enter the device code manually. The raw Mac URL is hidden from this screen.")
         }
@@ -258,45 +236,78 @@ struct SettingsScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var tailscaleRows: some View {
-        let tailscale = model.serverHealth?.tailscale
+    private var localNetworkSection: some View {
+        Section {
+            Toggle(
+                isOn: Binding(
+                    get: { localNetworkAccess.status.isToggleOn },
+                    set: { isEnabled in
+                        updateLocalNetworkAccess(isEnabled)
+                    }
+                )
+            ) {
+                Label("Local Network Access", systemImage: localNetworkAccess.status.symbolName)
+            }
+            .disabled(localNetworkAccess.isChecking)
+            .accessibilityIdentifier("settings.local-network-access")
 
-        LabeledContent {
-            Text(tailscale?.statusLabel ?? "Unknown")
-        } label: {
-            Label {
-                Text("Tailscale")
-            } icon: {
-                TailscaleLogoMark(color: .blue)
-                    .frame(
-                        width: ConnectionRouteVisuals.defaultIconSize,
-                        height: ConnectionRouteVisuals.defaultIconSize
-                    )
+            if localNetworkAccess.isChecking {
+                ProgressView("Checking Local Network")
+            }
+
+            if localNetworkAccess.status.canOpenAppSettings {
+                Button {
+                    localNetworkAccess.openAppSettings()
+                } label: {
+                    Label("Open iOS Settings", systemImage: "gear")
+                }
+                .accessibilityIdentifier("settings.open-ios-settings")
+            }
+        } header: {
+            Text("Local Network")
+        } footer: {
+            Text(localNetworkAccess.status.summary)
+        }
+    }
+
+    private var tailscaleSection: some View {
+        let tailscale = model.serverHealth?.tailscale
+        return Section {
+            LabeledContent {
+                Text(tailscale?.statusLabel ?? "Unknown")
+            } label: {
+                Label {
+                    Text("Tailscale")
+                } icon: {
+                    TailscaleLogoMark(color: .blue)
+                        .frame(
+                            width: ConnectionRouteVisuals.defaultIconSize,
+                            height: ConnectionRouteVisuals.defaultIconSize
+                        )
+                }
+            }
+
+            if let magicDNSSuffix = tailscale?.magicDNSSuffix {
+                LabeledContent("Tailnet", value: magicDNSSuffix)
+            }
+
+            if tailscale?.running == true, let baseURL = tailscale?.baseURL {
+                LabeledContent("Tailnet URL", value: baseURL)
+            }
+
+            Button {
+                openTailscaleDownload()
+            } label: {
+                Label("Open Tailscale in App Store", systemImage: "arrow.up.forward.app")
+            }
+            .accessibilityIdentifier("settings.open-tailscale")
+        } header: {
+            Text("Tailscale")
+        } footer: {
+            if let detailLabel = tailscale?.detailLabel, !detailLabel.isEmpty {
+                Text(detailLabel)
             }
         }
-
-        if let detailLabel = tailscale?.detailLabel, !detailLabel.isEmpty {
-            Text(detailLabel)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-        }
-
-        if let magicDNSSuffix = tailscale?.magicDNSSuffix {
-            LabeledContent("Tailnet", value: magicDNSSuffix)
-        }
-
-        if tailscale?.running == true, let baseURL = tailscale?.baseURL {
-            LabeledContent("Tailnet URL", value: baseURL)
-        }
-
-        Button {
-            openTailscaleDownload()
-        } label: {
-            Label("Open Tailscale in App Store", systemImage: "arrow.up.forward.app")
-        }
-        .accessibilityIdentifier("settings.open-tailscale")
     }
 
     private var continuePromptSection: some View {

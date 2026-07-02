@@ -1265,7 +1265,7 @@ impl StoredState {
         chunk: ClientTextChunk,
     ) -> ClientSessionDetailProjection {
         if let Some(current) = self.latest_replies.get(&session_id).cloned() {
-            if chunk.seq <= current.latest_seq {
+            if chunk.seq < current.latest_seq {
                 return self.session_detail(&session_id);
             }
             self.latest_replies
@@ -1569,9 +1569,7 @@ fn updated_latest_reply(
     let message_id = non_empty(chunk.message_id).unwrap_or(current.message_id.clone());
     let same_message = current.message_id == message_id || current.message_id.trim().is_empty();
     let next_text = if same_message {
-        let mut text = current.text;
-        text.push_str(&chunk.content);
-        text
+        merged_latest_reply_text(&current.text, &chunk.content)
     } else {
         chunk.content
     };
@@ -1586,6 +1584,18 @@ fn updated_latest_reply(
         is_final: chunk.is_final,
         is_truncated,
         server_time: newer_optional_time(current.server_time, chunk.server_time),
+    }
+}
+
+fn merged_latest_reply_text(current: &str, incoming: &str) -> String {
+    if incoming.is_empty() || incoming == current {
+        current.to_owned()
+    } else if incoming.starts_with(current) {
+        incoming.to_owned()
+    } else {
+        let mut text = current.to_owned();
+        text.push_str(incoming);
+        text
     }
 }
 
@@ -2106,6 +2116,68 @@ mod tests {
         assert_eq!(detail.latest_reply.message_id, "message-2");
         assert_eq!(detail.latest_reply.text, "New");
         assert!(!detail.latest_reply.is_final);
+    }
+
+    #[test]
+    fn local_store_text_chunk_merges_same_seq_live_progress() {
+        let path = temp_store_path("text-chunk-same-seq-progress");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", "Hello ", false))
+            .expect("first chunk");
+        let detail = store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", "world", true))
+            .expect("same-seq final chunk");
+        store
+            .apply_text_chunk(text_chunk(6, "thread-main", "message-1", " stale", true))
+            .expect("lower-seq stale chunk ignored");
+
+        assert_eq!(detail.latest_reply.text, "Hello world");
+        assert_eq!(detail.latest_reply.latest_seq, 7);
+        assert!(detail.latest_reply.is_final);
+        assert_eq!(
+            store
+                .session_detail("thread-main".to_owned())
+                .expect("detail projection")
+                .latest_reply
+                .text,
+            "Hello world"
+        );
+    }
+
+    #[test]
+    fn local_store_text_chunk_replaces_same_seq_full_message_without_duplication() {
+        let path = temp_store_path("text-chunk-same-seq-full-message");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", "Hello ", false))
+            .expect("first chunk");
+        store
+            .apply_text_chunk(text_chunk(
+                7,
+                "thread-main",
+                "message-1",
+                "Hello world",
+                false,
+            ))
+            .expect("same-seq full message");
+        let detail = store
+            .apply_text_chunk(text_chunk(
+                7,
+                "thread-main",
+                "message-1",
+                "Hello world",
+                true,
+            ))
+            .expect("same-seq duplicate full message");
+
+        assert_eq!(detail.latest_reply.text, "Hello world");
+        assert_eq!(detail.latest_reply.latest_seq, 7);
+        assert!(detail.latest_reply.is_final);
     }
 
     #[test]

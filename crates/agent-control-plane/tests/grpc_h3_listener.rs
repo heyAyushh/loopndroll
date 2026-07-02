@@ -35,6 +35,8 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
     let (mut h3_client, health) = h3.ready_client().await;
     assert!(health.ok, "H3 health should report ok");
 
+    // H3 does not currently provide a real remote peer address to the gRPC
+    // service, so even a local test client must authenticate with metadata.
     let mut h3_request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
     h3_request.metadata_mut().insert(
         "authorization",
@@ -77,7 +79,49 @@ async fn grpc_h3_listener_binds_shutdowns_and_coexists_with_h2() {
 }
 
 #[tokio::test]
-async fn grpc_h3_listener_allows_loopback_without_mobile_auth() {
+async fn grpc_h3_unspecified_listener_accepts_valid_pairing_token() {
+    let fixture = TestControlPlaneFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    let authorization =
+        issue_mobile_authorization_header(&build_router(control_plane.clone())).await;
+    let h3 = spawn_h3(
+        control_plane,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+    )
+    .await;
+    h3.wait_until_ready().await;
+
+    // The client reaches the unspecified listener via loopback, but the service
+    // cannot see that true peer address through tonic-h3. Valid auth metadata is
+    // therefore the required proof for h3 Session streams.
+    let mut client = h3.client_for_host(Ipv4Addr::LOCALHOST.into());
+    let mut request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
+    request.metadata_mut().insert(
+        "authorization",
+        MetadataValue::try_from(authorization.as_str()).expect("authorization metadata"),
+    );
+    let mut stream = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))
+        .await
+        .expect("authenticated H3 session timed out")
+        .expect("authenticated H3 session should open")
+        .into_inner();
+    let frame = tokio::time::timeout(H3_TEST_TIMEOUT, stream.message())
+        .await
+        .expect("authenticated H3 frame timed out")
+        .expect("authenticated H3 frame result")
+        .expect("authenticated H3 should produce a frame");
+    let ack = match frame.frame {
+        Some(server_frame::Frame::Ack(ack)) => ack,
+        other => panic!("expected authenticated H3 Session ack, got {other:?}"),
+    };
+    assert_eq!(ack.error_code, "empty_client_frame");
+    println!("h3_unspecified_valid_token_ok udp_addr={}", h3.address);
+    h3.shutdown().await;
+}
+
+#[tokio::test]
+async fn grpc_h3_loopback_listener_requires_pairing_token_when_peer_unavailable() {
     let fixture = TestControlPlaneFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
@@ -87,24 +131,28 @@ async fn grpc_h3_listener_allows_loopback_without_mobile_auth() {
     )
     .await;
     let (mut client, _) = h3.ready_client().await;
+    // Binding the server to 127.0.0.1 is not enough: without the client's real
+    // QUIC remote address, the service must not apply the loopback bypass.
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
-    let mut stream = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))
+    let status = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))
         .await
-        .expect("loopback H3 session timed out")
-        .expect("loopback H3 should bypass auth")
-        .into_inner();
-    let frame = tokio::time::timeout(H3_TEST_TIMEOUT, stream.message())
-        .await
-        .expect("loopback H3 frame timed out")
-        .expect("loopback H3 frame result")
-        .expect("loopback H3 should produce a frame");
-    assert!(matches!(frame.frame, Some(server_frame::Frame::Ack(_))));
-    println!("h3_loopback_bypass_ok udp_addr={}", h3.address);
+        .expect("loopback H3 auth rejection timed out")
+        .expect_err("loopback H3 without real peer address should require token auth");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert!(
+        status.message().contains("pairing token required"),
+        "unexpected auth error: {status}"
+    );
+    println!(
+        "h3_loopback_missing_token_rejected code={:?} message={}",
+        status.code(),
+        status.message()
+    );
     h3.shutdown().await;
 }
 
 #[tokio::test]
-async fn grpc_h3_auth_rejects_missing_pairing_token() {
+async fn grpc_h3_unspecified_listener_rejects_missing_pairing_token() {
     let fixture = TestControlPlaneFixture::new();
     fixture.write_state_db();
     let control_plane = fixture.control_plane();
@@ -114,6 +162,8 @@ async fn grpc_h3_auth_rejects_missing_pairing_token() {
     )
     .await;
     h3.wait_until_ready().await;
+    // The client connects via 127.0.0.1, but h3 auth cannot infer loopback from
+    // the server's local 0.0.0.0 listen socket. Missing metadata must reject.
     let mut client = h3.client_for_host(Ipv4Addr::LOCALHOST.into());
     let request = tonic::Request::new(tokio_stream::iter(vec![ClientFrame { frame: None }]));
     let status = tokio::time::timeout(H3_TEST_TIMEOUT, client.session(request))

@@ -10,6 +10,8 @@ const DEFAULT_ASSISTANT_SURFACE: &str = "codex";
 const ASSISTANT_CLIENT_FIELD: &str = "assistantClient";
 const UNKNOWN_ASSISTANT_CLIENT: &str = "unknown";
 const CODEX_SURFACE_CLIENTS: &[&str] = &["codex", "cursor", "super-engineering", "openclaw"];
+const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
+const PAUSED_GOAL_STATUS: &str = "paused";
 
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct ClientSnapshotProjection {
@@ -396,9 +398,18 @@ pub fn reduce_siri_session_entities(
 
 impl SessionDocument {
     fn has_blocked_goal(&self) -> bool {
-        self.goal
-            .as_ref()
-            .is_some_and(|goal| normalized_status(&goal.status) == "blocked")
+        self.goal.as_ref().is_some_and(|goal| {
+            let status = normalized_status(&goal.status);
+            BLOCKED_GOAL_STATUSES.contains(&status.as_str())
+        })
+    }
+
+    fn needs_goal_attention(&self) -> bool {
+        self.has_blocked_goal()
+            || self
+                .goal
+                .as_ref()
+                .is_some_and(|goal| normalized_status(&goal.status) == PAUSED_GOAL_STATUS)
     }
 
     fn has_running_goal(&self) -> bool {
@@ -685,7 +696,7 @@ fn project_session_sections(sessions: Vec<SessionDocument>) -> ClientSessionSect
 
         projection.active_indexes.push(index);
 
-        if session.has_blocked_goal() {
+        if session.needs_goal_attention() {
             projection.needs_attention_indexes.push(index);
             continue;
         }
@@ -1179,11 +1190,11 @@ mod tests {
         let projection =
             reduce_session_sections(session_sections_json()).expect("project sections");
 
-        assert_eq!(projection.active_indexes, vec![1, 2, 3, 4]);
+        assert_eq!(projection.active_indexes, vec![1, 2, 3, 4, 5]);
         assert_eq!(projection.running_indexes, vec![4]);
         assert_eq!(projection.waiting_indexes, vec![1]);
         assert_eq!(projection.stopped_indexes, vec![3]);
-        assert_eq!(projection.needs_attention_indexes, vec![1, 2]);
+        assert_eq!(projection.needs_attention_indexes, vec![1, 2, 5]);
         assert_eq!(projection.archived_indexes, vec![0]);
     }
 
@@ -1798,6 +1809,15 @@ mod tests {
                 "lastActivityAt":"2026-06-16T08:02:00.318Z",
                 "isArchived":false,
                 "goal":{"status":"pursuing","running":true}
+            },
+            {
+                "id":"paused-goal",
+                "ref":"S5",
+                "status":"stopped",
+                "lastActivityAtMs":1781596920317,
+                "lastActivityAt":"2026-06-16T08:02:00.317Z",
+                "isArchived":false,
+                "goal":{"status":"paused","running":false}
             }
         ]"#
         .to_owned()

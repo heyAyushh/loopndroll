@@ -655,6 +655,221 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testIdenticalVisibleSnapshotApplyDoesNotInvalidateVisibleProjection() throws {
+        let runningSession = Self.sessionSummary(
+            id: "stable-running-thread",
+            title: "Stable Running Mini",
+            ref: "S1",
+            status: .active
+        )
+        let waitingSession = Self.sessionSummary(
+            id: "stable-waiting-thread",
+            title: "Stable Waiting Mini",
+            ref: "S2",
+            status: .waiting
+        )
+        let snapshot = Self.mobileSnapshot(
+            revision: "stable-visible-revision",
+            sessions: [runningSession, waitingSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [runningSession, waitingSession],
+            ]
+        )
+        let store = CompanionSnapshotStateStore()
+        let firstResult = store.applySnapshotResult(snapshot)
+        let firstActiveIDs = store.sessionSections.active.map(\.id)
+        let firstRunningIDs = store.sessionSections.running.map(\.id)
+        let firstWaitingIDs = store.sessionSections.waiting.map(\.id)
+        let firstIndexIdentity = store.sessionIndexIdentity
+
+        let secondResult = store.applySnapshotResult(snapshot)
+
+        #expect(firstResult.didChangeVisibleSnapshot)
+        #expect(!secondResult.didChangeVisibleSnapshot)
+        #expect(store.sessionSections.active.map(\.id) == firstActiveIDs)
+        #expect(store.sessionSections.running.map(\.id) == firstRunningIDs)
+        #expect(store.sessionSections.waiting.map(\.id) == firstWaitingIDs)
+        #expect(store.sessionIndexIdentity == firstIndexIdentity)
+    }
+
+    @MainActor
+    @Test
+    func testPreparedSnapshotResultMatchesSynchronousApplySnapshotResult() throws {
+        let codexSession = Self.sessionSummary(
+            id: "prepared-codex-thread",
+            title: "Prepared Codex",
+            ref: "P1",
+            status: .active
+        )
+        let devinSession = Self.sessionSummary(
+            id: "prepared-devin-thread",
+            title: "Prepared Devin",
+            ref: "P2",
+            status: .waiting
+        )
+        let snapshot = Self.mobileSnapshot(
+            revision: "prepared-parity-revision",
+            sessions: [codexSession, devinSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [codexSession],
+                CompanionAssistantSurface.devin.rawValue: [devinSession],
+            ]
+        )
+        let synchronousStore = CompanionSnapshotStateStore()
+        let preparedStore = CompanionSnapshotStateStore()
+
+        let synchronousResult = synchronousStore.applySnapshotResult(
+            snapshot,
+            preferredSurface: .devin
+        )
+        let preparedProjection = CompanionPreparedSnapshotProjection.build(
+            snapshot: snapshot,
+            surface: .devin
+        )
+        let preparedResult = preparedStore.applyPreparedSnapshotResult(preparedProjection)
+
+        #expect(preparedResult.didChangeVisibleSnapshot == synchronousResult.didChangeVisibleSnapshot)
+        #expect(preparedResult.visibleSnapshot.sessions.map(\.id) == synchronousResult.visibleSnapshot.sessions.map(\.id))
+        #expect(preparedStore.selectedAssistantSurface == synchronousStore.selectedAssistantSurface)
+        #expect(preparedStore.snapshot?.sessions.map(\.id) == synchronousStore.snapshot?.sessions.map(\.id))
+        #expect(preparedStore.sourceSnapshot?.sessionsAcrossSurfaces.map(\.id) == synchronousStore.sourceSnapshot?.sessionsAcrossSurfaces.map(\.id))
+        #expect(preparedStore.sessionIndexIdentity == synchronousStore.sessionIndexIdentity)
+        #expect(Self.sessionSectionIDs(preparedStore.sessionSections) == Self.sessionSectionIDs(synchronousStore.sessionSections))
+        #expect(Self.sessionSectionIDs(preparedStore.allSessionSections) == Self.sessionSectionIDs(synchronousStore.allSessionSections))
+    }
+
+    @MainActor
+    @Test
+    func testOutOfOrderPreparedSessionMiniResultCannotOverwriteNewerSnapshot() throws {
+        let olderSession = Self.sessionSummary(
+            id: "older-prepared-thread",
+            title: "Older Prepared Mini",
+            ref: "O1",
+            status: .active
+        )
+        let newerSession = Self.sessionSummary(
+            id: "newer-prepared-thread",
+            title: "Newer Prepared Mini",
+            ref: "N1",
+            status: .active
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(
+                service: SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+            ),
+            sessionRuntime: try Self.temporarySessionRuntime()
+        )
+        let olderSnapshot = Self.mobileSnapshot(
+            revision: "prepared-seq-10",
+            sessions: [olderSession]
+        )
+        let newerSnapshot = Self.mobileSnapshot(
+            revision: "prepared-seq-11",
+            sessions: [newerSession]
+        )
+        let olderProjection = CompanionPreparedSnapshotProjection.build(
+            snapshot: olderSnapshot,
+            surface: .codex
+        )
+        let newerProjection = CompanionPreparedSnapshotProjection.build(
+            snapshot: newerSnapshot,
+            surface: .codex
+        )
+        let olderGeneration = try #require(model.reserveSessionMiniProjectionBuildForTesting(latestSeq: 10))
+        let newerGeneration = try #require(model.reserveSessionMiniProjectionBuildForTesting(latestSeq: 11))
+
+        #expect(model.applyPreparedSessionMiniSyncSnapshot(
+            newerProjection,
+            reason: CompanionSessionMiniSyncReason.delta,
+            latestSeq: 11,
+            endpointURL: nil,
+            connectionRevision: 0,
+            generation: newerGeneration,
+            builtSurface: .codex
+        ))
+        #expect(!model.applyPreparedSessionMiniSyncSnapshot(
+            olderProjection,
+            reason: CompanionSessionMiniSyncReason.delta,
+            latestSeq: 10,
+            endpointURL: nil,
+            connectionRevision: 0,
+            generation: olderGeneration,
+            builtSurface: .codex
+        ))
+
+        #expect(model.snapshot?.session(withID: newerSession.id)?.title == "Newer Prepared Mini")
+        #expect(model.snapshot?.session(withID: olderSession.id) == nil)
+        #expect(model.viewState.activeSessions.map(\.id) == [newerSession.id])
+        #expect(model.realtimeLatestSeq == 11)
+    }
+
+    @MainActor
+    @Test
+    func testPreparedSessionMiniResultDropsWhenSurfaceSwitchesDuringBuild() throws {
+        let initialCodexSession = Self.sessionSummary(
+            id: "initial-codex-thread",
+            title: "Initial Codex",
+            ref: "C1",
+            status: .active
+        )
+        let initialDevinSession = Self.sessionSummary(
+            id: "initial-devin-thread",
+            title: "Initial Devin",
+            ref: "D1",
+            status: .active
+        )
+        let staleCodexSession = Self.sessionSummary(
+            id: "stale-codex-thread",
+            title: "Stale Codex",
+            ref: "C2",
+            status: .active
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(
+                service: SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+            ),
+            sessionRuntime: try Self.temporarySessionRuntime()
+        )
+        model.snapshot = Self.mobileSnapshot(
+            revision: "surface-initial",
+            sessions: [initialCodexSession, initialDevinSession],
+            surfaceSessions: [
+                CompanionAssistantSurface.codex.rawValue: [initialCodexSession],
+                CompanionAssistantSurface.devin.rawValue: [initialDevinSession],
+            ]
+        )
+        let staleProjection = CompanionPreparedSnapshotProjection.build(
+            snapshot: Self.mobileSnapshot(
+                revision: "surface-stale-codex",
+                sessions: [staleCodexSession, initialDevinSession],
+                surfaceSessions: [
+                    CompanionAssistantSurface.codex.rawValue: [staleCodexSession],
+                    CompanionAssistantSurface.devin.rawValue: [initialDevinSession],
+                ]
+            ),
+            surface: .codex
+        )
+        let generation = try #require(model.reserveSessionMiniProjectionBuildForTesting(latestSeq: 12))
+
+        #expect(model.selectAssistantSurface(.devin))
+        #expect(!model.applyPreparedSessionMiniSyncSnapshot(
+            staleProjection,
+            reason: CompanionSessionMiniSyncReason.delta,
+            latestSeq: 12,
+            endpointURL: nil,
+            connectionRevision: 0,
+            generation: generation,
+            builtSurface: .codex
+        ))
+
+        #expect(model.viewState.selectedAssistantSurface == .devin)
+        #expect(model.snapshot?.sessions.map(\.id) == [initialDevinSession.id])
+        #expect(model.snapshot?.session(withID: staleCodexSession.id) == nil)
+        #expect(model.realtimeLatestSeq == 0)
+    }
+
+    @MainActor
+    @Test
     func testAssistantSurfaceSwitchAppliesAfterRuntimeAccept() async throws {
         let cachedSession = Self.sessionSummary(
             id: Constants.cachedThreadID,
@@ -1770,6 +1985,133 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.viewState.detailPresentation(for: route).latestAssistantReply == "Cached assistant reply from mini")
     }
 
+    @Test
+    func testTextChunkStreamUpdatePublishesSyncUpdateForDetailInvalidation() throws {
+        let sessionID = "text-chunk-thread"
+        let liveReplyTime = "2026-06-24T00:01:00Z"
+        var cachedSession = Self.sessionSummary(
+            id: sessionID,
+            title: "Text Chunk Detail",
+            ref: "T1",
+            status: .active
+        )
+        cachedSession.assistantPreview = "Cached preview"
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 21,
+            records: [
+                Self.miniRecord(
+                    session: cachedSession,
+                    seq: 21,
+                    revision: "text-chunk-revision-21"
+                ),
+            ],
+            latestReplies: [
+                Self.latestReply(
+                    sessionID: sessionID,
+                    messageID: "message-live",
+                    text: "Newest streamed reply",
+                    latestSeq: 22,
+                    serverTime: liveReplyTime
+                ),
+            ]
+        )
+        let streamUpdate = ClientMobileSnapshotStreamUpdate(
+            hasSnapshot: false,
+            snapshotJson: "",
+            syncReason: CompanionSessionMiniSyncReason.textChunk,
+            shouldStop: false,
+            latestSeq: 22,
+            serverTime: liveReplyTime,
+            errorDescription: "",
+            debugMessage: "",
+            hasTextChunk: true,
+            textChunk: ClientTextChunk(
+                seq: 22,
+                threadId: sessionID,
+                messageId: "message-live",
+                content: "Newest streamed reply",
+                isFinal: true,
+                serverTime: liveReplyTime
+            )
+        )
+
+        let result = try runtime.mobileSnapshotStreamResult(
+            from: streamUpdate,
+            stateSnapshot: runtime.currentStateMiniSnapshot(),
+            endpointURL: URL(string: "http://127.0.0.1:8766")
+        )
+
+        #expect(result.update?.reason == CompanionSessionMiniSyncReason.textChunk)
+        #expect(result.update?.latestSeq == 22)
+        #expect(result.update?.snapshot.session(withID: sessionID)?.title == "Text Chunk Detail")
+        #expect(result.liveness?.isLive == true)
+        #expect(result.liveness?.latestSeq == 22)
+    }
+
+    @MainActor
+    @Test
+    func testRejectedTextChunkUpdateStillIncrementsDetailRevision() async throws {
+        let sessionID = "rejected-text-chunk-thread"
+        let liveReplyTime = "2026-06-24T00:01:00Z"
+        var cachedSession = Self.sessionSummary(
+            id: sessionID,
+            title: "Rejected Text Chunk Detail",
+            ref: "R1",
+            status: .active
+        )
+        cachedSession.assistantPreview = "Cached preview"
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 30,
+            records: [
+                Self.miniRecord(
+                    session: cachedSession,
+                    seq: 30,
+                    revision: "rejected-text-chunk-revision-30"
+                ),
+            ],
+            latestReplies: [
+                Self.latestReply(
+                    sessionID: sessionID,
+                    messageID: "message-live",
+                    text: "Newest streamed reply",
+                    latestSeq: 31,
+                    serverTime: liveReplyTime
+                ),
+            ]
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(
+                service: SessionMiniLocalFirstServiceSpy(snapshot: Self.networkSnapshot())
+            ),
+            sessionRuntime: runtime
+        )
+        let visibleSnapshot = Self.mobileSnapshot(
+            revision: "visible-revision-30",
+            sessions: [cachedSession],
+            surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [cachedSession]]
+        )
+        model.snapshot = visibleSnapshot
+        model.realtimeLatestSeq = 30
+        let initialRevision = model.sessionDetailRevision
+
+        let rejectedUpdate = CompanionSessionMiniSyncUpdate(
+            reason: CompanionSessionMiniSyncReason.textChunk,
+            latestSeq: 29,
+            endpointURL: URL(string: "http://127.0.0.1:8766"),
+            snapshot: Self.mobileSnapshot(
+                revision: "rejected-revision-29",
+                sessions: [cachedSession],
+                surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [cachedSession]]
+            )
+        )
+        model.applySessionMiniSyncUpdate(rejectedUpdate, connectionRevision: 0)
+        await model.waitForPendingSessionMiniProjectionForTesting()
+
+        #expect(model.sessionDetailRevision == initialRevision + 1)
+        #expect(model.viewState.session(withID: sessionID, assistantSurface: .codex)?.title == "Rejected Text Chunk Detail")
+        #expect(model.realtimeLatestSeq == 30)
+    }
+
     @MainActor
     @Test
     func testPendingPromptDeliveryPresentationMapsRecentAndStaleAttempts() {
@@ -2585,6 +2927,17 @@ struct CompanionSessionMiniLocalFirstTests {
             }
             try await Task.sleep(nanoseconds: Constants.assistantSurfaceAckPollNanoseconds)
         }
+    }
+
+    private static func sessionSectionIDs(_ sections: SessionSections) -> [[String]] {
+        [
+            sections.active.map(\.id),
+            sections.running.map(\.id),
+            sections.waiting.map(\.id),
+            sections.stopped.map(\.id),
+            sections.needsAttention.map(\.id),
+            sections.archived.map(\.id),
+        ]
     }
 
     private static func sessionSummary(

@@ -1465,6 +1465,62 @@ struct SessionGoalSummary: Codable, Hashable, Sendable {
     var tokensUsed: Int?
     var timeUsedSeconds: Int?
     var updatedAtMs: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case status
+        case lifecycle
+        case running
+        case tokenBudget
+        case tokensUsed
+        case timeUsedSeconds
+        case updatedAtMs
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case reason
+    }
+
+    init(
+        id: String,
+        title: String,
+        status: String,
+        lifecycle: String,
+        running: Bool,
+        tokenBudget: Int? = nil,
+        tokensUsed: Int? = nil,
+        timeUsedSeconds: Int? = nil,
+        updatedAtMs: Int64? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.lifecycle = lifecycle
+        self.running = running
+        self.tokenBudget = tokenBudget
+        self.tokensUsed = tokensUsed
+        self.timeUsedSeconds = timeUsedSeconds
+        self.updatedAtMs = updatedAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        let decodedStatus = try container.decodeIfPresent(String.self, forKey: .status) ??
+            legacyContainer.decodeIfPresent(String.self, forKey: .reason) ??
+            ""
+
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        status = decodedStatus
+        lifecycle = try container.decodeIfPresent(String.self, forKey: .lifecycle) ?? decodedStatus
+        running = try container.decodeIfPresent(Bool.self, forKey: .running) ?? false
+        tokenBudget = try container.decodeIfPresent(Int.self, forKey: .tokenBudget)
+        tokensUsed = try container.decodeIfPresent(Int.self, forKey: .tokensUsed)
+        timeUsedSeconds = try container.decodeIfPresent(Int.self, forKey: .timeUsedSeconds)
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
+    }
 }
 
 extension SessionGoalSummary {
@@ -1486,7 +1542,23 @@ extension SessionGoalSummary {
     }
 
     var isBlocked: Bool {
-        normalizedStatus == GoalStatusValue.blocked
+        switch normalizedStatus {
+        case GoalStatusValue.blocked,
+             GoalStatusValue.unmet,
+             GoalStatusValue.usageLimited,
+             GoalStatusValue.budgetLimited:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isPaused: Bool {
+        normalizedStatus == GoalStatusValue.paused
+    }
+
+    var needsAttention: Bool {
+        isBlocked || isPaused
     }
 
     var displayStatusLabel: String {
@@ -1511,28 +1583,12 @@ extension SessionGoalSummary {
     }
 
     var cardStatusLabel: String? {
-        if isBlocked || running {
+        if needsAttention || running {
             return displayStatusLabel
         }
         return nil
     }
 
-    var displayStatusSymbolName: String {
-        switch normalizedStatus {
-        case GoalStatusValue.blocked:
-            return "exclamationmark.octagon.fill"
-        case GoalStatusValue.paused:
-            return "pause.circle.fill"
-        case GoalStatusValue.achieved:
-            return "checkmark.circle.fill"
-        case GoalStatusValue.unmet:
-            return "xmark.circle.fill"
-        case GoalStatusValue.usageLimited, GoalStatusValue.budgetLimited:
-            return "gauge"
-        default:
-            return running ? "target" : "questionmark.circle"
-        }
-    }
 }
 
 struct MobileWorkStatusGoal: Codable, Hashable, Sendable {
@@ -1926,6 +1982,10 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
         case metadata
     }
 
+    private enum LegacyCodingKeys: String, CodingKey {
+        case blockedGoal
+    }
+
     init(
         id: String,
         ref: String,
@@ -1972,6 +2032,7 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         ref = try container.decode(String.self, forKey: .ref)
         title = try container.decode(String.self, forKey: .title)
@@ -1994,7 +2055,8 @@ struct SessionSummary: Codable, Identifiable, Hashable, Sendable {
             forKey: .promptDeliveryUnavailableReason
         )
         assistantClient = try container.decodeIfPresent(AssistantClient.self, forKey: .assistantClient) ?? .unknown
-        goal = try container.decodeIfPresent(SessionGoalSummary.self, forKey: .goal)
+        goal = try container.decodeIfPresent(SessionGoalSummary.self, forKey: .goal) ??
+            legacyContainer.decodeIfPresent(SessionGoalSummary.self, forKey: .blockedGoal)
         metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata) ?? .empty
     }
 
@@ -2057,12 +2119,12 @@ extension SessionSummary {
         goal?.isBlocked == true
     }
 
-    var workStatusLabel: String? {
-        goal?.cardStatusLabel
+    var needsGoalAttention: Bool {
+        goal?.needsAttention == true
     }
 
-    var workStatusSymbolName: String {
-        goal?.displayStatusSymbolName ?? "target"
+    var workStatusLabel: String? {
+        goal?.cardStatusLabel
     }
 
     private func date(fromMilliseconds milliseconds: Int64?) -> Date? {
@@ -2748,7 +2810,9 @@ struct SessionSections: Sendable {
     let archived: [SessionSummary]
 
     init(sessions: [SessionSummary]) {
-        guard let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions) else {
+        guard let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions),
+              Self.projectionIncludesGoalAttention(projection, sessions: sessions)
+        else {
             self.init(localProjectionSessions: sessions)
             return
         }
@@ -2772,7 +2836,7 @@ struct SessionSections: Sendable {
             }
 
             active.append(session)
-            if session.hasBlockedGoal {
+            if session.needsGoalAttention {
                 needsAttention.append(session)
                 continue
             }
@@ -2800,6 +2864,19 @@ struct SessionSections: Sendable {
         self.stopped = stopped
         self.needsAttention = needsAttention
         self.archived = archived
+    }
+
+    private static func projectionIncludesGoalAttention(
+        _ projection: ClientSessionSectionsProjection,
+        sessions: [SessionSummary]
+    ) -> Bool {
+        let projectedAttentionIndexes = Set(projection.needsAttentionIndexes.compactMap(Int.init))
+        for (index, session) in sessions.enumerated()
+            where session.needsGoalAttention && !projectedAttentionIndexes.contains(index)
+        {
+            return false
+        }
+        return true
     }
 
     init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {
@@ -2918,8 +2995,10 @@ enum ModelFormatting {
         return date.formatted(.relative(presentation: .named))
     }
 
+    // The clock glyph next to this label already says "last activity";
+    // prefixing "active" read as a second status word on the card.
     static func sessionFreshness(_ session: SessionSummary) -> String {
-        "\(session.displayFreshnessPrefix) \(relativeTimestamp(session.displayFreshnessAt))"
+        relativeTimestamp(session.displayFreshnessAt)
     }
 
     static func friendlyDateTime(_ value: String) -> String {

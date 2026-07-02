@@ -77,15 +77,17 @@ struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                AssistantSurfaceLogoMark(surface: assistantSurface)
-                    .frame(width: 28, height: 28)
-                    .accessibilityLabel(assistantSurface.displayTitle)
+                VStack(spacing: 4) {
+                    AssistantSurfaceLogoMark(surface: assistantSurface)
+                        .frame(width: 28, height: 28)
+                        .accessibilityLabel(assistantSurface.displayTitle)
 
-                VStack(alignment: .leading, spacing: 4) {
                     Text(session.ref)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+                }
 
+                VStack(alignment: .leading, spacing: 4) {
                     Text(session.title)
                         .font(.headline)
                         .foregroundStyle(.primary)
@@ -102,20 +104,14 @@ struct SessionRow: View {
 
                 Spacer(minLength: 12)
 
-                VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 6) {
+                    if let goal = session.goal, goal.cardStatusLabel != nil {
+                        GoalStatusBadge(goal: goal)
+                            .accessibilityIdentifier("session-row.goal-status")
+                    }
+
                     StatusPill(text: session.status.label, tint: tint)
                         .accessibilityIdentifier("session-row.session-status")
-
-                    if session.hasBlockedGoal,
-                       let goal = session.goal,
-                       let workStatusLabel = session.workStatusLabel
-                    {
-                        StatusPill(
-                            text: workStatusLabel,
-                            tint: SessionGoalStatusVisuals.tint(for: goal)
-                        )
-                        .accessibilityIdentifier("session-row.goal-status")
-                    }
                 }
             }
 
@@ -142,14 +138,6 @@ struct SessionRow: View {
                         "\(session.metadata.installedPlugins.count)",
                         systemImage: "puzzlepiece.extension"
                     )
-                }
-
-                if let workStatusLabel = session.workStatusLabel {
-                    Label(workStatusLabel, systemImage: session.workStatusSymbolName)
-                        .foregroundStyle(
-                            session.goal.map(SessionGoalStatusVisuals.tint(for:)) ?? .secondary
-                        )
-                        .accessibilityIdentifier("session-row.goal-work-status")
                 }
 
                 if session.metadata.taskKind != .unknown {

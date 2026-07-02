@@ -16,6 +16,12 @@ async fn local_session_command_h3() {
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
     let grpc_address = reserve_local_tcp_address().await;
+    let http = spawn_http(
+        control_plane.clone(),
+        http_address_for_grpc_address(grpc_address),
+    )
+    .await;
+    let http_base_url = format!("http://{}", http.address);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let h3 = crate::grpc::spawn_h3_server(control_plane.clone(), grpc_address, async {
         let _ = shutdown_receiver.await;
@@ -26,7 +32,7 @@ async fn local_session_command_h3() {
     let client_mutation_id = "local-h3-mode";
     let command = set_session_mode_command("thread-main", client_mutation_id);
     let result = submit_local_session_command_with_h3_certificate_sha256(
-        &http_base_url_for_grpc_address(grpc_address),
+        &http_base_url,
         command,
         client_mutation_id,
         Some(h3.certificate_sha256.clone()),
@@ -57,6 +63,7 @@ async fn local_session_command_h3() {
         .await
         .expect("H3 server task should not panic")
         .expect("H3 server should shut down");
+    http.shutdown().await;
 }
 
 #[tokio::test]
@@ -66,6 +73,12 @@ async fn local_session_command_h3_keeps_stream_open_for_followup_frame() {
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
     let grpc_address = reserve_local_tcp_address().await;
+    let http = spawn_http(
+        control_plane.clone(),
+        http_address_for_grpc_address(grpc_address),
+    )
+    .await;
+    let http_base_url = format!("http://{}", http.address);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let h3 = crate::grpc::spawn_h3_server(control_plane.clone(), grpc_address, async {
         let _ = shutdown_receiver.await;
@@ -80,11 +93,8 @@ async fn local_session_command_h3_keeps_stream_open_for_followup_frame() {
         )),
     };
     let mut opened = open_local_session_command_stream(
-        local_session_transport_endpoints(
-            &http_base_url_for_grpc_address(grpc_address),
-            Some(h3.certificate_sha256.clone()),
-        )
-        .expect("local endpoints"),
+        local_session_transport_endpoints(&http_base_url, Some(h3.certificate_sha256.clone()))
+            .expect("local endpoints"),
         first_frame,
     )
     .await
@@ -122,6 +132,7 @@ async fn local_session_command_h3_keeps_stream_open_for_followup_frame() {
         .await
         .expect("H3 server task should not panic")
         .expect("H3 server should shut down");
+    http.shutdown().await;
 }
 
 #[tokio::test]

@@ -5093,7 +5093,7 @@ public func reduceConnectionFailure(mappedErrorState: String, hasUsableSnapshot:
  * `current_connection_state`, `has_server_health`, and `has_reached_base_url` are part
  * of the stable FFI signature (Swift already builds and passes these) but are
  * deliberately not used to influence the projection: an earlier version of this
- * reducer used them to report a synthetic "connected" state from cached metadata
+ * function used them to report a synthetic "connected" state from cached metadata
  * when a snapshot load failed, which let a genuinely offline client claim it was
  * connected (see the "stop cached routes from reporting connected" fix). Keep
  * reporting the real error state instead of resurrecting that behavior. The
@@ -5256,7 +5256,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_looper_client_core_checksum_func_reduce_connection_failure() != 21774) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 18810) {
+    if (uniffi_looper_client_core_checksum_func_reduce_snapshot_load_failure() != 61322) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_func_reduce_menu_snapshot_human_status() != 13305) {

@@ -53,11 +53,62 @@ enum SessionGoalStatusVisuals {
         if goal.isBlocked {
             return .orange
         }
+        if goal.isPaused {
+            return .yellow
+        }
         if goal.running {
             return .accentColor
         }
         return .secondary
     }
+}
+
+enum GoalStatusIconMetrics {
+    static let defaultSize: CGFloat = 20
+    static let assetName = "GoalMark"
+}
+
+/// Bullseye board with a dart landing on its center, drawn from the vector
+/// GoalMark asset and tinted by goal state.
+struct GoalStatusIcon: View {
+    let tint: Color
+    var size: CGFloat = GoalStatusIconMetrics.defaultSize
+
+    var body: some View {
+        Image(GoalStatusIconMetrics.assetName)
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Icon-only replacement for the goal status text pill: the goal state is
+/// conveyed by tint alone, the status wording lives in accessibility.
+struct GoalStatusBadge: View {
+    let goal: SessionGoalSummary
+
+    private var tint: Color {
+        SessionGoalStatusVisuals.tint(for: goal)
+    }
+
+    var body: some View {
+        GoalStatusIcon(tint: tint)
+            .padding(GoalStatusBadgeMetrics.padding)
+            .background(Circle().fill(tint.opacity(StatusPillMetrics.backgroundOpacity)))
+            .pinballSurface(
+                cornerRadius: GoalStatusBadgeMetrics.surfaceCornerRadius,
+                material: .soft
+            )
+            .accessibilityLabel(goal.displayStatusLabel)
+    }
+}
+
+private enum GoalStatusBadgeMetrics {
+    static let padding: CGFloat = 6
+    static let surfaceCornerRadius: CGFloat = 16
 }
 
 enum ConnectionRouteVisuals {

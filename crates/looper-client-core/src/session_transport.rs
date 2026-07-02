@@ -543,11 +543,8 @@ async fn fetch_state_mini_snapshot_from_endpoint(
         .build();
     let client = Client::builder(TokioExecutor::new()).build(connector);
     let mut request = HyperRequest::builder().method(Method::GET).uri(uri);
-    if !bearer_token.trim().is_empty() {
-        request = request.header(
-            AUTHORIZATION_HEADER,
-            format!("{BEARER_PREFIX}{bearer_token}"),
-        );
+    if let Some(authorization) = authorization_header_value(bearer_token) {
+        request = request.header(AUTHORIZATION_HEADER, authorization);
     }
     if !mobile_session_header.trim().is_empty() {
         request = request.header(MOBILE_SESSION_HEADER, mobile_session_header);
@@ -855,19 +852,36 @@ async fn run_state_mini_stream_session(
                     fallback_reason,
                 } = opened;
                 mark_endpoint_last_good(endpoints, &endpoint_url, endpoint_transport);
-                return drive_state_mini_stream_session(
+                let drive_result = drive_state_mini_stream_session(
                     stream,
                     request_sender,
                     command_submitter,
                     commands,
-                    events,
-                    command_acks,
+                    events.clone(),
+                    command_acks.clone(),
                     after_seq,
                     endpoint_url,
                     endpoint_transport,
                     fallback_reason,
                 )
                 .await;
+                match drive_result {
+                    Ok(latest_seq) => return Ok(latest_seq),
+                    Err(StateMiniTransportError::Transport {
+                        latest_seq,
+                        error_description,
+                        endpoint_transport: failed_transport,
+                        fallback_reason,
+                    }) if is_h3_tier
+                        && failed_transport == ClientEndpointTransport::H3
+                        && latest_seq <= after_seq =>
+                    {
+                        h3_fallback_reason = format!("h3 stream failure: {error_description}");
+                        last_transport_error = error_description;
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             Err(StateMiniTransportError::RecoveryRequired {
                 latest_seq,
@@ -1672,8 +1686,7 @@ fn apply_metadata(
     bearer_token: &str,
     mobile_session_header: &str,
 ) -> Result<(), ClientCoreError> {
-    if !bearer_token.trim().is_empty() {
-        let value = format!("{BEARER_PREFIX}{bearer_token}");
+    if let Some(value) = authorization_header_value(&bearer_token) {
         metadata.insert(
             AUTHORIZATION_HEADER,
             MetadataValue::try_from(value)
@@ -1690,6 +1703,22 @@ fn apply_metadata(
     }
 
     Ok(())
+}
+
+fn authorization_header_value(bearer_token: &str) -> Option<String> {
+    let bearer_token = bearer_token.trim();
+    if bearer_token.is_empty() {
+        return None;
+    }
+
+    if let Some((scheme, credential)) = bearer_token.split_once(' ')
+        && scheme.eq_ignore_ascii_case(BEARER_PREFIX.trim())
+        && !credential.trim().is_empty()
+    {
+        return Some(format!("{BEARER_PREFIX}{}", credential.trim()));
+    }
+
+    Some(format!("{BEARER_PREFIX}{bearer_token}"))
 }
 
 fn client_frame(frame: OutboundSessionFrame) -> Result<proto::ClientFrame, ClientCoreError> {
@@ -2296,6 +2325,43 @@ mod tests {
     }
 
     #[test]
+    fn authorization_header_value_normalizes_raw_and_prefixed_pairing_tokens() {
+        assert_eq!(
+            authorization_header_value("pairing-id.pairing-token").as_deref(),
+            Some("Bearer pairing-id.pairing-token")
+        );
+        assert_eq!(
+            authorization_header_value("Bearer pairing-id.pairing-token").as_deref(),
+            Some("Bearer pairing-id.pairing-token")
+        );
+        assert_eq!(
+            authorization_header_value("bearer pairing-id.pairing-token").as_deref(),
+            Some("Bearer pairing-id.pairing-token")
+        );
+        assert_eq!(authorization_header_value("   "), None);
+    }
+
+    #[test]
+    fn apply_metadata_keeps_prefixed_authorization_single_prefixed() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        apply_metadata(
+            &mut metadata,
+            "Bearer pairing-id.pairing-token".to_owned(),
+            String::new(),
+        )
+        .expect("metadata");
+
+        assert_eq!(
+            metadata
+                .get(AUTHORIZATION_HEADER)
+                .expect("authorization metadata")
+                .to_str()
+                .expect("authorization string"),
+            "Bearer pairing-id.pairing-token"
+        );
+    }
+
+    #[test]
     fn state_mini_delta_recovery_instruction_triggers_snapshot_recovery() {
         let result = client_state_mini_delta(proto::StateMiniDelta {
             seq: 57,
@@ -2806,6 +2872,79 @@ mod tests {
     }
 
     #[test]
+    fn h3_stream_failure_before_server_frame_falls_back_to_h2() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let h3 = spawn_h3_realtime_session_server_with_service(
+                FailBeforeFrameRealtimeSessionService,
+            )
+            .await;
+            let (h2_url, h2_server) = spawn_realtime_session_server_with_heartbeat(101).await;
+            let endpoints = vec![
+                h3_endpoint(
+                    &h3.url,
+                    "http://127.0.0.1:8765",
+                    &h3.certificate_sha256,
+                    false,
+                ),
+                h2_endpoint(&h2_url, false),
+            ];
+            let (_command_sender, commands) = mpsc::channel(1);
+            let (events_sender, mut events) = mpsc::channel(8);
+            let (command_acks_sender, _command_acks) = mpsc::channel(1);
+            let stream_task = tokio::spawn(async move {
+                run_state_mini_stream(
+                    endpoints,
+                    String::new(),
+                    String::new(),
+                    100,
+                    commands,
+                    events_sender,
+                    command_acks_sender,
+                )
+                .await;
+            });
+
+            let fallback_event = loop {
+                let event =
+                    recv_stream_event(&mut events, "H2 fallback after early H3 close").await;
+                match event {
+                    StateMiniStreamEvent::Heartbeat {
+                        endpoint_transport: ClientEndpointTransport::H2,
+                        ..
+                    } => break event,
+                    StateMiniStreamEvent::Heartbeat {
+                        endpoint_transport: ClientEndpointTransport::H3,
+                        ..
+                    } => continue,
+                    other => panic!("expected H2 fallback heartbeat, got {other:?}"),
+                }
+            };
+            match fallback_event {
+                StateMiniStreamEvent::Heartbeat {
+                    endpoint_url,
+                    fallback_reason,
+                    ..
+                } => {
+                    assert_eq!(endpoint_url, normalized_endpoint_url(&h2_url));
+                    assert!(
+                        fallback_reason.contains("h3 stream failure"),
+                        "fallback reason should identify early H3 stream failure: {fallback_reason}"
+                    );
+                }
+                other => panic!("expected H2 fallback heartbeat, got {other:?}"),
+            }
+
+            stream_task.abort();
+            let _ = stream_task.await;
+            h3.shutdown().await;
+            h2_server.abort();
+            let _ = h2_server.await;
+        });
+    }
+
+    #[test]
     fn h3_established_stream_failure_reconnects_with_after_seq_and_preserves_pending_ack() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
@@ -2856,50 +2995,60 @@ mod tests {
             }
 
             let mut expected_resume_after_seq = 90;
-            let reconnecting = loop {
-                let event = recv_stream_event(&mut events, "H3 reconnecting event").await;
+            let mut did_queue_command = false;
+            let reopened = loop {
+                let event = recv_stream_event(&mut events, "fallback H2 heartbeat").await;
                 match event {
                     StateMiniStreamEvent::Heartbeat {
                         latest_seq,
-                        endpoint_transport,
+                        endpoint_transport: ClientEndpointTransport::H3,
                         ..
                     } => {
-                        assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
                         expected_resume_after_seq = expected_resume_after_seq.max(latest_seq);
                     }
-                    other @ StateMiniStreamEvent::Reconnecting { .. } => break other,
-                    other => panic!("expected H3 heartbeat or reconnecting event, got {other:?}"),
+                    StateMiniStreamEvent::Reconnecting {
+                        latest_seq,
+                        endpoint_transport,
+                        fallback_reason,
+                        error_description,
+                    } => {
+                        assert_eq!(latest_seq, expected_resume_after_seq);
+                        assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
+                        assert!(fallback_reason.is_empty());
+                        assert!(
+                            error_description.contains("Connection error")
+                                || error_description.contains("established h3 stream failed"),
+                            "unexpected reconnect reason: {error_description}"
+                        );
+                        h3.endpoint.close(VarInt::from_u32(0), b"test h3 down");
+                        if !did_queue_command {
+                            command_sender
+                                .send(test_outbound_command(
+                                    "mutation-after-h3-failure",
+                                    expected_resume_after_seq,
+                                ))
+                                .await
+                                .expect("queue command across reconnect");
+                            did_queue_command = true;
+                        }
+                    }
+                    StateMiniStreamEvent::Heartbeat {
+                        endpoint_transport: ClientEndpointTransport::H2,
+                        ..
+                    } => break event,
+                    other => panic!("expected H3 open or H2 fallback heartbeat, got {other:?}"),
                 }
             };
-            match reconnecting {
-                StateMiniStreamEvent::Reconnecting {
-                    latest_seq,
-                    endpoint_transport,
-                    fallback_reason,
-                    error_description,
-                } => {
-                    assert_eq!(latest_seq, expected_resume_after_seq);
-                    assert_eq!(endpoint_transport, ClientEndpointTransport::H3);
-                    assert!(fallback_reason.is_empty());
-                    assert!(
-                        error_description.contains("Connection error")
-                            || error_description.contains("established h3 stream failed"),
-                        "unexpected reconnect reason: {error_description}"
-                    );
-                }
-                other => panic!("expected H3 reconnecting event, got {other:?}"),
+            if !did_queue_command {
+                command_sender
+                    .send(test_outbound_command(
+                        "mutation-after-h3-failure",
+                        expected_resume_after_seq,
+                    ))
+                    .await
+                    .expect("queue command across reconnect");
             }
 
-            h3.endpoint.close(VarInt::from_u32(0), b"test h3 down");
-            command_sender
-                .send(test_outbound_command(
-                    "mutation-after-h3-failure",
-                    expected_resume_after_seq,
-                ))
-                .await
-                .expect("queue command across reconnect");
-
-            let reopened = recv_stream_event(&mut events, "fallback H2 heartbeat").await;
             match reopened {
                 StateMiniStreamEvent::Heartbeat {
                     latest_seq,
@@ -2930,14 +3079,14 @@ mod tests {
             assert_eq!(
                 resumes.last().copied(),
                 Some(expected_resume_after_seq),
-                "H3 reconnect must preserve Resume after_seq from the failed established stream"
+                "H3 fallback must preserve Resume after_seq from the failed opened stream"
             );
             assert!(
                 !resumes.contains(&0),
-                "H3 reconnect must not reset Resume after_seq to zero: {resumes:?}"
+                "H3 fallback must not reset Resume after_seq to zero: {resumes:?}"
             );
             println!(
-                "manual_qa_h3_established_reconnect transport=h3_then_h2 resumes={resumes:?} ack_seq={}",
+                "manual_qa_h3_early_fallback transport=h3_then_h2 resumes={resumes:?} ack_seq={}",
                 ack.ack_seq
             );
 
@@ -3087,6 +3236,29 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_millis(25)).await;
         (format!("http://{address}"), handle, observed_resume)
+    }
+
+    async fn spawn_realtime_session_server_with_heartbeat(
+        heartbeat_seq: i64,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind realtime server port");
+        let address = listener.local_addr().expect("realtime server addr");
+        drop(listener);
+        let service = TestRealtimeSessionService {
+            heartbeat_seq: Some(heartbeat_seq),
+            ack_seq: None,
+            ack_client_mutation_id: String::new(),
+            observed_resume: Arc::new(Mutex::new(Vec::new())),
+        };
+        let handle = tokio::spawn(async move {
+            let service = proto::looper_realtime_server::LooperRealtimeServer::new(service);
+            let _ = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve(address)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        (format!("http://{address}"), handle)
     }
 
     struct SpawnedH3RealtimeSessionServer {
@@ -3368,6 +3540,40 @@ mod tests {
         }
 
         impl_unimplemented_unary_commands_lowered!();
+    }
+
+    #[derive(Clone)]
+    struct FailBeforeFrameRealtimeSessionService;
+
+    #[tonic::async_trait]
+    impl proto::looper_realtime_server::LooperRealtime for FailBeforeFrameRealtimeSessionService {
+        type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
+
+        async fn health(
+            &self,
+            _request: tonic::Request<proto::HealthRequest>,
+        ) -> Result<tonic::Response<proto::HealthResponse>, tonic::Status> {
+            Ok(tonic::Response::new(proto::HealthResponse {
+                ok: true,
+                service: "test".to_owned(),
+                server_time: String::new(),
+            }))
+        }
+
+        async fn session(
+            &self,
+            _request: tonic::Request<tonic::Streaming<proto::ClientFrame>>,
+        ) -> Result<tonic::Response<Self::SessionStream>, tonic::Status> {
+            let (sender, receiver) = mpsc::channel(1);
+            tokio::spawn(async move {
+                let _ = sender
+                    .send(Err(tonic::Status::unavailable(
+                        "h3 stream failed before server frame",
+                    )))
+                    .await;
+            });
+            Ok(tonic::Response::new(ReceiverStream::new(receiver)))
+        }
     }
 
     async fn reserve_dead_udp_url() -> String {

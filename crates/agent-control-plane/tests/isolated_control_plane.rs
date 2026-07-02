@@ -3830,6 +3830,53 @@ async fn desktop_mobile_state_uses_fresh_snapshot_session_projection() {
 }
 
 #[tokio::test]
+async fn desktop_mobile_state_includes_codex_assistant_preview() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let transcript_path = fixture.write_transcript(
+        "thread-main-mobile-preview.jsonl",
+        &[
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "User prompt for mobile preview."
+                        }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Latest assistant reply for mobile."
+                        }
+                    ]
+                }
+            }),
+        ],
+    );
+    fixture.attach_transcript_path("thread-main", &transcript_path);
+    let router = build_router(fixture.control_plane());
+
+    let mobile_state = request_json(&router, "/desktop/mobile-state").await;
+    let codex_session = mobile_surface_session(&mobile_state, "codex", "thread-main");
+
+    assert_eq!(
+        codex_session["assistantPreview"],
+        "Latest assistant reply for mobile."
+    );
+}
+
+#[tokio::test]
 async fn mobile_snapshot_includes_every_assistant_surface() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();

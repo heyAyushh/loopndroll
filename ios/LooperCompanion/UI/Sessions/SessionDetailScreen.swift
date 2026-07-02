@@ -14,6 +14,8 @@ struct SessionDetailScreen: View {
     @State private var showingDeleteConfirmation = false
     @State private var openedLifecycleSessionID: String?
     @State private var openedLifecycleTask: Task<Void, Never>?
+    @State private var cachedPresentation: SessionDetailPresentation?
+    @State private var lastReplyStreamActivityAt: Date?
     @FocusState private var focusedInput: SessionDetailInput?
 
     private var sessionID: String {
@@ -21,11 +23,13 @@ struct SessionDetailScreen: View {
     }
 
     var body: some View {
-        // Computed once per render: `detailPresentation(for:)` performs a
-        // synchronous Rust FFI local-store read, so every section/helper
-        // below takes this single value as a parameter instead of each
-        // re-deriving it from `model.viewState`.
-        let presentation = model.viewState.detailPresentation(for: route)
+        let snapshotPresentation = model.viewState.snapshotDetailPresentation(for: route)
+        let presentation = cachedPresentation(for: route) ?? snapshotPresentation
+        let detailRefreshKey = SessionDetailPresentationRefreshKey(
+            routeID: route.id,
+            detailRevision: model.sessionDetailRevision,
+            snapshotIdentity: presentationRefreshIdentity(snapshotPresentation)
+        )
 
         List {
             if presentation.hasResolvedSession {
@@ -37,6 +41,7 @@ struct SessionDetailScreen: View {
                 modeSection(presentation)
                 notificationsSection(presentation)
                 completionCheckSection(presentation)
+                detailsSection(presentation)
                 manageSection(presentation)
             } else {
                 missingSessionSection
@@ -67,6 +72,8 @@ struct SessionDetailScreen: View {
             syncDraftModeFromCurrentModeIfNeeded(presentation.effectiveMode)
         }
         .onChange(of: route.id) {
+            cachedPresentation = snapshotPresentation
+            lastReplyStreamActivityAt = nil
             resetDraftMode(presentation.effectiveMode)
             openedLifecycleSessionID = nil
             openedLifecycleTask?.cancel()
@@ -102,6 +109,12 @@ struct SessionDetailScreen: View {
         }
         .task(id: route.id) {
             runOpenedSessionLifecycleIfNeeded()
+        }
+        .task(id: detailRefreshKey) {
+            await refreshCachedPresentation(from: snapshotPresentation)
+        }
+        .task(id: lastReplyStreamActivityAt) {
+            await expireReplyStreamActivityAfterLinger()
         }
         .task(id: promptSuggestionContextKey(presentation)) {
             await refreshPromptSuggestions(presentation)
@@ -151,6 +164,8 @@ struct SessionDetailScreen: View {
         }
     }
 
+    // Summary keeps only what a user acts on at a glance; provenance
+    // and capability rows live in the Details section at the bottom.
     private func summarySection(_ presentation: SessionDetailPresentation) -> some View {
         let metadata = presentation.metadata
         return Section("Summary") {
@@ -164,14 +179,6 @@ struct SessionDetailScreen: View {
                 Text("Assistant")
             }
             LabeledContent("Title", value: presentation.title)
-            if let firstUserPromptText = presentation.firstUserPromptText {
-                LabeledContent("First Prompt") {
-                    Text(firstUserPromptText)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(4)
-                }
-            }
-            LabeledContent("Kind", value: metadata.kind.label)
 
             if let projectPath = metadata.projectPath {
                 LabeledContent("Project") {
@@ -185,12 +192,6 @@ struct SessionDetailScreen: View {
                 }
             }
 
-            LabeledContent("Started From", value: metadata.sourceDisplayName)
-            LabeledContent("Task Type", value: metadata.taskKind.label)
-            LabeledContent("Transcript") {
-                Text(metadata.transcriptAvailable ? "Available" : "Not Available")
-            }
-
             if let gitRepository = metadata.gitRepository {
                 LabeledContent("Git Repo") {
                     VStack(alignment: .trailing, spacing: 2) {
@@ -202,6 +203,40 @@ struct SessionDetailScreen: View {
                         }
                     }
                 }
+            }
+
+            LabeledContent("Status", value: presentation.status.label)
+            if let currentGoal = presentation.goal {
+                LabeledContent("Goal") {
+                    SessionGoalStatusDetail(goal: currentGoal)
+                }
+            }
+            if let currentLastActivityAt = presentation.lastActivityAt {
+                LabeledContent("Last Active") {
+                    Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
+                }
+            }
+            LabeledContent("Mode", value: ModelFormatting.friendlyMode(presentation.effectiveMode))
+        }
+    }
+
+    private func detailsSection(_ presentation: SessionDetailPresentation) -> some View {
+        let metadata = presentation.metadata
+        return Section("Details") {
+            if let firstUserPromptText = presentation.firstUserPromptText {
+                LabeledContent("First Prompt") {
+                    Text(firstUserPromptText)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(4)
+                }
+            }
+            LabeledContent("Kind", value: metadata.kind.label)
+            LabeledContent("Started From", value: metadata.sourceDisplayName)
+            if metadata.taskKind != .unknown {
+                LabeledContent("Task Type", value: metadata.taskKind.label)
+            }
+            LabeledContent("Transcript") {
+                Text(metadata.transcriptAvailable ? "Available" : "Not Available")
             }
 
             if let pullRequestURL = metadata.pullRequestURL {
@@ -226,38 +261,37 @@ struct SessionDetailScreen: View {
                 )
             }
 
-            LabeledContent("Status", value: presentation.status.label)
-            if let currentGoal = presentation.goal {
-                LabeledContent("Goal") {
-                    SessionGoalStatusDetail(goal: currentGoal)
-                }
-            }
-            if let currentLastMessageAt = presentation.lastMessageAt {
-                LabeledContent("Last Message") {
-                    Text(ModelFormatting.relativeTimestamp(currentLastMessageAt))
-                }
-            }
-            if let currentLastActivityAt = presentation.lastActivityAt {
-                LabeledContent("Last Active") {
-                    Text(ModelFormatting.relativeTimestamp(currentLastActivityAt))
-                }
-            }
             LabeledContent("Connection", value: model.viewState.deviceHubConnectionStatusLabel)
-            LabeledContent("Mode", value: ModelFormatting.friendlyMode(presentation.effectiveMode))
         }
     }
 
     private func assistantReplySection(_ presentation: SessionDetailPresentation) -> some View {
-        Section("Latest Assistant Reply") {
+        Section {
             if let latestAssistantReply = presentation.latestAssistantReply {
                 MarkdownMessageView(markdown: latestAssistantReply)
                     .padding(.vertical, 4)
+                    .contentTransition(.opacity)
+                    .animation(.default, value: latestAssistantReply)
                 if let currentLastMessageAt = presentation.lastMessageAt {
                     Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("session-detail.latest-reply-timestamp")
                 }
+            }
+        } header: {
+            assistantReplyHeader(presentation)
+        }
+    }
+
+    private func assistantReplyHeader(_ presentation: SessionDetailPresentation) -> some View {
+        HStack(spacing: SessionDetailStreamingIndicatorMetrics.spacing) {
+            Text("Latest Assistant Reply")
+            if isStreamingAssistantReply(presentation) {
+                Image(systemName: SessionDetailStreamingIndicatorMetrics.systemImage)
+                    .foregroundStyle(Color.accentColor)
+                    .symbolEffect(.variableColor.iterative, isActive: true)
+                    .accessibilityLabel("Streaming")
             }
         }
     }
@@ -485,6 +519,87 @@ struct SessionDetailScreen: View {
             .joined(separator: "|")
     }
 
+    private func cachedPresentation(for route: SessionDetailRoute) -> SessionDetailPresentation? {
+        guard cachedPresentation?.route == route else {
+            return nil
+        }
+        return cachedPresentation
+    }
+
+    @MainActor
+    private func refreshCachedPresentation(from snapshotPresentation: SessionDetailPresentation) async {
+        let previousReply = cachedPresentation(for: route)?.latestAssistantReply
+        cachedPresentation = snapshotPresentation
+        let refreshedPresentation = model.viewState.detailPresentation(for: route)
+        guard !Task.isCancelled else {
+            return
+        }
+        cachedPresentation = refreshedPresentation
+        markReplyStreamActivityIfNeeded(
+            previousReply: previousReply,
+            currentReply: refreshedPresentation.latestAssistantReply
+        )
+    }
+
+    /// The indicator tracks the reply text itself: it turns on only when the
+    /// displayed reply actually changed (not on first load), and a linger task
+    /// turns it off once chunks stop arriving. Connection liveness alone is
+    /// not "streaming".
+    private func markReplyStreamActivityIfNeeded(previousReply: String?, currentReply: String?) {
+        guard let previousReply, let currentReply, previousReply != currentReply else {
+            return
+        }
+        lastReplyStreamActivityAt = Date()
+    }
+
+    private func expireReplyStreamActivityAfterLinger() async {
+        guard lastReplyStreamActivityAt != nil else {
+            return
+        }
+        try? await Task.sleep(for: SessionDetailStreamingIndicatorMetrics.linger)
+        guard !Task.isCancelled else {
+            return
+        }
+        lastReplyStreamActivityAt = nil
+    }
+
+    private func presentationRefreshIdentity(_ presentation: SessionDetailPresentation) -> Int {
+        var hasher = Hasher()
+        hasher.combine(presentation.route)
+        combineSummaryIdentity(presentation.summary, into: &hasher)
+        combineDetailIdentity(presentation.detail, into: &hasher)
+        return hasher.finalize()
+    }
+
+    private func combineSummaryIdentity(_ summary: SessionSummary?, into hasher: inout Hasher) {
+        hasher.combine(summary?.id)
+        hasher.combine(summary?.title)
+        hasher.combine(summary?.status)
+        hasher.combine(summary?.effectiveMode)
+        hasher.combine(summary?.lastUpdatedAt)
+        hasher.combine(summary?.lastActivityAt)
+        hasher.combine(summary?.lastMessageAt)
+        hasher.combine(summary?.assistantPreview)
+        hasher.combine(summary?.goal)
+    }
+
+    private func combineDetailIdentity(_ detail: SessionDetail?, into hasher: inout Hasher) {
+        hasher.combine(detail?.id)
+        hasher.combine(detail?.title)
+        hasher.combine(detail?.status)
+        hasher.combine(detail?.effectiveMode)
+        hasher.combine(detail?.lastUpdatedAt)
+        hasher.combine(detail?.lastActivityAt)
+        hasher.combine(detail?.lastMessageAt)
+        hasher.combine(detail?.assistantPreview)
+        hasher.combine(detail?.latestAssistantMessage)
+        hasher.combine(detail?.goal)
+    }
+
+    private func isStreamingAssistantReply(_ presentation: SessionDetailPresentation) -> Bool {
+        model.realtimeStreamIsLive && lastReplyStreamActivityAt != nil
+    }
+
     private func refreshPromptSuggestions(_ presentation: SessionDetailPresentation) async {
         contextualPromptSuggestions = fallbackPromptSuggestions(presentation)
         guard let detail = presentation.detail else {
@@ -622,15 +737,22 @@ private enum SessionDetailInput {
     case prompt
 }
 
+private struct SessionDetailPresentationRefreshKey: Equatable {
+    let routeID: String
+    let detailRevision: Int
+    let snapshotIdentity: Int
+}
+
 private struct SessionGoalStatusDetail: View {
     let goal: SessionGoalSummary
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Label(goal.displayStatusLabel, systemImage: goal.displayStatusSymbolName)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(SessionGoalStatusVisuals.tint(for: goal))
-                .accessibilityIdentifier("session-detail.goal-status")
+            GoalStatusIcon(
+                tint: SessionGoalStatusVisuals.tint(for: goal),
+                size: SessionGoalStatusDetailMetrics.iconSize
+            )
+            .accessibilityIdentifier("session-detail.goal-status")
 
             Text(goal.title)
                 .font(.caption)
@@ -642,6 +764,18 @@ private struct SessionGoalStatusDetail: View {
         .accessibilityLabel(goal.displayStatusLabel)
         .accessibilityValue(goal.title)
     }
+}
+
+private enum SessionGoalStatusDetailMetrics {
+    static let iconSize: CGFloat = 24
+}
+
+private enum SessionDetailStreamingIndicatorMetrics {
+    static let spacing: CGFloat = 6
+    static let systemImage = "waveform"
+    /// How long the indicator stays on after the last reply change; long
+    /// enough to bridge the gap between consecutive text chunks.
+    static let linger: Duration = .seconds(3)
 }
 
 private enum SessionPromptSuggestionLayout {

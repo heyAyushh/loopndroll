@@ -20,6 +20,10 @@ private enum PromptDispatchFailure {
     static let resumeFailedDetailPrefix = "prompt-resume-failed:"
 }
 
+private enum SessionMiniProjectionBuild {
+    static let millisecondsPerSecond = 1_000.0
+}
+
 private enum AssistantSurfaceETTraceMetric {
     static let startedNotification = Notification.Name(rawValue: "EmergeMetricStarted")
     static let endedNotification = Notification.Name(rawValue: "EmergeMetricEnded")
@@ -163,6 +167,7 @@ final class CompanionAppModel {
     var realtimeStreamIsLive = false
     @ObservationIgnored var lastRealtimeDataAt: Date?
     var realtimeReconnectInProgress = false
+    private(set) var sessionDetailRevision = 0
     private(set) var isAwaitingRouteSessionProof = false
     var localNotificationStatus: UNAuthorizationStatus = .notDetermined
     var remotePushRegistration: RemotePushRegistrationResponse?
@@ -187,6 +192,9 @@ final class CompanionAppModel {
     @ObservationIgnored private var lastNetworkPathIdentity: String?
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
+    @ObservationIgnored private var sessionMiniProjectionTask: Task<Void, Never>?
+    @ObservationIgnored private var sessionMiniProjectionGeneration: UInt64 = 0
+    @ObservationIgnored private var sessionMiniProjectionLatestSeq: Int64 = 0
 
     init(
         environment: CompanionEnvironment,
@@ -254,6 +262,7 @@ final class CompanionAppModel {
                     preferredSurface: snapshotState.selectedAssistantSurface
                 )
             } else {
+                invalidatePendingSessionMiniProjectionBuilds()
                 snapshotState.reset()
             }
         }
@@ -329,6 +338,7 @@ final class CompanionAppModel {
 
     func stopSessionRuntimeSync() {
         sessionMiniController.stopSync()
+        invalidatePendingSessionMiniProjectionBuilds()
         markSessionStreamStopped(reconnectInProgress: false)
     }
 
@@ -375,6 +385,7 @@ final class CompanionAppModel {
 
     private func stopSessionRuntimeSyncForRestart() {
         sessionMiniController.stopSync()
+        invalidatePendingSessionMiniProjectionBuilds()
         markSessionStreamStopped(reconnectInProgress: true)
     }
 
@@ -397,7 +408,7 @@ final class CompanionAppModel {
         }
     }
 
-    private func applySessionMiniSyncUpdate(
+    func applySessionMiniSyncUpdate(
         _ update: CompanionSessionMiniSyncUpdate,
         connectionRevision: Int
     ) {
@@ -407,49 +418,40 @@ final class CompanionAppModel {
         }
         refreshPendingPromptDeliveryState()
 
-        guard applyCachedSessionMiniSnapshot(
-            update.snapshot,
-            reason: "session-mini-sync-\(update.reason)",
-            latestSeq: update.latestSeq
-        ) else {
-            // The stream is still delivering data even though this
-            // particular session-list snapshot was rejected as stale, so
-            // liveness genuinely advances here (it has its own seq guard).
-            applyRealtimeStreamLiveness(
-                serverTime: update.snapshot.host.lastSyncedAt,
-                latestSeq: update.latestSeq,
-                isLive: true,
-                endpointURL: update.endpointURL
-            )
-            if update.reason == CompanionSessionMiniSyncReason.textChunk {
-                // A rejected text-chunk snapshot doesn't change the session
-                // list, but the assistant reply text itself still needs a
-                // fresh render: SessionDetailScreen re-reads the latest
-                // reply straight from client-core on each render. Bumping
-                // lastUpdatedAt is what triggers that re-render; it does not
-                // claim the snapshot was applied.
-                lastUpdatedAt = Date()
-                CompanionDiagnostics.record(
-                    "session-detail:text-chunk-invalidated seq=\(update.latestSeq)"
-                )
-                return
-            }
+        guard let generation = reserveSessionMiniProjectionBuild(latestSeq: update.latestSeq) else {
             CompanionDiagnostics.record(
-                "session-mini:sync-snapshot-skip reason=\(update.reason) seq=\(update.latestSeq)"
+                "session-mini:projection-stale-drop seq=\(update.latestSeq)"
             )
             return
         }
 
-        applyRealtimeStreamLiveness(
-            serverTime: update.snapshot.host.lastSyncedAt,
-            latestSeq: update.latestSeq,
-            isLive: true,
-            endpointURL: update.endpointURL
-        )
-        lastUpdatedAt = Date()
-        CompanionDiagnostics.record(
-            "session-mini:sync-applied reason=\(update.reason) seq=\(update.latestSeq)"
-        )
+        let surface = snapshotState.selectedAssistantSurface
+        sessionMiniProjectionTask?.cancel()
+        sessionMiniProjectionTask = Task.detached(priority: .userInitiated) { [weak self, update, connectionRevision, generation, surface] in
+            let buildStartedAt = Date()
+            let preparedProjection = CompanionPreparedSnapshotProjection.build(
+                snapshot: update.snapshot,
+                surface: surface
+            )
+            let durationMilliseconds = Int(
+                (Date().timeIntervalSince(buildStartedAt) * SessionMiniProjectionBuild.millisecondsPerSecond)
+                    .rounded()
+            )
+            CompanionDiagnostics.record(
+                "session-mini:projection-built seq=\(update.latestSeq) ms=\(durationMilliseconds)"
+            )
+            _ = await MainActor.run { [weak self] in
+                self?.applyPreparedSessionMiniSyncSnapshot(
+                    preparedProjection,
+                    reason: update.reason,
+                    latestSeq: update.latestSeq,
+                    endpointURL: update.endpointURL,
+                    connectionRevision: connectionRevision,
+                    generation: generation,
+                    builtSurface: surface
+                )
+            }
+        }
     }
 
     private func applySessionMiniLivenessUpdate(
@@ -596,6 +598,7 @@ final class CompanionAppModel {
         activeSessionRouteBaseURL = nil
         realtimeServerTime = nil
         realtimeLatestSeq = 0
+        sessionMiniProjectionLatestSeq = 0
         realtimeStreamIsLive = false
         lastRealtimeDataAt = nil
         realtimeReconnectInProgress = false
@@ -1277,6 +1280,13 @@ final class CompanionAppModel {
         return detail
     }
 
+    private func bumpSessionDetailRevision(reason: String, latestSeq: Int64) {
+        sessionDetailRevision &+= 1
+        CompanionDiagnostics.record(
+            "session-detail:revision-bump reason=\(reason) seq=\(latestSeq) revision=\(sessionDetailRevision)"
+        )
+    }
+
     @discardableResult
     private func openSessionFromLocalTruth(
         _ sessionID: String,
@@ -1850,6 +1860,7 @@ final class CompanionAppModel {
             AssistantSurfaceETTraceMetric.postEnded(for: surface)
             return false
         }
+        invalidatePendingSessionMiniProjectionBuilds()
         logAssistantSurfaceSelection(AssistantSurfaceSelectionLogEvent.applied, surface: surface)
         CompanionDiagnostics.record("assistant-surface:selected-local surface=\(surface.rawValue)")
         errorMessage = nil
@@ -2018,6 +2029,110 @@ final class CompanionAppModel {
         }
     }
 
+    private func reserveSessionMiniProjectionBuild(latestSeq: Int64) -> UInt64? {
+        guard latestSeq >= sessionMiniProjectionLatestSeq else {
+            return nil
+        }
+
+        sessionMiniProjectionGeneration &+= 1
+        sessionMiniProjectionLatestSeq = latestSeq
+        return sessionMiniProjectionGeneration
+    }
+
+    private func invalidatePendingSessionMiniProjectionBuilds() {
+        sessionMiniProjectionGeneration &+= 1
+        sessionMiniProjectionTask?.cancel()
+        sessionMiniProjectionTask = nil
+    }
+
+    @discardableResult
+    func applyPreparedSessionMiniSyncSnapshot(
+        _ preparedProjection: CompanionPreparedSnapshotProjection,
+        reason: String,
+        latestSeq: Int64,
+        endpointURL: URL?,
+        connectionRevision: Int,
+        generation: UInt64,
+        builtSurface: CompanionAssistantSurface
+    ) -> Bool {
+        let isCurrentGeneration = generation == sessionMiniProjectionGeneration
+        defer {
+            if isCurrentGeneration {
+                sessionMiniProjectionTask = nil
+            }
+        }
+
+        guard connectionRevision == self.connectionRevision,
+              isCurrentGeneration,
+              latestSeq >= sessionMiniProjectionLatestSeq,
+              builtSurface == snapshotState.selectedAssistantSurface,
+              preparedProjection.surface == snapshotState.selectedAssistantSurface
+        else {
+            CompanionDiagnostics.record(
+                "session-mini:projection-stale-drop seq=\(latestSeq)"
+            )
+            return false
+        }
+
+        guard shouldApplyStateMiniSnapshot(latestSeq: latestSeq) else {
+            return rejectPreparedSessionMiniSyncSnapshot(
+                preparedProjection.sourceSnapshot,
+                reason: reason,
+                latestSeq: latestSeq,
+                endpointURL: endpointURL
+            )
+        }
+
+        realtimeLatestSeq = max(realtimeLatestSeq, latestSeq)
+        _ = applyPreparedCachedSnapshot(preparedProjection, reason: "session-mini-sync-\(reason)")
+        applyRealtimeStreamLiveness(
+            serverTime: preparedProjection.sourceSnapshot.host.lastSyncedAt,
+            latestSeq: latestSeq,
+            isLive: true,
+            endpointURL: endpointURL
+        )
+        lastUpdatedAt = Date()
+        if reason == CompanionSessionMiniSyncReason.textChunk {
+            bumpSessionDetailRevision(
+                reason: reason,
+                latestSeq: latestSeq
+            )
+        }
+        CompanionDiagnostics.record(
+            "session-mini:sync-applied reason=\(reason) seq=\(latestSeq)"
+        )
+        return true
+    }
+
+    @discardableResult
+    private func rejectPreparedSessionMiniSyncSnapshot(
+        _ snapshot: MobileSnapshot,
+        reason: String,
+        latestSeq: Int64,
+        endpointURL: URL?
+    ) -> Bool {
+        applyRealtimeStreamLiveness(
+            serverTime: snapshot.host.lastSyncedAt,
+            latestSeq: latestSeq,
+            isLive: true,
+            endpointURL: endpointURL
+        )
+        if reason == CompanionSessionMiniSyncReason.textChunk {
+            bumpSessionDetailRevision(
+                reason: "rejected-text-chunk",
+                latestSeq: latestSeq
+            )
+            CompanionDiagnostics.record(
+                "session-detail:text-chunk-invalidated seq=\(latestSeq)"
+            )
+            return false
+        }
+        CompanionDiagnostics.record(
+            "session-mini:sync-snapshot-skip reason=\(reason) seq=\(latestSeq)"
+        )
+        return false
+    }
+
     /// Client-core-accepted commands (archive, delete, mode, prompt, etc.)
     /// already mutated the local store synchronously, so the resulting
     /// cached snapshot is authoritative regardless of its sequence number.
@@ -2061,6 +2176,37 @@ final class CompanionAppModel {
         CompanionDiagnostics.record(
             "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
         )
+    }
+
+    private func applyPreparedCachedSnapshot(
+        _ preparedProjection: CompanionPreparedSnapshotProjection,
+        reason: String
+    ) -> CompanionSnapshotApplyResult {
+        let result = snapshotState.applyPreparedSnapshotResult(preparedProjection)
+        let visibleSnapshot = result.visibleSnapshot
+        markCachedSnapshotReadyIfNeeded(reason: reason)
+        guard result.didChangeVisibleSnapshot else {
+            CompanionDiagnostics.record(
+                "snapshot:cache-restore-noop reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
+            )
+            return result
+        }
+
+        lastUpdatedAt = Date()
+        spotlightCoordinator.clearForCachedSnapshotIfNeeded()
+        CompanionDiagnostics.record(
+            "snapshot:cache-restore reason=\(reason) sessions=\(visibleSnapshot.sessions.count)"
+        )
+        return result
+    }
+
+    func reserveSessionMiniProjectionBuildForTesting(latestSeq: Int64) -> UInt64? {
+        reserveSessionMiniProjectionBuild(latestSeq: latestSeq)
+    }
+
+    func waitForPendingSessionMiniProjectionForTesting() async {
+        let pendingTask = sessionMiniProjectionTask
+        await pendingTask?.value
     }
 
     @discardableResult

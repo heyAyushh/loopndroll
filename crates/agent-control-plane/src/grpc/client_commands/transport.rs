@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, anyhow};
+use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::codegen::http::Uri;
+use tonic::metadata::MetadataValue;
 use tonic::transport::Endpoint;
 use tonic_h3::quinn::H3QuinnConnector;
 
@@ -14,6 +16,17 @@ use super::{
 };
 
 const LOCAL_H3_SESSION_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+const AUTHORIZATION_METADATA: &str = "authorization";
+const BEARER_PREFIX: &str = "Bearer ";
+const LOCAL_CONNECTION_CODE_PATH: &str = "api/mobile/connection-code";
+
+#[derive(Deserialize)]
+struct LocalConnectionCodeResponse {
+    #[serde(rename = "pairingTokenId")]
+    pairing_token_id: String,
+    #[serde(rename = "pairingToken")]
+    pairing_token: String,
+}
 
 pub(super) async fn open_local_session_command_stream(
     endpoints: Vec<LocalSessionEndpoint>,
@@ -93,7 +106,12 @@ async fn open_h3_local_session_command_stream(
     let connector = H3QuinnConnector::new(uri.clone(), "localhost".to_owned(), client_endpoint);
     let channel = tonic_h3::H3Channel::new(connector, uri);
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
-    let (request, request_sender) = session_request(frame).await?;
+    let (mut request, request_sender) = session_request(frame).await?;
+    let authorization = local_h3_authorization_header(&endpoint.http_base_url).await?;
+    request.metadata_mut().insert(
+        AUTHORIZATION_METADATA,
+        MetadataValue::try_from(authorization).context("build local H3 authorization metadata")?,
+    );
     let response = tokio::time::timeout(LOCAL_H3_SESSION_OPEN_TIMEOUT, client.session(request))
         .await
         .context("local H3 Session open timed out")?
@@ -136,12 +154,14 @@ pub(super) fn local_session_transport_endpoints(
             transport: LocalSessionTransport::H3,
             url: local_grpc_url(http_base_url, LocalSessionTransport::H3)?,
             h3_certificate_sha256: Some(certificate_sha256),
+            http_base_url: http_base_url.to_owned(),
         });
     }
     endpoints.push(LocalSessionEndpoint {
         transport: LocalSessionTransport::H2,
         url: local_grpc_url(http_base_url, LocalSessionTransport::H2)?,
         h3_certificate_sha256: None,
+        http_base_url: http_base_url.to_owned(),
     });
     Ok(endpoints)
 }
@@ -176,4 +196,23 @@ fn local_grpc_url(http_base_url: &str, transport: LocalSessionTransport) -> Resu
         }
     }
     Ok(url.to_string())
+}
+
+async fn local_h3_authorization_header(http_base_url: &str) -> Result<String> {
+    let mut url = reqwest::Url::parse(http_base_url).context("parse local HTTP base URL")?;
+    url.set_path(LOCAL_CONNECTION_CODE_PATH);
+    url.set_query(None);
+    url.set_fragment(None);
+    let connection_code = reqwest::get(url)
+        .await
+        .context("request local H3 pairing token")?
+        .error_for_status()
+        .context("local H3 pairing token request failed")?
+        .json::<LocalConnectionCodeResponse>()
+        .await
+        .context("decode local H3 pairing token")?;
+    Ok(format!(
+        "{BEARER_PREFIX}{}.{}",
+        connection_code.pairing_token_id, connection_code.pairing_token
+    ))
 }

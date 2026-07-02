@@ -37,6 +37,7 @@ const COMPACT_SESSION_MINI_FIELDS: &[&str] = &[
     "assistantPreview",
     "metadata",
     "replyable",
+    "goal",
     "blockedGoal",
     "queueCount",
     "lifecycle",
@@ -442,9 +443,16 @@ fn session_mini_value(
             .cloned()
             .unwrap_or_else(|| json!(false)),
     );
+    let summary_goal = summary.get("goal");
+    mini.insert(
+        "goal".to_owned(),
+        summary_goal
+            .and_then(compact_goal_payload)
+            .unwrap_or(Value::Null),
+    );
     mini.insert(
         "blockedGoal".to_owned(),
-        blocked_goal(summary.get("goal")).unwrap_or(Value::Null),
+        blocked_goal(summary_goal).unwrap_or(Value::Null),
     );
     mini.insert(
         "queueCount".to_owned(),
@@ -487,6 +495,7 @@ fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
         };
         let compacted = match *field {
             "metadata" => compact_metadata(Some(value)).unwrap_or(Value::Null),
+            "goal" => compact_goal_payload(value).unwrap_or(Value::Null),
             "blockedGoal" => compact_blocked_goal_payload(value).unwrap_or(Value::Null),
             "notificationStatus" => compact_notification_status(value).unwrap_or(Value::Null),
             _ => value.clone(),
@@ -514,6 +523,42 @@ fn blocked_goal(goal: Option<&Value>) -> Option<Value> {
         blocked_goal.insert("title".to_owned(), title);
     }
     Some(Value::Object(blocked_goal))
+}
+
+fn compact_goal_payload(goal: &Value) -> Option<Value> {
+    if goal.is_null() {
+        return Some(Value::Null);
+    }
+    let goal = goal.as_object()?;
+    let mut compact = Map::new();
+    for field in [
+        "id",
+        "title",
+        "status",
+        "lifecycle",
+        "running",
+        "updatedAtMs",
+        "tokenBudget",
+        "tokensUsed",
+        "timeUsedSeconds",
+    ] {
+        if let Some(value) = goal.get(field)
+            && !compact_goal_value_is_empty(value)
+        {
+            compact.insert(field.to_owned(), value.clone());
+        }
+    }
+    Some(Value::Object(compact))
+}
+
+fn compact_goal_value_is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(value) => value.trim().is_empty(),
+        Value::Array(value) => value.is_empty(),
+        Value::Object(value) => value.is_empty(),
+        _ => false,
+    }
 }
 
 fn session_mini_is_unarchived(mini: &Value) -> bool {
@@ -600,6 +645,9 @@ fn compact_git_repository(git_repository: Option<&Value>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assistant::AssistantKind;
+    use crate::goals::{GoalStatus, ThreadGoalSummary};
+    use crate::mobile::api::test_support::test_thread;
 
     #[test]
     fn compact_session_mini_payload_preserves_oversized_allowed_text() {
@@ -695,6 +743,16 @@ mod tests {
                 "tags": ["codex"]
             },
             "title": "Main task",
+            "goal": {
+                "id": "goal-paused",
+                "title": "Pause visible work",
+                "status": "paused",
+                "lifecycle": "paused",
+                "running": false,
+                "updatedAtMs": 1_781_596_920_321i64,
+                "tokenBudget": null,
+                "unknownHuge": "x".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES),
+            },
             "unknownHuge": "x".repeat(SESSION_MINI_CONTROL_FRAME_MAX_BYTES),
         });
 
@@ -712,7 +770,53 @@ mod tests {
         assert!(compacted["metadata"].get("spawn").is_none());
         assert!(compacted["metadata"].get("sources").is_none());
         assert!(compacted["metadata"].get("tags").is_none());
+        assert_eq!(compacted["goal"]["status"], "paused");
+        assert_eq!(compacted["goal"]["running"], false);
+        assert!(compacted["goal"].get("tokenBudget").is_none());
+        assert!(compacted["goal"].get("unknownHuge").is_none());
         assert!(compacted.to_string().len() < SESSION_MINI_CONTROL_FRAME_MAX_BYTES);
+    }
+
+    #[test]
+    fn session_mini_goal_projection_includes_paused_and_running_goals() {
+        let paused = mini_for_goal(Some(goal_summary(
+            "goal-paused",
+            "Pause visible work",
+            GoalStatus::Paused,
+            false,
+        )));
+        let pursuing = mini_for_goal(Some(goal_summary(
+            "goal-pursuing",
+            "Keep working",
+            GoalStatus::Pursuing,
+            true,
+        )));
+        let no_goal = mini_for_goal(None);
+        let blocked = mini_for_goal(Some(goal_summary(
+            "goal-blocked",
+            "Unblock mobile card",
+            GoalStatus::Blocked,
+            false,
+        )));
+
+        assert_eq!(paused["goal"]["id"], "goal-paused");
+        assert_eq!(paused["goal"]["status"], "paused");
+        assert_eq!(paused["goal"]["running"], false);
+        assert_eq!(paused["blockedGoal"], Value::Null);
+        assert!(paused["goal"].get("tokenBudget").is_none());
+
+        assert_eq!(pursuing["goal"]["id"], "goal-pursuing");
+        assert_eq!(pursuing["goal"]["status"], "pursuing");
+        assert_eq!(pursuing["goal"]["running"], true);
+        assert_eq!(pursuing["blockedGoal"], Value::Null);
+
+        assert_eq!(no_goal["goal"], Value::Null);
+        assert_eq!(no_goal["blockedGoal"], Value::Null);
+
+        assert_eq!(blocked["goal"]["status"], "blocked");
+        assert_eq!(blocked["blockedGoal"]["id"], "goal-blocked");
+        assert_eq!(blocked["blockedGoal"]["status"], "blocked");
+        assert_eq!(blocked["blockedGoal"]["reason"], "blocked");
     }
 
     #[test]
@@ -778,6 +882,33 @@ mod tests {
             "isArchived": true,
             "lastActivityAtMs": 1,
         })));
+    }
+
+    fn mini_for_goal(goal: Option<ThreadGoalSummary>) -> Value {
+        let mut thread = test_thread("thread-main", AssistantKind::Codex, Some("stopped"));
+        thread.goal = goal;
+        session_mini_value(
+            &thread,
+            0,
+            &MobileSessionState::default(),
+            &BTreeMap::new(),
+            42,
+            "revision-42",
+        )
+    }
+
+    fn goal_summary(id: &str, title: &str, status: GoalStatus, running: bool) -> ThreadGoalSummary {
+        ThreadGoalSummary {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            status: status.clone(),
+            lifecycle: status,
+            running,
+            token_budget: None,
+            tokens_used: Some(123),
+            time_used_seconds: Some(45),
+            updated_at_ms: Some(1_781_596_920_321),
+        }
     }
 }
 

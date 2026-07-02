@@ -375,11 +375,39 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         let stateSnapshot = try? sessionManager.stateSnapshot()
         Self.recordRuntimeDiagnostics(stateSnapshot, reason: streamUpdate.syncReason)
         let endpointURL = Self.endpointURL(from: stateSnapshot)
+        return try mobileSnapshotStreamResult(
+            from: streamUpdate,
+            stateSnapshot: try? localStore.currentStateMiniSnapshot(),
+            endpointURL: endpointURL
+        )
+    }
+
+    func mobileSnapshotStreamResult(
+        from streamUpdate: ClientMobileSnapshotStreamUpdate,
+        stateSnapshot: ClientLocalStateSnapshot?,
+        endpointURL: URL?
+    ) throws -> CompanionClientCoreMobileSnapshotStreamResult {
         let livenessUpdate = Self.livenessUpdate(
             from: streamUpdate,
             endpointURL: endpointURL
         )
         guard streamUpdate.hasSnapshot else {
+            if streamUpdate.hasTextChunk,
+               streamUpdate.syncReason == CompanionSessionMiniSyncReason.textChunk,
+               let stateSnapshot,
+               let snapshot = try localStore.mobileSnapshot(from: stateSnapshot) {
+                return CompanionClientCoreMobileSnapshotStreamResult(
+                    update: CompanionSessionMiniSyncUpdate(
+                        reason: streamUpdate.syncReason,
+                        latestSeq: streamUpdate.latestSeq,
+                        endpointURL: endpointURL,
+                        snapshot: snapshot
+                    ),
+                    liveness: livenessUpdate,
+                    shouldStop: streamUpdate.shouldStop,
+                    debugMessage: streamUpdate.debugMessage
+                )
+            }
             return CompanionClientCoreMobileSnapshotStreamResult(
                 update: nil,
                 liveness: livenessUpdate,

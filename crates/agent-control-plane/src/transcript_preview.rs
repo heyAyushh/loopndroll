@@ -19,6 +19,19 @@ const TEXT_CONTENT_TYPE: &str = "text";
 const ELLIPSIS_CHARS: usize = 3;
 const BYTES_PER_KIB: u64 = 1024;
 const TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES: u64 = 64 * BYTES_PER_KIB;
+/// The real first prompt sits at the head of the transcript, usually after
+/// injected instruction blocks, so the head window is larger than the tail's.
+const FIRST_USER_PROMPT_HEAD_SCAN_BYTES: u64 = 256 * BYTES_PER_KIB;
+/// User-role records Codex injects around real prompts (AGENTS.md payloads,
+/// skill bodies, interrupt markers, goal/environment context); these must
+/// never surface as the session's first prompt.
+const INJECTED_USER_TEXT_PREFIXES: &[&str] = &[
+    "# AGENTS.md instructions",
+    "<user_instructions",
+    "<environment_context",
+    "<skill>",
+    "<turn_aborted>",
+];
 const MILLISECONDS_PER_SECOND: i64 = 1_000;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 const UNIX_MILLISECONDS_THRESHOLD: i64 = 100_000_000_000;
@@ -57,10 +70,19 @@ pub fn transcript_preview_for_path_fast(transcript_path: &Path) -> Option<Transc
 }
 
 pub fn transcript_preview_for_path(transcript_path: &Path) -> Option<TranscriptPreview> {
-    transcript_preview_for_path_fast(transcript_path).or_else(|| {
+    let fast_preview = transcript_preview_for_path_fast(transcript_path);
+    if fast_preview
+        .as_ref()
+        .is_some_and(transcript_preview_has_user_context)
+    {
+        return fast_preview;
+    }
+
+    let full_preview = || {
         let file = File::open(transcript_path).ok()?;
         transcript_preview_from_reader(BufReader::new(file))
-    })
+    };
+    full_preview().or(fast_preview)
 }
 
 fn transcript_preview_from_tail(transcript_path: &Path) -> Option<TranscriptPreview> {
@@ -74,7 +96,39 @@ fn transcript_preview_from_tail(transcript_path: &Path) -> Option<TranscriptPrev
     let mut buffer = Vec::with_capacity(TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES as usize);
     file.read_to_end(&mut buffer).ok()?;
     let tail = String::from_utf8_lossy(&buffer);
-    transcript_preview_from_reversed_lines(tail.lines().rev())
+    let mut preview = transcript_preview_from_reversed_lines(tail.lines().rev())?;
+    preview.first_user_prompt = first_user_prompt_from_head(transcript_path);
+    Some(preview)
+}
+
+/// Scans forward from the start of the transcript for the first genuine user
+/// prompt, bounded so large transcripts never trigger a full scan.
+fn first_user_prompt_from_head(transcript_path: &Path) -> Option<String> {
+    let file = File::open(transcript_path).ok()?;
+    let reader = BufReader::new(file.take(FIRST_USER_PROMPT_HEAD_SCAN_BYTES));
+    for line in reader.lines().map_while(Result::ok) {
+        let Some(record) = message_record_from_transcript_line(&line) else {
+            continue;
+        };
+        if record.role != USER_ROLE {
+            continue;
+        }
+        let Some(text) = record.text.as_deref() else {
+            continue;
+        };
+        if is_injected_user_text(text) {
+            continue;
+        }
+        return Some(truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS));
+    }
+    None
+}
+
+fn is_injected_user_text(text: &str) -> bool {
+    let text = text.trim_start();
+    INJECTED_USER_TEXT_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
 }
 
 fn transcript_preview_from_reader(reader: impl BufRead) -> Option<TranscriptPreview> {
@@ -97,6 +151,7 @@ fn transcript_preview_from_reader(reader: impl BufRead) -> Option<TranscriptPrev
         if record.role == USER_ROLE
             && preview.first_user_prompt.is_none()
             && let Some(text) = record.text.as_deref()
+            && !is_injected_user_text(text)
         {
             preview.first_user_prompt = Some(truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS));
         }
@@ -128,12 +183,11 @@ fn transcript_preview_from_reversed_lines<'a>(
             preview.latest_activity_at_ms = Some(created_at_ms);
             captured_latest_activity = true;
         }
+        // The reversed tail scan only sees the latest turns, so it can never
+        // claim a first user prompt; the head scan owns that field.
         if !captured_latest_user_message && record.role == USER_ROLE {
             if let Some(created_at_ms) = record.created_at_ms {
                 preview.latest_message_at_ms = Some(created_at_ms);
-            }
-            if let Some(text) = record.text.as_deref() {
-                preview.first_user_prompt = Some(truncate_text(text, FIRST_USER_PROMPT_MAX_CHARS));
             }
             captured_latest_user_message = true;
         }
@@ -153,10 +207,16 @@ fn transcript_preview_from_reversed_lines<'a>(
             break;
         }
     }
-    (captured_latest_activity
-        && captured_latest_user_message
-        && preview.latest_assistant_message.is_some())
-    .then_some(preview)
+    preview
+        .latest_assistant_message
+        .is_some()
+        .then_some(preview)
+}
+
+fn transcript_preview_has_user_context(preview: &TranscriptPreview) -> bool {
+    preview.latest_assistant_message.is_some()
+        && preview.latest_activity_at_ms.is_some()
+        && (preview.latest_message_at_ms.is_some() || preview.first_user_prompt.is_some())
 }
 
 struct TranscriptMessageRecord {
@@ -384,6 +444,46 @@ mod tests {
     }
 
     #[test]
+    fn fast_transcript_preview_keeps_tail_assistant_without_nearby_user_message() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("fast-tail-assistant.jsonl");
+        let old_user_message = user_record_at("old first prompt", "2026-06-16T08:00:00Z");
+        let filler = "x".repeat((super::TRANSCRIPT_PREVIEW_TAIL_SCAN_BYTES + 1) as usize);
+        let assistant_message = assistant_record_at("fresh assistant", "2026-06-16T08:02:00Z");
+        fs::write(
+            &transcript_path,
+            format!("{old_user_message}\n{filler}\n{assistant_message}"),
+        )
+        .expect("write transcript");
+
+        let fast_preview = transcript_preview_for_path_fast(&transcript_path).expect("preview");
+        assert_eq!(
+            fast_preview
+                .latest_assistant_message
+                .as_ref()
+                .map(|message| message.text.as_str()),
+            Some("fresh assistant")
+        );
+        assert_eq!(
+            fast_preview.first_user_prompt.as_deref(),
+            Some("old first prompt")
+        );
+
+        let full_preview = transcript_preview_for_path(&transcript_path).expect("preview");
+        assert_eq!(
+            full_preview
+                .latest_assistant_message
+                .as_ref()
+                .map(|message| message.text.as_str()),
+            Some("fresh assistant")
+        );
+        assert_eq!(
+            full_preview.first_user_prompt.as_deref(),
+            Some("old first prompt")
+        );
+    }
+
+    #[test]
     fn transcript_preview_reports_latest_user_message_time() {
         let tempdir = tempdir().expect("tempdir");
         let transcript_path = tempdir.path().join("timestamps.jsonl");
@@ -458,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_preview_does_not_full_scan_large_file_for_first_prompt() {
+    fn transcript_preview_reads_head_first_prompt_for_large_files() {
         let tempdir = tempdir().expect("tempdir");
         let transcript_path = tempdir.path().join("large-tail-preview.jsonl");
         let first_user_message = user_record_at("old first prompt", "2026-06-16T08:00:00Z");
@@ -482,7 +582,53 @@ mod tests {
         );
         assert_eq!(preview.latest_activity_at_ms, Some(1_781_596_980_000));
         assert_eq!(preview.latest_message_at_ms, Some(1_781_596_980_000));
-        assert_eq!(preview.first_user_prompt.as_deref(), Some("latest user"));
+        assert_eq!(
+            preview.first_user_prompt.as_deref(),
+            Some("old first prompt")
+        );
+    }
+
+    #[test]
+    fn transcript_preview_skips_injected_user_records_for_first_prompt() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("injected-user-records.jsonl");
+        let instructions =
+            user_record_at("# AGENTS.md instructions for /repo body", "2026-06-16T08:00:00Z");
+        let skill = user_record_at("<skill> body of a skill", "2026-06-16T08:00:01Z");
+        let real_prompt = user_record_at("real prompt", "2026-06-16T08:00:02Z");
+        let aborted = user_record_at(
+            "<turn_aborted> The user interrupted the previous turn on purpose.",
+            "2026-06-16T08:00:03Z",
+        );
+        let assistant_message = assistant_record_at("assistant", "2026-06-16T08:00:04Z");
+        fs::write(
+            &transcript_path,
+            format!("{instructions}\n{skill}\n{real_prompt}\n{aborted}\n{assistant_message}"),
+        )
+        .expect("write transcript");
+
+        let preview = transcript_preview_for_path(&transcript_path).expect("preview");
+
+        assert_eq!(preview.first_user_prompt.as_deref(), Some("real prompt"));
+    }
+
+    #[test]
+    fn transcript_preview_head_scan_never_claims_tail_user_messages() {
+        let tempdir = tempdir().expect("tempdir");
+        let transcript_path = tempdir.path().join("head-bound.jsonl");
+        let filler = "x".repeat((super::FIRST_USER_PROMPT_HEAD_SCAN_BYTES + 1) as usize);
+        let assistant_message = assistant_record_at("fresh assistant", "2026-06-16T08:02:00Z");
+        let latest_user_message = user_record_at("latest user", "2026-06-16T08:03:00Z");
+        fs::write(
+            &transcript_path,
+            format!("{filler}\n{assistant_message}\n{latest_user_message}"),
+        )
+        .expect("write transcript");
+
+        let preview = transcript_preview_for_path(&transcript_path).expect("preview");
+
+        assert_eq!(preview.first_user_prompt, None);
+        assert_eq!(preview.latest_message_at_ms, Some(1_781_596_980_000));
     }
 
     #[test]

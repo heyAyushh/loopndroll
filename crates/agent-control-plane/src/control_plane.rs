@@ -33,9 +33,9 @@ use crate::claude_code::{
 };
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
-    SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, capabilities_for_state_thread,
-    discover_sources, inspect_control_plane, inspect_hooks, read_snapshot_state_with_thread_limit,
-    read_state, read_thread_revision_state, source_status,
+    SpawnGraph, StateData, ThreadCapabilities, ThreadRecord, ThreadRevisionRecord,
+    capabilities_for_state_thread, discover_sources, inspect_control_plane, inspect_hooks,
+    read_snapshot_state_with_thread_limit, read_state, read_thread_revision_state, source_status,
 };
 use crate::compaction::{CompactionEvent, read_compaction_events, read_recent_compaction_events};
 use crate::content_slices::{
@@ -137,6 +137,10 @@ impl SnapshotInspectionMode {
         self == Self::Live
     }
 
+    fn includes_transcript_previews(self) -> bool {
+        matches!(self, Self::Live | Self::Mobile)
+    }
+
     fn discovers_live_external_sessions(self) -> bool {
         self == Self::Live
     }
@@ -228,6 +232,7 @@ struct SessionMiniProjectionSourceSignature {
     state_db_path: PathBuf,
     modified_at_ms: i64,
     len: u64,
+    transcript_signature: String,
     // In-process ACP runtimes (zed/devin) never touch the codex state DB; their
     // session activity is folded in here so the source-change reconciler wakes for
     // non-codex surfaces too.
@@ -869,8 +874,15 @@ impl ControlPlane {
             state_db_path,
             modified_at_ms,
             len: metadata.len(),
+            transcript_signature: self.session_mini_transcript_source_signature(),
             acp_runtime_signature: self.acp_runtime_source_signature(),
         })
+    }
+
+    fn session_mini_transcript_source_signature(&self) -> String {
+        read_thread_revision_state(&self.config.codex_home, DESKTOP_SNAPSHOT_THREAD_LIMIT)
+            .map(|state| transcript_source_signature(&state.threads))
+            .unwrap_or_default()
     }
 
     fn acp_runtime_source_signature(&self) -> String {
@@ -1750,6 +1762,7 @@ impl ControlPlane {
         inspection_mode: SnapshotInspectionMode,
     ) -> Result<DesktopSnapshot> {
         let include_diagnostic_details = inspection_mode.includes_diagnostic_details();
+        let include_transcript_previews = inspection_mode.includes_transcript_previews();
         let prune_diagnostic_details = !include_diagnostic_details;
         let control_plane_status = self.snapshot_status(inspection_mode);
         let state = read_snapshot_state_with_thread_limit(&self.config.codex_home, thread_limit)?;
@@ -1766,7 +1779,7 @@ impl ControlPlane {
                 Ok(codex_thread_to_desktop_thread(
                     thread,
                     capabilities,
-                    include_diagnostic_details,
+                    include_transcript_previews,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -2663,6 +2676,29 @@ fn metadata_modified_at_ms(path: &Path) -> Option<i64> {
     i64::try_from(millis).ok()
 }
 
+fn transcript_source_signature(threads: &[ThreadRevisionRecord]) -> String {
+    let mut parts = threads
+        .iter()
+        .filter_map(|thread| {
+            let path = thread.transcript_path.as_deref()?;
+            let metadata = fs::metadata(Path::new(path)).ok();
+            let modified_at_ms = metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+                .unwrap_or_default();
+            let len = metadata.as_ref().map(fs::Metadata::len).unwrap_or_default();
+            Some(format!(
+                "{}:{}:{}:{}",
+                thread.thread_id, path, modified_at_ms, len
+            ))
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("|")
+}
+
 fn mobile_session_state_revision(state: &MobileSessionState) -> String {
     let session_overrides = state
         .sessions
@@ -2940,6 +2976,9 @@ mod tests {
         assert!(!SnapshotInspectionMode::Mobile.discovers_live_external_sessions());
         assert!(!SnapshotInspectionMode::CachedMenu.discovers_live_external_sessions());
         assert!(SnapshotInspectionMode::Live.discovers_live_external_sessions());
+        assert!(SnapshotInspectionMode::Mobile.includes_transcript_previews());
+        assert!(!SnapshotInspectionMode::CachedMenu.includes_transcript_previews());
+        assert!(SnapshotInspectionMode::Live.includes_transcript_previews());
 
         let threads = (0..(DESKTOP_SNAPSHOT_THREAD_LIMIT + 1))
             .map(|index| {
@@ -3019,6 +3058,26 @@ mod tests {
             pruned_thread.updated_at_ms,
             Some(STORED_THREAD_UPDATED_AT_MS)
         );
+    }
+
+    #[test]
+    fn transcript_source_signature_tracks_transcript_file_metadata() {
+        let fixture_dir = tempfile::tempdir().expect("tempdir");
+        let transcript_path = fixture_dir.path().join("thread.jsonl");
+        std::fs::write(&transcript_path, "one").expect("write transcript");
+        let records = vec![ThreadRevisionRecord {
+            thread_id: "thread-1".to_owned(),
+            transcript_path: Some(transcript_path.display().to_string()),
+            updated_at_ms: Some(1),
+            archived: false,
+        }];
+
+        let first = transcript_source_signature(&records);
+        std::fs::write(&transcript_path, "one\ntwo").expect("update transcript");
+        let second = transcript_source_signature(&records);
+
+        assert_ne!(first, second);
+        assert!(second.contains(":7"));
     }
 
     #[test]
@@ -3163,6 +3222,7 @@ mod tests {
             state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
             modified_at_ms: 1,
             len: 10,
+            transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
         };
         let changed_signature = SessionMiniProjectionSourceSignature {
@@ -3195,6 +3255,7 @@ mod tests {
             state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
             modified_at_ms: 1,
             len: 10,
+            transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
         };
 

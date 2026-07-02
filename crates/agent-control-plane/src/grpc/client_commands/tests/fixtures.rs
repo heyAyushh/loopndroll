@@ -60,6 +60,31 @@ pub(super) async fn spawn_h2(control_plane: ControlPlane) -> SpawnedH2 {
     }
 }
 
+pub(super) async fn spawn_http(control_plane: ControlPlane, address: SocketAddr) -> SpawnedHttp {
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .expect("bind HTTP listener");
+    let address = listener.local_addr().expect("HTTP listener address");
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            crate::http::build_router(control_plane)
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = shutdown_receiver.await;
+        })
+        .await
+        .expect("HTTP server");
+    });
+    SpawnedHttp {
+        address,
+        shutdown_sender: Some(shutdown_sender),
+        server_task,
+    }
+}
+
 pub(super) async fn spawn_no_ack_h2() -> SpawnedH2 {
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -80,6 +105,23 @@ pub(super) async fn spawn_no_ack_h2() -> SpawnedH2 {
         address,
         shutdown_sender: Some(shutdown_sender),
         server_task,
+    }
+}
+
+pub(super) struct SpawnedHttp {
+    pub(super) address: SocketAddr,
+    shutdown_sender: Option<oneshot::Sender<()>>,
+    server_task: tokio::task::JoinHandle<()>,
+}
+
+impl SpawnedHttp {
+    pub(super) async fn shutdown(mut self) {
+        if let Some(sender) = self.shutdown_sender.take() {
+            let _ = sender.send(());
+        }
+        self.server_task
+            .await
+            .expect("HTTP server task should join");
     }
 }
 
@@ -276,11 +318,16 @@ impl LooperRealtime for NoAckRealtimeService {
 }
 
 pub(super) fn http_base_url_for_grpc_address(grpc_address: SocketAddr) -> String {
+    let http_address = http_address_for_grpc_address(grpc_address);
+    format!("http://{}", http_address)
+}
+
+pub(super) fn http_address_for_grpc_address(grpc_address: SocketAddr) -> SocketAddr {
     let http_port = grpc_address
         .port()
         .checked_sub(DEFAULT_GRPC_PORT_OFFSET)
         .expect("reserved gRPC port must allow HTTP base derivation");
-    format!("http://{}:{http_port}", grpc_address.ip())
+    SocketAddr::new(grpc_address.ip(), http_port)
 }
 
 pub(super) fn prime_state_mini_cache(control_plane: &ControlPlane) {

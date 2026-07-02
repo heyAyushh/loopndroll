@@ -360,6 +360,13 @@ struct CompanionAppViewState {
         )
     }
 
+    func snapshotDetail(for route: SessionDetailRoute) -> SessionDetail? {
+        snapshotState.detail(
+            for: route.sessionID,
+            assistantSurface: route.assistantSurface
+        )
+    }
+
     func detailPresentation(for route: SessionDetailRoute) -> SessionDetailPresentation {
         let summary = session(
             withID: route.sessionID,
@@ -379,6 +386,20 @@ struct CompanionAppViewState {
         now: Date = Date()
     ) -> PendingPromptDeliveryPresentation? {
         snapshotState.pendingPromptDeliveryPresentation(for: sessionID, now: now)
+    }
+
+    func snapshotDetailPresentation(for route: SessionDetailRoute) -> SessionDetailPresentation {
+        let summary = session(
+            withID: route.sessionID,
+            assistantSurface: route.assistantSurface
+        )
+        let detail = snapshotDetail(for: route)
+        return SessionDetailPresentation(
+            route: route,
+            summary: summary,
+            detail: detail,
+            pendingPromptDelivery: pendingPromptDeliveryPresentation(for: route.sessionID)
+        )
     }
 
     private var connectedStatusSummary: String {

@@ -638,10 +638,92 @@ struct SessionSummaryTimingTests {
         let sections = SessionSections(sessions: [session])
 
         #expect(session.hasBlockedGoal)
+        #expect(session.needsGoalAttention)
         #expect(session.workStatusLabel == "Goal blocked")
-        #expect(session.workStatusSymbolName == "exclamationmark.octagon.fill")
         #expect(sections.needsAttention.map { $0.id } == ["blocked-thread"])
         #expect(sections.stopped.isEmpty)
+    }
+
+    @Test("Paused goal from mini payload is visible as needs-attention status")
+    func pausedGoalFromMiniPayloadIsVisibleAsNeedsAttentionStatus() throws {
+        let session = try sessionSummary(
+            id: "paused-thread",
+            ref: "S4",
+            status: "stopped",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            goal: [
+                "id": "goal-paused",
+                "title": "Resume delivery",
+                "status": "paused",
+                "lifecycle": "paused",
+                "running": false,
+                "updatedAtMs": Constants.activityMilliseconds,
+            ]
+        )
+        let sections = SessionSections(sessions: [session])
+
+        #expect(session.goal?.status == "paused")
+        #expect(session.goal?.running == false)
+        #expect(!session.hasBlockedGoal)
+        #expect(session.needsGoalAttention)
+        #expect(session.workStatusLabel == "Goal paused")
+        #expect(sections.needsAttention.map { $0.id } == ["paused-thread"])
+        #expect(sections.stopped.isEmpty)
+    }
+
+    @Test("Running goal from mini payload stays out of needs-attention status")
+    func runningGoalFromMiniPayloadStaysOutOfNeedsAttentionStatus() throws {
+        let session = try sessionSummary(
+            id: "running-goal-thread",
+            ref: "S5",
+            status: "stopped",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds,
+            goal: [
+                "id": "goal-running",
+                "title": "Continue implementation",
+                "status": "pursuing",
+                "lifecycle": "pursuing",
+                "running": true,
+                "updatedAtMs": Constants.activityMilliseconds,
+            ]
+        )
+        let sections = SessionSections(sessions: [session])
+
+        #expect(session.goal?.status == "pursuing")
+        #expect(session.hasRunningGoal)
+        #expect(!session.needsGoalAttention)
+        #expect(session.workStatusLabel == "Goal running")
+        #expect(sections.needsAttention.isEmpty)
+        #expect(sections.running.map { $0.id } == ["running-goal-thread"])
+    }
+
+    @Test("Older mini payload with only blockedGoal still decodes goal")
+    func olderMiniPayloadWithOnlyBlockedGoalStillDecodesGoal() throws {
+        var payload = sessionPayload(
+            id: "legacy-blocked-thread",
+            ref: "S6",
+            status: "stopped",
+            activityMilliseconds: Constants.activityMilliseconds,
+            messageMilliseconds: Constants.messageMilliseconds
+        )
+        payload["blockedGoal"] = [
+            "id": "goal-legacy-blocked",
+            "title": "Legacy unblock",
+            "status": "blocked",
+            "reason": "blocked",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let session = try decoder.decode(SessionSummary.self, from: data)
+
+        #expect(session.goal?.id == "goal-legacy-blocked")
+        #expect(session.goal?.status == "blocked")
+        #expect(session.goal?.lifecycle == "blocked")
+        #expect(session.goal?.running == false)
+        #expect(session.hasBlockedGoal)
+        #expect(session.needsGoalAttention)
+        #expect(session.workStatusLabel == "Goal blocked")
     }
 
     @MainActor

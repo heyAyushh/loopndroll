@@ -40,9 +40,13 @@ pub async fn spawn_h3_server(
     let endpoint_for_shutdown_signal = endpoint.clone();
     let endpoint_for_idle = endpoint.clone();
     let acceptor = H3QuinnAcceptor::new(endpoint);
-    let service_peer_addr = SocketAddr::new(local_address.ip(), local_address.port());
+    // tonic-h3 0.0.5 does not surface the QUIC remote peer through
+    // `tonic::Request::remote_addr()`. Do not substitute the local listen socket:
+    // that turns `0.0.0.0` into a false non-loopback peer and `127.0.0.1` into a
+    // false loopback peer. Without a real peer address h3 requests must prove
+    // mobile auth with metadata.
     let routes = tonic::service::Routes::new(LooperRealtimeServer::new(
-        LooperRealtimeService::with_peer_addr_override(control_plane, service_peer_addr),
+        LooperRealtimeService::new(control_plane),
     ));
     let server_task = tokio::spawn(async move {
         let shutdown = async move {

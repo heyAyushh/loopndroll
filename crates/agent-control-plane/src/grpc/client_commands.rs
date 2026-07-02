@@ -115,6 +115,7 @@ pub(super) struct LocalSessionEndpoint {
     pub(super) transport: LocalSessionTransport,
     pub(super) url: String,
     pub(super) h3_certificate_sha256: Option<String>,
+    pub(super) http_base_url: String,
 }
 
 pub(super) struct OpenLocalSessionCommandStream {
