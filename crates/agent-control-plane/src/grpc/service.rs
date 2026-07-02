@@ -48,6 +48,8 @@ const STATE_DELTA_NO_PROJECTION_REASON: &str = "projection-missing";
 const STATE_DELTA_PROJECTION_READ_FAILED_REASON: &str = "projection-read-failed";
 const STATE_DELTA_FRAME_CAP_EXCEEDED_REASON: &str = "projection-frame-cap-exceeded";
 const STATE_DELTA_RECOVERY_INSTRUCTION: &str = "session-mini-snapshot";
+const UNARY_COMMAND_MISSING_ACK_MESSAGE: &str = "unary command did not produce CommandAck";
+const UNARY_COMMAND_WORKER_FAILED_MESSAGE: &str = "unary command worker failed";
 
 type SessionFrameStream =
     Pin<Box<dyn Stream<Item = Result<proto::ServerFrame, Status>> + Send + 'static>>;
@@ -84,6 +86,39 @@ impl LooperRealtimeService {
             control_plane,
             peer_addr_override: Some(peer_addr_override),
         }
+    }
+
+    async fn unary_command_response<T>(
+        &self,
+        request: Request<T>,
+        command: impl FnOnce(T) -> proto::command::Command + Send + 'static,
+    ) -> Result<Response<proto::CommandAck>, Status>
+    where
+        T: Send + 'static,
+    {
+        authorize_mobile_api_request_from_peer(
+            &self.control_plane,
+            request.metadata(),
+            self.peer_addr_override.or_else(|| request.remote_addr()),
+        )?;
+        let control_plane = self.control_plane.clone();
+        let request = request.into_inner();
+        let runtime = tokio::runtime::Handle::current();
+        let ack = tokio::task::spawn_blocking(move || {
+            // Command helpers may publish follow-up Tokio work while SQLite runs off-thread.
+            let _runtime_guard = runtime.enter();
+            unary_session_command_ack(
+                &control_plane,
+                proto::Command {
+                    command: Some(command(request)),
+                },
+            )
+        })
+        .await
+        .map_err(|error| {
+            Status::internal(format!("{UNARY_COMMAND_WORKER_FAILED_MESSAGE}: {error}"))
+        })??;
+        Ok(Response::new(ack))
     }
 }
 
@@ -220,6 +255,193 @@ impl LooperRealtime for LooperRealtimeService {
         };
         Ok(Response::new(Box::pin(output)))
     }
+
+    async fn set_session_mode(
+        &self,
+        request: Request<proto::SetSessionModeRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSessionMode)
+            .await
+    }
+
+    async fn send_session_prompt(
+        &self,
+        request: Request<proto::SendSessionPromptRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SendSessionPrompt)
+            .await
+    }
+
+    async fn submit_notification_reply(
+        &self,
+        request: Request<proto::SubmitNotificationReplyRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SubmitNotificationReply)
+            .await
+    }
+
+    async fn set_siri_current_session(
+        &self,
+        request: Request<proto::SetSiriCurrentSessionRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSiriCurrentSession)
+            .await
+    }
+
+    async fn set_siri_default_session(
+        &self,
+        request: Request<proto::SetSiriDefaultSessionRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSiriDefaultSession)
+            .await
+    }
+
+    async fn save_default_prompt(
+        &self,
+        request: Request<proto::SaveDefaultPromptRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SaveDefaultPrompt)
+            .await
+    }
+
+    async fn set_session_archived(
+        &self,
+        request: Request<proto::SetSessionArchivedRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSessionArchived)
+            .await
+    }
+
+    async fn delete_session(
+        &self,
+        request: Request<proto::DeleteSessionRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::DeleteSession)
+            .await
+    }
+
+    async fn mute_session(
+        &self,
+        request: Request<proto::MuteSessionRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::MuteSession)
+            .await
+    }
+
+    async fn set_scope(
+        &self,
+        request: Request<proto::SetScopeRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetScope)
+            .await
+    }
+
+    async fn set_global_preset(
+        &self,
+        request: Request<proto::SetGlobalPresetRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetGlobalPreset)
+            .await
+    }
+
+    async fn set_global_notification(
+        &self,
+        request: Request<proto::SetGlobalNotificationRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetGlobalNotification)
+            .await
+    }
+
+    async fn set_default_notification_targets(
+        &self,
+        request: Request<proto::SetDefaultNotificationTargetsRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(
+            request,
+            proto::command::Command::SetDefaultNotificationTargets,
+        )
+        .await
+    }
+
+    async fn set_global_completion_check(
+        &self,
+        request: Request<proto::SetGlobalCompletionCheckRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetGlobalCompletionCheck)
+            .await
+    }
+
+    async fn upsert_notification_route(
+        &self,
+        request: Request<proto::UpsertNotificationRouteRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::UpsertNotificationRoute)
+            .await
+    }
+
+    async fn delete_notification_route(
+        &self,
+        request: Request<proto::DeleteNotificationRouteRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::DeleteNotificationRoute)
+            .await
+    }
+
+    async fn upsert_completion_check(
+        &self,
+        request: Request<proto::UpsertCompletionCheckRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::UpsertCompletionCheck)
+            .await
+    }
+
+    async fn delete_completion_check(
+        &self,
+        request: Request<proto::DeleteCompletionCheckRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::DeleteCompletionCheck)
+            .await
+    }
+
+    async fn set_session_notifications(
+        &self,
+        request: Request<proto::SetSessionNotificationsRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSessionNotifications)
+            .await
+    }
+
+    async fn set_session_completion_check(
+        &self,
+        request: Request<proto::SetSessionCompletionCheckRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetSessionCompletionCheck)
+            .await
+    }
+
+    async fn set_assistant_surface(
+        &self,
+        request: Request<proto::SetAssistantSurfaceRequest>,
+    ) -> Result<Response<proto::CommandAck>, Status> {
+        self.unary_command_response(request, proto::command::Command::SetAssistantSurface)
+            .await
+    }
+}
+
+fn unary_session_command_ack(
+    control_plane: &ControlPlane,
+    command: proto::Command,
+) -> Result<proto::CommandAck, Status> {
+    let mut last_seq = latest_mobile_state_seq(control_plane);
+    let batch = handle_session_command(control_plane, command, &mut last_seq);
+    for frame in batch.frames {
+        if let Some(proto::server_frame::Frame::Ack(ack)) = frame.frame {
+            return Ok(ack);
+        }
+    }
+    Err(batch
+        .terminal_error
+        .unwrap_or_else(|| Status::internal(UNARY_COMMAND_MISSING_ACK_MESSAGE)))
 }
 
 fn handle_session_client_frame(

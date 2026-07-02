@@ -100,6 +100,10 @@ impl SpawnedH2 {
 
 struct NoAckRealtimeService;
 
+fn no_ack_unary_command_status() -> Status {
+    Status::unimplemented("no-ACK fixture only implements Session")
+}
+
 #[tonic::async_trait]
 impl LooperRealtime for NoAckRealtimeService {
     type SessionStream =
@@ -121,6 +125,153 @@ impl LooperRealtime for NoAckRealtimeService {
         _request: Request<tonic::Streaming<proto::ClientFrame>>,
     ) -> std::result::Result<Response<Self::SessionStream>, Status> {
         Ok(Response::new(Box::pin(futures_util::stream::pending())))
+    }
+
+    async fn set_session_mode(
+        &self,
+        _request: Request<proto::SetSessionModeRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn send_session_prompt(
+        &self,
+        _request: Request<proto::SendSessionPromptRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn submit_notification_reply(
+        &self,
+        _request: Request<proto::SubmitNotificationReplyRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_siri_current_session(
+        &self,
+        _request: Request<proto::SetSiriCurrentSessionRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_siri_default_session(
+        &self,
+        _request: Request<proto::SetSiriDefaultSessionRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn save_default_prompt(
+        &self,
+        _request: Request<proto::SaveDefaultPromptRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_session_archived(
+        &self,
+        _request: Request<proto::SetSessionArchivedRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn delete_session(
+        &self,
+        _request: Request<proto::DeleteSessionRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn mute_session(
+        &self,
+        _request: Request<proto::MuteSessionRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_scope(
+        &self,
+        _request: Request<proto::SetScopeRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_global_preset(
+        &self,
+        _request: Request<proto::SetGlobalPresetRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_global_notification(
+        &self,
+        _request: Request<proto::SetGlobalNotificationRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_default_notification_targets(
+        &self,
+        _request: Request<proto::SetDefaultNotificationTargetsRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_global_completion_check(
+        &self,
+        _request: Request<proto::SetGlobalCompletionCheckRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn upsert_notification_route(
+        &self,
+        _request: Request<proto::UpsertNotificationRouteRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn delete_notification_route(
+        &self,
+        _request: Request<proto::DeleteNotificationRouteRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn upsert_completion_check(
+        &self,
+        _request: Request<proto::UpsertCompletionCheckRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn delete_completion_check(
+        &self,
+        _request: Request<proto::DeleteCompletionCheckRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_session_notifications(
+        &self,
+        _request: Request<proto::SetSessionNotificationsRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_session_completion_check(
+        &self,
+        _request: Request<proto::SetSessionCompletionCheckRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
+    }
+
+    async fn set_assistant_surface(
+        &self,
+        _request: Request<proto::SetAssistantSurfaceRequest>,
+    ) -> std::result::Result<Response<proto::CommandAck>, Status> {
+        Err(no_ack_unary_command_status())
     }
 }
 
