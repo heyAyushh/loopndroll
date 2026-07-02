@@ -134,3 +134,18 @@ with these changes, because build/test wall-clock dominates:
 Deferred by this plan: CompanionAppModel split (Phase 2 refactor luxury), per-branch
 bisectability. Risk to watch: a contract mistake discovered mid-fan-out cascades; the
 hour-1 review of the contract job is the checkpoint that protects the day.
+
+## Status: COMPLETE (2026-07-02)
+
+All phases landed on this branch. Final gates on the merged tip: client-core 210,
+session-core 8, control-plane lib 259, e2e 13 (0 ignored, 3 stable rounds),
+grpc_h3_listener 5, quinn smoke 2, boundaries pass, swift package 16, macOS 117,
+iOS bundle 106. Notable closures beyond the original plan: fresh-dial h3 connector
+fixes same-port listener-restart recovery and attempts 0-RTT; prompt-delivery
+worker no longer dies scheduling reconciles off-runtime; the in-flight
+tonic-h3-migration working-tree changes were absorbed and reconciled.
+
+Known accepted leftovers: `scripts/check-ios.sh` fails on a resolver file removed
+by b12a45f3b (pre-existing gate rot, also fails on main); stream command path kept
+as old-server fallback by design; 13-14 `isolated_control_plane` tests fail on
+main under parallel load (pre-existing, unrelated).
