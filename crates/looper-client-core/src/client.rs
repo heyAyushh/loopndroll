@@ -47,6 +47,10 @@ const EMPTY_SEQUENCE: i64 = 0;
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const COMMAND_FLUSH_RETRY_ATTEMPTS: usize = 5;
 const COMMAND_FLUSH_RETRY_DELAY: Duration = Duration::from_millis(250);
+#[cfg(not(test))]
+const COMMAND_FLUSH_BACKSTOP_INTERVAL: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const COMMAND_FLUSH_BACKSTOP_INTERVAL: Duration = Duration::from_millis(50);
 const COMMAND_ACK_BACKLOG_LIMIT: usize = 64;
 const RECENT_COMMAND_ACK_LIMIT: usize = 16;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
@@ -71,6 +75,7 @@ struct ClientCoreState {
     recent_command_acks: Vec<ClientCommandAck>,
     pending_replacement: Option<PendingStateMiniReplacement>,
     last_error: String,
+    should_reflush_pending_outbox_on_live: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +111,7 @@ pub(crate) struct LooperClientCore {
     local_update_sender: mpsc::UnboundedSender<ClientStateMiniStreamUpdate>,
     observe_updates: tokio::sync::Mutex<()>,
     command_flush: tokio::sync::Mutex<()>,
+    command_flush_backstop: tokio::sync::Mutex<()>,
     notification_reply_drain: tokio::sync::Mutex<()>,
     runtime: tokio::runtime::Runtime,
 }
@@ -251,6 +257,7 @@ impl LooperClientCore {
             local_update_sender,
             observe_updates: tokio::sync::Mutex::new(()),
             command_flush: tokio::sync::Mutex::new(()),
+            command_flush_backstop: tokio::sync::Mutex::new(()),
             notification_reply_drain: tokio::sync::Mutex::new(()),
             runtime: tokio::runtime::Runtime::new().expect("looper client core runtime"),
         })
@@ -664,6 +671,40 @@ impl LooperClientCore {
     fn pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
         let state = self.lock_state()?;
         Ok(state.pending_outbox_client_mutation_ids())
+    }
+
+    fn ready_pending_outbox_client_mutation_ids(&self) -> Result<Vec<String>, ClientCoreError> {
+        let state = self.lock_state()?;
+        if state.phase != ConnectionPhase::Ready {
+            return Ok(Vec::new());
+        }
+        Ok(state.pending_outbox_client_mutation_ids())
+    }
+
+    fn take_live_transition_pending_outbox_client_mutation_ids(
+        &self,
+    ) -> Result<Vec<String>, ClientCoreError> {
+        let mut state = self.lock_state()?;
+        if !state.should_reflush_pending_outbox_on_live {
+            return Ok(Vec::new());
+        }
+        state.should_reflush_pending_outbox_on_live = false;
+        Ok(state.pending_outbox_client_mutation_ids())
+    }
+
+    pub(crate) fn spawn_pending_outbox_flush_after_live_transition(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+    ) -> Result<(), ClientCoreError> {
+        let pending_client_mutation_ids =
+            self.take_live_transition_pending_outbox_client_mutation_ids()?;
+        if pending_client_mutation_ids.is_empty() {
+            return Ok(());
+        }
+
+        self.spawn_restored_command_ack_flush(local_store.clone(), pending_client_mutation_ids);
+        self.spawn_pending_outbox_backstop(local_store);
+        Ok(())
     }
 
     pub(crate) fn restore_pending_commands(
@@ -1428,6 +1469,7 @@ impl LooperClientCore {
         client_mutation_id: String,
     ) {
         let client_core = self.clone();
+        let backstop_store = local_store.clone();
         let handle = self.runtime.handle().clone();
         self.runtime.spawn_blocking(move || {
             let flush_result = handle.block_on(client_core.flush_pending_outbox_with_retries(
@@ -1437,6 +1479,7 @@ impl LooperClientCore {
             ));
             if let Err(error) = flush_result {
                 let _ = client_core.emit_command_flush_error(error);
+                client_core.spawn_pending_outbox_backstop(backstop_store);
             }
         });
     }
@@ -1452,6 +1495,7 @@ impl LooperClientCore {
         }
 
         let client_core = self.clone();
+        let backstop_store = local_store.clone();
         let handle = self.runtime.handle().clone();
         self.runtime.spawn_blocking(move || {
             let flush_result = handle.block_on(client_core.flush_pending_outbox_with_retries(
@@ -1461,6 +1505,60 @@ impl LooperClientCore {
             ));
             if let Err(error) = flush_result {
                 let _ = client_core.emit_command_flush_error(error);
+                client_core.spawn_pending_outbox_backstop(backstop_store);
+            }
+        });
+    }
+
+    fn spawn_pending_outbox_backstop(
+        self: &Arc<Self>,
+        local_store: Arc<LooperClientCoreLocalStore>,
+    ) {
+        let Ok(pending_client_mutation_ids) = self.ready_pending_outbox_client_mutation_ids()
+        else {
+            return;
+        };
+        if pending_client_mutation_ids.is_empty() {
+            return;
+        }
+
+        let client_core = self.clone();
+        self.runtime.spawn(async move {
+            let Ok(_backstop) = client_core.command_flush_backstop.try_lock() else {
+                return;
+            };
+
+            loop {
+                sleep(COMMAND_FLUSH_BACKSTOP_INTERVAL).await;
+                let pending_client_mutation_ids =
+                    match client_core.ready_pending_outbox_client_mutation_ids() {
+                        Ok(ids) if !ids.is_empty() => ids,
+                        Ok(_) => return,
+                        Err(error) => {
+                            let _ = client_core.emit_command_flush_error(error);
+                            return;
+                        }
+                    };
+
+                let flush_result = client_core
+                    .flush_pending_outbox_with_retries(
+                        local_store.clone(),
+                        pending_client_mutation_ids,
+                        true,
+                    )
+                    .await;
+                if let Err(error) = flush_result {
+                    let _ = client_core.emit_command_flush_error(error);
+                }
+
+                match client_core.pending_outbox_client_mutation_ids() {
+                    Ok(ids) if ids.is_empty() => return,
+                    Ok(_) => {}
+                    Err(error) => {
+                        let _ = client_core.emit_command_flush_error(error);
+                        return;
+                    }
+                }
             }
         });
     }
@@ -1609,6 +1707,7 @@ impl LooperClientCore {
         event: StateMiniStreamEvent,
     ) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let mut state = self.lock_state()?;
+        let was_live = state.phase == ConnectionPhase::Ready;
         let (reason, did_change, latest_seq, error_description, has_text_chunk, text_chunk) =
             match event {
                 StateMiniStreamEvent::Delta(delta) => {
@@ -1705,6 +1804,18 @@ impl LooperClientCore {
                     )
                 }
             };
+        if !was_live
+            && state.phase == ConnectionPhase::Ready
+            && !state.outbox.is_empty()
+            && matches!(
+                reason,
+                ClientStateMiniStreamUpdateReason::Delta
+                    | ClientStateMiniStreamUpdateReason::Heartbeat
+                    | ClientStateMiniStreamUpdateReason::TextChunk
+            )
+        {
+            state.should_reflush_pending_outbox_on_live = true;
+        }
         Ok(ClientStateMiniStreamUpdate {
             reason,
             snapshot: state.snapshot(),
@@ -2759,6 +2870,21 @@ mod tests {
         });
     }
 
+    async fn wait_for_empty_pending_commands(store: &LooperClientCoreLocalStore) {
+        for _ in 0..100 {
+            if store
+                .snapshot()
+                .expect("local snapshot")
+                .pending_commands
+                .is_empty()
+            {
+                return;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        panic!("pending commands did not drain");
+    }
+
     fn accepted_ack(client_mutation_id: &str, ack_seq: i64, revision: &str) -> ClientCommandAck {
         ClientCommandAck {
             accepted: true,
@@ -3464,6 +3590,137 @@ mod tests {
         assert_eq!(snapshot.outbox_depth, 0);
         assert_eq!(snapshot.latest_seq, 44);
         assert_eq!(snapshot.revision, "rev-44");
+    }
+
+    #[test]
+    fn stream_recovery_reflushes_pending_outbox_without_new_command() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("stream-recovery-reflush");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "queue".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+        store
+            .enqueue_send_prompt_command(
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "queue".to_owned(),
+                "cmid-prompt".to_owned(),
+            )
+            .expect("persist prompt");
+        store
+            .mark_attempted("cmid-prompt".to_owned())
+            .expect("mark initial attempt");
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Reconnecting;
+        }
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let ack_task = tokio::spawn(async move {
+                let frame = commands_receiver.recv().await.expect("recovered command");
+                assert_eq!(frame.client_mutation_id, "cmid-prompt");
+                assert_eq!(frame.command_kind, ClientCommandKind::SendSessionPrompt);
+                acks_sender
+                    .send(accepted_ack("cmid-prompt", 45, "rev-45"))
+                    .await
+                    .expect("send ack");
+            });
+
+            core.apply_state_mini_stream_event(StateMiniStreamEvent::Heartbeat {
+                latest_seq: 44,
+                server_time: "2026-06-25T00:00:44Z".to_owned(),
+                endpoint_url: ENDPOINT_PRIMARY.to_owned(),
+                endpoint_transport: ClientEndpointTransport::H2,
+                fallback_reason: String::new(),
+            })
+            .expect("live heartbeat");
+            core.spawn_pending_outbox_flush_after_live_transition(store.clone())
+                .expect("spawn recovery flush");
+            ack_task.await.expect("ack task");
+            wait_for_empty_pending_commands(&store).await;
+        });
+
+        let local_snapshot = store.snapshot().expect("local snapshot");
+        assert!(local_snapshot.pending_commands.is_empty());
+        let snapshot = core.snapshot().expect("snapshot");
+        assert_eq!(snapshot.outbox_depth, 0);
+        assert_eq!(snapshot.latest_seq, 45);
+        assert_eq!(snapshot.revision, "rev-45");
+    }
+
+    #[test]
+    fn pending_outbox_backstop_retries_and_stops_when_empty() {
+        let core = LooperClientCore::new();
+        let store_path = temp_store_path("pending-outbox-backstop");
+        let store = LooperClientCoreLocalStore::new(store_path.to_string_lossy().into_owned())
+            .expect("store");
+        core.send_prompt(
+            "thread-1".to_owned(),
+            "continue".to_owned(),
+            "codex".to_owned(),
+            "queue".to_owned(),
+            "cmid-prompt".to_owned(),
+        )
+        .expect("queue prompt");
+        store
+            .enqueue_send_prompt_command(
+                "thread-1".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "queue".to_owned(),
+                "cmid-prompt".to_owned(),
+            )
+            .expect("persist prompt");
+        store
+            .mark_attempted("cmid-prompt".to_owned())
+            .expect("mark initial attempt");
+        let (mut commands_receiver, acks_sender) = install_test_session_stream(&core);
+        {
+            let mut state = core.lock_state().expect("state lock");
+            state.phase = ConnectionPhase::Ready;
+        }
+
+        core.spawn_pending_outbox_backstop(store.clone());
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let frame = tokio::time::timeout(Duration::from_secs(1), commands_receiver.recv())
+                .await
+                .expect("backstop retry timed out")
+                .expect("backstop command");
+            assert_eq!(frame.client_mutation_id, "cmid-prompt");
+            assert_eq!(frame.command_kind, ClientCommandKind::SendSessionPrompt);
+            acks_sender
+                .send(accepted_ack("cmid-prompt", 46, "rev-46"))
+                .await
+                .expect("send ack");
+            wait_for_empty_pending_commands(&store).await;
+
+            let extra_frame = tokio::time::timeout(
+                COMMAND_FLUSH_BACKSTOP_INTERVAL * 3,
+                commands_receiver.recv(),
+            )
+            .await;
+            assert!(extra_frame.is_err(), "backstop kept running after drain");
+        });
+
+        assert!(
+            store
+                .snapshot()
+                .expect("local snapshot")
+                .pending_commands
+                .is_empty()
+        );
+        assert_eq!(core.snapshot().expect("snapshot").outbox_depth, 0);
     }
 
     #[test]

@@ -205,7 +205,8 @@ struct SessionsScreen: View {
                 NavigationLink(value: item.detailRoute) {
                     SessionRow(
                         session: item.session,
-                        assistantSurface: item.assistantSurface
+                        assistantSurface: item.assistantSurface,
+                        pendingPromptDelivery: item.pendingPromptDelivery
                     )
                 }
                 .companionCardRowSurface()
@@ -250,7 +251,8 @@ struct SessionsScreen: View {
         visibleSessions(from: sessions, isExpanded: isExpanded).map { session in
             SessionRowDisplayItem(
                 session: session,
-                assistantSurface: model.viewState.assistantSurface(for: session.id)
+                assistantSurface: model.viewState.assistantSurface(for: session.id),
+                pendingPromptDelivery: model.viewState.pendingPromptDeliveryPresentation(for: session.id)
             )
         }
     }

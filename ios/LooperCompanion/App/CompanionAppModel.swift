@@ -400,6 +400,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("session-mini:sync-stale-skip")
             return
         }
+        refreshPendingPromptDeliveryState()
 
         guard applyCachedSessionMiniSnapshot(
             update.snapshot,
@@ -454,6 +455,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("session-mini:liveness-stale-skip")
             return
         }
+        refreshPendingPromptDeliveryState()
 
         let didChange = applyRealtimeStreamLiveness(
             serverTime: update.serverTime,
@@ -2007,7 +2009,22 @@ final class CompanionAppModel {
     /// magic string prefix on `reason`.
     @discardableResult
     private func applyAcceptedClientCoreLocalSnapshot(reason: String) -> Bool {
-        restoreCachedSessionMiniSnapshotIfAvailable(reason: reason, bypassesSeqGating: true)
+        let didRestore = restoreCachedSessionMiniSnapshotIfAvailable(
+            reason: reason,
+            bypassesSeqGating: true
+        )
+        refreshPendingPromptDeliveryState()
+        return didRestore
+    }
+
+    @discardableResult
+    private func refreshPendingPromptDeliveryState(now: Date = Date()) -> Bool {
+        let pendingCommands = sessionMiniController.sessionRuntime?.pendingCommands() ?? []
+        let didChange = snapshotState.applyPendingCommands(pendingCommands, now: now)
+        if didChange {
+            lastUpdatedAt = now
+        }
+        return didChange
     }
 
     private func applyCachedSnapshot(_ cachedSnapshot: MobileSnapshot, reason: String) {

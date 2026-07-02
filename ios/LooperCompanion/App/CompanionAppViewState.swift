@@ -359,8 +359,16 @@ struct CompanionAppViewState {
         return SessionDetailPresentation(
             route: route,
             summary: summary,
-            detail: detail
+            detail: detail,
+            pendingPromptDelivery: pendingPromptDeliveryPresentation(for: route.sessionID)
         )
+    }
+
+    func pendingPromptDeliveryPresentation(
+        for sessionID: String,
+        now: Date = Date()
+    ) -> PendingPromptDeliveryPresentation? {
+        snapshotState.pendingPromptDeliveryPresentation(for: sessionID, now: now)
     }
 
     private var connectedStatusSummary: String {
@@ -413,6 +421,7 @@ struct SessionDetailPresentation {
     let route: SessionDetailRoute
     let summary: SessionSummary?
     let detail: SessionDetail?
+    let pendingPromptDelivery: PendingPromptDeliveryPresentation?
 
     var hasResolvedSession: Bool {
         detail != nil || summary != nil

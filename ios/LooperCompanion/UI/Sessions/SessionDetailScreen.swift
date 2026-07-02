@@ -290,6 +290,17 @@ struct SessionDetailScreen: View {
             }
             .disabled(!canSendPrompt(presentation))
             .accessibilityIdentifier("session-detail.send-prompt")
+
+            if let pendingPromptDelivery = presentation.pendingPromptDelivery {
+                HStack {
+                    StatusPill(
+                        text: pendingPromptDelivery.label,
+                        tint: pendingPromptTint(for: pendingPromptDelivery)
+                    )
+                    .accessibilityIdentifier("session-detail.pending-prompt")
+                    Spacer(minLength: 0)
+                }
+            }
         } header: {
             Text("Prompt")
         } footer: {
@@ -420,6 +431,15 @@ struct SessionDetailScreen: View {
             return selectedMode == nil
                 ? "Choose a continuation mode before queueing."
                 : "Queue this prompt for the selected continuation mode."
+        }
+    }
+
+    private func pendingPromptTint(for presentation: PendingPromptDeliveryPresentation) -> Color {
+        switch presentation.status {
+        case .sending:
+            return .accentColor
+        case .notDeliveredRetry:
+            return .orange
         }
     }
 
