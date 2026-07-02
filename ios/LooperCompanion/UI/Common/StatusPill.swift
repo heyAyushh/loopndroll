@@ -50,16 +50,7 @@ private enum StatusPillMetrics {
 
 enum SessionGoalStatusVisuals {
     static func tint(for goal: SessionGoalSummary) -> Color {
-        if goal.isBlocked {
-            return .orange
-        }
-        if goal.isPaused {
-            return .yellow
-        }
-        if goal.running {
-            return .accentColor
-        }
-        return .secondary
+        goal.running ? .green : .secondary
     }
 }
 
