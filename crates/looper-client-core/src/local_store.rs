@@ -1,7 +1,10 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, mpsc},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -23,17 +26,33 @@ use crate::{
 };
 
 pub const DEFAULT_LOCAL_STORE_FILE_NAME: &str = "looper-realtime-state-minis.json";
+pub const DEFAULT_LOCAL_STORE_DETAIL_FILE_NAME: &str = "looper-realtime-session-details.json";
 
 const NOTIFICATION_REPLY_INITIAL_RETRY_DELAY_NANOSECONDS: u64 = 250_000_000;
 const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const MAX_LATEST_REPLY_BYTES: usize = 64 * 1024;
+const LOCAL_STORE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
+const LOCAL_STORE_MAX_STALENESS: Duration = Duration::from_secs(2);
+const MAX_STORED_SESSION_DETAIL_BYTES: usize = 2 * 1024 * 1024;
+const LOCAL_STORE_PERSISTER_THREAD_NAME: &str = "looper-client-core-local-store-persister";
 
-#[derive(Debug)]
 pub(crate) struct LooperClientCoreLocalStore {
     file_path: PathBuf,
+    detail_file_path: PathBuf,
     state: Mutex<StoredState>,
+    persister: StorePersister,
+}
+
+impl fmt::Debug for LooperClientCoreLocalStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LooperClientCoreLocalStore")
+            .field("file_path", &self.file_path)
+            .field("detail_file_path", &self.detail_file_path)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -61,9 +80,50 @@ struct StoredState {
     #[serde(
         rename = "latestReplies",
         default,
+        deserialize_with = "deserialize_latest_replies",
+        skip_serializing
+    )]
+    latest_replies: HashMap<String, ClientSessionLatestReply>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+struct StoredPrimaryState {
+    #[serde(rename = "latestSeq", alias = "latest_seq", default)]
+    latest_seq: i64,
+    #[serde(default)]
+    sessions: Vec<ClientStateMini>,
+    #[serde(rename = "lastSeqByNode", alias = "last_seq_by_node", default)]
+    last_seq_by_node: BTreeMap<String, i64>,
+    #[serde(rename = "pendingCommands", default)]
+    pending_commands: Vec<StoredPendingCommand>,
+    #[serde(rename = "serverTime", default)]
+    server_time: Option<String>,
+    #[serde(
+        rename = "lastGoodEndpointURL",
+        alias = "lastGoodEndpointUrl",
+        alias = "last_good_endpoint_url",
+        default,
+        skip_serializing
+    )]
+    last_good_endpoint_url: Option<String>,
+    #[serde(rename = "lastGoodEndpoint", default)]
+    last_good_endpoint: Option<StoredLastGoodEndpoint>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+struct StoredDetailState {
+    #[serde(
+        rename = "latestReplies",
+        default,
         deserialize_with = "deserialize_latest_replies"
     )]
     latest_replies: HashMap<String, ClientSessionLatestReply>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct StorePersistSnapshot {
+    primary: Option<StoredPrimaryState>,
+    detail: Option<StoredDetailState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -95,6 +155,334 @@ struct StoredPendingCommand {
     archived: bool,
     #[serde(rename = "attemptCount", default)]
     attempt_count: u32,
+}
+
+trait LocalStoreFileWriter: Send + Sync {
+    fn write_atomic(&self, file_path: &Path, data: Vec<u8>) -> Result<(), ClientCoreError>;
+}
+
+#[derive(Debug)]
+struct FsLocalStoreFileWriter;
+
+impl LocalStoreFileWriter for FsLocalStoreFileWriter {
+    fn write_atomic(&self, file_path: &Path, data: Vec<u8>) -> Result<(), ClientCoreError> {
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+        }
+        let temp_path = temporary_path(file_path)?;
+        std::fs::write(&temp_path, data).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+        std::fs::rename(temp_path, file_path).map_err(|_| ClientCoreError::LocalStoreWriteFailed)
+    }
+}
+
+enum StorePersisterCommand {
+    Schedule(StorePersistSnapshot),
+    PersistPrimaryNow(
+        StoredPrimaryState,
+        mpsc::Sender<Result<(), ClientCoreError>>,
+    ),
+    Flush(mpsc::Sender<Result<(), ClientCoreError>>),
+    Shutdown(mpsc::Sender<Result<(), ClientCoreError>>),
+}
+
+struct StorePersister {
+    sender: Mutex<Option<mpsc::Sender<StorePersisterCommand>>>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl fmt::Debug for StorePersister {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorePersister")
+            .finish_non_exhaustive()
+    }
+}
+
+impl StorePersister {
+    fn new(
+        primary_file_path: PathBuf,
+        detail_file_path: PathBuf,
+        writer: Arc<dyn LocalStoreFileWriter>,
+    ) -> Result<Self, ClientCoreError> {
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::Builder::new()
+            .name(LOCAL_STORE_PERSISTER_THREAD_NAME.to_owned())
+            .spawn(move || {
+                StorePersisterWorker {
+                    primary_file_path,
+                    detail_file_path,
+                    writer,
+                    pending: StorePersistSnapshot::default(),
+                    first_pending_at: None,
+                    last_update_at: None,
+                    last_error: None,
+                }
+                .run(receiver);
+            })
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+        Ok(Self {
+            sender: Mutex::new(Some(sender)),
+            handle: Mutex::new(Some(handle)),
+        })
+    }
+
+    fn schedule(&self, snapshot: StorePersistSnapshot) -> Result<(), ClientCoreError> {
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+        let sender = self
+            .sender
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)?
+            .clone()
+            .ok_or(ClientCoreError::LocalStoreWriteFailed)?;
+        sender
+            .send(StorePersisterCommand::Schedule(snapshot))
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)
+    }
+
+    fn persist_primary_now(&self, primary: StoredPrimaryState) -> Result<(), ClientCoreError> {
+        let sender = self
+            .sender
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)?
+            .clone()
+            .ok_or(ClientCoreError::LocalStoreWriteFailed)?;
+        let (ack_sender, ack_receiver) = mpsc::channel();
+        sender
+            .send(StorePersisterCommand::PersistPrimaryNow(
+                primary, ack_sender,
+            ))
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+        ack_receiver
+            .recv()
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)?
+    }
+
+    fn flush(&self) -> Result<(), ClientCoreError> {
+        let sender = self
+            .sender
+            .lock()
+            .map_err(|_| ClientCoreError::StateLockPoisoned)?
+            .clone()
+            .ok_or(ClientCoreError::LocalStoreWriteFailed)?;
+        let (ack_sender, ack_receiver) = mpsc::channel();
+        sender
+            .send(StorePersisterCommand::Flush(ack_sender))
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+        ack_receiver
+            .recv()
+            .map_err(|_| ClientCoreError::LocalStoreWriteFailed)?
+    }
+}
+
+impl Drop for StorePersister {
+    fn drop(&mut self) {
+        let sender = self.sender.get_mut().ok().and_then(Option::take);
+        if let Some(sender) = sender {
+            let (ack_sender, ack_receiver) = mpsc::channel();
+            let _ = sender.send(StorePersisterCommand::Shutdown(ack_sender));
+            let _ = ack_receiver.recv();
+        }
+        if let Ok(handle) = self.handle.get_mut() {
+            if let Some(handle) = handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+struct StorePersisterWorker {
+    primary_file_path: PathBuf,
+    detail_file_path: PathBuf,
+    writer: Arc<dyn LocalStoreFileWriter>,
+    pending: StorePersistSnapshot,
+    first_pending_at: Option<Instant>,
+    last_update_at: Option<Instant>,
+    last_error: Option<ClientCoreError>,
+}
+
+impl StorePersistSnapshot {
+    fn primary(primary: StoredPrimaryState) -> Self {
+        Self {
+            primary: Some(primary),
+            detail: None,
+        }
+    }
+
+    fn primary_and_detail(primary: StoredPrimaryState, detail: StoredDetailState) -> Self {
+        Self {
+            primary: Some(primary),
+            detail: Some(detail),
+        }
+    }
+
+    fn merge(&mut self, snapshot: StorePersistSnapshot) {
+        if snapshot.primary.is_some() {
+            self.primary = snapshot.primary;
+        }
+        if snapshot.detail.is_some() {
+            self.detail = snapshot.detail;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.primary.is_none() && self.detail.is_none()
+    }
+}
+
+impl StorePersisterWorker {
+    fn run(&mut self, receiver: mpsc::Receiver<StorePersisterCommand>) {
+        loop {
+            match self.next_command(&receiver) {
+                Ok(Some(command)) => {
+                    if !self.handle_command(command) {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    let _ = self.flush_pending();
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = self.flush_pending();
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let _ = self.flush_pending();
+                }
+            }
+        }
+    }
+
+    fn next_command(
+        &self,
+        receiver: &mpsc::Receiver<StorePersisterCommand>,
+    ) -> Result<Option<StorePersisterCommand>, mpsc::RecvTimeoutError> {
+        let Some(timeout) = self.next_flush_timeout() else {
+            return receiver
+                .recv()
+                .map(Some)
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected);
+        };
+        match receiver.recv_timeout(timeout) {
+            Ok(command) => Ok(Some(command)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn next_flush_timeout(&self) -> Option<Duration> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        let debounce_due = self
+            .last_update_at
+            .map(|updated| updated + LOCAL_STORE_DEBOUNCE_INTERVAL)
+            .unwrap_or(now);
+        let stale_due = self
+            .first_pending_at
+            .map(|pending| pending + LOCAL_STORE_MAX_STALENESS)
+            .unwrap_or(now);
+        let due = debounce_due.min(stale_due);
+        Some(due.saturating_duration_since(now))
+    }
+
+    fn handle_command(&mut self, command: StorePersisterCommand) -> bool {
+        match command {
+            StorePersisterCommand::Schedule(snapshot) => {
+                self.schedule(snapshot);
+                true
+            }
+            StorePersisterCommand::PersistPrimaryNow(primary, ack_sender) => {
+                self.pending.primary = Some(primary);
+                let result = self.flush_primary();
+                let _ = ack_sender.send(result);
+                true
+            }
+            StorePersisterCommand::Flush(ack_sender) => {
+                let result = self.flush_pending();
+                let _ = ack_sender.send(result);
+                true
+            }
+            StorePersisterCommand::Shutdown(ack_sender) => {
+                let result = self.flush_pending();
+                let _ = ack_sender.send(result);
+                false
+            }
+        }
+    }
+
+    fn schedule(&mut self, snapshot: StorePersistSnapshot) {
+        if snapshot.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self.pending.is_empty() {
+            self.first_pending_at = Some(now);
+        }
+        self.pending.merge(snapshot);
+        self.last_update_at = Some(now);
+        if self
+            .first_pending_at
+            .is_some_and(|pending| now.duration_since(pending) >= LOCAL_STORE_MAX_STALENESS)
+        {
+            let _ = self.flush_pending();
+        }
+    }
+
+    fn flush_pending(&mut self) -> Result<(), ClientCoreError> {
+        let primary_result = self.flush_primary();
+        let detail_result = self.flush_detail();
+        match (primary_result, detail_result) {
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            (Ok(()), Ok(())) => {
+                self.last_error.take();
+                Ok(())
+            }
+        }
+    }
+
+    fn flush_primary(&mut self) -> Result<(), ClientCoreError> {
+        let Some(primary) = self.pending.primary.clone() else {
+            return Ok(());
+        };
+        match persist_json(&self.primary_file_path, &primary, self.writer.as_ref()) {
+            Ok(()) => {
+                self.pending.primary = None;
+                self.clear_pending_clock_if_empty();
+                Ok(())
+            }
+            Err(error) => {
+                self.last_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn flush_detail(&mut self) -> Result<(), ClientCoreError> {
+        let Some(detail) = self.pending.detail.clone() else {
+            return Ok(());
+        };
+        match persist_json(&self.detail_file_path, &detail, self.writer.as_ref()) {
+            Ok(()) => {
+                self.pending.detail = None;
+                self.clear_pending_clock_if_empty();
+                Ok(())
+            }
+            Err(error) => {
+                self.last_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn clear_pending_clock_if_empty(&mut self) {
+        if self.pending.is_empty() {
+            self.first_pending_at = None;
+            self.last_update_at = None;
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -154,11 +542,49 @@ fn trimmed_session_id(value: &str) -> Option<String> {
 impl LooperClientCoreLocalStore {
     pub(crate) fn new(file_path: String) -> Result<Arc<Self>, ClientCoreError> {
         let file_path = require_store_path(file_path)?;
-        let state = load_recovering(&file_path)?;
-        Ok(Arc::new(Self {
+        Self::new_with_writer(file_path, Arc::new(FsLocalStoreFileWriter))
+    }
+
+    fn new_with_writer(
+        file_path: PathBuf,
+        writer: Arc<dyn LocalStoreFileWriter>,
+    ) -> Result<Arc<Self>, ClientCoreError> {
+        let detail_file_path = detail_file_path(&file_path)?;
+        let (state, initial_persist) =
+            load_recovering(&file_path, &detail_file_path, writer.as_ref())?;
+        let persister = StorePersister::new(file_path.clone(), detail_file_path.clone(), writer)?;
+        let store = Arc::new(Self {
             file_path,
+            detail_file_path,
             state: Mutex::new(state),
-        }))
+            persister,
+        });
+        store.schedule_debounced_persist(initial_persist)?;
+        Ok(store)
+    }
+
+    #[cfg(test)]
+    fn new_with_test_writer(
+        file_path: String,
+        writer: Arc<dyn LocalStoreFileWriter>,
+    ) -> Result<Arc<Self>, ClientCoreError> {
+        let file_path = require_store_path(file_path)?;
+        Self::new_with_writer(file_path, writer)
+    }
+
+    pub(crate) fn flush(&self) -> Result<(), ClientCoreError> {
+        self.persister.flush()
+    }
+
+    fn schedule_debounced_persist(
+        &self,
+        snapshot: StorePersistSnapshot,
+    ) -> Result<(), ClientCoreError> {
+        self.persister.schedule(snapshot)
+    }
+
+    fn persist_primary_now(&self, primary: StoredPrimaryState) -> Result<(), ClientCoreError> {
+        self.persister.persist_primary_now(primary)
     }
 
     pub(crate) fn snapshot(&self) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
@@ -190,16 +616,26 @@ impl LooperClientCoreLocalStore {
         require_valid_sequence(chunk.seq)?;
         let session_id = required_session_id(chunk.thread_id.clone())?;
 
-        let mut state = self.lock_state()?;
-        let detail = state.apply_text_chunk(session_id, chunk);
-        state.latest_seq = state.latest_seq.max(detail.latest_reply.latest_seq);
-        if let Some(server_time) = non_empty(detail.latest_reply.server_time.clone()) {
-            state.server_time = Some(newer_optional_time(
-                state.server_time.clone().unwrap_or_default(),
-                server_time,
-            ));
-        }
-        self.persist_locked(&state)?;
+        let (detail, persist_snapshot) = {
+            let mut state = self.lock_state()?;
+            let detail = state.apply_text_chunk(session_id, chunk);
+            state.latest_seq = state.latest_seq.max(detail.latest_reply.latest_seq);
+            if let Some(server_time) = non_empty(detail.latest_reply.server_time.clone()) {
+                state.server_time = Some(newer_optional_time(
+                    state.server_time.clone().unwrap_or_default(),
+                    server_time,
+                ));
+            }
+            state.enforce_detail_size_cap();
+            (
+                detail,
+                StorePersistSnapshot::primary_and_detail(
+                    state.primary_state(),
+                    state.detail_state(),
+                ),
+            )
+        };
+        self.schedule_debounced_persist(persist_snapshot)?;
         Ok(detail)
     }
 
@@ -210,41 +646,61 @@ impl LooperClientCoreLocalStore {
         require_valid_sequence(snapshot.latest_seq)?;
         validate_state_minis(&snapshot.sessions)?;
 
-        let mut state = self.lock_state()?;
-        let sessions = normalize_state_minis(snapshot.sessions);
-        if state_mini_snapshot_is_stale_for_all_nodes(
-            state.latest_seq,
-            &state.last_seq_by_node,
-            &state.sessions,
-            snapshot.latest_seq,
-            &sessions,
-        ) {
-            return Ok(state.snapshot());
-        }
-        let fresh_node_ids = fresh_state_mini_snapshot_covered_node_ids(
-            state.latest_seq,
-            &state.last_seq_by_node,
-            &state.sessions,
-            snapshot.latest_seq,
-            &sessions,
-        );
-        let fresh_last_seq_by_node =
-            state_mini_snapshot_last_seq_by_node(snapshot.latest_seq, &sessions, &fresh_node_ids);
-        merge_state_minis_preserving_newer(&mut state.sessions, sessions, &fresh_last_seq_by_node);
-        state.merge_last_seq_by_node_from_minis();
-        state.merge_last_seq_by_node(&fresh_last_seq_by_node);
-        if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
-            state
-                .last_seq_by_node
-                .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
-        }
-        state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
-        if let Some(server_time) = non_empty(snapshot.server_time) {
-            state.server_time = Some(server_time);
-        }
-        state.retain_latest_replies_for_visible_sessions();
-        self.persist_locked(&state)?;
-        Ok(state.snapshot())
+        let (local_snapshot, persist_snapshot) = {
+            let mut state = self.lock_state()?;
+            let sessions = normalize_state_minis(snapshot.sessions);
+            if state_mini_snapshot_is_stale_for_all_nodes(
+                state.latest_seq,
+                &state.last_seq_by_node,
+                &state.sessions,
+                snapshot.latest_seq,
+                &sessions,
+            ) {
+                return Ok(state.snapshot());
+            }
+            let fresh_node_ids = fresh_state_mini_snapshot_covered_node_ids(
+                state.latest_seq,
+                &state.last_seq_by_node,
+                &state.sessions,
+                snapshot.latest_seq,
+                &sessions,
+            );
+            let fresh_last_seq_by_node = state_mini_snapshot_last_seq_by_node(
+                snapshot.latest_seq,
+                &sessions,
+                &fresh_node_ids,
+            );
+            merge_state_minis_preserving_newer(
+                &mut state.sessions,
+                sessions,
+                &fresh_last_seq_by_node,
+            );
+            state.merge_last_seq_by_node_from_minis();
+            state.merge_last_seq_by_node(&fresh_last_seq_by_node);
+            if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
+                state
+                    .last_seq_by_node
+                    .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
+            }
+            state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
+            if let Some(server_time) = non_empty(snapshot.server_time) {
+                state.server_time = Some(server_time);
+            }
+            let detail_changed = state.retain_latest_replies_for_visible_sessions()
+                || state.enforce_detail_size_cap();
+            let local_snapshot = state.snapshot();
+            let persist_snapshot = if detail_changed {
+                StorePersistSnapshot::primary_and_detail(
+                    state.primary_state(),
+                    state.detail_state(),
+                )
+            } else {
+                StorePersistSnapshot::primary(state.primary_state())
+            };
+            (local_snapshot, persist_snapshot)
+        };
+        self.schedule_debounced_persist(persist_snapshot)?;
+        Ok(local_snapshot)
     }
 
     /// Persists the client core's own optimistic session-mini state verbatim, bypassing
@@ -265,21 +721,34 @@ impl LooperClientCoreLocalStore {
         require_valid_sequence(snapshot.latest_seq)?;
         validate_state_minis(&snapshot.sessions)?;
 
-        let mut state = self.lock_state()?;
-        state.sessions = normalize_state_minis(snapshot.sessions);
-        state.merge_last_seq_by_node_from_minis();
-        if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
-            state
-                .last_seq_by_node
-                .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
-        }
-        state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
-        if let Some(server_time) = non_empty(snapshot.server_time) {
-            state.server_time = Some(server_time);
-        }
-        state.retain_latest_replies_for_visible_sessions();
-        self.persist_locked(&state)?;
-        Ok(state.snapshot())
+        let (local_snapshot, persist_snapshot) = {
+            let mut state = self.lock_state()?;
+            state.sessions = normalize_state_minis(snapshot.sessions);
+            state.merge_last_seq_by_node_from_minis();
+            if state.last_seq_by_node.is_empty() && snapshot.latest_seq > 0 {
+                state
+                    .last_seq_by_node
+                    .insert(DEFAULT_NODE_ID.to_owned(), snapshot.latest_seq);
+            }
+            state.latest_seq = state.latest_seq.max(snapshot.latest_seq);
+            if let Some(server_time) = non_empty(snapshot.server_time) {
+                state.server_time = Some(server_time);
+            }
+            let detail_changed = state.retain_latest_replies_for_visible_sessions()
+                || state.enforce_detail_size_cap();
+            let local_snapshot = state.snapshot();
+            let persist_snapshot = if detail_changed {
+                StorePersistSnapshot::primary_and_detail(
+                    state.primary_state(),
+                    state.detail_state(),
+                )
+            } else {
+                StorePersistSnapshot::primary(state.primary_state())
+            };
+            (local_snapshot, persist_snapshot)
+        };
+        self.schedule_debounced_persist(persist_snapshot)?;
+        Ok(local_snapshot)
     }
 
     pub(crate) fn endpoints_with_last_good(
@@ -299,17 +768,20 @@ impl LooperClientCoreLocalStore {
         transport: ClientEndpointTransport,
     ) -> Result<(), ClientCoreError> {
         let endpoint_url = normalized_endpoint_url(&endpoint_url)?;
-        let mut state = self.lock_state()?;
-        let next = StoredLastGoodEndpoint {
-            url: endpoint_url,
-            transport,
+        let persist_snapshot = {
+            let mut state = self.lock_state()?;
+            let next = StoredLastGoodEndpoint {
+                url: endpoint_url,
+                transport,
+            };
+            if state.last_good_endpoint.as_ref() == Some(&next) {
+                return Ok(());
+            }
+            state.last_good_endpoint = Some(next);
+            state.last_good_endpoint_url = None;
+            StorePersistSnapshot::primary(state.primary_state())
         };
-        if state.last_good_endpoint.as_ref() == Some(&next) {
-            return Ok(());
-        }
-        state.last_good_endpoint = Some(next);
-        state.last_good_endpoint_url = None;
-        self.persist_locked(&state)
+        self.schedule_debounced_persist(persist_snapshot)
     }
 }
 
@@ -326,43 +798,46 @@ impl LooperClientCoreLocalStore {
             require_present(&command.thread_id, ClientCoreError::EmptyThreadId)?;
         }
 
-        let mut state = self.lock_state()?;
-        let command = StoredPendingCommand::from(command);
-        if latest_pending_command_wins(command.kind) {
-            state.pending_commands.retain(|pending| {
-                pending.client_mutation_id == command.client_mutation_id
-                    || !same_pending_command_target(pending, &command)
-            });
-        }
-        if let Some(existing) = state
-            .pending_commands
-            .iter_mut()
-            .find(|pending| pending.client_mutation_id == command.client_mutation_id)
-        {
-            existing.kind = command.kind;
-            existing.thread_id = command.thread_id;
-            existing.preset = command.preset.or_else(|| existing.preset.clone());
-            existing.assistant_surface = command
-                .assistant_surface
-                .or_else(|| existing.assistant_surface.clone());
-            existing.prompt_intent = command
-                .prompt_intent
-                .or_else(|| existing.prompt_intent.clone());
-            existing.prompt = command.prompt.or_else(|| existing.prompt.clone());
-            existing.notification_id = command
-                .notification_id
-                .or_else(|| existing.notification_id.clone());
-            existing.notification_target_ids = if command.notification_target_ids.is_empty() {
-                existing.notification_target_ids.clone()
+        let (local_snapshot, primary) = {
+            let mut state = self.lock_state()?;
+            let command = StoredPendingCommand::from(command);
+            if latest_pending_command_wins(command.kind) {
+                state.pending_commands.retain(|pending| {
+                    pending.client_mutation_id == command.client_mutation_id
+                        || !same_pending_command_target(pending, &command)
+                });
+            }
+            if let Some(existing) = state
+                .pending_commands
+                .iter_mut()
+                .find(|pending| pending.client_mutation_id == command.client_mutation_id)
+            {
+                existing.kind = command.kind;
+                existing.thread_id = command.thread_id;
+                existing.preset = command.preset.or_else(|| existing.preset.clone());
+                existing.assistant_surface = command
+                    .assistant_surface
+                    .or_else(|| existing.assistant_surface.clone());
+                existing.prompt_intent = command
+                    .prompt_intent
+                    .or_else(|| existing.prompt_intent.clone());
+                existing.prompt = command.prompt.or_else(|| existing.prompt.clone());
+                existing.notification_id = command
+                    .notification_id
+                    .or_else(|| existing.notification_id.clone());
+                existing.notification_target_ids = if command.notification_target_ids.is_empty() {
+                    existing.notification_target_ids.clone()
+                } else {
+                    command.notification_target_ids
+                };
+                existing.archived = command.archived;
             } else {
-                command.notification_target_ids
-            };
-            existing.archived = command.archived;
-        } else {
-            state.pending_commands.push(command);
-        }
-        self.persist_locked(&state)?;
-        Ok(state.snapshot())
+                state.pending_commands.push(command);
+            }
+            (state.snapshot(), state.primary_state())
+        };
+        self.persist_primary_now(primary)?;
+        Ok(local_snapshot)
     }
 
     pub(crate) fn enqueue_set_mode_command(
@@ -589,26 +1064,37 @@ impl LooperClientCoreLocalStore {
     ) -> Result<ClientLocalStateSnapshot, ClientCoreError> {
         require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
 
-        let mut state = self.lock_state()?;
-        if let Some(command) = state
-            .pending_commands
-            .iter_mut()
-            .find(|command| command.client_mutation_id == client_mutation_id)
-        {
-            command.attempt_count = command.attempt_count.saturating_add(1);
-            self.persist_locked(&state)?;
+        let (local_snapshot, primary) = {
+            let mut state = self.lock_state()?;
+            let primary = if let Some(command) = state
+                .pending_commands
+                .iter_mut()
+                .find(|command| command.client_mutation_id == client_mutation_id)
+            {
+                command.attempt_count = command.attempt_count.saturating_add(1);
+                Some(state.primary_state())
+            } else {
+                None
+            };
+            (state.snapshot(), primary)
+        };
+        if let Some(primary) = primary {
+            self.persist_primary_now(primary)?;
         }
-        Ok(state.snapshot())
+        Ok(local_snapshot)
     }
 
     pub(crate) fn mark_delivered(&self, client_mutation_id: String) -> Result<(), ClientCoreError> {
         require_present(&client_mutation_id, ClientCoreError::EmptyMutationId)?;
 
-        let mut state = self.lock_state()?;
-        state
-            .pending_commands
-            .retain(|command| command.client_mutation_id != client_mutation_id);
-        self.persist_locked(&state)
+        let primary = {
+            let mut state = self.lock_state()?;
+            state
+                .pending_commands
+                .retain(|command| command.client_mutation_id != client_mutation_id);
+            state.primary_state()
+        };
+        self.persist_primary_now(primary)
     }
 }
 
@@ -632,13 +1118,27 @@ impl LooperClientCoreLocalStore {
             .lock()
             .map_err(|_| ClientCoreError::StateLockPoisoned)
     }
-
-    fn persist_locked(&self, state: &StoredState) -> Result<(), ClientCoreError> {
-        persist_state(&self.file_path, state)
-    }
 }
 
 impl StoredState {
+    fn primary_state(&self) -> StoredPrimaryState {
+        StoredPrimaryState {
+            latest_seq: self.latest_seq,
+            sessions: self.sessions.clone(),
+            last_seq_by_node: self.last_seq_by_node.clone(),
+            pending_commands: self.pending_commands.clone(),
+            server_time: self.server_time.clone(),
+            last_good_endpoint_url: self.last_good_endpoint_url.clone(),
+            last_good_endpoint: self.last_good_endpoint.clone(),
+        }
+    }
+
+    fn detail_state(&self) -> StoredDetailState {
+        StoredDetailState {
+            latest_replies: self.latest_replies.clone(),
+        }
+    }
+
     fn last_good_endpoint(&self) -> Option<StoredLastGoodEndpoint> {
         self.last_good_endpoint.clone().or_else(|| {
             self.last_good_endpoint_url
@@ -788,6 +1288,43 @@ impl StoredState {
             .retain(|session_id, _| visible_session_ids.contains(session_id.as_str()));
         self.latest_replies.len() != original_len
     }
+
+    fn enforce_detail_size_cap(&mut self) -> bool {
+        if latest_reply_detail_bytes(&self.latest_replies) <= MAX_STORED_SESSION_DETAIL_BYTES {
+            return false;
+        }
+
+        let original_len = self.latest_replies.len();
+        let mut sessions_by_age = self
+            .latest_replies
+            .values()
+            .map(|reply| (reply.latest_seq, reply.session_id.clone()))
+            .collect::<Vec<_>>();
+        sessions_by_age
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        for (_, session_id) in sessions_by_age {
+            if latest_reply_detail_bytes(&self.latest_replies) <= MAX_STORED_SESSION_DETAIL_BYTES {
+                break;
+            }
+            self.latest_replies.remove(&session_id);
+        }
+        self.latest_replies.len() != original_len
+    }
+}
+
+impl From<StoredPrimaryState> for StoredState {
+    fn from(primary: StoredPrimaryState) -> Self {
+        Self {
+            latest_seq: primary.latest_seq,
+            sessions: primary.sessions,
+            last_seq_by_node: primary.last_seq_by_node,
+            pending_commands: primary.pending_commands,
+            server_time: primary.server_time,
+            last_good_endpoint_url: primary.last_good_endpoint_url,
+            last_good_endpoint: primary.last_good_endpoint,
+            latest_replies: HashMap::new(),
+        }
+    }
 }
 
 impl From<ClientPendingCommand> for StoredPendingCommand {
@@ -826,36 +1363,61 @@ impl From<StoredPendingCommand> for ClientPendingCommand {
     }
 }
 
-fn load_recovering(file_path: &Path) -> Result<StoredState, ClientCoreError> {
-    match load(file_path) {
-        Ok(mut state) => {
-            let coalesced_pending_commands = state.coalesce_latest_pending_commands();
-            let dropped_legacy_assistant_surface_commands =
-                state.drop_legacy_assistant_surface_commands();
-            let normalized_local_minis = state.normalize_local_minis();
-            let repaired_last_seq_by_node = state.repair_last_seq_by_node();
-            if coalesced_pending_commands
-                || dropped_legacy_assistant_surface_commands
-                || normalized_local_minis
-                || repaired_last_seq_by_node
-            {
-                persist_state(file_path, &state)?;
-            }
-            Ok(state)
-        }
-        // A corrupt or empty cache file is a cache problem, not a fatal one: bricking
-        // the runtime forever (and with it the realtime stream) over a bad cache is
-        // never the right trade. Start fresh; the server snapshot repopulates it.
-        Err(ClientCoreError::InvalidSnapshotJson) => {
-            let state = StoredState::default();
-            persist_state(file_path, &state)?;
-            Ok(state)
-        }
-        Err(error) => Err(error),
-    }
+struct LoadedDetailState {
+    latest_replies: HashMap<String, ClientSessionLatestReply>,
+    overrides_primary_detail: bool,
+    needs_persist: bool,
 }
 
-fn load(file_path: &Path) -> Result<StoredState, ClientCoreError> {
+fn load_recovering(
+    file_path: &Path,
+    detail_file_path: &Path,
+    writer: &dyn LocalStoreFileWriter,
+) -> Result<(StoredState, StorePersistSnapshot), ClientCoreError> {
+    let mut state = match load_primary(file_path) {
+        Ok(state) => state,
+        Err(ClientCoreError::InvalidSnapshotJson) => {
+            let state = StoredState::default();
+            persist_json(file_path, &state.primary_state(), writer)?;
+            state
+        }
+        Err(error) => return Err(error),
+    };
+
+    let loaded_detail = load_detail_recovering(detail_file_path, writer)?;
+    if loaded_detail.overrides_primary_detail {
+        state.latest_replies = loaded_detail.latest_replies;
+    }
+
+    let legacy_combined_detail = !state.latest_replies.is_empty()
+        && !loaded_detail.overrides_primary_detail
+        && !detail_file_path.exists();
+    let coalesced_pending_commands = state.coalesce_latest_pending_commands();
+    let dropped_legacy_assistant_surface_commands = state.drop_legacy_assistant_surface_commands();
+    let normalized_local_minis = state.normalize_local_minis();
+    let repaired_last_seq_by_node = state.repair_last_seq_by_node();
+    let detail_cap_changed = state.enforce_detail_size_cap();
+
+    if coalesced_pending_commands
+        || dropped_legacy_assistant_surface_commands
+        || normalized_local_minis
+        || repaired_last_seq_by_node
+    {
+        persist_json(file_path, &state.primary_state(), writer)?;
+    }
+
+    let mut initial_persist = StorePersistSnapshot::default();
+    if legacy_combined_detail {
+        initial_persist.primary = Some(state.primary_state());
+    }
+    if legacy_combined_detail || loaded_detail.needs_persist || detail_cap_changed {
+        initial_persist.detail = Some(state.detail_state());
+    }
+
+    Ok((state, initial_persist))
+}
+
+fn load_primary(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     if !file_path.exists() {
         return Ok(StoredState::default());
     }
@@ -866,14 +1428,53 @@ fn load(file_path: &Path) -> Result<StoredState, ClientCoreError> {
     serde_json::from_slice(&data).map_err(|_| ClientCoreError::InvalidSnapshotJson)
 }
 
-fn persist_state(file_path: &Path, state: &StoredState) -> Result<(), ClientCoreError> {
-    if let Some(parent) = file_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+fn load_detail_recovering(
+    file_path: &Path,
+    writer: &dyn LocalStoreFileWriter,
+) -> Result<LoadedDetailState, ClientCoreError> {
+    match load_detail(file_path) {
+        Ok(Some(detail)) => Ok(LoadedDetailState {
+            latest_replies: detail.latest_replies,
+            overrides_primary_detail: true,
+            needs_persist: false,
+        }),
+        Ok(None) => Ok(LoadedDetailState {
+            latest_replies: HashMap::new(),
+            overrides_primary_detail: false,
+            needs_persist: false,
+        }),
+        Err(ClientCoreError::InvalidDetailJson) => {
+            persist_json(file_path, &StoredDetailState::default(), writer)?;
+            Ok(LoadedDetailState {
+                latest_replies: HashMap::new(),
+                overrides_primary_detail: false,
+                needs_persist: false,
+            })
+        }
+        Err(error) => Err(error),
     }
-    let data = serde_json::to_vec(state).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
-    let temp_path = temporary_path(file_path)?;
-    std::fs::write(&temp_path, data).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
-    std::fs::rename(temp_path, file_path).map_err(|_| ClientCoreError::LocalStoreWriteFailed)
+}
+
+fn load_detail(file_path: &Path) -> Result<Option<StoredDetailState>, ClientCoreError> {
+    if !file_path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read(file_path).map_err(|_| ClientCoreError::LocalStoreReadFailed)?;
+    if data.is_empty() {
+        return Err(ClientCoreError::InvalidDetailJson);
+    }
+    serde_json::from_slice(&data)
+        .map(Some)
+        .map_err(|_| ClientCoreError::InvalidDetailJson)
+}
+
+fn persist_json<T: Serialize>(
+    file_path: &Path,
+    value: &T,
+    writer: &dyn LocalStoreFileWriter,
+) -> Result<(), ClientCoreError> {
+    let data = serde_json::to_vec(value).map_err(|_| ClientCoreError::LocalStoreWriteFailed)?;
+    writer.write_atomic(file_path, data)
 }
 
 fn temporary_path(file_path: &Path) -> Result<PathBuf, ClientCoreError> {
@@ -882,6 +1483,14 @@ fn temporary_path(file_path: &Path) -> Result<PathBuf, ClientCoreError> {
         .and_then(|name| name.to_str())
         .ok_or(ClientCoreError::LocalStorePathRequired)?;
     Ok(file_path.with_file_name(format!(".{file_name}.tmp")))
+}
+
+fn detail_file_path(file_path: &Path) -> Result<PathBuf, ClientCoreError> {
+    file_path
+        .parent()
+        .map(|parent| parent.join(DEFAULT_LOCAL_STORE_DETAIL_FILE_NAME))
+        .or_else(|| Some(PathBuf::from(DEFAULT_LOCAL_STORE_DETAIL_FILE_NAME)))
+        .ok_or(ClientCoreError::LocalStorePathRequired)
 }
 
 fn require_store_path(file_path: String) -> Result<PathBuf, ClientCoreError> {
@@ -992,6 +1601,21 @@ fn bounded_latest_reply_text(value: String, was_truncated: bool) -> (String, boo
     (value[start..].to_owned(), true)
 }
 
+fn latest_reply_detail_bytes(replies: &HashMap<String, ClientSessionLatestReply>) -> usize {
+    replies
+        .values()
+        .map(|reply| {
+            reply.session_id.len()
+                + reply.message_id.len()
+                + reply.text.len()
+                + reply.server_time.len()
+                + std::mem::size_of_val(&reply.latest_seq)
+                + std::mem::size_of_val(&reply.is_final)
+                + std::mem::size_of_val(&reply.is_truncated)
+        })
+        .sum()
+}
+
 fn newer_optional_time(current: String, candidate: String) -> String {
     if candidate.trim().is_empty() || (!current.is_empty() && current > candidate) {
         current
@@ -1086,6 +1710,14 @@ fn notification_reply_retry_delay(attempt_count: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
     use serde_json::json;
 
     use super::*;
@@ -1096,6 +1728,267 @@ mod tests {
     const TEST_ACCOUNT_ID: &str = "local-account";
     const TEST_NODE_ID: &str = "node-a";
     const TEST_ASSISTANT_SURFACE: &str = "codex";
+    const TEST_SNAPSHOT_READ_BUDGET: Duration = Duration::from_millis(100);
+    const TEST_WRITER_ENTER_TIMEOUT: Duration = Duration::from_secs(2);
+
+    #[derive(Default)]
+    struct CountingFileWriter {
+        primary_writes: AtomicUsize,
+        detail_writes: AtomicUsize,
+    }
+
+    impl CountingFileWriter {
+        fn primary_writes(&self) -> usize {
+            self.primary_writes.load(Ordering::SeqCst)
+        }
+
+        fn detail_writes(&self) -> usize {
+            self.detail_writes.load(Ordering::SeqCst)
+        }
+    }
+
+    impl LocalStoreFileWriter for CountingFileWriter {
+        fn write_atomic(&self, file_path: &Path, data: Vec<u8>) -> Result<(), ClientCoreError> {
+            if file_path.file_name().and_then(|name| name.to_str())
+                == Some(DEFAULT_LOCAL_STORE_DETAIL_FILE_NAME)
+            {
+                self.detail_writes.fetch_add(1, Ordering::SeqCst);
+            } else {
+                self.primary_writes.fetch_add(1, Ordering::SeqCst);
+            }
+            FsLocalStoreFileWriter.write_atomic(file_path, data)
+        }
+    }
+
+    #[derive(Default)]
+    struct BlockingFileWriter {
+        entered: (Mutex<bool>, Condvar),
+        release: (Mutex<bool>, Condvar),
+    }
+
+    impl BlockingFileWriter {
+        fn wait_until_entered(&self) {
+            let (lock, condvar) = &self.entered;
+            let mut entered = lock.lock().expect("entered lock");
+            let deadline = Instant::now() + TEST_WRITER_ENTER_TIMEOUT;
+            while !*entered {
+                let now = Instant::now();
+                assert!(now < deadline, "writer did not enter");
+                let timeout = deadline.saturating_duration_since(now);
+                let (next_entered, _) = condvar
+                    .wait_timeout(entered, timeout)
+                    .expect("entered condvar");
+                entered = next_entered;
+            }
+        }
+
+        fn release(&self) {
+            let (lock, condvar) = &self.release;
+            *lock.lock().expect("release lock") = true;
+            condvar.notify_all();
+        }
+    }
+
+    impl LocalStoreFileWriter for BlockingFileWriter {
+        fn write_atomic(&self, file_path: &Path, data: Vec<u8>) -> Result<(), ClientCoreError> {
+            {
+                let (lock, condvar) = &self.entered;
+                *lock.lock().expect("entered lock") = true;
+                condvar.notify_all();
+            }
+            let (lock, condvar) = &self.release;
+            let mut released = lock.lock().expect("release lock");
+            while !*released {
+                released = condvar.wait(released).expect("release condvar");
+            }
+            FsLocalStoreFileWriter.write_atomic(file_path, data)
+        }
+    }
+
+    #[test]
+    fn local_store_debounced_text_chunk_writes_coalesce() {
+        let path = temp_store_path("debounced-text-coalesces");
+        let writer = Arc::new(CountingFileWriter::default());
+        let store = LooperClientCoreLocalStore::new_with_test_writer(
+            path.to_string_lossy().into_owned(),
+            writer.clone(),
+        )
+        .expect("store");
+
+        for seq in 1..=20 {
+            store
+                .apply_text_chunk(text_chunk(
+                    seq,
+                    "thread-main",
+                    "message-1",
+                    "chunk ",
+                    seq == 20,
+                ))
+                .expect("text chunk");
+        }
+        store.flush().expect("flush coalesced writes");
+
+        assert_eq!(writer.primary_writes(), 1);
+        assert_eq!(writer.detail_writes(), 1);
+        let detail = store
+            .session_detail("thread-main".to_owned())
+            .expect("detail");
+        assert_eq!(detail.latest_reply.latest_seq, 20);
+    }
+
+    #[test]
+    fn local_store_pending_command_enqueue_is_durable_immediately() {
+        let path = temp_store_path("pending-command-immediate-durable");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+
+        store
+            .enqueue_send_prompt_command(
+                "thread-main".to_owned(),
+                "continue".to_owned(),
+                "codex".to_owned(),
+                "queue".to_owned(),
+                "mutation-immediate".to_owned(),
+            )
+            .expect("enqueue prompt");
+
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let snapshot = reopened.snapshot().expect("snapshot");
+        assert_eq!(snapshot.pending_commands.len(), 1);
+        assert_eq!(
+            snapshot.pending_commands[0].client_mutation_id,
+            "mutation-immediate"
+        );
+    }
+
+    #[test]
+    fn local_store_splits_legacy_combined_detail_on_flush() {
+        let path = temp_store_path("legacy-combined-detail-split");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 8,
+                "sessions": [
+                    state_mini("thread-main", "codex", 8, "rev-8", "Cached")
+                ],
+                "latestReplies": {
+                    "thread-main": {
+                        "session_id": "thread-main",
+                        "message_id": "message-1",
+                        "text": "legacy detail",
+                        "latest_seq": 8,
+                        "is_final": true,
+                        "is_truncated": false,
+                        "server_time": "2026-06-24T00:00:08Z"
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write legacy combined cache");
+
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        store.flush().expect("flush split");
+
+        let primary: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read primary"))
+                .expect("primary json");
+        assert!(primary.get("latestReplies").is_none());
+        let detail: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(detail_store_path(&path)).expect("read detail"))
+                .expect("detail json");
+        assert_eq!(
+            detail["latestReplies"]["thread-main"]["text"],
+            json!("legacy detail")
+        );
+    }
+
+    #[test]
+    fn local_store_evicts_oldest_detail_when_detail_cap_is_exceeded() {
+        let path = temp_store_path("detail-cap-evicts-oldest");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let session_count = (MAX_STORED_SESSION_DETAIL_BYTES / MAX_LATEST_REPLY_BYTES) + 4;
+        let large_reply = "x".repeat(MAX_LATEST_REPLY_BYTES);
+
+        for index in 0..session_count {
+            store
+                .apply_text_chunk(text_chunk(
+                    index as i64 + 1,
+                    &format!("thread-{index}"),
+                    "message-1",
+                    &large_reply,
+                    true,
+                ))
+                .expect("text chunk");
+        }
+        store.flush().expect("flush capped detail");
+
+        let first_detail = store
+            .session_detail("thread-0".to_owned())
+            .expect("first detail");
+        let newest_detail = store
+            .session_detail(format!("thread-{}", session_count - 1))
+            .expect("newest detail");
+        assert!(!first_detail.has_latest_reply);
+        assert!(newest_detail.has_latest_reply);
+    }
+
+    #[test]
+    fn local_store_flushes_pending_detail_on_drop() {
+        let path = temp_store_path("drop-flushes-detail");
+        {
+            let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+                .expect("store");
+            store
+                .apply_text_chunk(text_chunk(
+                    7,
+                    "thread-main",
+                    "message-1",
+                    "drop flush",
+                    true,
+                ))
+                .expect("text chunk");
+        }
+
+        let reopened =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("reopen");
+        let detail = reopened
+            .session_detail("thread-main".to_owned())
+            .expect("detail");
+        assert_eq!(detail.latest_reply.text, "drop flush");
+    }
+
+    #[test]
+    fn local_store_snapshot_read_does_not_wait_for_slow_persist() {
+        let path = temp_store_path("snapshot-not-blocked-by-persist");
+        let writer = Arc::new(BlockingFileWriter::default());
+        let store = LooperClientCoreLocalStore::new_with_test_writer(
+            path.to_string_lossy().into_owned(),
+            writer.clone(),
+        )
+        .expect("store");
+
+        store
+            .apply_text_chunk(text_chunk(
+                7,
+                "thread-main",
+                "message-1",
+                "slow write",
+                true,
+            ))
+            .expect("text chunk");
+        writer.wait_until_entered();
+
+        let started = Instant::now();
+        store.snapshot().expect("snapshot");
+        assert!(started.elapsed() < TEST_SNAPSHOT_READ_BUDGET);
+        writer.release();
+        store.flush().expect("flush after release");
+    }
 
     #[test]
     fn local_store_text_chunk_persists_bounded_latest_reply_projection() {
@@ -1120,8 +2013,10 @@ mod tests {
         assert_eq!(detail.latest_reply.text, "Hello world");
         assert_eq!(detail.latest_reply.latest_seq, 8);
         assert!(detail.latest_reply.is_final);
+        store.flush().expect("flush cache");
         let persisted: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+            serde_json::from_slice(&std::fs::read(detail_store_path(&path)).expect("read detail"))
+                .expect("detail json");
         let latest_replies = persisted["latestReplies"]
             .as_object()
             .expect("keyed latest replies");
@@ -1184,8 +2079,10 @@ mod tests {
         store
             .apply_text_chunk(text_chunk(9, "thread-main", "message-fresh", " live", true))
             .expect("live chunk");
+        store.flush().expect("flush detail");
         let persisted: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
+            serde_json::from_slice(&std::fs::read(detail_store_path(&path)).expect("read detail"))
+                .expect("detail json");
         let latest_replies = persisted["latestReplies"]
             .as_object()
             .expect("keyed latest replies");
@@ -1338,6 +2235,7 @@ mod tests {
                 .all(|session| session.session_id != "thread-a-stale-extra")
         );
 
+        store.flush().expect("flush cache");
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
         assert_eq!(persisted["lastSeqByNode"]["node-a"], 20);
@@ -1368,6 +2266,7 @@ mod tests {
 
         assert_eq!(snapshot.latest_seq, 6);
         assert!(snapshot.sessions.is_empty());
+        store.flush().expect("flush cache");
         let persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read cache")).expect("cache json");
         assert_eq!(persisted["lastSeqByNode"][DEFAULT_NODE_ID], 6);
@@ -2009,6 +2908,38 @@ mod tests {
     }
 
     #[test]
+    fn local_store_recovers_from_corrupt_detail_cache_without_resetting_primary() {
+        let path = temp_store_path("corrupt-detail");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+        std::fs::write(
+            &path,
+            json!({
+                "latestSeq": 5,
+                "sessions": [
+                    state_mini("thread-main", "codex", 5, "rev-5", "Cached")
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write primary");
+        std::fs::write(detail_store_path(&path), b"not-json").expect("write corrupt detail");
+
+        let store = LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned())
+            .expect("corrupt detail recovers");
+        let snapshot = store.snapshot().expect("snapshot");
+        assert_eq!(snapshot.latest_seq, 5);
+        assert_eq!(snapshot.sessions[0].session_id, "thread-main");
+        let detail = store
+            .session_detail("thread-main".to_owned())
+            .expect("detail");
+        assert!(!detail.has_latest_reply);
+        assert_ne!(
+            std::fs::read(detail_store_path(&path)).expect("detail rewritten"),
+            b"not-json".to_vec()
+        );
+    }
+
+    #[test]
     fn local_store_recovers_from_empty_cache_with_fresh_state() {
         let path = temp_store_path("empty-cache");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
@@ -2109,5 +3040,12 @@ mod tests {
             let _ = std::fs::remove_dir_all(parent);
         }
         path
+    }
+
+    fn detail_store_path(primary_path: &Path) -> PathBuf {
+        primary_path
+            .parent()
+            .expect("primary parent")
+            .join(DEFAULT_LOCAL_STORE_DETAIL_FILE_NAME)
     }
 }

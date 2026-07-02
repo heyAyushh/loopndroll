@@ -85,7 +85,9 @@ impl LooperClientCoreSessionRuntime {
     }
 
     pub fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
-        self.client_core.stop()
+        let snapshot = self.client_core.stop()?;
+        self.local_store.flush()?;
+        Ok(snapshot)
     }
 
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
@@ -1278,6 +1280,7 @@ mod tests {
                     crate::model::ClientEndpointTransport::H2,
                 )
                 .expect("seed last-good endpoint");
+            runtime.local_store.flush().expect("flush seeded endpoint");
             let before = std::fs::read(&path).expect("read initial local store");
 
             runtime
@@ -1556,6 +1559,32 @@ mod tests {
             .expect("reopened detail projection");
         assert_eq!(detail.latest_reply.text, "Hello live");
         assert_eq!(detail.latest_reply.latest_seq, 44);
+    }
+
+    #[test]
+    fn runtime_stop_flushes_pending_local_store_detail() {
+        let path = temp_store_path("stop-flushes-local-store-detail");
+        let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
+        runtime
+            .local_store
+            .apply_text_chunk(ClientTextChunk {
+                seq: 9,
+                thread_id: "thread-live".to_owned(),
+                message_id: "message-live".to_owned(),
+                content: "stop flush".to_owned(),
+                is_final: true,
+                server_time: "2026-06-24T00:00:09Z".to_owned(),
+            })
+            .expect("text chunk");
+
+        runtime.stop().expect("stop runtime");
+
+        let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
+        let detail = reopened
+            .session_detail("thread-live".to_owned())
+            .expect("detail projection");
+        assert_eq!(detail.latest_reply.text, "stop flush");
+        assert_eq!(detail.latest_reply.latest_seq, 9);
     }
 
     #[test]
