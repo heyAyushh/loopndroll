@@ -1,4 +1,9 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper::{Method, Request as HyperRequest, StatusCode, Uri, body::Bytes};
@@ -39,10 +44,11 @@ const STATE_MINI_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 // The server heartbeats every 15s; a stream that stays silent past this deadline is
 // dead (e.g. the phone left the LAN and the TCP read blackholes) and must be redialed.
 const STATE_MINI_STREAM_READ_DEADLINE: Duration = Duration::from_secs(20);
-// H3/QUIC liveness: ping every 5s so quinn notices a blackholed path within
-// max_idle_timeout instead of waiting out the 30s default.
-const STATE_MINI_H3_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
-const STATE_MINI_H3_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+// The H3 server sends QUIC keepalives every 10s, below the 15s Session
+// heartbeat. The 20s read deadline detects missing app frames before this 40s
+// QUIC idle timeout closes an otherwise quiet connection.
+const STATE_MINI_H3_KEEP_ALIVE_INTERVAL: Option<Duration> = None;
+const STATE_MINI_H3_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(40);
 // H2/TCP liveness: keep-alive pings surface a dead path in seconds instead of never.
 const STATE_MINI_H2_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const STATE_MINI_H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -215,6 +221,7 @@ pub(crate) async fn run_state_mini_stream(
 ) {
     let mut next_after_seq = after_seq;
     let mut reconnect_backoff = ReconnectBackoff::new();
+    let h3_endpoint_cache = H3ClientEndpointCache::new();
     loop {
         if events.is_closed() {
             return;
@@ -228,6 +235,7 @@ pub(crate) async fn run_state_mini_stream(
             &mut commands,
             events.clone(),
             command_acks.clone(),
+            &h3_endpoint_cache,
         )
         .await
         {
@@ -452,6 +460,7 @@ async fn run_state_mini_stream_session(
     commands: &mut mpsc::Receiver<OutboundSessionFrame>,
     events: mpsc::Sender<StateMiniStreamEvent>,
     command_acks: mpsc::Sender<ClientCommandAck>,
+    h3_endpoint_cache: &H3ClientEndpointCache,
 ) -> Result<i64, StateMiniTransportError> {
     let candidates = session_transport_endpoints(endpoints)
         .map_err(|error| state_mini_transport_error(after_seq, error.to_string()))?;
@@ -468,6 +477,7 @@ async fn run_state_mini_stream_session(
             mobile_session_header,
             after_seq,
             h3_fallback_reason.clone(),
+            h3_endpoint_cache,
         )
         .await
         {
@@ -526,6 +536,7 @@ async fn open_state_mini_stream_tier(
     mobile_session_header: &str,
     after_seq: i64,
     fallback_reason: String,
+    h3_endpoint_cache: &H3ClientEndpointCache,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let mut last_transport_error = ClientCoreError::StateMiniSnapshotTransportFailed.to_string();
     let mut pending_recovery_required: Option<(i64, String, ClientEndpointTransport, String)> =
@@ -537,6 +548,7 @@ async fn open_state_mini_stream_tier(
         let bearer_token = bearer_token.to_owned();
         let mobile_session_header = mobile_session_header.to_owned();
         let fallback_reason = fallback_reason.clone();
+        let h3_endpoint_cache = h3_endpoint_cache.clone();
         handles.push(tokio::spawn(async move {
             if index > 0 {
                 tokio::time::sleep(STATE_MINI_STREAM_FALLBACK_RACE_DELAY).await;
@@ -547,6 +559,7 @@ async fn open_state_mini_stream_tier(
                 mobile_session_header,
                 after_seq,
                 fallback_reason,
+                h3_endpoint_cache,
             )
             .await;
             let _ = result_sender.send(result).await;
@@ -607,6 +620,7 @@ async fn open_state_mini_stream_candidate(
     mobile_session_header: String,
     after_seq: i64,
     fallback_reason: String,
+    h3_endpoint_cache: H3ClientEndpointCache,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let endpoint_url = normalized_endpoint_url(&endpoint.url);
     match endpoint.transport {
@@ -628,6 +642,7 @@ async fn open_state_mini_stream_candidate(
                 bearer_token,
                 mobile_session_header,
                 after_seq,
+                h3_endpoint_cache,
             )
             .await
         }
@@ -684,6 +699,7 @@ async fn open_h3_state_mini_stream_candidate(
     bearer_token: String,
     mobile_session_header: String,
     after_seq: i64,
+    h3_endpoint_cache: H3ClientEndpointCache,
 ) -> Result<OpenStateMiniSession, StateMiniTransportError> {
     let uri = endpoint_url.parse::<Uri>().map_err(|_| {
         state_mini_transport_error_with_endpoint(
@@ -693,7 +709,7 @@ async fn open_h3_state_mini_stream_candidate(
             String::new(),
         )
     })?;
-    let client_endpoint = h3_client_endpoint(&endpoint).map_err(|error| {
+    let client_endpoint = h3_client_endpoint(&h3_endpoint_cache, &endpoint).map_err(|error| {
         state_mini_transport_error_with_endpoint(
             after_seq,
             error.to_string(),
@@ -851,7 +867,15 @@ async fn drive_state_mini_stream_session(
                         )
                     }
                 })? else {
-                    return Ok(latest_seq);
+                    if endpoint_transport != ClientEndpointTransport::H3 {
+                        return Ok(latest_seq);
+                    }
+                    return Err(state_mini_transport_error_with_endpoint(
+                        latest_seq,
+                        STATE_MINI_STREAM_ENDED.to_owned(),
+                        endpoint_transport,
+                        fallback_reason.clone(),
+                    ));
                 };
 
                 match frame.frame {
@@ -1083,34 +1107,74 @@ fn snapshot_recovery_authority(scheme: &str, authority: &str) -> String {
     authority.to_owned()
 }
 
+#[derive(Clone, Default)]
+struct H3ClientEndpointCache {
+    endpoint: Arc<Mutex<Option<tonic_h3::quinn::h3_quinn::Endpoint>>>,
+}
+
+impl H3ClientEndpointCache {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn configured_endpoint(
+        &self,
+        client_config: ClientConfig,
+    ) -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+        let mut endpoint = self
+            .endpoint
+            .lock()
+            .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
+        if endpoint.is_none() {
+            *endpoint = Some(new_h3_client_endpoint()?);
+        }
+        let endpoint = endpoint
+            .as_mut()
+            .expect("H3 endpoint cache is initialized above");
+        endpoint.set_default_client_config(client_config);
+        Ok(endpoint.clone())
+    }
+}
+
 fn h3_client_endpoint(
+    cache: &H3ClientEndpointCache,
     endpoint: &ClientEndpoint,
 ) -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+    cache.configured_endpoint(h3_client_config(endpoint)?)
+}
+
+fn new_h3_client_endpoint() -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+    tonic_h3::quinn::h3_quinn::Endpoint::client(
+        "0.0.0.0:0"
+            .parse::<SocketAddr>()
+            .map_err(|_| ClientCoreError::InvalidEndpoint)?,
+    )
+    .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)
+}
+
+fn h3_client_config(endpoint: &ClientEndpoint) -> Result<ClientConfig, ClientCoreError> {
     let cert_pin = normalized_sha256_pin(&endpoint.h3_certificate_sha256)?;
     let spki_pin = normalized_sha256_pin(&endpoint.h3_certificate_spki_sha256)?;
     if cert_pin.is_none() && spki_pin.is_none() {
         return Err(ClientCoreError::InvalidEndpoint);
     }
 
-    let mut client_endpoint = tonic_h3::quinn::h3_quinn::Endpoint::client(
-        "0.0.0.0:0"
-            .parse::<SocketAddr>()
-            .map_err(|_| ClientCoreError::InvalidEndpoint)?,
-    )
-    .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
     let tls_config = h3_client_tls_config(cert_pin, spki_pin)?;
     let quic_config =
         QuicClientConfig::try_from(tls_config).map_err(|_| ClientCoreError::InvalidEndpoint)?;
     let mut client_config = ClientConfig::new(Arc::new(quic_config));
+    client_config.transport_config(Arc::new(h3_client_transport_config()?));
+    Ok(client_config)
+}
+
+fn h3_client_transport_config() -> Result<TransportConfig, ClientCoreError> {
     let mut transport_config = TransportConfig::default();
-    transport_config.keep_alive_interval(Some(STATE_MINI_H3_KEEP_ALIVE_INTERVAL));
+    transport_config.keep_alive_interval(STATE_MINI_H3_KEEP_ALIVE_INTERVAL);
     transport_config.max_idle_timeout(Some(
         IdleTimeout::try_from(STATE_MINI_H3_MAX_IDLE_TIMEOUT)
             .map_err(|_| ClientCoreError::InvalidEndpoint)?,
     ));
-    client_config.transport_config(Arc::new(transport_config));
-    client_endpoint.set_default_client_config(client_config);
-    Ok(client_endpoint)
+    Ok(transport_config)
 }
 
 fn h3_client_tls_config(
@@ -2000,7 +2064,7 @@ mod tests {
     fn h3_rejects_missing_or_malformed_certificate_pin_material() {
         let missing_pin = h3_endpoint("https://127.0.0.1:8766", "http://127.0.0.1:8765", "", false);
         assert_eq!(
-            h3_client_endpoint(&missing_pin).expect_err("missing H3 pin rejects"),
+            h3_client_config(&missing_pin).expect_err("missing H3 pin rejects"),
             ClientCoreError::InvalidEndpoint
         );
 
@@ -2011,7 +2075,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            h3_client_endpoint(&malformed_cert_pin).expect_err("malformed H3 cert pin rejects"),
+            h3_client_config(&malformed_cert_pin).expect_err("malformed H3 cert pin rejects"),
             ClientCoreError::InvalidEndpoint
         );
 
@@ -2024,12 +2088,64 @@ mod tests {
             last_good: false,
         };
         assert_eq!(
-            h3_client_endpoint(&malformed_spki_pin).expect_err("malformed H3 SPKI pin rejects"),
+            h3_client_config(&malformed_spki_pin).expect_err("malformed H3 SPKI pin rejects"),
             ClientCoreError::InvalidEndpoint
         );
         println!(
             "manual_qa_malformed_h3_pin missing_pin=reject malformed_cert=reject malformed_spki=reject"
         );
+    }
+
+    #[test]
+    fn h3_client_transport_config_sets_idle_timeout_and_uses_server_keepalive() {
+        let endpoint = h3_endpoint(
+            "https://127.0.0.1:8766",
+            "http://127.0.0.1:8765",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            false,
+        );
+        let config = h3_client_config(&endpoint).expect("H3 client config");
+        let debug = format!("{config:?}");
+
+        assert!(
+            debug.contains("keep_alive_interval: None"),
+            "client H3 keepalive should be left to the server: {debug}"
+        );
+        assert!(
+            debug.contains("max_idle_timeout: Some(40000)"),
+            "client H3 idle timeout must match the server: {debug}"
+        );
+    }
+
+    #[test]
+    fn h3_client_endpoint_cache_reuses_udp_socket_across_attempts() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let cache = H3ClientEndpointCache::new();
+            let first = h3_endpoint(
+                "https://127.0.0.1:8766",
+                "http://127.0.0.1:8765",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                false,
+            );
+            let second = h3_endpoint(
+                "https://127.0.0.1:8767",
+                "http://127.0.0.1:8765",
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                false,
+            );
+
+            let first_endpoint = h3_client_endpoint(&cache, &first).expect("first H3 endpoint");
+            let first_addr = first_endpoint.local_addr().expect("first H3 local addr");
+            let second_endpoint = h3_client_endpoint(&cache, &second).expect("second H3 endpoint");
+            let second_addr = second_endpoint.local_addr().expect("second H3 local addr");
+
+            assert_eq!(
+                first_addr, second_addr,
+                "H3 reconnects should reuse the cached Quinn UDP endpoint"
+            );
+        });
     }
 
     #[test]
@@ -2127,6 +2243,7 @@ mod tests {
             drop(command_sender);
             let (events_sender, mut events) = mpsc::channel(2);
             let (command_acks_sender, _command_acks) = mpsc::channel(1);
+            let h3_endpoint_cache = H3ClientEndpointCache::new();
 
             let latest_seq = run_state_mini_stream_session(
                 &mut endpoints,
@@ -2136,6 +2253,7 @@ mod tests {
                 &mut commands,
                 events_sender,
                 command_acks_sender,
+                &h3_endpoint_cache,
             )
             .await
             .expect("fallback session connects");
@@ -2176,6 +2294,7 @@ mod tests {
             let (command_sender, mut commands) = mpsc::channel(1);
             let (events_sender, mut events) = mpsc::channel(4);
             let (command_acks_sender, _command_acks) = mpsc::channel(1);
+            let h3_endpoint_cache = H3ClientEndpointCache::new();
             let session_task = tokio::spawn(async move {
                 run_state_mini_stream_session(
                     &mut endpoints,
@@ -2185,6 +2304,7 @@ mod tests {
                     &mut commands,
                     events_sender,
                     command_acks_sender,
+                    &h3_endpoint_cache,
                 )
                 .await
             });
@@ -2244,6 +2364,7 @@ mod tests {
                 .expect("queue command");
             let (events_sender, mut events) = mpsc::channel(4);
             let (command_acks_sender, mut command_acks) = mpsc::channel(2);
+            let h3_endpoint_cache = H3ClientEndpointCache::new();
 
             let latest_seq = run_state_mini_stream_session(
                 &mut endpoints,
@@ -2253,6 +2374,7 @@ mod tests {
                 &mut commands,
                 events_sender,
                 command_acks_sender,
+                &h3_endpoint_cache,
             )
             .await
             .expect("H2 fallback session connects");
