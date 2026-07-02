@@ -60,5 +60,6 @@ tonic-prost-build = "0.14.6"
 
 [dev-dependencies]
 http-body-util = "0.1.3"
+looper-client-core = { path = "../looper-client-core" }
 tempfile = "3.23.0"
 tower = { version = "0.5.2", features = ["util"] }
