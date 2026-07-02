@@ -18,11 +18,11 @@ use tonic::{
     metadata::MetadataValue,
     transport::{Channel, Endpoint},
 };
-use tonic_h3::quinn::H3QuinnConnector;
 use tonic_h3::quinn::h3_quinn::quinn::{
     ClientConfig, IdleTimeout, TransportConfig, crypto::rustls::QuicClientConfig,
     rustls as quinn_rustls,
 };
+use tonic_h3::quinn::h3_quinn::{self, quinn::Endpoint as H3QuinnEndpoint};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::{
@@ -64,6 +64,7 @@ const STATE_MINI_RECONNECT_BACKOFF_MULTIPLIER: u32 = 2;
 const SESSION_COMMAND_RPC_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const SESSION_COMMAND_RPC_TIMEOUT: Duration = Duration::from_millis(50);
+const H3_SERVER_NAME: &str = "localhost";
 const STATE_MINI_SNAPSHOT_PATH: &str = "/api/mobile/session-minis/snapshot";
 const MAX_STATE_MINI_SNAPSHOT_BYTES: usize = 512 * 1024;
 const STATE_MINI_STREAM_ENDED: &str = "state mini stream ended";
@@ -117,7 +118,7 @@ pub(crate) enum StateMiniStreamEvent {
 
 type H2RealtimeClient = proto::looper_realtime_client::LooperRealtimeClient<Channel>;
 type H3RealtimeClient =
-    proto::looper_realtime_client::LooperRealtimeClient<tonic_h3::H3Channel<H3QuinnConnector>>;
+    proto::looper_realtime_client::LooperRealtimeClient<tonic_h3::H3Channel<FreshH3QuinnConnector>>;
 
 #[derive(Clone)]
 pub(crate) enum SessionCommandSubmitter {
@@ -1108,7 +1109,7 @@ async fn open_h3_state_mini_stream_candidate(
             String::new(),
         )
     })?;
-    let connector = H3QuinnConnector::new(uri.clone(), "localhost".to_owned(), client_endpoint);
+    let connector = FreshH3QuinnConnector::new(uri.clone(), client_endpoint);
     let channel = tonic_h3::H3Channel::new(connector, uri);
     let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
     let (request_sender, request_receiver) = mpsc::channel(64);
@@ -1508,9 +1509,104 @@ fn snapshot_recovery_authority(scheme: &str, authority: &str) -> String {
     authority.to_owned()
 }
 
+// Adapted from h3-util 0.0.5's H3QuinnConnector. Looper needs explicit control
+// over each dial so reconnects never return a stale H3 request sender after the
+// listener has restarted on the same UDP port.
+#[derive(Clone)]
+pub(crate) struct FreshH3QuinnConnector {
+    uri: Uri,
+    server_name: String,
+    endpoint: H3QuinnEndpoint,
+    #[cfg(test)]
+    attempt_log: Option<Arc<Mutex<Vec<H3ConnectionAttemptMode>>>>,
+}
+
+impl FreshH3QuinnConnector {
+    fn new(uri: Uri, endpoint: H3QuinnEndpoint) -> Self {
+        Self {
+            uri,
+            server_name: H3_SERVER_NAME.to_owned(),
+            endpoint,
+            #[cfg(test)]
+            attempt_log: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_attempt_log(
+        uri: Uri,
+        endpoint: H3QuinnEndpoint,
+        attempt_log: Arc<Mutex<Vec<H3ConnectionAttemptMode>>>,
+    ) -> Self {
+        Self {
+            uri,
+            server_name: H3_SERVER_NAME.to_owned(),
+            endpoint,
+            attempt_log: Some(attempt_log),
+        }
+    }
+
+    async fn connect_fresh(&self) -> Result<h3_quinn::Connection, h3_util::Error> {
+        let mut connection_error: h3_util::Error =
+            std::io::Error::from(std::io::ErrorKind::AddrNotAvailable).into();
+        for address in h3_util::client::dns_resolve(&self.uri).await? {
+            let connecting = match self.endpoint.connect(address, &self.server_name) {
+                Ok(connecting) => connecting,
+                Err(error) => {
+                    connection_error = error.into();
+                    continue;
+                }
+            };
+            let (connection, mode) = match connecting.into_0rtt() {
+                Ok((connection, zero_rtt_accepted)) => {
+                    drop(zero_rtt_accepted);
+                    (connection, H3ConnectionAttemptMode::ZeroRttAttempted)
+                }
+                Err(connecting) => (
+                    connecting.await.map_err(Into::<h3_util::Error>::into)?,
+                    H3ConnectionAttemptMode::FullHandshake,
+                ),
+            };
+            self.record_attempt(mode);
+            return Ok(h3_quinn::Connection::new(connection));
+        }
+        Err(connection_error)
+    }
+
+    #[cfg(not(test))]
+    fn record_attempt(&self, _mode: H3ConnectionAttemptMode) {}
+
+    #[cfg(test)]
+    fn record_attempt(&self, mode: H3ConnectionAttemptMode) {
+        if let Some(attempt_log) = &self.attempt_log {
+            if let Ok(mut attempts) = attempt_log.lock() {
+                attempts.push(mode);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum H3ConnectionAttemptMode {
+    FullHandshake,
+    ZeroRttAttempted,
+}
+
+impl h3_util::client::H3Connector for FreshH3QuinnConnector {
+    type CONN = h3_quinn::Connection;
+    type OS = h3_quinn::OpenStreams;
+    type SS = h3_quinn::SendStream<Bytes>;
+    type RS = h3_quinn::RecvStream;
+    type BS = h3_quinn::BidiStream<Bytes>;
+
+    async fn connect(&self) -> Result<Self::CONN, h3_util::Error> {
+        self.connect_fresh().await
+    }
+}
+
 #[derive(Clone, Default)]
 struct H3ClientEndpointCache {
-    endpoint: Arc<Mutex<Option<tonic_h3::quinn::h3_quinn::Endpoint>>>,
+    endpoint: Arc<Mutex<Option<H3QuinnEndpoint>>>,
 }
 
 impl H3ClientEndpointCache {
@@ -1521,7 +1617,7 @@ impl H3ClientEndpointCache {
     fn configured_endpoint(
         &self,
         client_config: ClientConfig,
-    ) -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+    ) -> Result<H3QuinnEndpoint, ClientCoreError> {
         let mut endpoint = self
             .endpoint
             .lock()
@@ -1540,12 +1636,12 @@ impl H3ClientEndpointCache {
 fn h3_client_endpoint(
     cache: &H3ClientEndpointCache,
     endpoint: &ClientEndpoint,
-) -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
+) -> Result<H3QuinnEndpoint, ClientCoreError> {
     cache.configured_endpoint(h3_client_config(endpoint)?)
 }
 
-fn new_h3_client_endpoint() -> Result<tonic_h3::quinn::h3_quinn::Endpoint, ClientCoreError> {
-    tonic_h3::quinn::h3_quinn::Endpoint::client(
+fn new_h3_client_endpoint() -> Result<H3QuinnEndpoint, ClientCoreError> {
+    H3QuinnEndpoint::client(
         "0.0.0.0:0"
             .parse::<SocketAddr>()
             .map_err(|_| ClientCoreError::InvalidEndpoint)?,
@@ -1595,6 +1691,7 @@ fn h3_client_tls_config(
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
     tls_config.alpn_protocols = vec![b"h3".to_vec()];
+    tls_config.enable_early_data = true;
     Ok(tls_config)
 }
 
@@ -2140,6 +2237,8 @@ mod tests {
 
     use super::*;
 
+    const H3_TEST_MAX_EARLY_DATA_SIZE: u32 = u32::MAX;
+
     #[test]
     fn state_mini_snapshot_from_json_preserves_payloads_and_skips_invalid_sessions() {
         let snapshot = state_mini_snapshot_from_json(json!({
@@ -2344,8 +2443,7 @@ mod tests {
     #[test]
     fn apply_metadata_keeps_prefixed_authorization_single_prefixed() {
         let mut metadata = tonic::metadata::MetadataMap::new();
-        apply_metadata(&mut metadata, "Bearer pairing-id.pairing-token", "")
-            .expect("metadata");
+        apply_metadata(&mut metadata, "Bearer pairing-id.pairing-token", "").expect("metadata");
 
         assert_eq!(
             metadata
@@ -2563,6 +2661,20 @@ mod tests {
         assert!(
             debug.contains("max_idle_timeout: Some(40000)"),
             "client H3 idle timeout must match the server: {debug}"
+        );
+    }
+
+    #[test]
+    fn h3_client_tls_config_enables_early_data_for_0rtt_attempts() {
+        let tls_config = h3_client_tls_config(
+            Some("0000000000000000000000000000000000000000000000000000000000000000".to_owned()),
+            None,
+        )
+        .expect("H3 client TLS config");
+
+        assert!(
+            tls_config.enable_early_data,
+            "H3 client TLS must allow Quinn into_0rtt after a resumable handshake"
         );
     }
 
@@ -2785,6 +2897,87 @@ mod tests {
             drop(command_sender);
             session_task.abort();
             let _ = session_task.await;
+            h3.shutdown().await;
+        });
+    }
+
+    #[test]
+    fn h3_connector_attempts_0rtt_on_second_connection_and_streams() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        runtime.block_on(async {
+            let h3 = spawn_h3_realtime_session_server_with_service_and_early_data(
+                TestRealtimeSessionService {
+                    heartbeat_seq: Some(123),
+                    ..Default::default()
+                },
+                H3TestEarlyData::Enabled,
+            )
+            .await;
+            let endpoint = h3_endpoint(
+                &h3.url,
+                "http://127.0.0.1:8765",
+                &h3.certificate_sha256,
+                false,
+            );
+            let cache = H3ClientEndpointCache::new();
+            let client_endpoint = h3_client_endpoint(&cache, &endpoint).expect("H3 endpoint");
+            let uri = h3.url.parse::<Uri>().expect("H3 URI");
+            let attempts = Arc::new(Mutex::new(Vec::new()));
+
+            for after_seq in [121, 122] {
+                let connector = FreshH3QuinnConnector::new_with_attempt_log(
+                    uri.clone(),
+                    client_endpoint.clone(),
+                    attempts.clone(),
+                );
+                let channel = tonic_h3::H3Channel::new(connector, uri.clone());
+                let mut client = proto::looper_realtime_client::LooperRealtimeClient::new(channel);
+                let (request_sender, request_receiver) = mpsc::channel(1);
+                request_sender
+                    .send(resume_client_frame(after_seq))
+                    .await
+                    .expect("send resume frame");
+                drop(request_sender);
+                let request = TonicRequest::new(ReceiverStream::new(request_receiver));
+                let mut stream = tokio::time::timeout(Duration::from_secs(2), client.session(request))
+                    .await
+                    .expect("H3 Session open timeout")
+                    .expect("H3 Session opens")
+                    .into_inner();
+                let frame = tokio::time::timeout(Duration::from_secs(2), stream.message())
+                    .await
+                    .expect("H3 heartbeat timeout")
+                    .expect("H3 heartbeat result")
+                    .expect("H3 heartbeat frame");
+                match frame.frame {
+                    Some(proto::server_frame::Frame::Heartbeat(heartbeat)) => {
+                        assert_eq!(heartbeat.latest_seq, 123);
+                    }
+                    other => panic!("expected H3 heartbeat, got {other:?}"),
+                }
+                drop(stream);
+                drop(client);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            let attempts = attempts.lock().expect("attempt log").clone();
+            assert_eq!(
+                attempts.first().copied(),
+                Some(H3ConnectionAttemptMode::FullHandshake),
+                "first H3 connection should perform a full handshake: {attempts:?}"
+            );
+            assert!(
+                attempts
+                    .iter()
+                    .skip(1)
+                    .any(|attempt| *attempt == H3ConnectionAttemptMode::ZeroRttAttempted),
+                "second H3 connection should attempt 0-RTT after the first resumable handshake: {attempts:?}"
+            );
+            println!(
+                "manual_qa_h3_0rtt_configured attempts={attempts:?} heartbeat_seq=123"
+            );
+
             h3.shutdown().await;
         });
     }
@@ -3308,6 +3501,27 @@ mod tests {
         S: proto::looper_realtime_server::LooperRealtime + Clone + Send + Sync + 'static,
         S::SessionStream: Send + 'static,
     {
+        spawn_h3_realtime_session_server_with_service_and_early_data(
+            service,
+            H3TestEarlyData::Disabled,
+        )
+        .await
+    }
+
+    #[derive(Clone, Copy)]
+    enum H3TestEarlyData {
+        Disabled,
+        Enabled,
+    }
+
+    async fn spawn_h3_realtime_session_server_with_service_and_early_data<S>(
+        service: S,
+        early_data: H3TestEarlyData,
+    ) -> SpawnedH3RealtimeSessionServer
+    where
+        S: proto::looper_realtime_server::LooperRealtime + Clone + Send + Sync + 'static,
+        S::SessionStream: Send + 'static,
+    {
         let certificate = generate_simple_self_signed(vec!["localhost".to_owned()])
             .expect("generate H3 test certificate");
         let certificate_der = certificate.cert.der().as_ref().to_vec();
@@ -3324,6 +3538,9 @@ mod tests {
         )
         .expect("H3 test cert");
         tls_config.alpn_protocols = vec![b"h3".to_vec()];
+        if matches!(early_data, H3TestEarlyData::Enabled) {
+            tls_config.max_early_data_size = H3_TEST_MAX_EARLY_DATA_SIZE;
+        }
         let quic_config =
             QuicServerConfig::try_from(Arc::new(tls_config)).expect("H3 QUIC server config");
         let endpoint = H3Endpoint::server(
