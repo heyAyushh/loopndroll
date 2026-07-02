@@ -1998,6 +1998,90 @@ mod tests {
 
     struct TextChunkRealtimeSessionService;
 
+    macro_rules! unimplemented_unary_command {
+        ($name:ident, $request:ty) => {
+            fn $name<'life0, 'async_trait>(
+                &'life0 self,
+                _request: tonic::Request<$request>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<tonic::Response<proto::CommandAck>, tonic::Status>,
+                        > + Send
+                        + 'async_trait,
+                >,
+            >
+            where
+                'life0: 'async_trait,
+                Self: Sync + 'async_trait,
+            {
+                Box::pin(async { Err(tonic::Status::unimplemented("test service stream-only")) })
+            }
+        };
+    }
+
+    macro_rules! impl_unimplemented_unary_commands {
+        () => {
+            unimplemented_unary_command!(set_session_mode, proto::SetSessionModeRequest);
+            unimplemented_unary_command!(send_session_prompt, proto::SendSessionPromptRequest);
+            unimplemented_unary_command!(
+                submit_notification_reply,
+                proto::SubmitNotificationReplyRequest
+            );
+            unimplemented_unary_command!(
+                set_siri_current_session,
+                proto::SetSiriCurrentSessionRequest
+            );
+            unimplemented_unary_command!(
+                set_siri_default_session,
+                proto::SetSiriDefaultSessionRequest
+            );
+            unimplemented_unary_command!(save_default_prompt, proto::SaveDefaultPromptRequest);
+            unimplemented_unary_command!(set_session_archived, proto::SetSessionArchivedRequest);
+            unimplemented_unary_command!(delete_session, proto::DeleteSessionRequest);
+            unimplemented_unary_command!(mute_session, proto::MuteSessionRequest);
+            unimplemented_unary_command!(set_scope, proto::SetScopeRequest);
+            unimplemented_unary_command!(set_global_preset, proto::SetGlobalPresetRequest);
+            unimplemented_unary_command!(
+                set_global_notification,
+                proto::SetGlobalNotificationRequest
+            );
+            unimplemented_unary_command!(
+                set_default_notification_targets,
+                proto::SetDefaultNotificationTargetsRequest
+            );
+            unimplemented_unary_command!(
+                set_global_completion_check,
+                proto::SetGlobalCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                upsert_notification_route,
+                proto::UpsertNotificationRouteRequest
+            );
+            unimplemented_unary_command!(
+                delete_notification_route,
+                proto::DeleteNotificationRouteRequest
+            );
+            unimplemented_unary_command!(
+                upsert_completion_check,
+                proto::UpsertCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                delete_completion_check,
+                proto::DeleteCompletionCheckRequest
+            );
+            unimplemented_unary_command!(
+                set_session_notifications,
+                proto::SetSessionNotificationsRequest
+            );
+            unimplemented_unary_command!(
+                set_session_completion_check,
+                proto::SetSessionCompletionCheckRequest
+            );
+            unimplemented_unary_command!(set_assistant_surface, proto::SetAssistantSurfaceRequest);
+        };
+    }
+
     #[tonic::async_trait]
     impl proto::looper_realtime_server::LooperRealtime for TestRealtimeSessionService {
         type SessionStream = ReceiverStream<Result<proto::ServerFrame, tonic::Status>>;
@@ -2020,6 +2104,8 @@ mod tests {
             let (_sender, receiver) = mpsc::channel(1);
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands!();
     }
 
     #[tonic::async_trait]
@@ -2049,6 +2135,8 @@ mod tests {
             });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands!();
     }
 
     #[tonic::async_trait]
@@ -2085,6 +2173,8 @@ mod tests {
                 .await;
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands!();
     }
 
     fn state_mini(
