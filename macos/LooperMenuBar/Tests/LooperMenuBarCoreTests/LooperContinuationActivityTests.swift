@@ -242,6 +242,89 @@ struct LooperContinuationActivityTests {
         )
     }
 
+    @MainActor
+    @Test
+    func storeUpdateTriggersDebouncedMenuRebuild() async throws {
+        var renderedSnapshots: [MenuBarSessionMiniLocalSnapshot] = []
+        let debouncer = MenuBarSessionMiniMenuRebuildDebouncer(
+            delay: .milliseconds(20)
+        ) { snapshot in
+            renderedSnapshots.append(snapshot)
+        }
+        let firstSnapshot = try continuationMiniSnapshot(
+            latestSeq: 601,
+            sessionID: "thread-first",
+            title: "First menu truth"
+        )
+        let secondSnapshot = try continuationMiniSnapshot(
+            latestSeq: 602,
+            sessionID: "thread-second",
+            title: "Second menu truth"
+        )
+
+        debouncer.scheduleRebuild(from: firstSnapshot)
+        debouncer.scheduleRebuild(from: secondSnapshot)
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(renderedSnapshots.map(\.latestSeq) == [602])
+        #expect(renderedSnapshots.first?.sessions.map(\.sessionID) == ["thread-second"])
+    }
+
+    @Test
+    func httpFailureWithWarmStoreKeepsSessionMenuContent() throws {
+        let snapshot = try continuationMiniSnapshot(
+            latestSeq: 603,
+            sessionID: "thread-local",
+            title: "Local menu truth"
+        )
+        var state = MenuBarStorePrimaryMenuState(
+            cachedMenuEnrichmentMaxAge: 30
+        )
+        state.applySessionMiniSnapshot(snapshot)
+        state.applyHTTPRefreshResult(
+            MenuRefreshResult(
+                didFetchHTTP: true,
+                sessionMiniSnapshot: nil,
+                snapshot: nil,
+                connections: nil,
+                acpClientHosts: nil,
+                mobileState: nil,
+                pushDevices: nil,
+                mobileHealth: nil,
+                error: MenuRefreshError(MenuStorePrimaryTestError())
+            )
+        )
+
+        let content = state.menuContent()
+
+        #expect(content.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
+        #expect(LooperMenuContent.buildThreadSections(from: content.sessionMiniSnapshot?.sessions ?? [])
+            .first?.rows.map(\.threadId) == ["thread-local"])
+    }
+
+    @Test
+    func menuWillOpenWithWarmStoreUsesSessionRowsWithoutHTTPContent() throws {
+        let snapshot = try continuationMiniSnapshot(
+            latestSeq: 604,
+            sessionID: "thread-warm",
+            title: "Warm menu truth"
+        )
+        var state = MenuBarStorePrimaryMenuState(
+            cachedMenuEnrichmentMaxAge: 30
+        )
+        state.applySessionMiniSnapshot(snapshot)
+
+        let content = state.menuContentForMenuWillOpen()
+        let sections = LooperMenuContent.buildThreadSections(
+            from: content.sessionMiniSnapshot?.sessions ?? []
+        )
+
+        #expect(content.snapshot == nil)
+        #expect(content.connections == nil)
+        #expect(content.acpClientHosts == nil)
+        #expect(sections.first?.rows.map(\.threadId) == ["thread-warm"])
+    }
+
     @Test
     func refreshFailureWithSessionMiniSnapshotKeepsSessionDescriptor() throws {
         let snapshot = try continuationMiniSnapshot(
@@ -719,6 +802,8 @@ private struct TestContinuationActivityMiniMetadata: Encodable {
     let projectName: String
     let projectPath: String
 }
+
+private struct MenuStorePrimaryTestError: Error {}
 
 private struct TestContinuationMiniFixture: Equatable, Sendable {
     let sessionID: String

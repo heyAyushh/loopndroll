@@ -169,14 +169,12 @@ public actor MenuRefreshCoordinator {
 
         let client = self.client
         let sessionRuntime = self.sessionRuntime
-        let shouldFetchDesktopSnapshot = bypassingCache
         let refreshID = nextRefreshID
         nextRefreshID += 1
         let task = Task {
             await Self.fetch(
                 client: client,
-                sessionRuntime: sessionRuntime,
-                shouldFetchDesktopSnapshot: shouldFetchDesktopSnapshot
+                sessionRuntime: sessionRuntime
             )
         }
         inFlight = InFlightRefresh(id: refreshID, task: task, bypassesCache: bypassingCache)
@@ -202,26 +200,9 @@ public actor MenuRefreshCoordinator {
 
     private static func fetch(
         client: any ControlPlaneClient,
-        sessionRuntime: (any MenuBarSessionMiniSnapshotProviding)?,
-        shouldFetchDesktopSnapshot: Bool
+        sessionRuntime: (any MenuBarSessionMiniSnapshotProviding)?
     ) async -> MenuRefreshResult {
         let sessionMiniSnapshot = fetchSessionMiniSnapshot(sessionRuntime)
-        if sessionMiniSnapshot != nil, !shouldFetchDesktopSnapshot {
-            async let mobileState = fetchDesktopMobileState(client: client)
-            async let pushDevices = fetchDesktopPushDevices(client: client)
-            async let health = fetchMobileHealth(client: client)
-            return MenuRefreshResult(
-                didFetchHTTP: true,
-                sessionMiniSnapshot: sessionMiniSnapshot,
-                snapshot: nil,
-                connections: nil,
-                acpClientHosts: nil,
-                mobileState: await mobileState,
-                pushDevices: await pushDevices,
-                mobileHealth: await health,
-                error: nil
-            )
-        }
 
         async let snapshotResult = fetchSnapshot(client: client)
         async let connections = fetchDesktopConnections(client: client)

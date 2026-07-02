@@ -549,14 +549,14 @@ struct MenuRefreshCoordinatorTests {
         #expect(client.snapshotCalls == 1)
     }
 
-    @Test("cached SessionMini normal refresh fetches cheap mobile enrichment only")
-    func cachedSessionMiniNormalRefreshFetchesCheapMobileEnrichmentOnly() async throws {
+    @Test("cached SessionMini normal refresh fetches HTTP enrichment")
+    func cachedSessionMiniNormalRefreshFetchesHTTPEnrichment() async throws {
         let runtime = try seededRuntime(
             latestSeq: 302,
             sessionID: "thread-local",
             title: "Local menu truth"
         )
-        let client = MenuRefreshRecordingClient(snapshotDelay: .seconds(5))
+        let client = MenuRefreshRecordingClient()
         let coordinator = MenuRefreshCoordinator(
             client: client,
             sessionRuntime: runtime,
@@ -567,28 +567,30 @@ struct MenuRefreshCoordinatorTests {
 
         #expect(result.succeeded)
         #expect(result.didFetchHTTP)
-        #expect(result.snapshot == nil)
+        #expect(result.snapshot != nil)
+        #expect(result.connections != nil)
+        #expect(result.acpClientHosts != nil)
         #expect(result.mobileState != nil)
         #expect(result.pushDevices != nil)
         #expect(result.mobileHealth != nil)
         #expect(result.sessionMiniSnapshot?.latestSeq == 302)
         #expect(result.sessionMiniSnapshot?.sessions.map(\.sessionID) == ["thread-local"])
-        #expect(client.snapshotCalls == 0)
-        #expect(client.connectionCalls == 0)
-        #expect(client.acpHostCalls == 0)
+        #expect(client.snapshotCalls == 1)
+        #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
     }
 
-    @Test("stale cached SessionMini refreshes cheap mobile enrichment only")
-    func staleCachedSessionMiniRefreshesCheapMobileEnrichmentOnly() async throws {
+    @Test("stale cached SessionMini refreshes HTTP enrichment")
+    func staleCachedSessionMiniRefreshesHTTPEnrichment() async throws {
         let runtime = try seededRuntime(
             latestSeq: 309,
             sessionID: "thread-local",
             title: "Local menu truth"
         )
-        let client = MenuRefreshRecordingClient(snapshotDelay: .seconds(5))
+        let client = MenuRefreshRecordingClient()
         let coordinator = MenuRefreshCoordinator(
             client: client,
             sessionRuntime: runtime,
@@ -603,13 +605,15 @@ struct MenuRefreshCoordinatorTests {
         #expect(refreshed.succeeded)
         #expect(refreshed.didFetchHTTP)
         #expect(refreshed.sessionMiniSnapshot?.latestSeq == 309)
-        #expect(refreshed.snapshot == nil)
+        #expect(refreshed.snapshot != nil)
+        #expect(refreshed.connections != nil)
+        #expect(refreshed.acpClientHosts != nil)
         #expect(refreshed.mobileState != nil)
         #expect(refreshed.pushDevices != nil)
         #expect(refreshed.mobileHealth != nil)
-        #expect(client.snapshotCalls == 0)
-        #expect(client.connectionCalls == 0)
-        #expect(client.acpHostCalls == 0)
+        #expect(client.snapshotCalls == 2)
+        #expect(client.connectionCalls == 2)
+        #expect(client.acpHostCalls == 2)
         #expect(client.mobileStateCalls == 2)
         #expect(client.pushDeviceCalls == 2)
         #expect(client.healthCalls == 2)
@@ -646,7 +650,9 @@ struct MenuRefreshCoordinatorTests {
         #expect(cached.mobileState == nil)
         #expect(cached.pushDevices == nil)
         #expect(cached.mobileHealth == nil)
-        #expect(client.snapshotCalls == 0)
+        #expect(client.snapshotCalls == 1)
+        #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
@@ -683,7 +689,9 @@ struct MenuRefreshCoordinatorTests {
         #expect(cached.mobileState == nil)
         #expect(cached.pushDevices == nil)
         #expect(cached.mobileHealth == nil)
-        #expect(client.snapshotCalls == 0)
+        #expect(client.snapshotCalls == 1)
+        #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
@@ -727,7 +735,9 @@ struct MenuRefreshCoordinatorTests {
         #expect(cached.mobileState == nil)
         #expect(cached.pushDevices == nil)
         #expect(cached.mobileHealth == nil)
-        #expect(client.snapshotCalls == 0)
+        #expect(client.snapshotCalls == 1)
+        #expect(client.connectionCalls == 1)
+        #expect(client.acpHostCalls == 1)
         #expect(client.mobileStateCalls == 1)
         #expect(client.pushDeviceCalls == 1)
         #expect(client.healthCalls == 1)
