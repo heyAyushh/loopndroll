@@ -21,7 +21,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     static let zedAcpHostTitle = "Zed"
     static let threadMenuTitleCharacterLimit = 38
     static let detachServerOnQuitKey = "detachServerOnQuit"
-    static let continuationRefreshInterval: Duration = .seconds(20)
+    static let sessionMiniMenuRebuildDebounce: Duration = .milliseconds(500)
+    static let httpMenuEnrichmentRefreshInterval: Duration = .seconds(60)
     // Mirrors MobileRouteReadinessState's HTTP health freshness window: cached
     // HTTP menu enrichment older than this is dropped instead of rendered as
     // if it were current.
@@ -64,10 +65,19 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   )
   private var statusItem: NSStatusItem?
   private var menu: NSMenu?
-  private var cachedSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
-  private var cachedMenuEnrichment: MenuRefreshResult?
-  private var cachedMenuEnrichmentRecordedAt: Date?
-  private var continuationRefreshTask: Task<Void, Never>?
+  private var storePrimaryMenuState = MenuBarStorePrimaryMenuState(
+    cachedMenuEnrichmentMaxAge: Layout.cachedMenuEnrichmentMaxAge
+  )
+  private lazy var sessionMiniMenuRebuildDebouncer = MenuBarSessionMiniMenuRebuildDebouncer(
+    delay: Layout.sessionMiniMenuRebuildDebounce
+  ) { [weak self] snapshot in
+    self?.replaceMenuWithCachedEnrichment(
+      sessionMiniSnapshot: snapshot,
+      error: nil,
+      restoreSessionMiniIfMissing: false
+    )
+  }
+  private var menuEnrichmentRefreshTask: Task<Void, Never>?
   private var sessionMiniSyncTask: Task<Void, Never>?
   private var sessionMiniSyncGeneration = 0
   private var mobileRouteReadiness = MobileRouteReadinessState()
@@ -112,7 +122,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     continuationPublisher.focusAssistHoldDuration = handoffHoldDuration
     installStatusItem()
     continuationPublisher.publish(LooperContinuationActivityBuilder.genericDescriptor())
-    startContinuationRefreshLoop()
+    startMenuEnrichmentRefreshLoop()
     installHandoffHotkey()
     desktopNotifications.start()
     startSessionMiniSync()
@@ -122,7 +132,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     Task {
       _ = await lifecycle.registerOnLaunch()
       restartSessionMiniSync()
-      await refreshMenu()
+      await refreshHTTPMenuEnrichment(force: true)
       if diagnosticsRequestedFromLaunchArguments {
         await showDiagnosticsWindow(force: true)
       }
@@ -130,7 +140,8 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    continuationRefreshTask?.cancel()
+    menuEnrichmentRefreshTask?.cancel()
+    sessionMiniMenuRebuildDebouncer.cancel()
     continuationStorePublisher.cancel()
     stopSessionMiniSync()
     sessionRuntime?.stop()
@@ -165,9 +176,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   func menuWillOpen(_ menu: NSMenu) {
-    Task {
-      await refreshMenu()
-    }
+    replaceMenuWithWarmStore()
   }
 
   private func installStatusItem() {
@@ -187,17 +196,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let latestSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
   }
 
-  /// Runs a coordinator refresh and folds its result into the cached
-  /// enrichment/SessionMini/HTTP-route state shared by every refresh
-  /// entry point (menu refresh, continuation-activity refresh, diagnostics).
-  /// Callers are responsible for whatever they render before and after.
   private func performMenuRefresh(
     force: Bool,
     preRefreshSessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?
   ) async -> MenuRefreshOutcome {
     let routeReadinessGeneration = mobileRouteReadiness.generation
     let result = await menuRefreshCoordinator.refresh(force: force)
-    cacheMenuEnrichmentIfAvailable(result)
+    storePrimaryMenuState.applyHTTPRefreshResult(result)
     cacheSessionMiniSnapshotIfAvailable(result.sessionMiniSnapshot)
     let latestSessionMiniSnapshot = latestSessionMiniSnapshot(
       fallback: result.sessionMiniSnapshot ?? preRefreshSessionMiniSnapshot
@@ -210,11 +215,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func refreshMenu(force: Bool = false) async {
-    let sessionMiniSnapshot = currentSessionMiniSnapshot()
-    if !force, let sessionMiniSnapshot {
-      replaceMenuWithCachedEnrichment(sessionMiniSnapshot: sessionMiniSnapshot, error: nil)
-    }
+    replaceMenuWithWarmStore()
+    await refreshHTTPMenuEnrichment(force: force)
+  }
 
+  @discardableResult
+  private func refreshHTTPMenuEnrichment(force: Bool) async -> MenuRefreshOutcome {
+    let sessionMiniSnapshot = currentSessionMiniSnapshot()
     let outcome = await performMenuRefresh(
       force: force,
       preRefreshSessionMiniSnapshot: sessionMiniSnapshot
@@ -245,14 +252,15 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: latestSessionMiniSnapshot == nil ? result.error : nil
       )
     }
+    return outcome
   }
 
-  private func startContinuationRefreshLoop() {
-    continuationRefreshTask?.cancel()
-    continuationRefreshTask = Task { [weak self] in
+  private func startMenuEnrichmentRefreshLoop() {
+    menuEnrichmentRefreshTask?.cancel()
+    menuEnrichmentRefreshTask = Task { [weak self] in
       while !Task.isCancelled {
-        await self?.refreshContinuationActivity()
-        try? await Task.sleep(for: Layout.continuationRefreshInterval)
+        try? await Task.sleep(for: Layout.httpMenuEnrichmentRefreshInterval)
+        await self?.refreshHTTPMenuEnrichment(force: false)
       }
     }
   }
@@ -261,20 +269,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let sessionMiniSnapshot {
       publishContinuationActivity(from: sessionMiniSnapshot)
-    }
-
-    let outcome = await performMenuRefresh(
-      force: false,
-      preRefreshSessionMiniSnapshot: sessionMiniSnapshot
-    )
-    let result = outcome.result
-    let latestSessionMiniSnapshot = outcome.latestSessionMiniSnapshot
-    if let snapshot = result.snapshot {
-      publishContinuationActivity(
-        sessionMiniSnapshot: latestSessionMiniSnapshot,
-        snapshot: snapshot
-      )
-    } else if latestSessionMiniSnapshot == nil {
+    } else {
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
     }
@@ -533,9 +528,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot? = nil,
     connections: DesktopConnectionsResponse? = nil,
     acpClientHosts: AcpClientHostsResponse? = nil,
-    error: Error?
+    error: Error?,
+    restoreSessionMiniIfMissing: Bool = true
   ) {
-    let effectiveSessionMiniSnapshot = sessionMiniSnapshot ?? currentSessionMiniSnapshot()
+    let effectiveSessionMiniSnapshot =
+      sessionMiniSnapshot ?? (restoreSessionMiniIfMissing ? currentSessionMiniSnapshot() : nil)
     updateStatusItem(
       snapshot: snapshot,
       sessionMiniSnapshot: effectiveSessionMiniSnapshot,
@@ -554,15 +551,30 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func replaceMenuWithCachedEnrichment(
     sessionMiniSnapshot: MenuBarSessionMiniLocalSnapshot?,
-    error: Error?
+    error: Error?,
+    restoreSessionMiniIfMissing: Bool = true
   ) {
-    let enrichment = currentMenuEnrichmentIfFresh()
+    let content = storePrimaryMenuState.menuContent()
+    let effectiveSessionMiniSnapshot = sessionMiniSnapshot ?? content.sessionMiniSnapshot
     replaceMenu(
-      snapshot: enrichment?.snapshot,
-      sessionMiniSnapshot: sessionMiniSnapshot,
-      connections: enrichment?.connections,
-      acpClientHosts: enrichment?.acpClientHosts,
-      error: error
+      snapshot: content.snapshot,
+      sessionMiniSnapshot: effectiveSessionMiniSnapshot,
+      connections: content.connections,
+      acpClientHosts: content.acpClientHosts,
+      error: error,
+      restoreSessionMiniIfMissing: restoreSessionMiniIfMissing
+    )
+  }
+
+  private func replaceMenuWithWarmStore(error: Error? = nil) {
+    let content = storePrimaryMenuState.menuContentForMenuWillOpen()
+    replaceMenu(
+      snapshot: content.snapshot,
+      sessionMiniSnapshot: content.sessionMiniSnapshot,
+      connections: content.connections,
+      acpClientHosts: content.acpClientHosts,
+      error: error,
+      restoreSessionMiniIfMissing: false
     )
   }
 
@@ -775,61 +787,32 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     guard let snapshot = try? sessionRuntime?.cachedSnapshot() else {
       return nil
     }
-    cachedSessionMiniSnapshot = snapshot
+    storePrimaryMenuState.applySessionMiniSnapshot(snapshot)
     return snapshot
   }
 
   private func currentSessionMiniSnapshot() -> MenuBarSessionMiniLocalSnapshot? {
-    cachedSessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
+    storePrimaryMenuState.sessionMiniSnapshot ?? restoreCachedSessionMiniSnapshot()
   }
 
   private func cacheMenuEnrichmentIfAvailable(_ result: MenuRefreshResult) {
-    guard result.hasReusableEnrichment else {
-      return
-    }
-    cachedMenuEnrichment = result.mergingReusableEnrichment(from: currentMenuEnrichmentIfFresh())
-    cachedMenuEnrichmentRecordedAt = Date()
-  }
-
-  /// The cached HTTP menu enrichment, or nil once it has aged past
-  /// `Layout.cachedMenuEnrichmentMaxAge`. Without this, a route that stops
-  /// refreshing (e.g. the control plane going unreachable) would render
-  /// arbitrarily old snapshot/connections/ACP-host data forever with no
-  /// staleness marker, unlike `mobileHealth`, which already expires.
-  private func currentMenuEnrichmentIfFresh() -> MenuRefreshResult? {
-    guard let cachedMenuEnrichment else {
-      return nil
-    }
-    guard let cachedMenuEnrichmentRecordedAt else {
-      return cachedMenuEnrichment
-    }
-    guard Date().timeIntervalSince(cachedMenuEnrichmentRecordedAt) <= Layout.cachedMenuEnrichmentMaxAge
-    else {
-      self.cachedMenuEnrichment = nil
-      self.cachedMenuEnrichmentRecordedAt = nil
-      return nil
-    }
-    return cachedMenuEnrichment
+    storePrimaryMenuState.cacheMenuEnrichmentIfAvailable(result)
   }
 
   private func cacheSessionMiniSnapshotIfAvailable(_ snapshot: MenuBarSessionMiniLocalSnapshot?) {
-    guard let snapshot else {
-      return
-    }
-    cachedSessionMiniSnapshot = snapshot
+    storePrimaryMenuState.applySessionMiniSnapshot(snapshot)
   }
 
   private func latestSessionMiniSnapshot(
     fallback: MenuBarSessionMiniLocalSnapshot?
   ) -> MenuBarSessionMiniLocalSnapshot? {
-    cachedSessionMiniSnapshot ?? fallback ?? restoreCachedSessionMiniSnapshot()
+    storePrimaryMenuState.latestSessionMiniSnapshot(fallback: fallback) ?? restoreCachedSessionMiniSnapshot()
   }
 
   private func reloadSessionMiniSnapshotFromStore() -> MenuBarSessionMiniLocalSnapshot? {
     guard let snapshot = restoreCachedSessionMiniSnapshot() else {
       return nil
     }
-    cachedSessionMiniSnapshot = snapshot
     return snapshot
   }
 
@@ -921,13 +904,13 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   }
 
   private func applySessionMiniSnapshot(_ snapshot: MenuBarSessionMiniLocalSnapshot) {
-    let previousSnapshot = cachedSessionMiniSnapshot
-    cachedSessionMiniSnapshot = snapshot
+    let previousSnapshot = storePrimaryMenuState.sessionMiniSnapshot
+    storePrimaryMenuState.applySessionMiniSnapshot(snapshot)
     continuationStorePublisher.schedulePublish(
       from: snapshot,
       handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
     )
-    replaceMenuWithCachedEnrichment(sessionMiniSnapshot: snapshot, error: nil)
+    sessionMiniMenuRebuildDebouncer.scheduleRebuild(from: snapshot)
     Task { @MainActor [weak self] in
       await self?.deliverSessionMiniStopNotifications(
         previousSnapshot: previousSnapshot,
