@@ -195,43 +195,35 @@ require_syncable_entity_source_when_available() {
   fi
 }
 
+# Since b12a45f3b the current-session resolution policy lives in Rust
+# client-core (`reduce_siri_session_entities`); Swift must consume the
+# projection instead of re-deriving "current" with ad-hoc scans.
 require_current_session_resolver_source() {
-  local resolver_file="${IOS_DIR}/LooperCompanion/AppIntents/LooperCurrentSessionResolver.swift"
   local support_file="${IOS_DIR}/LooperCompanion/AppIntents/LooperSiriSessionSupport.swift"
-  local core_resolver_file="${IOS_DIR}/LooperCompanionCore/Sources/LooperCompanionCore/LooperCurrentSessionResolution.swift"
+  local core_policy_file="${ROOT_DIR}/crates/looper-client-core/src/snapshot_reducer.rs"
 
-  if [ ! -s "${resolver_file}" ]; then
-    printf 'error: missing deterministic current-session resolver at %s\n' "${resolver_file}" >&2
-    exit 1
-  fi
-
-  if [ ! -s "${core_resolver_file}" ]; then
-    printf 'error: missing tested current-session resolution policy at %s\n' "${core_resolver_file}" >&2
-    exit 1
-  fi
-
-  if ! rg -q 'LooperCurrentSessionResolution\.resolve' "${resolver_file}"; then
-    printf 'error: current-session resolver must use LooperCurrentSessionResolution.resolve\n' >&2
+  if ! rg -q 'pub fn reduce_siri_session_entities' "${core_policy_file}"; then
+    printf 'error: missing Rust-owned current-session resolution policy (reduce_siri_session_entities) in %s\n' "${core_policy_file}" >&2
     exit 1
   fi
 
   if ! awk '
     /func currentSiriSessionEntity\(\)/ { in_current = 1 }
-    in_current && /LooperCurrentSessionResolver\(\)\.currentEntity/ { found = 1 }
+    in_current && /LooperSiriSessionEntityProjectionCodec\.projectSessionEntities/ { found = 1 }
     in_current && /^    func / && !/currentSiriSessionEntity/ { in_current = 0 }
     END { exit found ? 0 : 1 }
   ' "${support_file}"; then
-    printf 'error: currentSiriSessionEntity must route through LooperCurrentSessionResolver\n' >&2
+    printf 'error: currentSiriSessionEntity must route through the Rust session-entity projection\n' >&2
     exit 1
   fi
 
   if awk '
     /func currentSiriSessionEntity\(\)/ { in_current = 1 }
-    in_current && /(defaultSiriSessionEntity|sessionEntities|suggestedEntities|latest|lastUpdated)/ { found = 1 }
+    in_current && /(suggestedEntities|sortedByFreshness|lastUpdated|latestMessageAt)/ { found = 1 }
     in_current && /^    func / && !/currentSiriSessionEntity/ { in_current = 0 }
     END { exit found ? 0 : 1 }
   ' "${support_file}"; then
-    printf 'error: currentSiriSessionEntity contains fallback lookup logic outside the resolver\n' >&2
+    printf 'error: currentSiriSessionEntity contains fallback scan logic outside the Rust projection\n' >&2
     exit 1
   fi
 }
