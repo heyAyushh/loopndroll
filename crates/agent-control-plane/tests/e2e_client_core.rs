@@ -147,7 +147,6 @@ async fn client_core_h2_stream_recovers_delta_after_listener_restart_same_port()
 }
 
 #[tokio::test]
-#[ignore = "current behavior: established h3 stream closes as client after replay; production transport fix required"]
 async fn client_core_h3_stream_recovers_delta_after_listener_restart_same_port() {
     let harness = E2eHarness::new().await;
     harness.seed_hook_session(Some(PRESET_AWAIT_REPLY), INITIAL_TITLE);
@@ -695,8 +694,7 @@ async fn wait_for_server_fsm_to_allow_prompt(control_plane: &ControlPlane) {
             .store()
             .mobile_state_events_for_entity(THREAD_ID)
             .expect("state events for fsm wait");
-        let state =
-            session_state_for_thread(&events, &minis, THREAD_ID, Some(ASSISTANT_SURFACE));
+        let state = session_state_for_thread(&events, &minis, THREAD_ID, Some(ASSISTANT_SURFACE));
         if next(
             state,
             SessionCommand::SendPrompt {

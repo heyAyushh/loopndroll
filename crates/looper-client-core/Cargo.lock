@@ -934,6 +934,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 name = "looper-client-core"
 version = "0.1.0"
 dependencies = [
+ "h3-util",
  "http-body-util",
  "hyper",
  "hyper-rustls",
