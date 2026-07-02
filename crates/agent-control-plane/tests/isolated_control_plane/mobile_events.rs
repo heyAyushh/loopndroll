@@ -1,6 +1,7 @@
 use super::*;
 use agent_control_plane::events::{
-    EventStore, MobileCommandAckInput, MobileCommandAckResult, MobileCommandReservationResult,
+    EventRetentionReclaimMode, EventStore, MOBILE_STATE_EVENT_RETENTION_AGE_MS,
+    MobileCommandAckInput, MobileCommandAckResult, MobileCommandReservationResult,
     MobileSessionMiniProjectionInput, MobileStateEventGap, MobileStateEventInput,
 };
 use agent_control_plane::mobile::events::{MobileEvent, MobileEventInput, mobile_event_now};
@@ -476,6 +477,48 @@ async fn grpc_session_resume_drains_more_than_one_replay_batch_immediately() {
     .expect("resume replay should not wait for the periodic state poll");
 
     assert_eq!(replayed_seqs, expected_seqs);
+}
+
+#[tokio::test]
+async fn grpc_session_resume_after_pruned_events_returns_out_of_range_recovery_required() {
+    let fixture = IsolatedCodexFixture::new();
+    let control_plane = fixture.control_plane();
+    for index in 0..3 {
+        control_plane
+            .store()
+            .record_mobile_state_event(state_delta_input(
+                "thread-main",
+                &format!("revision-pruned-{index}"),
+                &format!("delta-pruned-{index}"),
+            ))
+            .expect("record prunable state delta");
+    }
+    let connection = rusqlite::Connection::open(control_plane.store().path()).expect("open store");
+    connection
+        .execute("update mobile_state_event_log set created_at_ms = 0", [])
+        .expect("age state events");
+    let report = control_plane
+        .store()
+        .prune_mobile_event_retention(
+            MOBILE_STATE_EVENT_RETENTION_AGE_MS + 1,
+            EventRetentionReclaimMode::Periodic,
+        )
+        .expect("prune retention");
+    assert_eq!(report.deleted_mobile_state_events, 2);
+
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane).await;
+    let mut stream =
+        open_session_stream(&mut client, &authorization, vec![resume_session_frame(0)]).await;
+
+    let status = next_session_error(&mut stream, "pruned resume gap").await;
+    assert_eq!(status.code(), tonic::Code::OutOfRange);
+    assert!(
+        status.message().contains("seq_gap"),
+        "status should route clients through recovery, got {}",
+        status.message()
+    );
 }
 
 #[tokio::test]
@@ -1988,6 +2031,26 @@ async fn next_session_frame(
     .unwrap_or_else(|_| panic!("timed out waiting for {label}"))
     .expect("session stream frame result")
     .unwrap_or_else(|| panic!("session stream closed before {label}"))
+}
+
+async fn next_session_error(
+    stream: &mut tonic::codec::Streaming<ServerFrame>,
+    label: &str,
+) -> tonic::Status {
+    for _ in 0..SESSION_FRAME_SCAN_LIMIT {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(SESSION_FRAME_TIMEOUT_MILLIS),
+            stream.message(),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {label}"))
+        {
+            Ok(Some(_)) => continue,
+            Ok(None) => panic!("session stream closed before {label}"),
+            Err(status) => return status,
+        }
+    }
+    panic!("timed out scanning session stream for {label}");
 }
 
 async fn next_session_ack_frame(
