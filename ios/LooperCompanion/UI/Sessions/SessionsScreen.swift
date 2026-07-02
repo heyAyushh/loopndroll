@@ -129,17 +129,26 @@ struct SessionsScreen: View {
 
     private var connectionSection: some View {
         Section {
-            SessionConnectionRow(
-                title: model.viewState.connectivityHeadline,
-                subtitle: connectionSubtitle,
-                statusText: model.viewState.connectivityStatusLabel,
-                statusTint: connectionStatusTint,
-                routePresentation: model.viewState.connectionRoutePresentation,
-                openSettings: openSettings,
-                assistantPicker: {
-                    assistantPicker
-                }
-            )
+            TimelineView(.periodic(
+                from: .now,
+                by: CompanionConnectionFreshnessPolicy.presentationRefreshCadence
+            )) { context in
+                let statusPresentation = model.viewState.connectionStatusPresentation(
+                    now: context.date
+                )
+                SessionConnectionRow(
+                    title: model.viewState.connectivityHeadline,
+                    subtitle: connectionSubtitle,
+                    statusText: statusPresentation.label,
+                    statusTint: CompanionTint.tint(for: statusPresentation.status),
+                    statusIsActive: statusPresentation.isActive,
+                    routePresentation: model.viewState.connectionRoutePresentation,
+                    openSettings: openSettings,
+                    assistantPicker: {
+                        assistantPicker
+                    }
+                )
+            }
             .companionCardRowSurface()
 
             if model.connectionState == .locked {
@@ -182,10 +191,6 @@ struct SessionsScreen: View {
         }
 
         return model.viewState.connectivitySummary
-    }
-
-    private var connectionStatusTint: Color {
-        CompanionTint.tint(for: model.connectionState)
     }
 
     private func sessionSection(
@@ -330,6 +335,7 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
     let subtitle: String
     let statusText: String
     let statusTint: Color
+    let statusIsActive: Bool
     let routePresentation: CompanionConnectionRoutePresentation?
     let openSettings: () -> Void
     @ViewBuilder let assistantPicker: () -> AssistantPicker
@@ -362,7 +368,12 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
                     Spacer(minLength: SessionConnectionRowMetrics.minimumTrailingSpacing)
 
                     VStack(alignment: .trailing, spacing: SessionConnectionRowMetrics.statusSpacing) {
-                        StatusPill(text: statusText, tint: statusTint)
+                        StatusPill(
+                            text: statusText,
+                            tint: statusTint,
+                            systemImage: nil,
+                            isActive: statusIsActive
+                        )
 
                         if let routePresentation {
                             ConnectionRouteBadge(presentation: routePresentation)

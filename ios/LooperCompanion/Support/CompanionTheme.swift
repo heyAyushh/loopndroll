@@ -142,6 +142,19 @@ enum CompanionTint {
         }
     }
 
+    static func tint(for status: CompanionConnectionPresentationStatus) -> Color {
+        switch status {
+        case .live:
+            return .green
+        case .reconnecting, .local:
+            return .secondary
+        case .connecting:
+            return .orange
+        case .offline, .unauthorized, .locked, .unpaired:
+            return .red
+        }
+    }
+
     static func tint(for status: SessionStatus) -> Color {
         switch status {
         case .active:

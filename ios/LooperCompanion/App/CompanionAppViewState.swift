@@ -168,20 +168,30 @@ struct CompanionAppViewState {
     }
 
     var connectivityStatusLabel: String {
-        if model.isAwaitingRouteSessionProof {
-            return model.connectionState.label
+        connectionStatusPresentation().label
+    }
+
+    func connectionStatusPresentation(
+        now: Date = Date()
+    ) -> CompanionConnectionStatusPresentation {
+        if let authorizationStatus = authorizationConnectionStatus {
+            return CompanionConnectionStatusPresentation(status: authorizationStatus)
+        }
+
+        if let freshnessStatus = realtimeFreshnessConnectionStatus(now: now) {
+            return CompanionConnectionStatusPresentation(status: freshnessStatus)
         }
 
         if isShowingUsableLocalState {
             switch model.connectionState {
             case .connecting, .offline:
-                return "Local"
+                return CompanionConnectionStatusPresentation(status: .local)
             case .connected, .unauthorized, .locked, .unpaired:
                 break
             }
         }
 
-        return model.connectionState.label
+        return CompanionConnectionStatusPresentation(status: model.connectionState.presentationStatus)
     }
 
     var sessionsUnavailableTitle: String {
@@ -383,6 +393,38 @@ struct CompanionAppViewState {
         model.connectionState == .connected || isShowingUsableLocalState
     }
 
+    private var authorizationConnectionStatus: CompanionConnectionPresentationStatus? {
+        switch model.connectionState {
+        case .unauthorized, .locked, .unpaired:
+            return model.connectionState.presentationStatus
+        case .connecting, .connected, .offline:
+            return nil
+        }
+    }
+
+    private func realtimeFreshnessConnectionStatus(
+        now: Date
+    ) -> CompanionConnectionPresentationStatus? {
+        guard let lastRealtimeDataAt = model.lastRealtimeDataAt else {
+            return nil
+        }
+
+        let elapsed = max(0, now.timeIntervalSince(lastRealtimeDataAt))
+        if elapsed <= CompanionConnectionFreshnessPolicy.liveGraceWindow {
+            return .live
+        }
+        if elapsed >= CompanionConnectionFreshnessPolicy.offlineWindow {
+            return .offline
+        }
+        if model.realtimeReconnectInProgress {
+            return .reconnecting
+        }
+        if model.realtimeStreamIsLive {
+            return .live
+        }
+        return nil
+    }
+
     private var selectedSurfaceEmptyTitle: String {
         switch selectedAssistantSurface {
         case .claudeCode:
@@ -413,6 +455,77 @@ struct CompanionAppViewState {
             return "Devin Desktop sessions appear here when Devin is running on your Mac."
         case .codex:
             return connectivitySummary
+        }
+    }
+}
+
+enum CompanionConnectionFreshnessPolicy {
+    // Server heartbeats are every 15 seconds; the pill's live window must be
+    // longer so one late heartbeat or app-switch restart does not look broken.
+    static let liveGraceWindow: TimeInterval = 20
+    static let offlineWindow: TimeInterval = 45
+    static let presentationRefreshCadence: TimeInterval = 1
+}
+
+enum CompanionConnectionPresentationStatus: Equatable {
+    case live
+    case reconnecting
+    case offline
+    case local
+    case connecting
+    case unauthorized
+    case locked
+    case unpaired
+
+    var label: String {
+        switch self {
+        case .live:
+            return "Live"
+        case .reconnecting:
+            return "Reconnecting"
+        case .offline:
+            return "Offline"
+        case .local:
+            return "Local"
+        case .connecting:
+            return "Connecting"
+        case .unauthorized:
+            return "Unauthorized"
+        case .locked:
+            return "Locked"
+        case .unpaired:
+            return "Unpaired"
+        }
+    }
+}
+
+struct CompanionConnectionStatusPresentation: Equatable {
+    let status: CompanionConnectionPresentationStatus
+
+    var label: String {
+        status.label
+    }
+
+    var isActive: Bool {
+        status == .live
+    }
+}
+
+private extension ConnectivityState {
+    var presentationStatus: CompanionConnectionPresentationStatus {
+        switch self {
+        case .connecting:
+            return .connecting
+        case .connected:
+            return .live
+        case .offline:
+            return .offline
+        case .unauthorized:
+            return .unauthorized
+        case .locked:
+            return .locked
+        case .unpaired:
+            return .unpaired
         }
     }
 }

@@ -4,18 +4,48 @@ import SwiftUI
 struct StatusPill: View {
     let text: String
     let tint: Color
+    var systemImage: String?
+    var isActive = false
+
+    init(
+        text: String,
+        tint: Color,
+        systemImage: String? = nil,
+        isActive: Bool = false
+    ) {
+        self.text = text
+        self.tint = tint
+        self.systemImage = systemImage
+        self.isActive = isActive
+    }
 
     var body: some View {
-        Text(text)
+        HStack(spacing: StatusPillMetrics.iconSpacing) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .symbolEffect(.variableColor.iterative, isActive: isActive)
+                    .accessibilityHidden(true)
+            }
+
+            Text(text)
+        }
             .font(.caption.weight(.medium))
             .foregroundStyle(tint)
             .lineLimit(1)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(tint.opacity(0.14)))
+            .padding(.horizontal, StatusPillMetrics.horizontalPadding)
+            .padding(.vertical, StatusPillMetrics.verticalPadding)
+            .background(Capsule().fill(tint.opacity(StatusPillMetrics.backgroundOpacity)))
             .fixedSize(horizontal: true, vertical: false)
-            .pinballSurface(cornerRadius: 14, material: .soft)
+            .pinballSurface(cornerRadius: StatusPillMetrics.cornerRadius, material: .soft)
     }
+}
+
+private enum StatusPillMetrics {
+    static let iconSpacing: CGFloat = 4
+    static let horizontalPadding: CGFloat = 10
+    static let verticalPadding: CGFloat = 6
+    static let backgroundOpacity = 0.14
+    static let cornerRadius: CGFloat = 14
 }
 
 enum SessionGoalStatusVisuals {

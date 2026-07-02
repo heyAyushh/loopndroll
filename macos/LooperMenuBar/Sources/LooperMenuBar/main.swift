@@ -49,6 +49,11 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private let client: HTTPControlPlaneClient
   private let lifecycle: LooperLifecycleCoordinator
   private let continuationPublisher = LooperContinuationActivityPublisher()
+  private lazy var continuationStorePublisher = LooperContinuationActivityStorePublisher(
+    publish: { [weak self] descriptor in
+      self?.continuationPublisher.publish(descriptor)
+    }
+  )
   private let sessionRuntime: MenuBarSessionRuntime?
   private lazy var menuRefreshCoordinator = MenuRefreshCoordinator(
     client: client,
@@ -126,6 +131,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   func applicationWillTerminate(_ notification: Notification) {
     continuationRefreshTask?.cancel()
+    continuationStorePublisher.cancel()
     stopSessionMiniSync()
     sessionRuntime?.stop()
     continuationPublisher.invalidate()
@@ -228,8 +234,12 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
         error: nil
       )
     } else {
-      continuationPublisher.publishFallbackIfIdle(
-        LooperContinuationActivityBuilder.genericDescriptor())
+      if let latestSessionMiniSnapshot {
+        publishContinuationActivity(from: latestSessionMiniSnapshot)
+      } else {
+        continuationPublisher.publishFallbackIfIdle(
+          LooperContinuationActivityBuilder.genericDescriptor())
+      }
       replaceMenuWithCachedEnrichment(
         sessionMiniSnapshot: latestSessionMiniSnapshot,
         error: latestSessionMiniSnapshot == nil ? result.error : nil
@@ -913,6 +923,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private func applySessionMiniSnapshot(_ snapshot: MenuBarSessionMiniLocalSnapshot) {
     let previousSnapshot = cachedSessionMiniSnapshot
     cachedSessionMiniSnapshot = snapshot
+    continuationStorePublisher.schedulePublish(
+      from: snapshot,
+      handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
+    )
     replaceMenuWithCachedEnrichment(sessionMiniSnapshot: snapshot, error: nil)
     Task { @MainActor [weak self] in
       await self?.deliverSessionMiniStopNotifications(
