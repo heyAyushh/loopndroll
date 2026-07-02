@@ -1914,6 +1914,164 @@ async fn grpc_session_stream_replays_duplicate_command_ack() {
     assert_eq!(replayed_ack.reject_reason, "");
 }
 
+#[tokio::test]
+async fn grpc_unary_send_prompt_replays_stream_ack_with_same_dispatch_record() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_await_reply_session_preset(&control_plane);
+    seed_replyable_session_mini(&control_plane, "mini-revision-unary-stream-prompt", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let setup_mode = set_mode_grpc(
+        &mut client,
+        &authorization,
+        "await-reply",
+        "unary-stream-setup-mode",
+    )
+    .await;
+    assert_accepted_finality_certificate(&setup_mode, "unary-stream-setup-mode");
+    let mutation_id = "unary-replay-stream-prompt";
+
+    let stream_ack = send_prompt_grpc(&mut client, &authorization, mutation_id).await;
+    assert_accepted_finality_certificate(&stream_ack, mutation_id);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+    wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
+    let stream_record = command_ack_response_json(&control_plane, mutation_id);
+    assert!(stream_record["dispatchKind"].as_str().is_some());
+    assert!(stream_record["promptId"].as_str().is_some());
+    let event_count = mobile_state_event_count(&control_plane);
+
+    let unary_ack = send_prompt_unary_grpc(&mut client, &authorization, mutation_id).await;
+
+    assert_replayed_command_ack(&unary_ack, &stream_ack);
+    assert_eq!(
+        command_ack_response_json(&control_plane, mutation_id),
+        stream_record
+    );
+    assert_eq!(mobile_state_event_count(&control_plane), event_count);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+}
+
+#[tokio::test]
+async fn grpc_unary_send_prompt_replays_duplicate_command_ack() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_await_reply_session_preset(&control_plane);
+    seed_replyable_session_mini(&control_plane, "mini-revision-unary-duplicate", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let setup_mode = set_mode_grpc(
+        &mut client,
+        &authorization,
+        "await-reply",
+        "unary-duplicate-setup-mode",
+    )
+    .await;
+    assert_accepted_finality_certificate(&setup_mode, "unary-duplicate-setup-mode");
+    let mutation_id = "unary-duplicate-prompt";
+
+    let first_ack = send_prompt_unary_grpc(&mut client, &authorization, mutation_id).await;
+    assert_accepted_finality_certificate(&first_ack, mutation_id);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+    wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
+    let event_count = mobile_state_event_count(&control_plane);
+
+    let replayed_ack = send_prompt_unary_grpc(&mut client, &authorization, mutation_id).await;
+
+    assert_replayed_command_ack(&replayed_ack, &first_ack);
+    assert_eq!(mobile_state_event_count(&control_plane), event_count);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+}
+
+#[tokio::test]
+async fn grpc_mixed_path_unary_then_stream_replays_prompt_ack() {
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let control_plane = fixture.control_plane();
+    record_thread_active(&control_plane, "thread-main");
+    seed_await_reply_session_preset(&control_plane);
+    seed_replyable_session_mini(&control_plane, "mini-revision-unary-then-stream", 4);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let (_server, mut client) = spawn_grpc_client(control_plane.clone()).await;
+    let setup_mode = set_mode_grpc(
+        &mut client,
+        &authorization,
+        "await-reply",
+        "mixed-unary-stream-setup-mode",
+    )
+    .await;
+    assert_accepted_finality_certificate(&setup_mode, "mixed-unary-stream-setup-mode");
+    let mutation_id = "mixed-unary-stream-prompt";
+
+    let unary_ack = send_prompt_unary_grpc(&mut client, &authorization, mutation_id).await;
+    assert_accepted_finality_certificate(&unary_ack, mutation_id);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+    wait_for_mobile_event_detail(&control_plane, "thread-main", "prompt-queued").await;
+    let event_count = mobile_state_event_count(&control_plane);
+
+    let stream_ack = send_prompt_grpc(&mut client, &authorization, mutation_id).await;
+
+    assert_replayed_command_ack(&stream_ack, &unary_ack);
+    assert_eq!(mobile_state_event_count(&control_plane), event_count);
+    wait_for_queued_prompt_count(&control_plane, "thread-main", 1).await;
+}
+
+#[tokio::test]
+async fn grpc_unary_prompt_rejection_matches_stream_rejection_encoding() {
+    let stream_fixture = IsolatedCodexFixture::new();
+    stream_fixture.write_state_db();
+    let stream_control_plane = stream_fixture.control_plane();
+    seed_promptable_session_mini_without_mode(
+        &stream_control_plane,
+        "mini-revision-stream-rejection",
+    );
+    let stream_router = build_router(stream_control_plane.clone());
+    let stream_authorization = issue_mobile_authorization_header(&stream_router).await;
+    let (_stream_server, mut stream_client) = spawn_grpc_client(stream_control_plane).await;
+    let stream_ack = send_prompt_grpc(
+        &mut stream_client,
+        &stream_authorization,
+        "stream-reject-mode-required",
+    )
+    .await;
+
+    let unary_fixture = IsolatedCodexFixture::new();
+    unary_fixture.write_state_db();
+    let unary_control_plane = unary_fixture.control_plane();
+    seed_promptable_session_mini_without_mode(
+        &unary_control_plane,
+        "mini-revision-unary-rejection",
+    );
+    let unary_router = build_router(unary_control_plane.clone());
+    let unary_authorization = issue_mobile_authorization_header(&unary_router).await;
+    let (_unary_server, mut unary_client) = spawn_grpc_client(unary_control_plane).await;
+    let unary_ack = send_prompt_unary_grpc(
+        &mut unary_client,
+        &unary_authorization,
+        "unary-reject-mode-required",
+    )
+    .await;
+
+    assert!(!stream_ack.accepted);
+    assert!(!unary_ack.accepted);
+    assert_eq!(unary_ack.error_code, stream_ack.error_code);
+    assert_eq!(unary_ack.reject_reason, stream_ack.reject_reason);
+    assert_eq!(unary_ack.current_state, stream_ack.current_state);
+    assert_eq!(unary_ack.entity_id, stream_ack.entity_id);
+    assert_eq!(unary_ack.error_code, "mode_required");
+    assert_eq!(unary_ack.current_state, "idle");
+    assert!(unary_ack.ack_seq > 0);
+    assert!(!unary_ack.revision.is_empty());
+    assert!(!unary_ack.server_time.is_empty());
+}
+
 fn add_mobile_grpc_authorization<T>(request: &mut tonic::Request<T>, authorization: &str) {
     request.metadata_mut().insert(
         "authorization",
@@ -2212,6 +2370,26 @@ async fn send_prompt_grpc(
     next_session_ack_frame(&mut stream, "send prompt ACK").await
 }
 
+async fn send_prompt_unary_grpc(
+    client: &mut LooperRealtimeClient<tonic::transport::Channel>,
+    authorization: &str,
+    client_mutation_id: &str,
+) -> agent_control_plane::grpc::proto::CommandAck {
+    let mut request = tonic::Request::new(SendSessionPromptRequest {
+        thread_id: "thread-main".to_owned(),
+        prompt: "Continue from G004.".to_owned(),
+        assistant_surface: String::new(),
+        client_mutation_id: client_mutation_id.to_owned(),
+        prompt_intent: "queue".to_owned(),
+    });
+    add_mobile_grpc_authorization(&mut request, authorization);
+    client
+        .send_session_prompt(request)
+        .await
+        .expect("send prompt unary ACK")
+        .into_inner()
+}
+
 async fn submit_notification_reply_grpc(
     client: &mut LooperRealtimeClient<tonic::transport::Channel>,
     authorization: &str,
@@ -2283,6 +2461,43 @@ fn assert_rejected_finality_certificate(
     assert_eq!(ack.error_code, expected_error_code);
     assert!(!ack.reject_reason.is_empty());
     assert_eq!(ack.current_state, expected_current_state);
+}
+
+fn seed_await_reply_session_preset(control_plane: &ControlPlane) {
+    control_plane
+        .mobile_session_service()
+        .set_session_preset("thread-main", Some("await-reply"))
+        .expect("seed await-reply session preset");
+}
+
+fn assert_replayed_command_ack(
+    replayed: &agent_control_plane::grpc::proto::CommandAck,
+    first: &agent_control_plane::grpc::proto::CommandAck,
+) {
+    assert!(replayed.idempotent_replay);
+    assert_eq!(replayed.accepted, first.accepted);
+    assert_eq!(replayed.client_mutation_id, first.client_mutation_id);
+    assert_eq!(replayed.ack_seq, first.ack_seq);
+    assert_eq!(replayed.entity_id, first.entity_id);
+    assert_eq!(replayed.revision, first.revision);
+    assert_eq!(replayed.server_time, first.server_time);
+    assert_eq!(replayed.error_code, first.error_code);
+    assert_eq!(replayed.reject_reason, first.reject_reason);
+    assert_eq!(replayed.account_id, first.account_id);
+    assert_eq!(replayed.node_id, first.node_id);
+    assert_eq!(replayed.current_state, first.current_state);
+}
+
+fn command_ack_response_json(
+    control_plane: &ControlPlane,
+    client_mutation_id: &str,
+) -> serde_json::Value {
+    let record = control_plane
+        .store()
+        .mobile_command_ack(COMMAND_KIND_SEND_SESSION_PROMPT, client_mutation_id)
+        .expect("command ack lookup")
+        .expect("command ack record");
+    serde_json::from_str(&record.response_json).expect("command ack response json")
 }
 
 fn mobile_state_event_count(control_plane: &ControlPlane) -> usize {

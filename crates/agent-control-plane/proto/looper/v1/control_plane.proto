@@ -5,6 +5,27 @@ package looper.v1;
 service LooperRealtime {
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc Session(stream ClientFrame) returns (stream ServerFrame);
+  rpc SetSessionMode(SetSessionModeRequest) returns (CommandAck);
+  rpc SendSessionPrompt(SendSessionPromptRequest) returns (CommandAck);
+  rpc SubmitNotificationReply(SubmitNotificationReplyRequest) returns (CommandAck);
+  rpc SetSiriCurrentSession(SetSiriCurrentSessionRequest) returns (CommandAck);
+  rpc SetSiriDefaultSession(SetSiriDefaultSessionRequest) returns (CommandAck);
+  rpc SaveDefaultPrompt(SaveDefaultPromptRequest) returns (CommandAck);
+  rpc SetSessionArchived(SetSessionArchivedRequest) returns (CommandAck);
+  rpc DeleteSession(DeleteSessionRequest) returns (CommandAck);
+  rpc MuteSession(MuteSessionRequest) returns (CommandAck);
+  rpc SetScope(SetScopeRequest) returns (CommandAck);
+  rpc SetGlobalPreset(SetGlobalPresetRequest) returns (CommandAck);
+  rpc SetGlobalNotification(SetGlobalNotificationRequest) returns (CommandAck);
+  rpc SetDefaultNotificationTargets(SetDefaultNotificationTargetsRequest) returns (CommandAck);
+  rpc SetGlobalCompletionCheck(SetGlobalCompletionCheckRequest) returns (CommandAck);
+  rpc UpsertNotificationRoute(UpsertNotificationRouteRequest) returns (CommandAck);
+  rpc DeleteNotificationRoute(DeleteNotificationRouteRequest) returns (CommandAck);
+  rpc UpsertCompletionCheck(UpsertCompletionCheckRequest) returns (CommandAck);
+  rpc DeleteCompletionCheck(DeleteCompletionCheckRequest) returns (CommandAck);
+  rpc SetSessionNotifications(SetSessionNotificationsRequest) returns (CommandAck);
+  rpc SetSessionCompletionCheck(SetSessionCompletionCheckRequest) returns (CommandAck);
+  rpc SetAssistantSurface(SetAssistantSurfaceRequest) returns (CommandAck);
 }
 
 message HealthRequest {}
