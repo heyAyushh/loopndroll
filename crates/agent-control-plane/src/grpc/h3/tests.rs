@@ -2,7 +2,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use super::certificate::generate_h3_certificate;
 use super::client::pinned_h3_client_endpoint;
-use super::server::{h3_listen_address_from_env_value, h3_tls_server_config};
+use super::server::{
+    h3_listen_address_from_env_value, h3_server_transport_config, h3_tls_server_config,
+};
 
 #[test]
 fn grpc_h3_invalid_listen_address_is_rejected() {
@@ -24,6 +26,21 @@ fn grpc_h3_server_tls_disables_0rtt_early_data() {
     assert_eq!(
         tls_config.max_early_data_size, 0,
         "H3 Session transport must not accept replayable 0-RTT early data"
+    );
+}
+
+#[test]
+fn grpc_h3_server_transport_config_sets_liveness_window() {
+    let config = h3_server_transport_config().expect("H3 server transport config");
+    let debug = format!("{config:?}");
+
+    assert!(
+        debug.contains("keep_alive_interval: Some(10s)"),
+        "H3 server keepalive should stay below Session heartbeat interval: {debug}"
+    );
+    assert!(
+        debug.contains("max_idle_timeout: Some(40000)"),
+        "H3 server idle timeout should exceed client read deadline: {debug}"
     );
 }
 

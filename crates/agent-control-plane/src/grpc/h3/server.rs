@@ -1,12 +1,14 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tonic_h3::quinn::H3QuinnAcceptor;
 use tonic_h3::quinn::h3_quinn::Endpoint;
 use tonic_h3::quinn::h3_quinn::quinn::{
-    ServerConfig, VarInt, crypto::rustls::QuicServerConfig, rustls as quinn_rustls,
+    IdleTimeout, ServerConfig, TransportConfig, VarInt, crypto::rustls::QuicServerConfig,
+    rustls as quinn_rustls,
 };
 
 use crate::control_plane::ControlPlane;
@@ -15,6 +17,9 @@ use crate::grpc::proto::looper_realtime_server::LooperRealtimeServer;
 
 use super::certificate::load_or_create_h3_certificate;
 use super::{GRPC_H3_LISTEN_ENV, GrpcH3Certificate, H3_ALPN, SpawnedGrpcH3Server};
+
+const H3_QUIC_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const H3_QUIC_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(40);
 
 pub fn default_h3_listen_address(h2_listen_address: SocketAddr) -> Result<SocketAddr> {
     h3_listen_address_from_env_value(
@@ -64,7 +69,23 @@ fn h3_server_config(certificate: &GrpcH3Certificate) -> Result<ServerConfig> {
     let tls_config = h3_tls_server_config(certificate)?;
     let quic_crypto = QuicServerConfig::try_from(Arc::new(tls_config))
         .map_err(|error| anyhow!("configure H3 QUIC TLS: {error:?}"))?;
-    Ok(ServerConfig::with_crypto(Arc::new(quic_crypto)))
+    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_crypto));
+    server_config.transport_config(Arc::new(h3_server_transport_config()?));
+    Ok(server_config)
+}
+
+pub(super) fn h3_server_transport_config() -> Result<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    // The Session service sends application heartbeats every 15s and the client
+    // read deadline is 20s. A 10s QUIC ping keeps NAT state warm before the app
+    // heartbeat is due, while a 40s QUIC idle timeout lets the app-level deadline
+    // classify missing frames before Quinn tears down the connection.
+    transport_config.keep_alive_interval(Some(H3_QUIC_KEEP_ALIVE_INTERVAL));
+    transport_config.max_idle_timeout(Some(
+        IdleTimeout::try_from(H3_QUIC_MAX_IDLE_TIMEOUT)
+            .context("configure H3 QUIC idle timeout")?,
+    ));
+    Ok(transport_config)
 }
 
 pub(super) fn h3_tls_server_config(
