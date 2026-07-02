@@ -2344,12 +2344,8 @@ mod tests {
     #[test]
     fn apply_metadata_keeps_prefixed_authorization_single_prefixed() {
         let mut metadata = tonic::metadata::MetadataMap::new();
-        apply_metadata(
-            &mut metadata,
-            "Bearer pairing-id.pairing-token".to_owned(),
-            String::new(),
-        )
-        .expect("metadata");
+        apply_metadata(&mut metadata, "Bearer pairing-id.pairing-token", "")
+            .expect("metadata");
 
         assert_eq!(
             metadata
@@ -3574,6 +3570,8 @@ mod tests {
             });
             Ok(tonic::Response::new(ReceiverStream::new(receiver)))
         }
+
+        impl_unimplemented_unary_commands_lowered!();
     }
 
     async fn reserve_dead_udp_url() -> String {
