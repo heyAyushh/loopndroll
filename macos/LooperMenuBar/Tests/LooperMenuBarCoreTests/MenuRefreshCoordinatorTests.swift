@@ -233,6 +233,25 @@ struct MenuRefreshCoordinatorTests {
         #expect(readiness.provenReachableHandoffBaseURL == nil)
         #expect(readiness.mobileStatusTitle == "Session-proven")
         #expect(readiness.routeStatusTitle == "Session-proven: Tailscale: 100.119.200.69")
+        #expect(readiness.focusAssistedHandoffBaseURL == nil)
+    }
+
+    @Test("fresh HTTP health can provide manual Handoff URL without ambient readiness")
+    func freshHTTPHealthCanProvideManualHandoffURLWithoutAmbientReadiness() throws {
+        let recordedAt = Date()
+        var readiness = MobileRouteReadinessState()
+
+        readiness.applyHTTPHealth(
+            MenuRefreshRecordingClient.mobileHealth(),
+            refreshGeneration: readiness.generation,
+            recordedAt: recordedAt
+        )
+
+        #expect(!readiness.hasLiveRouteProof)
+        #expect(!readiness.supportsNativeHandoff)
+        #expect(readiness.provenReachableHandoffBaseURL(now: recordedAt) == nil)
+        #expect(readiness.focusAssistedHandoffBaseURL(now: recordedAt)?.absoluteString == "http://192.168.1.4:8765")
+        #expect(readiness.mobileStatusTitle == "Local cache: Session proof unavailable")
     }
 
     @Test("stale HTTP health cannot prove iPhone handoff readiness")

@@ -48,6 +48,7 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>dev.looper.app.continue-session</string>
+		<string>NSUserActivityTypeBrowsingWeb</string>
 	</array>
 	<key>NSBonjourServices</key>
 	<array>

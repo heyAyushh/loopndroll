@@ -71,6 +71,9 @@ struct LooperApp: App {
                 .onContinueUserActivity(LooperContinuationActivity.activityType) { activity in
                     handleContinuationActivity(activity)
                 }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    handleContinuationActivity(activity)
+                }
                 .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     handleContinuationActivity(activity)
                 }

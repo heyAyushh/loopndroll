@@ -26,7 +26,9 @@ enum LooperContinuationActivity {
     }
 
     static func isSupportedActivityType(_ activityType: String) -> Bool {
-        activityType == Self.activityType || activityType == CSSearchableItemActionType
+        activityType == Self.activityType ||
+            activityType == NSUserActivityTypeBrowsingWeb ||
+            activityType == CSSearchableItemActionType
     }
 
     static func appEntityIdentifier(
@@ -128,7 +130,9 @@ enum LooperContinuationActivity {
     }
 
     static func baseURL(from activity: NSUserActivity) -> URL? {
-        guard activity.activityType == activityType else {
+        guard activity.activityType == activityType ||
+              activity.activityType == NSUserActivityTypeBrowsingWeb
+        else {
             return nil
         }
 

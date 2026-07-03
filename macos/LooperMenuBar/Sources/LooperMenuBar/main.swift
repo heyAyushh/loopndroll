@@ -83,6 +83,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
   private var sessionMiniSyncTask: Task<Void, Never>?
   private var sessionMiniSyncGeneration = 0
   private var mobileRouteReadiness = MobileRouteReadinessState()
+  private var lastFreshHandoffBaseURL: URL?
   private var mobileHealth: MobileHealthResponse? {
     mobileRouteReadiness.health
   }
@@ -286,10 +287,10 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     }
   }
 
-  private func refreshContinuationActivity() async {
+  private func refreshContinuationActivity(handoffBaseURL: URL? = nil) async {
     let sessionMiniSnapshot = currentSessionMiniSnapshot()
     if let sessionMiniSnapshot {
-      publishContinuationActivity(from: sessionMiniSnapshot)
+      publishContinuationActivity(from: sessionMiniSnapshot, handoffBaseURL: handoffBaseURL)
     } else {
       continuationPublisher.publishFallbackIfIdle(
         LooperContinuationActivityBuilder.genericDescriptor())
@@ -308,22 +309,32 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     publishContinuationActivity(from: snapshot)
   }
 
-  private func publishContinuationActivity(from snapshot: MenuBarSessionMiniLocalSnapshot) {
+  private func publishContinuationActivity(
+    from snapshot: MenuBarSessionMiniLocalSnapshot,
+    handoffBaseURL: URL? = nil
+  ) {
     continuationPublisher.publish(
       LooperContinuationActivityBuilder.descriptor(
         from: snapshot,
-        handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
+        handoffBaseURL: handoffBaseURL ?? currentHandoffBaseURL()
       )
     )
   }
 
-  private func publishContinuationActivity(from snapshot: DesktopSnapshotResponse) {
+  private func publishContinuationActivity(
+    from snapshot: DesktopSnapshotResponse,
+    handoffBaseURL: URL? = nil
+  ) {
     continuationPublisher.publish(
       LooperContinuationActivityBuilder.descriptor(
         from: snapshot,
-        handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
+        handoffBaseURL: handoffBaseURL ?? currentHandoffBaseURL()
       )
     )
+  }
+
+  private func currentHandoffBaseURL() -> URL? {
+    mobileRouteReadiness.focusAssistedHandoffBaseURL ?? lastFreshHandoffBaseURL
   }
 
   private func updateMobileHealth(
@@ -335,6 +346,9 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
       refreshGeneration: routeReadinessGeneration,
       recordedAt: Date()
     )
+    if let handoffBaseURL = mobileRouteReadiness.focusAssistedHandoffBaseURL {
+      lastFreshHandoffBaseURL = handoffBaseURL
+    }
     continuationPublisher.isHandoffSupported = mobileRouteReadiness.supportsNativeHandoff
   }
 
@@ -979,7 +993,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
     storePrimaryMenuState.applySessionMiniSnapshot(snapshot)
     continuationStorePublisher.schedulePublish(
       from: snapshot,
-      handoffBaseURL: mobileRouteReadiness.provenReachableHandoffBaseURL
+      handoffBaseURL: currentHandoffBaseURL()
     )
     sessionMiniMenuRebuildDebouncer.scheduleRebuild(from: snapshot)
     Task { @MainActor [weak self] in
@@ -1773,8 +1787,27 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
   private func handleHandoffHotkey() {
     Task {
-      await refreshContinuationActivity()
-      continuationPublisher.requestFocusAssistedActivation()
+      let sessionMiniSnapshot = currentSessionMiniSnapshot()
+      let outcome = await performMenuRefresh(
+        force: true,
+        preRefreshSessionMiniSnapshot: sessionMiniSnapshot
+      )
+      let handoffBaseURL = currentHandoffBaseURL()
+      let descriptor: LooperContinuationActivityDescriptor
+      if let latestSessionMiniSnapshot = outcome.latestSessionMiniSnapshot {
+        descriptor = LooperContinuationActivityBuilder.descriptor(
+          from: latestSessionMiniSnapshot,
+          handoffBaseURL: handoffBaseURL
+        )
+      } else if let snapshot = outcome.result.snapshot {
+        descriptor = LooperContinuationActivityBuilder.descriptor(
+          from: snapshot,
+          handoffBaseURL: handoffBaseURL
+        )
+      } else {
+        descriptor = LooperContinuationActivityBuilder.genericDescriptor()
+      }
+      continuationPublisher.publishFocusAssisted(descriptor)
     }
   }
 
@@ -2023,6 +2056,7 @@ private final class LooperMenuBarAppDelegate: NSObject, NSApplicationDelegate, N
 
     mobileRoutePreference = preference
     mobileRouteReadiness.invalidateForRouteSwitch(preference: preference)
+    lastFreshHandoffBaseURL = nil
     continuationPublisher.isHandoffSupported = false
     replaceMenu(snapshot: nil, sessionMiniSnapshot: currentSessionMiniSnapshot(), error: nil)
     Task {

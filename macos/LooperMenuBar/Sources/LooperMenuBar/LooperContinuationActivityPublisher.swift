@@ -90,6 +90,22 @@ final class LooperContinuationActivityPublisher {
         return republishCurrentActivity(presentation: .activateApplication)
     }
 
+    @discardableResult
+    func publishFocusAssisted(_ descriptor: LooperContinuationActivityDescriptor) -> Bool {
+        activateFocusAssist(reason: "hotkey")
+
+        currentActivity?.invalidate()
+        let activity = NSUserActivity(activityType: LooperContinuationActivity.activityType)
+        configure(activity, with: descriptor)
+        activityOwner.publish(activity, descriptor: descriptor, presentation: .activateApplication)
+        logPublishedActivity(activity, descriptor: descriptor, presentation: .activateApplication)
+
+        currentActivity = activity
+        currentDescriptor = descriptor
+        startCurrentActivityRefreshLoop()
+        return true
+    }
+
     func attachHost(_ host: NSResponder?) {
         activityOwner.attachStatusHost(host)
         logger.info("handoff host attached host=\(self.hostClassName(for: host), privacy: .public)")
@@ -302,15 +318,12 @@ final class LooperContinuationActivityPublisher {
         if activity.persistentIdentifier != Self.persistentActivityIdentifier {
             activity.persistentIdentifier = Self.persistentActivityIdentifier
         }
-        activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = descriptor.webpageURL
+        applyLooperContinuationPayload(activity, descriptor: descriptor)
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
         activity.keywords = activityKeywords(for: descriptor)
         activity.contentAttributeSet = contentAttributeSet(for: descriptor)
-        activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
     }
 
     private func logPublishedActivity(
@@ -321,6 +334,7 @@ final class LooperContinuationActivityPublisher {
         let kind = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.kind] ?? Logging.missingValue
         let sessionID = descriptor.userInfo[LooperContinuationActivity.UserInfoKey.sessionID] ?? Logging.missingValue
         let activityTarget = activity.targetContentIdentifier ?? Logging.missingValue
+        let webpageURL = activity.webpageURL?.absoluteString ?? Logging.missingValue
         let supported = isHandoffSupported ? "true" : "false"
         logger.info(
             """
@@ -331,7 +345,8 @@ final class LooperContinuationActivityPublisher {
             presentation=\(presentation.logName, privacy: .public) \
             current=\(presentation.publishesCurrentHandoffLogValue, privacy: .public) \
             activityTarget=\(activityTarget, privacy: .public) \
-            sessionTarget=\(descriptor.targetContentIdentifier, privacy: .public)
+            sessionTarget=\(descriptor.targetContentIdentifier, privacy: .public) \
+            webpageURL=\(webpageURL, privacy: .public)
             """
         )
     }
@@ -610,10 +625,7 @@ private final class LooperContinuationActivityPanelOwner {
         _ activity: NSUserActivity,
         with descriptor: LooperContinuationActivityDescriptor
     ) {
-        activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
-        activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = descriptor.webpageURL
+        applyLooperContinuationPayload(activity, descriptor: descriptor)
     }
 
     private func positionPanelInScreen(_ panel: NSWindow) {
@@ -952,10 +964,7 @@ private final class LooperContinuationActivityPanelViewController: NSViewControl
         }
         .filter { !$0.isEmpty }
         .joined(separator: " - ")
-        activity.userInfo = descriptor.userInfo
-        activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
-        activity.targetContentIdentifier = descriptor.targetContentIdentifier
-        activity.webpageURL = descriptor.webpageURL
+        applyLooperContinuationPayload(activity, descriptor: descriptor)
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
@@ -1327,4 +1336,14 @@ private func looperRequiredUserInfoKeys(
             keys.insert(key)
         }
     }
+}
+
+private func applyLooperContinuationPayload(
+    _ activity: NSUserActivity,
+    descriptor: LooperContinuationActivityDescriptor
+) {
+    activity.userInfo = descriptor.userInfo
+    activity.requiredUserInfoKeys = looperRequiredUserInfoKeys(for: descriptor)
+    activity.targetContentIdentifier = descriptor.targetContentIdentifier
+    activity.webpageURL = descriptor.webpageURL
 }

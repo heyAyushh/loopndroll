@@ -83,6 +83,14 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         provenReachableHandoffBaseURL != nil
     }
 
+    public var focusAssistedHandoffBaseURL: URL? {
+        focusAssistedHandoffBaseURL(now: Date())
+    }
+
+    public func focusAssistedHandoffBaseURL(now: Date) -> URL? {
+        provenReachableHandoffBaseURL(now: now) ?? freshHTTPHealthHandoffBaseURL(now: now)
+    }
+
     public var provenReachableHandoffBaseURL: URL? {
         provenReachableHandoffBaseURL(now: Date())
     }
@@ -99,6 +107,17 @@ public struct MobileRouteReadinessState: Equatable, Sendable {
         }
 
         return MobileRouteURLPolicy.canonicalHTTPAPIBaseURL(for: provenRealtimeEndpoint)
+    }
+
+    private func freshHTTPHealthHandoffBaseURL(now: Date) -> URL? {
+        guard health?.ok == true,
+              health?.requiresAuthentication == true,
+              isHTTPHealthFresh(now: now)
+        else {
+            return nil
+        }
+
+        return health?.preferredReachableHandoffBaseURL
     }
 
     public var mobileStatusTitle: String {
