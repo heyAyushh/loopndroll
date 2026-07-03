@@ -78,6 +78,18 @@ final class LooperCompanionControlFlowUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    // Temporary visual harness: taps through every assistant surface with pauses so a
+    // screen recording can capture the Mail-style picker transition. Not part of the gate.
+    func testMailStylePickerAnimationDemo() throws {
+        launchApp()
+        XCTAssertTrue(pollForText("Sessions", timeout: 10))
+        sleep(2)
+        for surfaceID in ["claude-code", "devin", "grok-build", "zed", "codex", "claude-code"] {
+            tapAssistantSurface(surfaceID)
+            sleep(1)
+        }
+    }
+
     func testOnboardingControlsReachMainApp() throws {
         launchApp(showOnboarding: true)
 

@@ -35,57 +35,87 @@ struct AssistantClientGlyph: View {
 }
 
 private struct CodexLogoMark: View {
+    var tintOverride: Color? = nil
+
     var body: some View {
         CompanionCachedImage(
             asset: .codexLogo,
+            renderingMode: tintOverride == nil ? nil : .template,
             fallbackSystemImage: "terminal"
         )
         .scaledToFit()
+        .foregroundStyle(tintOverride ?? .primary)
         .accessibilityHidden(true)
     }
 }
 
+/// Mail-style category picker (iOS 18.2 Mail): the selected surface is a solid-color pill with
+/// a white mark and label that stretches to fill the remaining row width, while unselected
+/// surfaces sit as gray icon-only rounded squares. Metrics mirror Mail's category bar.
 struct AssistantSurfacePicker: View {
     @Binding var selection: CompanionAssistantSurface
     var isDisabled = false
 
+    /// Drives the pill expand/collapse animation locally so the surrounding session list
+    /// (which reloads on `selection` changes with animations disabled) never animates.
+    @State private var visualSelection: CompanionAssistantSurface?
+
+    private var highlightedSurface: CompanionAssistantSurface {
+        visualSelection ?? selection
+    }
+
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
-                    ForEach(CompanionAssistantSurface.allCases) { surface in
-                        Button {
-                            select(surface)
-                        } label: {
-                            AssistantSurfacePickerItem(
-                                surface: surface,
-                                isSelected: selection == surface
-                            )
+        GeometryReader { geometry in
+            ScrollViewReader { scrollProxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: AssistantSurfacePickerMetrics.itemSpacing) {
+                        ForEach(CompanionAssistantSurface.allCases) { surface in
+                            Button {
+                                select(surface)
+                            } label: {
+                                AssistantSurfacePickerItem(
+                                    surface: surface,
+                                    isSelected: highlightedSurface == surface
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isDisabled)
+                            .id(surface.id)
+                            .accessibilityLabel(surface.displayTitle)
+                            .accessibilityIdentifier("assistant.surface.\(surface.rawValue)")
+                            .accessibilityAddTraits(highlightedSurface == surface ? .isSelected : [])
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isDisabled)
-                        .id(surface.id)
-                        .accessibilityLabel(surface.displayTitle)
-                        .accessibilityIdentifier("assistant.surface.\(surface.rawValue)")
-                        .accessibilityAddTraits(selection == surface ? .isSelected : [])
+                    }
+                    .frame(minWidth: geometry.size.width)
+                }
+                .onChange(of: selection) { _, selectedSurface in
+                    withAnimation(AssistantSurfacePickerMetrics.selectionAnimation) {
+                        visualSelection = selectedSurface
+                        scrollProxy.scrollTo(selectedSurface.id, anchor: .center)
                     }
                 }
-                .padding(.vertical, AssistantSurfacePickerMetrics.verticalPadding)
-            }
-            .frame(height: AssistantSurfacePickerMetrics.controlHeight)
-            .onChange(of: selection) { _, selectedSurface in
-                scrollProxy.scrollTo(selectedSurface.id, anchor: .center)
-            }
-            .onAppear {
-                scrollProxy.scrollTo(selection.id, anchor: .center)
+                .onAppear {
+                    scrollProxy.scrollTo(selection.id, anchor: .center)
+                }
             }
         }
+        .frame(height: AssistantSurfacePickerMetrics.barHeight)
+        .animation(AssistantSurfacePickerMetrics.selectionAnimation, value: highlightedSurface)
         .disabled(isDisabled)
         .accessibilityLabel("Assistant")
         .accessibilityIdentifier("assistant.surface.picker")
     }
 
     private func select(_ surface: CompanionAssistantSurface) {
+        guard surface != highlightedSurface else {
+            return
+        }
+
+        Haptics.selectionChanged()
+        withAnimation(AssistantSurfacePickerMetrics.selectionAnimation) {
+            visualSelection = surface
+        }
+
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -100,61 +130,103 @@ private struct AssistantSurfacePickerItem: View {
 
     var body: some View {
         HStack(spacing: AssistantSurfacePickerMetrics.contentSpacing) {
-            AssistantSurfaceLogoMark(surface: surface)
-                .frame(
-                    width: AssistantSurfacePickerMetrics.iconSize,
-                    height: AssistantSurfacePickerMetrics.iconSize
-                )
+            AssistantSurfaceLogoMark(
+                surface: surface,
+                tintOverride: isSelected
+                    ? .white
+                    : AssistantSurfacePickerMetrics.unselectedMarkColor
+            )
+            .frame(
+                width: AssistantSurfacePickerMetrics.iconSize,
+                height: AssistantSurfacePickerMetrics.iconSize
+            )
 
-            Text(surface.displayTitle)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
+            if isSelected {
+                Text(surface.compactTitle)
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+            }
         }
-        .padding(.horizontal, AssistantSurfacePickerMetrics.horizontalPadding)
-        .frame(height: AssistantSurfacePickerMetrics.height)
-        .background(
-            Capsule()
-                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+        .frame(maxHeight: .infinity)
+        .frame(maxWidth: isSelected ? .infinity : nil)
+        .padding(
+            .horizontal,
+            isSelected
+                ? AssistantSurfacePickerMetrics.selectedHorizontalPadding
+                : AssistantSurfacePickerMetrics.unselectedHorizontalPadding
         )
-        .overlay {
-            Capsule()
-                .strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(0.18))
+        .foregroundStyle(isSelected ? Color.white : AssistantSurfacePickerMetrics.unselectedMarkColor)
+        .background(
+            isSelected
+                ? AssistantSurfaceTintPalette.tint(for: surface)
+                : Color(.tertiarySystemFill)
+        )
+        .clipShape(.rect(
+            cornerRadius: AssistantSurfacePickerMetrics.cornerRadius,
+            style: .continuous
+        ))
+    }
+}
+
+/// Per-surface accent colors, in the spirit of Mail's per-category tints.
+private enum AssistantSurfaceTintPalette {
+    static func tint(for surface: CompanionAssistantSurface) -> Color {
+        switch surface {
+        case .codex:
+            return .teal
+        case .claudeCode:
+            return ClaudeLogoPalette.mark
+        case .devin:
+            return .blue
+        case .grokBuild:
+            return Color(red: 0.35, green: 0.37, blue: 0.41)
+        case .zed:
+            return .indigo
         }
-        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
     }
 }
 
 struct AssistantSurfaceLogoMark: View {
     let surface: CompanionAssistantSurface
+    /// Renders the mark as a single-color silhouette (Mail-style pill content)
+    /// instead of the brand colors.
+    var tintOverride: Color? = nil
 
     var body: some View {
         switch surface {
         case .codex:
-            CodexLogoMark()
+            CodexLogoMark(tintOverride: tintOverride)
         case .claudeCode:
-            ClaudeLogoMark()
+            ClaudeLogoMark(tintOverride: tintOverride)
         case .devin:
-            DevinLogoMark()
+            DevinLogoMark(tintOverride: tintOverride)
         case .grokBuild:
-            GrokLogoMark()
+            GrokLogoMark(tintOverride: tintOverride)
         case .zed:
-            ZedLogoMark()
+            ZedLogoMark(tintOverride: tintOverride)
         }
     }
 }
 
 private struct ZedLogoMark: View {
+    var tintOverride: Color? = nil
+
     var body: some View {
         CompanionCachedImage(
-            asset: .zedLogo,
+            asset: tintOverride == nil ? .zedLogo : .zedGlyph,
+            renderingMode: tintOverride == nil ? nil : .template,
             fallbackSystemImage: "bolt.square"
         )
             .scaledToFit()
+            .foregroundStyle(tintOverride ?? .primary)
             .aspectRatio(1, contentMode: .fit)
     }
 }
 
 private struct GrokLogoMark: View {
+    var tintOverride: Color? = nil
+
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -170,6 +242,10 @@ private struct GrokLogoMark: View {
     }
 
     private var tintColor: Color {
+        if let tintOverride {
+            return tintOverride
+        }
+
         switch colorScheme {
         case .dark:
             return GrokLogoPalette.darkModeTint
@@ -182,6 +258,8 @@ private struct GrokLogoMark: View {
 }
 
 private struct DevinLogoMark: View {
+    var tintOverride: Color? = nil
+
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -196,6 +274,10 @@ private struct DevinLogoMark: View {
     }
 
     private var tintColor: Color {
+        if let tintOverride {
+            return tintOverride
+        }
+
         switch colorScheme {
         case .dark:
             return DevinLogoPalette.darkModeTint
@@ -208,9 +290,11 @@ private struct DevinLogoMark: View {
 }
 
 private struct ClaudeLogoMark: View {
+    var tintOverride: Color? = nil
+
     var body: some View {
         ClaudeLogoShape()
-            .fill(ClaudeLogoPalette.mark)
+            .fill(tintOverride ?? ClaudeLogoPalette.mark)
             .aspectRatio(1, contentMode: .fit)
     }
 }
@@ -229,14 +313,20 @@ private struct ClaudeLogoShape: Shape {
     }
 }
 
+/// Mirrors the iOS 18.2+ Mail category bar: continuous rounded-rect chips (not capsules),
+/// icon-only gray chips for unselected categories, a solid tinted pill that stretches into
+/// the leftover row width for the selection, `.bouncy` animation on the whole bar, and a
+/// horizontally scrolling row that overflows offscreen exactly like Mail's.
 private enum AssistantSurfacePickerMetrics {
-    static let itemSpacing: CGFloat = 6
-    static let contentSpacing: CGFloat = 5
-    static let verticalPadding: CGFloat = 2
-    static let horizontalPadding: CGFloat = 9
-    static let height: CGFloat = 32
-    static let controlHeight = height + verticalPadding * 2
-    static let iconSize: CGFloat = 18
+    static let barHeight: CGFloat = 40
+    static let cornerRadius: CGFloat = 14
+    static let itemSpacing: CGFloat = 8
+    static let contentSpacing: CGFloat = 6
+    static let selectedHorizontalPadding: CGFloat = 14
+    static let unselectedHorizontalPadding: CGFloat = 20
+    static let iconSize: CGFloat = 20
+    static let unselectedMarkColor = Color(.systemGray)
+    static let selectionAnimation = Animation.bouncy
 }
 
 private enum DevinLogoPalette {

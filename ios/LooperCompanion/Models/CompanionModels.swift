@@ -1124,6 +1124,23 @@ enum CompanionAssistantSurface: String, Codable, CaseIterable, Identifiable, Sen
             return "Zed"
         }
     }
+
+    /// Short single-word label for space-constrained controls
+    /// (the Mail-style surface picker pill).
+    var compactTitle: String {
+        switch self {
+        case .codex:
+            return "Codex"
+        case .claudeCode:
+            return "Claude"
+        case .devin:
+            return "Devin"
+        case .grokBuild:
+            return "Grok"
+        case .zed:
+            return "Zed"
+        }
+    }
 }
 
 extension CompanionAssistantSurface {

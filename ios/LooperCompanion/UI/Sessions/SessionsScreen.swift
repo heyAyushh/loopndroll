@@ -6,6 +6,15 @@ private enum AssistantSurfaceControlMetrics {
     static let controlTopPadding: CGFloat = 6
 }
 
+/// Mail-style swipe-between-categories: a horizontal swipe on the session list moves to the
+/// adjacent assistant surface. Thresholds keep vertical scrolling and row taps unaffected.
+private enum AssistantSurfaceSwipeMetrics {
+    static let minimumDragDistance: CGFloat = 24
+    static let minimumHorizontalTranslation: CGFloat = 60
+    /// Horizontal movement must dominate vertical movement by this factor to count as a swipe.
+    static let horizontalDominanceRatio: CGFloat = 1.5
+}
+
 private enum SessionConnectionRowMetrics {
     static let horizontalSpacing: CGFloat = 12
     static let statusSpacing: CGFloat = 6
@@ -95,6 +104,10 @@ struct SessionsScreen: View {
             .refreshable {
                 await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: AssistantSurfaceSwipeMetrics.minimumDragDistance)
+                    .onEnded(handleAssistantSurfaceSwipe)
+            )
             .onChange(of: model.pendingOpenSessionID) {
                 openPendingSessionIfNeeded()
             }
@@ -312,6 +325,31 @@ struct SessionsScreen: View {
             )
         )
         navigationPath = path
+    }
+
+    private func handleAssistantSurfaceSwipe(_ value: DragGesture.Value) {
+        let horizontal = value.translation.width
+        let vertical = value.translation.height
+        guard abs(horizontal) >= AssistantSurfaceSwipeMetrics.minimumHorizontalTranslation,
+              abs(horizontal) >= abs(vertical) * AssistantSurfaceSwipeMetrics.horizontalDominanceRatio,
+              model.viewState.canSwitchAssistantSurface
+        else {
+            return
+        }
+
+        let surfaces = CompanionAssistantSurface.allCases
+        guard let currentIndex = surfaces.firstIndex(of: model.viewState.selectedAssistantSurface) else {
+            return
+        }
+
+        // Swiping the content left reveals the next surface on the right, and vice versa.
+        let targetIndex = horizontal < 0 ? currentIndex + 1 : currentIndex - 1
+        guard surfaces.indices.contains(targetIndex) else {
+            return
+        }
+
+        Haptics.selectionChanged()
+        updateAssistantSurface(surfaces[targetIndex])
     }
 
     private func updateAssistantSurface(_ surface: CompanionAssistantSurface) {

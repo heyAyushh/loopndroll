@@ -6,6 +6,9 @@ enum CompanionBundledImage: String, CaseIterable {
     case devinLogo = "DevinLogo"
     case grokLogo = "GrokLogo"
     case zedLogo = "ZedLogo"
+    /// Alpha-only Z mark (unlike `zedLogo`, which is a full app-icon tile)
+    /// so template rendering produces a silhouette instead of a solid square.
+    case zedGlyph = "ZedGlyph"
     case notificationOrb = "notification-orb"
 
     var fileExtension: String? {
@@ -15,7 +18,8 @@ enum CompanionBundledImage: String, CaseIterable {
         case .codexLogo,
              .devinLogo,
              .grokLogo,
-             .zedLogo:
+             .zedLogo,
+             .zedGlyph:
             return nil
         }
     }
