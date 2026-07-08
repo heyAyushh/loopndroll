@@ -279,7 +279,7 @@ struct RootTabView: View {
             "root:active-prepare-start scenePhase=\(String(describing: scenePhase)) onboarding=\(shouldShowOnboarding)"
         )
         await model.prepareForActiveState()
-        await model.reconcileLocalSessionState(reason: .activeScene)
+        model.connection.requestRefresh(.foreground)
         await model.sendLaunchVerificationAlertIfRequested()
 
         // The periodic freshness tick lives in the connection runtime now;

@@ -1470,7 +1470,8 @@ struct CompanionSessionMiniLocalFirstTests {
             sessions: [cachedSession]
         )
 
-        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+        model.connection.requestRefresh(.pullGesture)
+        await model.connection.waitForRefreshRecoveryForTesting()
 
         #expect(model.snapshot?.session(withID: Constants.cachedThreadID)?.title == "Recovered Mini")
         #expect(model.realtimeLatestSeq == 13)
@@ -1499,8 +1500,10 @@ struct CompanionSessionMiniLocalFirstTests {
         )
         model.realtimeStreamIsLive = true
         model.snapshot = nil
+        model.connection.simulateLiveActivityForTesting(latestSeq: 9)
 
-        await model.reconcileLocalSessionState(reason: .fallbackTimer)
+        model.connection.requestRefresh(.watchdog)
+        await model.connection.waitForRefreshRecoveryForTesting()
 
         #expect(model.snapshot == nil)
         #expect(service.loadSnapshotCallCount == 0)
@@ -1849,7 +1852,8 @@ struct CompanionSessionMiniLocalFirstTests {
         model.realtimeLatestSeq = 20
         model.snapshot = freshSnapshot
 
-        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+        model.connection.requestRefresh(.pullGesture)
+        await model.connection.waitForRefreshRecoveryForTesting()
 
         #expect(model.realtimeLatestSeq == 20)
         #expect(model.snapshot?.session(withID: freshSession.id)?.title == "Fresh Mini")
@@ -1928,7 +1932,8 @@ struct CompanionSessionMiniLocalFirstTests {
             surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [freshSession]]
         )
 
-        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+        model.connection.requestRefresh(.pullGesture)
+        await model.connection.waitForRefreshRecoveryForTesting()
 
         #expect(model.viewState.session(withID: sessionID, assistantSurface: .codex)?.title == "Fresh Detail Summary")
         #expect(model.viewState.session(withID: staleExtraSession.id, assistantSurface: .devin)?.title == "Cached Devin Extra")
@@ -2170,7 +2175,8 @@ struct CompanionSessionMiniLocalFirstTests {
         model.realtimeLatestSeq = 20
         model.snapshot = nil
 
-        await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+        model.connection.requestRefresh(.pullGesture)
+        await model.connection.waitForRefreshRecoveryForTesting()
 
         #expect(model.realtimeLatestSeq == 20)
         #expect(model.snapshot == nil)
@@ -2676,14 +2682,6 @@ struct CompanionSessionMiniLocalFirstTests {
         #expect(model.connectionState == .connecting)
         #expect(model.activeConnectionRouteBaseURL == nil)
         #expect(model.realtimeLatestSeq == 15)
-    }
-
-    @Test
-    func testStateMiniRecoveryEmptyResultIsNotApplied() {
-        #expect(!StateMiniRecoveryResult.empty.didApplySnapshot)
-        #expect(!StateMiniRecoveryResult.failed("transport").didApplySnapshot)
-        #expect(!StateMiniRecoveryResult.skipped.didApplySnapshot)
-        #expect(StateMiniRecoveryResult.applied.didApplySnapshot)
     }
 
     @Test

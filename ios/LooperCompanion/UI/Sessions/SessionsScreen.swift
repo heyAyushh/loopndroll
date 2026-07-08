@@ -306,7 +306,7 @@ struct SessionsScreen: View {
             return
         }
 
-        await model.reconcileLocalSessionState(reason: .unlockRecovery)
+        model.handleUnlock()
     }
 
     private func openPendingSessionIfNeeded() {

@@ -13,6 +13,11 @@ struct CompanionConnectionRuntimeCallbacks {
     let applyLiveness: (CompanionSessionMiniLivenessUpdate) -> Void
     let refreshPendingPromptDeliveryState: () -> Void
     let recoverySnapshotArrived: (CompanionRecoveredSessionMiniSnapshot) -> Void
+    /// Replays the local store into the visible snapshot (seq-gated by the
+    /// model). Cheap and offline; used before any background recovery so
+    /// state written by other processes (notification extension) surfaces
+    /// immediately on refresh.
+    let replayLocalStore: (_ reason: String) -> Bool
 }
 
 /// Single owner of the realtime connection: stream supervision with jittered
@@ -186,6 +191,7 @@ final class CompanionConnectionRuntime {
         case manual = "manual"
         case foreground = "foreground"
         case watchdog = "watchdog"
+        case sessionOpen = "session-open"
     }
 
     /// Never blocks on the network: returns immediately when live and fresh,
@@ -205,6 +211,10 @@ final class CompanionConnectionRuntime {
         guard let sessionRuntime else {
             return
         }
+
+        // Local-first: surface anything already in the on-disk store (other
+        // processes write it too) before going near the network.
+        _ = callbacks?.replayLocalStore("refresh-\(trigger.rawValue)")
 
         CompanionDiagnostics.record("refresh:background-recovery trigger=\(trigger.rawValue)")
         refreshRecoveryTask = Task { [weak self] in
@@ -235,6 +245,22 @@ final class CompanionConnectionRuntime {
         }
         apply(.recoveryCompleted(latestSeq: recovered.latestSeq))
         callbacks?.recoverySnapshotArrived(recovered)
+    }
+
+    // MARK: - Testing seams
+
+    /// Drives the machine to live+fresh without a running stream, so tests
+    /// can exercise refresh-skip semantics deterministically.
+    func simulateLiveActivityForTesting(latestSeq: Int64) {
+        apply(.streamUpdate(
+            .liveActivity(latestSeq: latestSeq),
+            streamGeneration: streamGeneration
+        ))
+    }
+
+    /// Awaits the in-flight background refresh recovery, if any.
+    func waitForRefreshRecoveryForTesting() async {
+        await refreshRecoveryTask?.value
     }
 
     // MARK: - Foreground watchdog

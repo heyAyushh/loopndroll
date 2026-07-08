@@ -64,91 +64,6 @@ private enum AssistantSurfaceSelectionFailureReason {
     static let projectionRejected = "projection-rejected"
 }
 
-enum StateMiniRecoveryResult: Equatable {
-    case skipped
-    case applied
-    case empty
-    case failed(String)
-
-    var didApplySnapshot: Bool {
-        if case .applied = self {
-            return true
-        }
-        return false
-    }
-}
-
-private enum StateMiniRecoveryError: LocalizedError {
-    case emptySnapshot
-
-    var errorDescription: String? {
-        switch self {
-        case .emptySnapshot:
-            "Looper did not return a state-mini snapshot."
-        }
-    }
-}
-
-enum CompanionLocalSessionReconcileReason: String {
-    case activeScene = "active-scene"
-    case fallbackTimer = "fallback-timer"
-    case continuationWithoutSession = "continuation-without-session"
-    case sessionOpen = "session-open"
-    case sessionsPullRefresh = "sessions-pull-refresh"
-    case searchPullRefresh = "search-pull-refresh"
-    case manualRefresh = "manual-refresh"
-    case unlockRecovery = "unlock-recovery"
-
-    var shouldReplayCachedSnapshotWhenLoaded: Bool {
-        switch self {
-        case .sessionsPullRefresh,
-             .searchPullRefresh,
-             .manualRefresh:
-            return true
-        case .activeScene,
-             .fallbackTimer,
-             .continuationWithoutSession,
-             .sessionOpen,
-             .unlockRecovery:
-            return false
-        }
-    }
-
-    var shouldRecoverStateMiniSnapshot: Bool {
-        switch self {
-        case .activeScene,
-             .sessionOpen,
-             .sessionsPullRefresh,
-             .searchPullRefresh,
-             .manualRefresh,
-             .unlockRecovery:
-            return true
-        case .fallbackTimer,
-             .continuationWithoutSession:
-            return false
-        }
-    }
-
-    var shouldRecoverStateMiniSnapshotBeforeCachedReplay: Bool {
-        switch self {
-        case .sessionsPullRefresh,
-             .searchPullRefresh,
-             .manualRefresh:
-            return true
-        case .activeScene,
-             .fallbackTimer,
-             .continuationWithoutSession,
-             .sessionOpen,
-             .unlockRecovery:
-            return false
-        }
-    }
-
-    var shouldSkipLocalReplayWhenStreamIsLive: Bool {
-        self == .fallbackTimer
-    }
-}
-
 @MainActor
 @Observable
 final class CompanionAppModel {
@@ -194,7 +109,6 @@ final class CompanionAppModel {
     @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
-    @ObservationIgnored private var didAttemptForegroundSessionMiniRecovery = false
     @ObservationIgnored private var sessionMiniProjectionTask: Task<Void, Never>?
     @ObservationIgnored private var sessionMiniProjectionGeneration: UInt64 = 0
     @ObservationIgnored private var sessionMiniProjectionLatestSeq: Int64 = 0
@@ -253,6 +167,9 @@ final class CompanionAppModel {
                     reason: "refresh-recovery",
                     latestSeq: recovered.latestSeq
                 )
+            },
+            replayLocalStore: { [weak self] reason in
+                self?.restoreCachedSessionMiniSnapshotIfAvailable(reason: reason) ?? false
             }
         ))
 
@@ -647,7 +564,6 @@ final class CompanionAppModel {
         connectionState = .connecting
         pendingOpenSessionID = nil
         errorMessage = nil
-        didAttemptForegroundSessionMiniRecovery = false
 
         if clearsSnapshotCache {
             CompanionSnapshotCache.clear()
@@ -671,7 +587,6 @@ final class CompanionAppModel {
         serverHealth = nil
         reachedBaseURL = nil
         stopSessionRuntimeSyncForRestart()
-        didAttemptForegroundSessionMiniRecovery = false
 
         restartSessionRuntimeSyncForRouteChange()
     }
@@ -837,175 +752,23 @@ final class CompanionAppModel {
     }
 
     func refresh() async {
-        await reconcileLocalSessionState(reason: .manualRefresh)
+        connection.requestRefresh(.manual)
     }
 
-    /// Single linear reconciliation flow. Order of precedence:
-    /// 1. Skip entirely if the realtime stream is already live and this
-    ///    reason doesn't need a local replay on top of it.
-    /// 2. Reasons that must recover the state-mini snapshot before trusting
-    ///    any cached replay (pull-to-refresh style reasons) do that first.
-    /// 3. Otherwise, prefer an already-loaded snapshot; fall back to
-    ///    restoring one from the local cache; finally attempt state-mini
-    ///    recovery as the last resort.
-    ///
-    /// A cached snapshot, once present, always ends the flow via
-    /// `finishWithExistingSnapshot` (mirroring `recoverStateMiniSnapshotIfNeeded`
-    /// in the background) rather than being checked for a second time.
-    func reconcileLocalSessionState(reason: CompanionLocalSessionReconcileReason) async {
+    /// Post-unlock recovery: restart the stream, replay local state, and
+    /// backfill in the background. Never blocks the unlock interaction.
+    func handleUnlock() {
         startSessionRuntimeSyncIfNeeded()
-
-        if reason.shouldSkipLocalReplayWhenStreamIsLive, realtimeStreamIsLive {
-            CompanionDiagnostics.record(
-                "session-mini:local-reconcile-live-skip reason=\(reason.rawValue)"
-            )
-            return
-        }
-
-        if reason.shouldRecoverStateMiniSnapshotBeforeCachedReplay {
-            let recoveryResult = await recoverStateMiniSnapshotIfNeeded(reason: reason)
-            if recoveryResult.didApplySnapshot {
-                return
-            }
-            if snapshotState.hasSnapshot {
-                if reason.shouldReplayCachedSnapshotWhenLoaded,
-                   restoreCachedSessionMiniSnapshotIfAvailable(reason: reason.rawValue) {
-                    CompanionDiagnostics.record(
-                        "session-mini:local-reconcile-applied-after-recovery reason=\(reason.rawValue) result=\(recoveryResult)"
-                    )
-                    return
-                }
-                markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
-                CompanionDiagnostics.record(
-                    "session-mini:local-reconcile-existing-after-recovery reason=\(reason.rawValue) result=\(recoveryResult)"
-                )
-                return
-            }
-        }
-
-        if snapshotState.hasSnapshot, !reason.shouldReplayCachedSnapshotWhenLoaded {
-            await finishWithExistingSnapshot(reason: reason)
-            return
-        }
-
-        if restoreCachedSessionMiniSnapshotIfAvailable(reason: reason.rawValue) {
-            CompanionDiagnostics.record(
-                "session-mini:local-reconcile-applied reason=\(reason.rawValue)"
-            )
-            _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
-            return
-        }
-
-        if (await recoverStateMiniSnapshotIfNeeded(reason: reason)).didApplySnapshot {
-            return
-        }
-
-        CompanionDiagnostics.record(
-            "session-mini:local-reconcile-wait reason=\(reason.rawValue)"
-        )
+        _ = restoreCachedSessionMiniSnapshotIfAvailable(reason: "unlock-recovery")
+        connection.requestRefresh(.foreground)
     }
 
-    private func finishWithExistingSnapshot(reason: CompanionLocalSessionReconcileReason) async {
-        markCachedSnapshotReadyIfNeeded(reason: reason.rawValue)
-        CompanionDiagnostics.record(
-            "session-mini:local-reconcile-existing reason=\(reason.rawValue)"
-        )
-        _ = await recoverStateMiniSnapshotIfNeeded(reason: reason)
-    }
-
-    private func recoverStateMiniSnapshotIfNeeded(
-        reason: CompanionLocalSessionReconcileReason
-    ) async -> StateMiniRecoveryResult {
-        guard reason.shouldRecoverStateMiniSnapshot else {
-            return .skipped
-        }
-        if shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(reason: reason) {
-            CompanionDiagnostics.record(
-                "session-mini:recovery-skip reason=\(reason.rawValue) local-ready"
-            )
-            return .skipped
-        }
-        if reason == .activeScene {
-            guard !didAttemptForegroundSessionMiniRecovery else {
-                return .skipped
-            }
-        }
-        guard let sessionRuntime = connection.sessionRuntime else {
-            let error = HTTPCompanionServiceError.localStoreUnavailable
-            applyStateMiniRecoveryFailure(error, reason: reason)
-            return .failed(error.localizedDescription)
-        }
-
-        if reason == .activeScene {
-            didAttemptForegroundSessionMiniRecovery = true
-        }
-
-        do {
-            guard let recoveredSnapshot = try await sessionRuntime.recoverStateMiniSnapshot() else {
-                CompanionDiagnostics.record(
-                    "session-mini:recovery-empty reason=\(reason.rawValue)"
-                )
-                applyStateMiniRecoveryFailure(StateMiniRecoveryError.emptySnapshot, reason: reason)
-                return .empty
-            }
-            let didApplySnapshot = applyCachedSessionMiniSnapshot(
-                recoveredSnapshot.snapshot,
-                reason: "session-mini-recovery-\(reason.rawValue)",
-                latestSeq: recoveredSnapshot.latestSeq
-            )
-            guard didApplySnapshot else {
-                CompanionDiagnostics.record(
-                    "session-mini:recovery-stale-skip reason=\(reason.rawValue) seq=\(recoveredSnapshot.latestSeq)"
-                )
-                return .skipped
-            }
-            CompanionDiagnostics.record(
-                "session-mini:recovery-applied reason=\(reason.rawValue) sessions=\(recoveredSnapshot.snapshot.sessions.count)"
-            )
-            return .applied
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:recovery-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
-            )
-            applyStateMiniRecoveryFailure(error, reason: reason)
-            return .failed(error.localizedDescription)
-        }
-    }
-
-    private func applyStateMiniRecoveryFailure(
-        _ error: Error,
-        reason: CompanionLocalSessionReconcileReason
-    ) {
-        restoreCachedSessionMiniSnapshotIfAvailable(
-            reason: "session-mini-recovery-failure-\(reason.rawValue)"
-        )
-        applyConnectionFailure(error, suppressErrorWhenSnapshotUsable: true)
-        CompanionDiagnostics.record(
-            "session-mini:recovery-truth-failed reason=\(reason.rawValue) error=\(error.localizedDescription)"
-        )
-    }
-
-    private func shouldSkipStateMiniRecoveryBecauseLocalStateIsReady(
-        reason: CompanionLocalSessionReconcileReason
-    ) -> Bool {
-        guard snapshotState.hasSnapshot else {
-            return false
-        }
-
-        switch reason {
-        case .activeScene:
-            return realtimeStreamIsLive
-        case .sessionsPullRefresh,
-             .searchPullRefresh,
-             .manualRefresh:
-            return false
-        case .sessionOpen,
-             .unlockRecovery:
-            return false
-        case .fallbackTimer,
-             .continuationWithoutSession:
-            return false
-        }
+    /// Local-first open support: replay whatever the local store has so the
+    /// session can render immediately, then refresh in the background.
+    private func ensureLocalSessionStateForOpen(reason: String) {
+        startSessionRuntimeSyncIfNeeded()
+        _ = restoreCachedSessionMiniSnapshotIfAvailable(reason: reason)
+        connection.requestRefresh(.sessionOpen)
     }
 
     private func adoptServerHealthBaseURLsIfNeeded(
@@ -1110,7 +873,7 @@ final class CompanionAppModel {
         guard let sessionID = LooperContinuationActivity.sessionID(from: activity) else {
             CompanionDiagnostics.lifecycle.info("Continuation activity had no session id; reconciling local state")
             CompanionDiagnostics.record("continuation:model-local-reconcile-no-session")
-            await reconcileLocalSessionState(reason: .continuationWithoutSession)
+            ensureLocalSessionStateForOpen(reason: "continuation-without-session")
             return
         }
 
@@ -1161,7 +924,7 @@ final class CompanionAppModel {
 
         CompanionDiagnostics.record("siri-open:pending-session id=\(sessionID)")
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
-            await reconcileLocalSessionState(reason: .sessionOpen)
+            ensureLocalSessionStateForOpen(reason: "siri-open")
         }
 
         if requestedAssistantSurfaceIfAvailable(
@@ -1206,7 +969,7 @@ final class CompanionAppModel {
 
     private func continueFromMacSession(id sessionID: String) async {
         if snapshot == nil || !snapshotState.containsSession(sessionID) {
-            await reconcileLocalSessionState(reason: .sessionOpen)
+            ensureLocalSessionStateForOpen(reason: "continuation")
         }
         _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
         _ = openSessionFromLocalTruth(sessionID, diagnosticPrefix: "continuation")
@@ -1484,13 +1247,13 @@ final class CompanionAppModel {
         switch action {
         case .openSession:
             if snapshot == nil || !snapshotState.containsSession(sessionID) {
-                await reconcileLocalSessionState(reason: .sessionOpen)
+                ensureLocalSessionStateForOpen(reason: "quick-action-open")
             }
             _ = selectAssistantSurfaceContainingSessionIfAvailable(sessionID)
             _ = openSessionFromLocalTruth(sessionID, diagnosticPrefix: "quick-action-open")
         case .continueChat:
             if snapshot == nil {
-                await reconcileLocalSessionState(reason: .sessionOpen)
+                ensureLocalSessionStateForOpen(reason: "quick-action-continue")
             }
             await sendSessionPrompt(snapshot?.globalSettings.defaultPrompt ?? "", to: sessionID)
         case .reply:
