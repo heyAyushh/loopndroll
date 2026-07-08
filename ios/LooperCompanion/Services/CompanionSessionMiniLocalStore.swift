@@ -382,24 +382,27 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         async throws -> CompanionClientCoreMobileSnapshotStreamResult
     {
         let streamUpdate = try await sessionManager.observeMobileSnapshotChange()
-        let stateSnapshot = try? sessionManager.stateSnapshot()
-        Self.recordRuntimeDiagnostics(stateSnapshot, reason: streamUpdate.syncReason)
-        let endpointURL = Self.endpointURL(from: stateSnapshot)
+        let coreStateSnapshot = try? sessionManager.stateSnapshot()
+        Self.recordRuntimeDiagnostics(coreStateSnapshot, reason: streamUpdate.syncReason)
+        let endpointURL = Self.endpointURL(from: coreStateSnapshot)
         return try mobileSnapshotStreamResult(
             from: streamUpdate,
             stateSnapshot: try? localStore.currentStateMiniSnapshot(),
-            endpointURL: endpointURL
+            endpointURL: endpointURL,
+            corePhase: coreStateSnapshot?.phase
         )
     }
 
     func mobileSnapshotStreamResult(
         from streamUpdate: ClientMobileSnapshotStreamUpdate,
         stateSnapshot: ClientLocalStateSnapshot?,
-        endpointURL: URL?
+        endpointURL: URL?,
+        corePhase: ConnectionPhase? = nil
     ) throws -> CompanionClientCoreMobileSnapshotStreamResult {
         let livenessUpdate = Self.livenessUpdate(
             from: streamUpdate,
-            endpointURL: endpointURL
+            endpointURL: endpointURL,
+            corePhase: corePhase
         )
         let textChunk = streamUpdate.hasTextChunk ? streamUpdate.textChunk : nil
         guard streamUpdate.hasSnapshot else {
@@ -450,10 +453,12 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         onTextChunk: @escaping CompanionSessionMiniTextChunkHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async {
-        defer {
-            stopStateMiniStream()
-        }
-
+        // No teardown here: CompanionConnectionRuntime.stopSync is the single
+        // owner of stream teardown (serialized through its pending-stop
+        // chain). A defer-stop from a cancelled supervisor used to fire AFTER
+        // the runtime had already started a replacement stream and abort the
+        // fresh one from behind — observed on device as "connects, then
+        // phase=disconnected two seconds later".
         do {
             try await drainStateMiniSync(
                 onUpdate: onUpdate,
@@ -788,13 +793,23 @@ final class CompanionSessionRuntime: @unchecked Sendable {
 
     private static func livenessUpdate(
         from streamUpdate: ClientMobileSnapshotStreamUpdate,
-        endpointURL: URL?
+        endpointURL: URL?,
+        corePhase: ConnectionPhase?
     ) -> CompanionSessionMiniLivenessUpdate? {
+        // Local echoes (command bookkeeping, cached replays) come through the
+        // same observe channel with the same "delta" reason as server data.
+        // Only the core's connection phase tells them apart — an update
+        // observed while the core is disconnected must not refresh the
+        // freshness clock, or the watchdog keeps skipping recovery for a
+        // stream that is actually dead (observed on device: pill live-fresh,
+        // phase=disconnected, zero recovery attempts). A nil phase (state
+        // snapshot read failed) preserves the reason-only behavior.
+        let coreConnectionIsLive = corePhase.map { $0 == .ready } ?? true
         return CompanionSessionMiniLivenessUpdate(
             reason: streamUpdate.syncReason,
             latestSeq: streamUpdate.latestSeq,
             serverTime: nonEmpty(streamUpdate.serverTime) ?? "",
-            isLive: !streamUpdate.shouldStop && (
+            isLive: !streamUpdate.shouldStop && coreConnectionIsLive && (
                 streamUpdate.syncReason == CompanionSessionMiniSyncReason.delta ||
                     streamUpdate.syncReason == CompanionSessionMiniSyncReason.heartbeat ||
                     streamUpdate.syncReason == CompanionSessionMiniSyncReason.textChunk

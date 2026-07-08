@@ -43,7 +43,7 @@ struct CompanionEnvironment {
                     endpointResolver: {
                         // Warm cache answers without a network round-trip so
                         // gesture-triggered recovery never blocks on health.
-                        await CompanionEndpointPlanCache.shared.endpoints(
+                        let planEndpoints = await CompanionEndpointPlanCache.shared.endpoints(
                             configuredBaseURLs: CompanionConfiguration.uniqueAttemptableBaseURLs(
                                 baseURLs.map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
                             ),
@@ -51,6 +51,28 @@ struct CompanionEnvironment {
                                 try? await service.resolveServerHealth().health
                             }
                         )
+                        if !planEndpoints.isEmpty {
+                            return planEndpoints
+                        }
+                        // Never hand the core an empty candidate list while a
+                        // stored connection exists: an unreachable preferred
+                        // route or failed health fetch must degrade to the
+                        // freshly-read stored base URLs (h2, no pins), not to
+                        // "at least one endpoint is required" and a dead
+                        // stream — observed on device after a Tailscale
+                        // route switch with the VPN off.
+                        let storedFallback = CompanionRealtimeEndpointResolver.endpoints(
+                            configuredBaseURLs: CompanionConfiguration.uniqueAttemptableBaseURLs(
+                                CompanionConfiguration.resolvedBaseURLStrings()
+                                    .map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
+                            )
+                        )
+                        if !storedFallback.isEmpty {
+                            CompanionDiagnostics.record(
+                                "session-runtime:endpoint-fallback-stored count=\(storedFallback.count)"
+                            )
+                        }
+                        return storedFallback
                     }
                 )
             )

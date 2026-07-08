@@ -1988,6 +1988,55 @@ struct CompanionSessionMiniLocalFirstTests {
 
     @MainActor
     @Test
+    func testDisconnectedCorePhaseNeverProvesLiveness() async throws {
+        // Local echo updates (command bookkeeping) arrive with the same
+        // "delta" reason as server data. When the core is disconnected they
+        // must not read as live, or the watchdog skips recovery for a dead
+        // stream (observed on device after a route switch).
+        let runtime = try Self.temporarySessionRuntime(
+            latestSeq: 5,
+            records: [],
+            latestReplies: []
+        )
+        let streamUpdate = ClientMobileSnapshotStreamUpdate(
+            hasSnapshot: false,
+            snapshot: Self.networkSnapshot().clientCoreSnapshot,
+            syncReason: CompanionSessionMiniSyncReason.delta,
+            shouldStop: false,
+            latestSeq: 5,
+            serverTime: "2026-06-24T00:01:00Z",
+            errorDescription: "",
+            debugMessage: "",
+            hasTextChunk: false,
+            textChunk: ClientTextChunk(
+                seq: 0,
+                threadId: "",
+                messageId: "",
+                content: "",
+                isFinal: false,
+                serverTime: ""
+            )
+        )
+
+        let disconnected = try runtime.mobileSnapshotStreamResult(
+            from: streamUpdate,
+            stateSnapshot: runtime.currentStateMiniSnapshot(),
+            endpointURL: nil,
+            corePhase: .disconnected
+        )
+        #expect(disconnected.liveness?.isLive == false)
+
+        let ready = try runtime.mobileSnapshotStreamResult(
+            from: streamUpdate,
+            stateSnapshot: runtime.currentStateMiniSnapshot(),
+            endpointURL: URL(string: "http://127.0.0.1:8766"),
+            corePhase: .ready
+        )
+        #expect(ready.liveness?.isLive == true)
+    }
+
+    @MainActor
+    @Test
     func testRejectedTextChunkUpdateStillIncrementsDetailRevision() async throws {
         let sessionID = "rejected-text-chunk-thread"
         let liveReplyTime = "2026-06-24T00:01:00Z"
