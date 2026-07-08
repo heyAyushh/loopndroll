@@ -33,7 +33,7 @@ const NOTIFICATION_REPLY_MAXIMUM_RETRY_DELAY_NANOSECONDS: u64 = 30_000_000_000;
 const NOTIFICATION_REPLY_BACKOFF_MULTIPLIER: u64 = 2;
 const MOBILE_SETTINGS_ENTITY_ID: &str = "mobile-settings";
 const MAX_LATEST_REPLY_BYTES: usize = 64 * 1024;
-const LOCAL_STORE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
+pub(crate) const LOCAL_STORE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 const LOCAL_STORE_MAX_STALENESS: Duration = Duration::from_secs(2);
 const MAX_STORED_SESSION_DETAIL_BYTES: usize = 2 * 1024 * 1024;
 const LOCAL_STORE_PERSISTER_THREAD_NAME: &str = "looper-client-core-local-store-persister";
@@ -181,6 +181,10 @@ enum StorePersisterCommand {
         StoredPrimaryState,
         mpsc::Sender<Result<(), ClientCoreError>>,
     ),
+    /// Durability barrier. No production caller since stream stop dropped its
+    /// flush (it stalled restarts behind the write queue); tests use it to
+    /// assert coalescing, and Shutdown performs the same drain on Drop.
+    #[cfg_attr(not(test), allow(dead_code))]
     Flush(mpsc::Sender<Result<(), ClientCoreError>>),
     Shutdown(mpsc::Sender<Result<(), ClientCoreError>>),
 }
@@ -1079,7 +1083,13 @@ impl LooperClientCoreLocalStore {
             (state.snapshot(), primary)
         };
         if let Some(primary) = primary {
-            self.persist_primary_now(primary)?;
+            // Retry bookkeeping only: losing an attempt-count bump to a crash
+            // is harmless, so it takes the debounced path. Immediate writes
+            // here serialized the full store once per delivery attempt and
+            // backlogged the single persister thread by tens of seconds
+            // during command bursts (measured 37s on device), stalling every
+            // caller that needed a durability barrier.
+            self.schedule_debounced_persist(StorePersistSnapshot::primary(primary))?;
         }
         Ok(local_snapshot)
     }
@@ -1094,7 +1104,11 @@ impl LooperClientCoreLocalStore {
                 .retain(|command| command.client_mutation_id != client_mutation_id);
             state.primary_state()
         };
-        self.persist_primary_now(primary)
+        // Ack cleanup is bookkeeping, not durability: a crash before the
+        // debounced write lands merely re-sends an already-delivered command,
+        // which the server-side command ledger dedupes. One full-store write
+        // per ack is what built the 37s persister backlog.
+        self.schedule_debounced_persist(StorePersistSnapshot::primary(primary))
     }
 }
 
@@ -1844,6 +1858,54 @@ mod tests {
             .session_detail("thread-main".to_owned())
             .expect("detail");
         assert_eq!(detail.latest_reply.latest_seq, 20);
+    }
+
+    #[test]
+    fn local_store_command_ack_bookkeeping_writes_coalesce() {
+        let path = temp_store_path("ack-bookkeeping-coalesces");
+        let writer = Arc::new(CountingFileWriter::default());
+        let store = LooperClientCoreLocalStore::new_with_test_writer(
+            path.to_string_lossy().into_owned(),
+            writer.clone(),
+        )
+        .expect("store");
+
+        let burst_size = 20;
+        for index in 0..burst_size {
+            store
+                .enqueue_send_prompt_command(
+                    "thread-main".to_owned(),
+                    format!("prompt {index}"),
+                    "codex".to_owned(),
+                    "queue".to_owned(),
+                    format!("mutation-{index}"),
+                )
+                .expect("enqueue prompt");
+        }
+        let writes_after_enqueues = writer.primary_writes();
+
+        for index in 0..burst_size {
+            store
+                .mark_attempted(format!("mutation-{index}"))
+                .expect("mark attempted");
+            store
+                .mark_delivered(format!("mutation-{index}"))
+                .expect("mark delivered");
+        }
+        store.flush().expect("flush coalesced ack writes");
+
+        // 40 bookkeeping mutations (attempt + delivery per command) must
+        // coalesce through the debounced persister instead of writing the
+        // full store once per call — that per-ack write pattern backlogged
+        // the persister by ~37s on device and stalled stream restarts.
+        let bookkeeping_writes = writer.primary_writes() - writes_after_enqueues;
+        assert!(
+            bookkeeping_writes < burst_size,
+            "expected coalesced bookkeeping writes, got {bookkeeping_writes} for {} mutations",
+            burst_size * 2
+        );
+        let snapshot = store.snapshot().expect("snapshot");
+        assert!(snapshot.pending_commands.is_empty());
     }
 
     #[test]

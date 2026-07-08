@@ -87,9 +87,13 @@ impl LooperClientCoreSessionRuntime {
     }
 
     pub fn stop(&self) -> Result<ClientStateSnapshot, ClientCoreError> {
-        let snapshot = self.client_core.stop()?;
-        self.local_store.flush()?;
-        Ok(snapshot)
+        // No flush here: the persister already writes continuously with a
+        // 250ms debounce / 2s max-staleness bound, so stream teardown needs
+        // no durability barrier — and a flush waits FIFO behind every queued
+        // write on the single persister thread, which measured 37s on a real
+        // device during command-ack bursts and stalled every stream restart
+        // behind it.
+        self.client_core.stop()
     }
 
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
@@ -727,6 +731,7 @@ impl From<ClientStateSnapshot> for ClientStateMiniSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_store::LOCAL_STORE_DEBOUNCE_INTERVAL;
     use crate::model::{
         ClientEndpoint, ClientPendingCommandKind, ClientStateMini, ClientTextChunk,
     };
@@ -1566,8 +1571,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_stop_flushes_pending_local_store_detail() {
-        let path = temp_store_path("stop-flushes-local-store-detail");
+    fn runtime_stop_does_not_block_on_local_store_flush() {
+        // stop() used to flush the local store, which waited FIFO behind the
+        // persister queue (measured 37s on device during command-ack bursts)
+        // and stalled every stream restart. Pending writes still land via the
+        // persister's own debounce/staleness deadlines — stop() just must not
+        // wait for them.
+        let path = temp_store_path("stop-does-not-block-on-flush");
         let runtime = LooperClientCoreSessionRuntime::new(path.clone()).expect("runtime");
         runtime
             .local_store
@@ -1581,8 +1591,17 @@ mod tests {
             })
             .expect("text chunk");
 
+        let stop_started_at = std::time::Instant::now();
         runtime.stop().expect("stop runtime");
+        assert!(
+            stop_started_at.elapsed() < LOCAL_STORE_DEBOUNCE_INTERVAL,
+            "stop() must return without waiting on the persister queue"
+        );
 
+        // Dropping the runtime shuts the persister down, which flushes
+        // pending writes — durability comes from the persister lifecycle,
+        // not from stop().
+        drop(runtime);
         let reopened = LooperClientCoreSessionRuntime::new(path).expect("reopened runtime");
         let detail = reopened
             .session_detail("thread-live".to_owned())
