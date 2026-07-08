@@ -198,75 +198,72 @@ extension View {
     }
 }
 
-private enum CompanionThinkingBubbleMetrics {
-    static let dotCount = 3
-    static let dotSize: CGFloat = 4
-    static let dotSpacing: CGFloat = 3
-    static let contentSpacing: CGFloat = 6
-    static let dotPulsePeriod: TimeInterval = 0.9
-    /// Stagger between neighboring dots so they wave instead of blinking
-    /// in unison.
-    static let dotPhaseOffset: TimeInterval = 0.18
-    static let dotMinOpacity: Double = 0.25
+private enum CompanionAIGlowOrbMetrics {
+    static let size: CGFloat = 10
+    /// One full hue rotation of the gradient; slow enough to read as ambient.
+    static let hueRotationPeriod: TimeInterval = 4
+    static let breathePeriod: TimeInterval = 2.2
+    static let breatheMinScale: CGFloat = 0.85
+    static let breatheMinOpacity: Double = 0.7
+    static let glowBlurRadius: CGFloat = 4
+    static let glowOpacity: Double = 0.6
+    /// Apple-Intelligence-flavored ring: cool blue through purple and pink to
+    /// warm orange and back, so the rotation never shows a seam.
+    static let gradientColors: [Color] = [.blue, .purple, .pink, .orange, .blue]
 }
 
-/// Quiet typing indicator for the reply tail: three small pulsing dots and a
-/// shimmering caption, no background — sized to read as a footnote, not a
-/// message bubble. Shown while an agent is working but no fresh text chunk
-/// has landed. Under Reduce Motion the dots hold steady and only the label's
-/// gentle pulse remains (via `companionTextShimmer`'s own fallback).
-struct CompanionThinkingBubble: View {
-    var label: LocalizedStringKey = "Thinking…"
-
+/// A small Apple-Intelligence-style orb: an angular gradient slowly rotating
+/// through the AI palette with a soft glow and a gentle breathe. The ambient
+/// "an agent is working" mark — sized to sit inline with caption text, not to
+/// occupy a row of its own. Under Reduce Motion it renders static.
+struct CompanionAIGlowOrb: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: CompanionThinkingBubbleMetrics.contentSpacing) {
-            dots
-            Text(label)
-                .font(.caption)
-                .companionTextShimmer(active: true)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Looper is thinking")
-    }
-
-    @ViewBuilder
-    private var dots: some View {
         if reduceMotion {
-            dotRow { _ in CompanionThinkingBubbleMetrics.dotMinOpacity }
+            orb(hueAngle: .zero, breathePhase: 1)
         } else {
             TimelineView(.animation) { timeline in
                 let now = timeline.date.timeIntervalSinceReferenceDate
-                dotRow { index in
-                    dotOpacity(at: now, index: index)
-                }
+                let hueTurns = now / CompanionAIGlowOrbMetrics.hueRotationPeriod
+                let breatheWave = (
+                    sin(now / CompanionAIGlowOrbMetrics.breathePeriod * 2 * .pi) + 1
+                ) / 2
+                orb(
+                    hueAngle: .degrees(hueTurns.truncatingRemainder(dividingBy: 1) * 360),
+                    breathePhase: breatheWave
+                )
             }
         }
     }
 
-    private func dotRow(opacity: @escaping (Int) -> Double) -> some View {
-        HStack(spacing: CompanionThinkingBubbleMetrics.dotSpacing) {
-            ForEach(0..<CompanionThinkingBubbleMetrics.dotCount, id: \.self) { index in
+    private func orb(hueAngle: Angle, breathePhase: Double) -> some View {
+        let gradient = AngularGradient(
+            colors: CompanionAIGlowOrbMetrics.gradientColors,
+            center: .center,
+            angle: hueAngle
+        )
+        let scale = CompanionAIGlowOrbMetrics.breatheMinScale
+            + (1 - CompanionAIGlowOrbMetrics.breatheMinScale) * breathePhase
+        let opacity = CompanionAIGlowOrbMetrics.breatheMinOpacity
+            + (1 - CompanionAIGlowOrbMetrics.breatheMinOpacity) * breathePhase
+        return Circle()
+            .fill(gradient)
+            .background(
+                // The glow is the same gradient bleeding past the orb's edge,
+                // not a shadow — matches how the system renders Siri's orb.
                 Circle()
-                    .fill(Color.secondary)
-                    .frame(
-                        width: CompanionThinkingBubbleMetrics.dotSize,
-                        height: CompanionThinkingBubbleMetrics.dotSize
-                    )
-                    .opacity(opacity(index))
-            }
-        }
-    }
-
-    private func dotOpacity(at time: TimeInterval, index: Int) -> Double {
-        let period = CompanionThinkingBubbleMetrics.dotPulsePeriod
-        let phase = (time - Double(index) * CompanionThinkingBubbleMetrics.dotPhaseOffset)
-            .truncatingRemainder(dividingBy: period) / period
-        // Sine wave between min and full opacity, one crest per period.
-        let wave = (sin(phase * 2 * .pi) + 1) / 2
-        let range = 1 - CompanionThinkingBubbleMetrics.dotMinOpacity
-        return CompanionThinkingBubbleMetrics.dotMinOpacity + wave * range
+                    .fill(gradient)
+                    .blur(radius: CompanionAIGlowOrbMetrics.glowBlurRadius)
+                    .opacity(CompanionAIGlowOrbMetrics.glowOpacity)
+            )
+            .frame(
+                width: CompanionAIGlowOrbMetrics.size,
+                height: CompanionAIGlowOrbMetrics.size
+            )
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .accessibilityHidden(true)
     }
 }
 

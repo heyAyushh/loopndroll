@@ -305,46 +305,68 @@ struct SessionDetailScreen: View {
                     .animation(.default, value: latestAssistantReply)
                     .id(SessionDetailScrollAnchor.latestReply)
             }
-            thinkingGapIndicator(presentation, buffer: buffer)
-            if let currentLastMessageAt = presentation.lastMessageAt {
-                Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("session-detail.latest-reply-timestamp")
-            }
+            replyStatusLine(presentation, buffer: buffer)
         } header: {
             assistantReplyHeader(presentation)
         }
     }
 
-    /// "Looper is still working" affordance for the gap between chunks: the
-    /// session is `.active` but `buffer.isStreaming` has gone false because
-    /// no chunk has landed within its liveness window (see
-    /// `StreamingReplyBuffer.isStreaming`). Wrapped in a `TimelineView` so it
-    /// appears/disappears as that liveness window elapses, not only when
-    /// some other state change happens to re-render this screen.
+    /// One caption line carries both jobs: the relative timestamp always,
+    /// and — while the agent is working with no chunk landing (see
+    /// `StreamingReplyBuffer.isStreaming`) — a leading AI orb plus a
+    /// shimmering "Working". No dedicated thinking row eating vertical space.
+    /// Wrapped in a `TimelineView` so the working affordance appears and
+    /// retires as the liveness window elapses, not only when some other
+    /// state change happens to re-render this screen. `isWorkingNow` (not
+    /// raw status) so goal-driven work — codex's common shape — reads the
+    /// same as status-active sessions; the outer gate keeps inactive
+    /// sessions from paying for a TimelineView.
     @ViewBuilder
-    private func thinkingGapIndicator(
+    private func replyStatusLine(
         _ presentation: SessionDetailPresentation,
         buffer: StreamingReplyBuffer
     ) -> some View {
-        // Outer gate keeps inactive sessions from paying for a TimelineView;
-        // isWorkingNow re-evaluates inside it so the indicator retires when
-        // the working window lapses. `isWorkingNow` (not raw status) so
-        // goal-driven work — codex's common shape — shows the same thinking
-        // affordance as status-active sessions.
         if presentation.status == .active || presentation.summary?.hasRunningGoal == true {
             TimelineView(.periodic(
                 from: .now,
                 by: SessionDetailThinkingIndicatorMetrics.livenessPollInterval
             )) { context in
-                if !buffer.isStreaming,
-                   presentation.summary?.isWorkingNow(relativeTo: context.date)
-                       ?? (presentation.status == .active) {
-                    CompanionThinkingBubble()
-                        .padding(.vertical, 4)
-                        .transition(.opacity)
-                }
+                let isWorking = presentation.summary?.isWorkingNow(relativeTo: context.date)
+                    ?? (presentation.status == .active)
+                statusLineContent(
+                    presentation,
+                    showsWorkingMark: isWorking && !buffer.isStreaming
+                )
+            }
+        } else {
+            statusLineContent(presentation, showsWorkingMark: false)
+        }
+    }
+
+    @ViewBuilder
+    private func statusLineContent(
+        _ presentation: SessionDetailPresentation,
+        showsWorkingMark: Bool
+    ) -> some View {
+        HStack(spacing: SessionDetailThinkingIndicatorMetrics.statusLineSpacing) {
+            if showsWorkingMark {
+                CompanionAIGlowOrb()
+                Text("Working")
+                    .font(.caption)
+                    .companionTextShimmer(active: true)
+            }
+            if let currentLastMessageAt = presentation.lastMessageAt {
+                Text(
+                    showsWorkingMark
+                        ? "· \(ModelFormatting.relativeTimestamp(currentLastMessageAt))"
+                        : "Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("session-detail.latest-reply-timestamp")
+            } else if showsWorkingMark {
+                // Working session with no message yet still earns the mark.
+                EmptyView()
             }
         }
     }
@@ -861,6 +883,7 @@ private enum SessionDetailThinkingIndicatorMetrics {
     /// pure function of wall-clock time and would otherwise never re-render
     /// this screen once chunks stop arriving.
     static let livenessPollInterval: TimeInterval = 0.5
+    static let statusLineSpacing: CGFloat = 6
 }
 
 private enum SessionPromptSuggestionLayout {
