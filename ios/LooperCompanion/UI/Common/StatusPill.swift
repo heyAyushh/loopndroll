@@ -6,17 +6,22 @@ struct StatusPill: View {
     let tint: Color
     var systemImage: String?
     var isActive = false
+    /// Shimmers the label text — for statuses that are actively in-progress
+    /// (e.g. reconnecting) so the pill reads as "working", not "stuck".
+    var isShimmering = false
 
     init(
         text: String,
         tint: Color,
         systemImage: String? = nil,
-        isActive: Bool = false
+        isActive: Bool = false,
+        isShimmering: Bool = false
     ) {
         self.text = text
         self.tint = tint
         self.systemImage = systemImage
         self.isActive = isActive
+        self.isShimmering = isShimmering
     }
 
     var body: some View {
@@ -28,6 +33,7 @@ struct StatusPill: View {
             }
 
             Text(text)
+                .companionShimmer(active: isShimmering)
         }
             .font(.caption.weight(.medium))
             .foregroundStyle(tint)

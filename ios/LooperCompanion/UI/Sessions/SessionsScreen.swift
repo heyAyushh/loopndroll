@@ -24,6 +24,14 @@ private enum SessionConnectionRowMetrics {
     static let verticalPadding: CGFloat = 4
 }
 
+private enum SessionsSkeletonMetrics {
+    /// Enough rows to fill a typical phone screen without scrolling.
+    static let rowCount = 6
+    static let rowSpacing: CGFloat = 12
+    static let horizontalPadding: CGFloat = 16
+    static let topPadding: CGFloat = 8
+}
+
 struct SessionsScreen: View {
     let model: CompanionAppModel
     let authenticator: CompanionAppAuthenticator
@@ -130,7 +138,7 @@ struct SessionsScreen: View {
     @ViewBuilder
     private var overlayState: some View {
         if model.isLoading && !model.viewState.hasSnapshot {
-            ProgressView("Loading Looper")
+            skeletonSessionsList
         } else if !hasVisibleSessions {
             ContentUnavailableView(
                 model.viewState.sessionsUnavailableTitle,
@@ -138,6 +146,26 @@ struct SessionsScreen: View {
                 description: Text(model.viewState.sessionsEmptyDescription)
             )
         }
+    }
+
+    /// First-launch loading state: a shimmering stand-in for the sessions
+    /// list rather than a spinner, so the screen reads as "about to fill in"
+    /// instead of "stuck" while the initial snapshot loads.
+    private var skeletonSessionsList: some View {
+        ScrollView {
+            VStack(spacing: SessionsSkeletonMetrics.rowSpacing) {
+                ForEach(0..<SessionsSkeletonMetrics.rowCount, id: \.self) { _ in
+                    CompanionSkeletonSessionRow()
+                        .companionCardRowSurface()
+                }
+            }
+            .padding(.horizontal, SessionsSkeletonMetrics.horizontalPadding)
+            .padding(.top, SessionsSkeletonMetrics.topPadding)
+        }
+        .scrollDisabled(true)
+        .companionListSurface()
+        .background(.background)
+        .accessibilityLabel("Loading sessions")
     }
 
     private var connectionSection: some View {
@@ -155,6 +183,7 @@ struct SessionsScreen: View {
                     statusText: statusPresentation.label,
                     statusTint: CompanionTint.tint(for: statusPresentation.status),
                     statusIsActive: statusPresentation.isActive,
+                    statusIsSyncing: Self.isSyncingStatus(statusPresentation.status),
                     routePresentation: model.viewState.connectionRoutePresentation,
                     openSettings: openSettings,
                     assistantPicker: {
@@ -181,6 +210,13 @@ struct SessionsScreen: View {
                     .foregroundStyle(.red)
             }
         }
+    }
+
+    /// Statuses where the connection is actively working towards `.live`
+    /// rather than settled (up) or stalled (down) — these get the shimmer
+    /// treatment so "syncing" reads as progress, not as stuck.
+    private static func isSyncingStatus(_ status: CompanionConnectionPresentationStatus) -> Bool {
+        status == .reconnecting || status == .connecting
     }
 
     private var assistantPicker: some View {
@@ -374,6 +410,7 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
     let statusText: String
     let statusTint: Color
     let statusIsActive: Bool
+    let statusIsSyncing: Bool
     let routePresentation: CompanionConnectionRoutePresentation?
     let openSettings: () -> Void
     @ViewBuilder let assistantPicker: () -> AssistantPicker
@@ -410,7 +447,8 @@ private struct SessionConnectionRow<AssistantPicker: View>: View {
                             text: statusText,
                             tint: statusTint,
                             systemImage: nil,
-                            isActive: statusIsActive
+                            isActive: statusIsActive,
+                            isShimmering: statusIsSyncing
                         )
 
                         if let routePresentation {

@@ -41,7 +41,9 @@ struct SessionDetailScreen: View {
             List {
                 if presentation.hasResolvedSession {
                     summarySection(presentation)
-                    if presentation.latestAssistantReply != nil || buffer.isStreaming {
+                    if presentation.latestAssistantReply != nil ||
+                        buffer.isStreaming ||
+                        presentation.status == .active {
                         assistantReplySection(presentation)
                     }
                     promptSection(presentation)
@@ -303,6 +305,7 @@ struct SessionDetailScreen: View {
                     .animation(.default, value: latestAssistantReply)
                     .id(SessionDetailScrollAnchor.latestReply)
             }
+            thinkingGapIndicator(presentation, buffer: buffer)
             if let currentLastMessageAt = presentation.lastMessageAt {
                 Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
                     .font(.caption)
@@ -311,6 +314,34 @@ struct SessionDetailScreen: View {
             }
         } header: {
             assistantReplyHeader(presentation)
+        }
+    }
+
+    /// "Looper is still working" affordance for the gap between chunks: the
+    /// session is `.active` but `buffer.isStreaming` has gone false because
+    /// no chunk has landed within its liveness window (see
+    /// `StreamingReplyBuffer.isStreaming`). Wrapped in a `TimelineView` so it
+    /// appears/disappears as that liveness window elapses, not only when
+    /// some other state change happens to re-render this screen.
+    @ViewBuilder
+    private func thinkingGapIndicator(
+        _ presentation: SessionDetailPresentation,
+        buffer: StreamingReplyBuffer
+    ) -> some View {
+        if presentation.status == .active {
+            TimelineView(.periodic(
+                from: .now,
+                by: SessionDetailThinkingIndicatorMetrics.livenessPollInterval
+            )) { _ in
+                if !buffer.isStreaming {
+                    CompanionShimmerLine(
+                        width: SessionDetailThinkingIndicatorMetrics.lineWidth,
+                        height: SessionDetailThinkingIndicatorMetrics.lineHeight
+                    )
+                    .padding(.vertical, 4)
+                    .accessibilityLabel("Looper is thinking")
+                }
+            }
         }
     }
 
@@ -818,6 +849,16 @@ private enum SessionDetailStreamingIndicatorMetrics {
     /// How long the indicator stays on after the last reply change; long
     /// enough to bridge the gap between consecutive text chunks.
     static let linger: Duration = .seconds(3)
+}
+
+private enum SessionDetailThinkingIndicatorMetrics {
+    static let lineWidth: CGFloat = 90
+    static let lineHeight: CGFloat = 12
+    /// How often the "still thinking" check re-evaluates
+    /// `StreamingReplyBuffer.isStreaming`, whose 2s liveness window is a
+    /// pure function of wall-clock time and would otherwise never re-render
+    /// this screen once chunks stop arriving.
+    static let livenessPollInterval: TimeInterval = 0.5
 }
 
 private enum SessionPromptSuggestionLayout {
