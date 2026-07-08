@@ -282,23 +282,20 @@ struct RootTabView: View {
         await model.reconcileLocalSessionState(reason: .activeScene)
         await model.sendLaunchVerificationAlertIfRequested()
 
-        // `refreshTaskID` includes `scenePhase == .active`, so this task is
-        // cancelled and restarted the moment scenePhase leaves `.active`.
-        // The loop body below only ever runs while still active; it does not
-        // need to re-check scenePhase itself.
-        while !Task.isCancelled {
-            try? await Task.sleep(for: CompanionMetrics.autoRefreshInterval)
-
-            guard !Task.isCancelled else {
-                return
+        // The periodic freshness tick lives in the connection runtime now;
+        // this task only switches it on while unlocked-and-active.
+        // `refreshTaskID` includes `scenePhase == .active`, so cancellation
+        // (scene change or lock) switches it back off.
+        model.connection.setAppActive(true)
+        await withTaskCancellationHandler {
+            // Park until cancelled; the watchdog does the ticking.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: CompanionMetrics.autoRefreshInterval)
             }
-
-            guard authenticator.isUnlocked else {
-                CompanionDiagnostics.lifecycle.info("Root refresh loop stopped because app locked")
-                return
+        } onCancel: {
+            Task { @MainActor in
+                model.connection.setAppActive(false)
             }
-
-            await model.reconcileLocalSessionState(reason: .fallbackTimer)
         }
     }
 }

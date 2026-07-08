@@ -40,6 +40,7 @@ final class CompanionConnectionRuntime {
     @ObservationIgnored private var streamGeneration: UInt64 = 0
     @ObservationIgnored private var refreshRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var notificationReplyOutboxDrainTask: Task<Bool, Never>?
+    @ObservationIgnored private var watchdogTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathMonitor: NWPathMonitor?
     @ObservationIgnored private var lastNetworkPathIdentity: String?
 
@@ -234,6 +235,31 @@ final class CompanionConnectionRuntime {
         }
         apply(.recoveryCompleted(latestSeq: recovered.latestSeq))
         callbacks?.recoverySnapshotArrived(recovered)
+    }
+
+    // MARK: - Foreground watchdog
+
+    /// Periodic freshness check while the app is active. Replaces the
+    /// RootTabView fallback-timer loop; each tick is a no-op when the stream
+    /// is live and the seq is current.
+    func setAppActive(_ isActive: Bool) {
+        guard isActive else {
+            watchdogTask?.cancel()
+            watchdogTask = nil
+            return
+        }
+        guard watchdogTask == nil else {
+            return
+        }
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: CompanionMetrics.autoRefreshInterval)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.requestRefresh(.watchdog)
+            }
+        }
     }
 
     // MARK: - Network path
