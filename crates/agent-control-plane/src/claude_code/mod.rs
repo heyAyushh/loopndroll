@@ -217,6 +217,36 @@ fn select_recent_claude_session_candidates(
     selected
 }
 
+/// Stat-only fingerprint (`path:mtime:len` per file) of the most recently
+/// modified Claude transcripts. Never opens the files, so it is cheap enough
+/// for the once-per-second source-change reconciler poll — this is what wakes
+/// the mini projection on mid-turn transcript growth, which the owned hook
+/// events (SessionStart/Stop/UserPromptSubmit) never report.
+pub fn claude_transcript_source_signature(claude_home: &Path, session_limit: usize) -> String {
+    let projects_root = claude_home.join(CLAUDE_PROJECTS_DIR);
+    if !projects_root.is_dir() {
+        return String::new();
+    }
+    let Ok(candidates) = collect_claude_session_candidates(&projects_root, &BTreeSet::new()) else {
+        return String::new();
+    };
+    select_recent_claude_session_candidates(candidates, session_limit)
+        .iter()
+        .map(|candidate| {
+            let len = fs::metadata(&candidate.path)
+                .map(|metadata| metadata.len())
+                .unwrap_or_default();
+            format!(
+                "{}:{}:{}",
+                candidate.path.display(),
+                candidate.modified_at_ms.unwrap_or_default(),
+                len
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 pub fn claude_session_to_desktop_thread(session: &ClaudeSessionRecord) -> DesktopThread {
     let runtime_status = if session.running {
         MOBILE_SESSION_STATUS_ACTIVE
@@ -653,6 +683,47 @@ mod tests {
             sessions[0].assistant_preview.as_deref(),
             Some("Newer Claude response")
         );
+    }
+
+    #[test]
+    fn claude_transcript_source_signature_tracks_transcript_growth() {
+        let temp_dir = tempdir().expect("tempdir");
+        let claude_home = temp_dir.path().join(".claude");
+        let project_dir = claude_home.join("projects").join("-tmp-project");
+        fs::create_dir_all(&project_dir).expect("project dir");
+        let transcript_path = write_claude_transcript(
+            &project_dir,
+            "growing-session",
+            None,
+            "Streaming request",
+            "First reply",
+        );
+
+        let first = claude_transcript_source_signature(&claude_home, 10);
+        assert!(
+            first.contains("growing-session"),
+            "signature should fingerprint the transcript, got {first}"
+        );
+
+        let mut transcript = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript_path)
+            .expect("open transcript");
+        std::io::Write::write_all(
+            &mut transcript,
+            b"{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"grown\"}]}}\n",
+        )
+        .expect("append transcript");
+        drop(transcript);
+
+        let second = claude_transcript_source_signature(&claude_home, 10);
+        assert_ne!(
+            first, second,
+            "mid-turn transcript growth must change the signature"
+        );
+
+        let third = claude_transcript_source_signature(&claude_home, 10);
+        assert_eq!(second, third, "signature must be stable without new writes");
     }
 
     #[test]

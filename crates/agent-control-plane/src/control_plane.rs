@@ -30,9 +30,9 @@ use crate::assistant::{
 use crate::automations::{AutomationSummary, read_automations};
 use crate::claude_code::{
     ClaudeHookOwner, ClaudeHookStatus, ClaudeSessionRecord, claude_session_to_desktop_thread,
-    default_claude_home, discover_claude_sessions_with_processes,
-    discover_recent_claude_sessions_with_processes, inspect_claude_hooks,
-    register_owned_claude_hooks, unregister_owned_claude_hooks,
+    claude_transcript_source_signature, default_claude_home,
+    discover_claude_sessions_with_processes, discover_recent_claude_sessions_with_processes,
+    inspect_claude_hooks, register_owned_claude_hooks, unregister_owned_claude_hooks,
 };
 use crate::codex::{
     CodexServerOwner, CodexServerProcess, ControlPlaneStatus, DiffSummary, HookOwner, LaunchKind,
@@ -353,6 +353,11 @@ struct SessionMiniProjectionSourceSignature {
     // session activity is folded in here so the source-change reconciler wakes for
     // non-codex surfaces too.
     acp_runtime_signature: String,
+    // Claude Code writes only to its own project transcripts (~/.claude/projects),
+    // never the codex state DB, and its owned hooks fire only at turn boundaries —
+    // without this component a claude session's mid-turn growth (and therefore its
+    // live text chunks) would sit invisible until Stop.
+    claude_transcript_signature: String,
 }
 
 struct SessionMiniProjectionReconcilePermit {
@@ -881,6 +886,12 @@ impl ControlPlane {
         content: &str,
         is_final: bool,
     ) {
+        // publish_mobile_text_chunk silently drops oversized content; recording a
+        // cursor for a chunk that never went out would dedupe away every later
+        // update of the same message, so bail before touching the cursor.
+        if content.is_empty() || content.len() > SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES {
+            return;
+        }
         let existing = cursors.get(session_id).cloned();
         let message_id = match &existing {
             Some(cursor) if cursor.is_final && cursor.content != content => {
@@ -1124,6 +1135,10 @@ impl ControlPlane {
             len: metadata.len(),
             transcript_signature: self.session_mini_transcript_source_signature(),
             acp_runtime_signature: self.acp_runtime_source_signature(),
+            claude_transcript_signature: claude_transcript_source_signature(
+                &self.claude_home(),
+                DESKTOP_SNAPSHOT_THREAD_LIMIT,
+            ),
         })
     }
 
