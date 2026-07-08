@@ -166,30 +166,46 @@ struct SessionSearchResults: Sendable {
         archivedSessions: [SessionSummary],
         spotlightResultSessionIDs: [String]
     ) {
+        // One freshness sort (an FFI round-trip into the client core) per
+        // results build; every per-section ordering below reuses the rank map.
+        // Sorting each section separately made every keystroke pay ~7 FFI sorts.
+        let freshnessSortedSessions = allSessions.sortedBySessionFreshness()
+        let freshnessRankByID = Dictionary(
+            freshnessSortedSessions.enumerated().map { ($1.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let spotlightSessionResults = Self.spotlightSessionResults(
-            allSessions: allSessions,
+            freshnessSortedSessions: freshnessSortedSessions,
             spotlightResultSessionIDs: spotlightResultSessionIDs,
             searchText: searchText
         )
-        let localSessionResults = SessionSearchEngine.sessions(allSessions, matching: searchText)
+        let localSessionResults = SessionSearchEngine.sessions(
+            allSessions,
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
+        )
         let spotlightIDs = Set(spotlightSessionResults.map(\.id))
         let filteredAllSessions = spotlightSessionResults +
             localSessionResults.filter { !spotlightIDs.contains($0.id) }
         let filteredNeedsAttentionSessions = SessionSearchEngine.sessions(
             needsAttentionSessions,
-            matching: searchText
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
         )
         let filteredRunningSessions = SessionSearchEngine.sessions(
             runningSessions,
-            matching: searchText
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
         )
         let filteredStoppedSessions = SessionSearchEngine.sessions(
             stoppedSessions,
-            matching: searchText
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
         )
         let filteredArchivedSessions = SessionSearchEngine.sessions(
             archivedSessions,
-            matching: searchText
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
         )
         let filteredQuickActions = SessionSearchEngine.actions(in: .quickActions, for: searchText)
         let filteredDeviceActions = SessionSearchEngine.actions(in: .device, for: searchText)
@@ -301,7 +317,7 @@ struct SessionSearchResults: Sendable {
     }
 
     private static func spotlightSessionResults(
-        allSessions: [SessionSummary],
+        freshnessSortedSessions: [SessionSummary],
         spotlightResultSessionIDs: [String],
         searchText: String
     ) -> [SessionSummary] {
@@ -309,7 +325,7 @@ struct SessionSearchResults: Sendable {
             return []
         }
 
-        let sessionsByID = allSessions.sortedBySessionFreshness().reduce(into: [String: SessionSummary]()) { sessionsByID, session in
+        let sessionsByID = freshnessSortedSessions.reduce(into: [String: SessionSummary]()) { sessionsByID, session in
             if sessionsByID[session.id] != nil {
                 return
             }
@@ -317,14 +333,22 @@ struct SessionSearchResults: Sendable {
             sessionsByID[session.id] = session
         }
         var seenSessionIDs = Set<String>()
-        let sessions = spotlightResultSessionIDs.compactMap { resultID -> SessionSummary? in
+        var matchedSessionIDs = Set<String>()
+        for resultID in spotlightResultSessionIDs {
             let sessionID = LooperSessionEntityIdentifier(rawValue: resultID)?.sessionID ?? resultID
             guard seenSessionIDs.insert(sessionID).inserted else {
-                return nil
+                continue
             }
-            return sessionsByID[sessionID]
+            if sessionsByID[sessionID] != nil {
+                matchedSessionIDs.insert(sessionID)
+            }
         }
-        return sessions.sortedBySessionFreshness()
+        // Input is already freshness-sorted, so filtering preserves the order;
+        // `remove` also dedupes repeated session IDs in the sorted list.
+        var pendingSessionIDs = matchedSessionIDs
+        return freshnessSortedSessions.compactMap { session in
+            pendingSessionIDs.remove(session.id) != nil ? session : nil
+        }
     }
 
     private static func withoutTopResults(
@@ -354,14 +378,24 @@ enum SessionSearchEngine {
 
     static func sessions(
         _ sessions: [SessionSummary],
-        matching searchText: String
+        matching searchText: String,
+        freshnessRankByID: [String: Int]? = nil
     ) -> [SessionSummary] {
-        scoredSessions(sessions, matching: searchText).map(\.session)
+        scoredSessions(
+            sessions,
+            matching: searchText,
+            freshnessRankByID: freshnessRankByID
+        ).map(\.session)
     }
 
+    /// - Parameter freshnessRankByID: precomputed session-id -> freshness rank.
+    ///   When provided, ordering is a cheap in-process sort; when nil, this
+    ///   falls back to `sortedBySessionFreshness()`, which crosses into the
+    ///   client core (FFI) — avoid calling that per section or per keystroke.
     static func scoredSessions(
         _ sessions: [SessionSummary],
-        matching searchText: String
+        matching searchText: String,
+        freshnessRankByID: [String: Int]? = nil
     ) -> [(session: SessionSummary, score: Int)] {
         let query = normalized(searchText)
 
@@ -371,8 +405,16 @@ enum SessionSearchEngine {
             }
         }
 
-        let matches: [ScoredSessionMatch] = sessions
-            .sortedBySessionFreshness()
+        let orderedSessions: [SessionSummary]
+        if let freshnessRankByID {
+            orderedSessions = sessions.sorted { lhs, rhs in
+                (freshnessRankByID[lhs.id] ?? .max) < (freshnessRankByID[rhs.id] ?? .max)
+            }
+        } else {
+            orderedSessions = sessions.sortedBySessionFreshness()
+        }
+
+        let matches: [ScoredSessionMatch] = orderedSessions
             .enumerated()
             .compactMap { freshnessRank, session in
             let score = bestMatchScore(

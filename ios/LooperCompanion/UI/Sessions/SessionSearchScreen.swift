@@ -16,6 +16,9 @@ struct SessionSearchScreen: View {
     @State private var searchPath = NavigationPath()
     @State private var isDeviceHubPresented = false
     @State private var renderedResults = SessionSearchResults.empty
+    /// Recent-query -> best match, precomputed off-main. Scoring every recent
+    /// query against all sessions inside `body` froze search-open on main.
+    @State private var recentSearchMatches: [String: GlobalSearchResult] = [:]
 
     var body: some View {
         NavigationStack(path: $searchPath) {
@@ -53,6 +56,9 @@ struct SessionSearchScreen: View {
             }
             .task(id: searchResultsTaskID) {
                 await updateRenderedSearchResults()
+            }
+            .task(id: recentMatchesTaskID) {
+                await updateRecentSearchMatches()
             }
             .task {
                 await searchService.prepareForSearch()
@@ -160,7 +166,7 @@ struct SessionSearchScreen: View {
         if !recentSearches.isEmpty {
             Section("Recent Searches") {
                 ForEach(recentSearches, id: \.self) { query in
-                    let match = bestRecentSearchResult(for: query)
+                    let match = recentSearchMatches[query]
                     Button {
                         activateRecentSearch(query)
                     } label: {
@@ -336,6 +342,35 @@ struct SessionSearchScreen: View {
         ].joined(separator: "|")
     }
 
+    private var recentMatchesTaskID: String {
+        recentSearchesStorage + "|" + model.viewState.sessionIndexIdentity
+    }
+
+    @MainActor
+    private func updateRecentSearchMatches() async {
+        let queries = recentSearches
+        guard !queries.isEmpty else {
+            recentSearchMatches = [:]
+            return
+        }
+
+        let sessions = model.viewState.allSessions
+        let matches = await Task.detached(priority: .userInitiated) {
+            queries.reduce(into: [String: GlobalSearchResult]()) { matches, query in
+                matches[query] = SessionSearchEngine.bestRecentSearchResult(
+                    for: query,
+                    allSessions: sessions
+                )
+            }
+        }.value
+
+        guard !Task.isCancelled else {
+            return
+        }
+
+        recentSearchMatches = matches
+    }
+
     private var spotlightResultIDs: [String] {
         searchService.searchResults.map(\.uniqueIdentifier)
     }
@@ -498,7 +533,9 @@ struct SessionSearchScreen: View {
     }
 
     private func bestRecentSearchResult(for query: String) -> GlobalSearchResult? {
-        SessionSearchEngine.bestRecentSearchResult(for: query, allSessions: allSessions)
+        // Single-query activation path; prefer the precomputed match.
+        recentSearchMatches[query]
+            ?? SessionSearchEngine.bestRecentSearchResult(for: query, allSessions: allSessions)
     }
 
     private func activateSearchResult(_ result: GlobalSearchResult) {
