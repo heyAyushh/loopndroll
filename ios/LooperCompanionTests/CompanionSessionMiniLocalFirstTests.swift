@@ -783,7 +783,7 @@ struct CompanionSessionMiniLocalFirstTests {
             reason: CompanionSessionMiniSyncReason.delta,
             latestSeq: 11,
             endpointURL: nil,
-            connectionRevision: 0,
+            streamGeneration: 0,
             generation: newerGeneration,
             builtSurface: .codex
         ))
@@ -792,7 +792,7 @@ struct CompanionSessionMiniLocalFirstTests {
             reason: CompanionSessionMiniSyncReason.delta,
             latestSeq: 10,
             endpointURL: nil,
-            connectionRevision: 0,
+            streamGeneration: 0,
             generation: olderGeneration,
             builtSurface: .codex
         ))
@@ -857,7 +857,7 @@ struct CompanionSessionMiniLocalFirstTests {
             reason: CompanionSessionMiniSyncReason.delta,
             latestSeq: 12,
             endpointURL: nil,
-            connectionRevision: 0,
+            streamGeneration: 0,
             generation: generation,
             builtSurface: .codex
         ))
@@ -1676,7 +1676,7 @@ struct CompanionSessionMiniLocalFirstTests {
             endpointURL: route,
             recordedAt: recordedAt
         )
-        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+        let restart = CompanionSessionMiniLivenessUpdate(reason: "runtime-restart", latestSeq: 0, serverTime: "", isLive: false, endpointURL: nil)
         _ = model.applyRealtimeStreamLiveness(
             serverTime: restart.serverTime,
             latestSeq: restart.latestSeq,
@@ -1767,7 +1767,7 @@ struct CompanionSessionMiniLocalFirstTests {
             endpointURL: route
         ))
 
-        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+        let restart = CompanionSessionMiniLivenessUpdate(reason: "runtime-restart", latestSeq: 0, serverTime: "", isLive: false, endpointURL: nil)
         #expect(model.applyRealtimeStreamLiveness(
             serverTime: restart.serverTime,
             latestSeq: restart.latestSeq,
@@ -2104,7 +2104,7 @@ struct CompanionSessionMiniLocalFirstTests {
                 surfaceSessions: [CompanionAssistantSurface.codex.rawValue: [cachedSession]]
             )
         )
-        model.applySessionMiniSyncUpdate(rejectedUpdate, connectionRevision: 0)
+        model.applySessionMiniSyncUpdate(rejectedUpdate, streamGeneration: 0)
         await model.waitForPendingSessionMiniProjectionForTesting()
 
         #expect(model.sessionDetailRevision == initialRevision + 1)
@@ -2626,7 +2626,7 @@ struct CompanionSessionMiniLocalFirstTests {
     @MainActor
     @Test
     func testStreamRestartLivenessDoesNotReplayLocalSnapshot() {
-        let restart = CompanionSessionMiniController.restartLivenessUpdate()
+        let restart = CompanionSessionMiniLivenessUpdate(reason: "runtime-restart", latestSeq: 0, serverTime: "", isLive: false, endpointURL: nil)
 
         #expect(restart.reason == "runtime-restart")
         #expect(restart.latestSeq == 0)
@@ -2663,7 +2663,7 @@ struct CompanionSessionMiniLocalFirstTests {
             endpointURL: route
         ))
 
-        let unavailable = CompanionSessionMiniController.runtimeUnavailableLivenessUpdate()
+        let unavailable = CompanionSessionMiniLivenessUpdate(reason: "runtime-unavailable", latestSeq: 0, serverTime: "", isLive: false, endpointURL: nil)
         #expect(model.applyRealtimeStreamLiveness(
             serverTime: unavailable.serverTime,
             latestSeq: unavailable.latestSeq,

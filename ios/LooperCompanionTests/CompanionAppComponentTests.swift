@@ -12,55 +12,60 @@ struct CompanionAppComponentTests {
 
     @MainActor
     @Test
-    func connectionControllerAppliesFreshnessAndRestartTransitions() throws {
-        let harness = ConnectionControllerHarness()
-        let controller = CompanionConnectionController(
-            sessionMiniController: harness.sessionMiniController,
-            delegate: harness
+    func modelAppliesFreshnessAndRestartTransitions() throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looper-component-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        let runtime = try CompanionSessionRuntime(
+            fileURL: storeDirectory.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
+        )
+        let model = CompanionAppModel(
+            environment: CompanionEnvironment(service: MockCompanionService()),
+            sessionRuntime: runtime
         )
         let route = try #require(URL(string: Constants.routeURL))
 
-        #expect(controller.applyRealtimeStreamLiveness(
+        #expect(model.applyRealtimeStreamLiveness(
             serverTime: Constants.serverTime,
             latestSeq: 10,
             isLive: true,
             endpointURL: route,
             recordedAt: Constants.recordedAt
         ))
-        #expect(harness.realtimeServerTime == Constants.serverTime)
-        #expect(harness.realtimeLatestSeq == 10)
-        #expect(harness.realtimeStreamIsLive)
-        #expect(harness.lastRealtimeDataAt == Constants.recordedAt)
-        #expect(!harness.realtimeReconnectInProgress)
-        #expect(harness.activeSessionRouteBaseURL == route)
-        #expect(harness.connectionState == .connected)
+        #expect(model.realtimeServerTime == Constants.serverTime)
+        #expect(model.realtimeLatestSeq == 10)
+        #expect(model.realtimeStreamIsLive)
+        #expect(model.lastRealtimeDataAt == Constants.recordedAt)
+        #expect(!model.realtimeReconnectInProgress)
+        #expect(model.activeSessionRouteBaseURL == route)
+        #expect(model.connectionState == .connected)
 
-        #expect(!controller.applyRealtimeStreamLiveness(
+        #expect(!model.applyRealtimeStreamLiveness(
             serverTime: Constants.serverTime,
             latestSeq: 9,
             isLive: true,
             endpointURL: route,
             recordedAt: Constants.recordedAt.addingTimeInterval(1)
         ))
-        #expect(harness.realtimeLatestSeq == 10)
-        #expect(harness.lastRealtimeDataAt == Constants.recordedAt)
+        #expect(model.realtimeLatestSeq == 10)
+        #expect(model.lastRealtimeDataAt == Constants.recordedAt)
 
-        controller.stopSessionRuntimeSyncForRestart()
-        #expect(!harness.realtimeStreamIsLive)
-        #expect(harness.realtimeReconnectInProgress)
-        #expect(harness.activeSessionRouteBaseURL == nil)
-        #expect(harness.connectionState == .connecting)
+        model.stopSessionRuntimeSync()
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.activeSessionRouteBaseURL == nil)
+        #expect(model.connectionState == .connecting)
 
-        let restart = CompanionSessionMiniController.restartLivenessUpdate()
-        #expect(controller.applyRealtimeStreamLiveness(
-            serverTime: restart.serverTime,
-            latestSeq: restart.latestSeq,
-            isLive: restart.isLive,
-            endpointURL: restart.endpointURL
+        // Restart-shaped liveness (seq 0, not live) passes the stale-seq
+        // guard; with no state delta it reports no change.
+        #expect(!model.applyRealtimeStreamLiveness(
+            serverTime: "",
+            latestSeq: 0,
+            isLive: false,
+            endpointURL: nil
         ))
-        #expect(!harness.realtimeStreamIsLive)
-        #expect(!harness.realtimeReconnectInProgress)
-        #expect(harness.connectionState == .connecting)
+        #expect(!model.realtimeStreamIsLive)
+        #expect(model.connectionState == .connecting)
     }
 
     @MainActor
@@ -79,93 +84,5 @@ struct CompanionAppComponentTests {
         for (error, expectedState) in cases {
             #expect(CompanionCommandDispatcher.connectionState(for: error) == expectedState)
         }
-    }
-}
-
-@MainActor
-private final class ConnectionControllerHarness: CompanionConnectionControllerDelegate {
-    let sessionMiniController = CompanionSessionMiniController(sessionRuntime: nil)
-    let snapshotState = CompanionSnapshotStateStore()
-
-    var realtimeServerTime: String?
-    var realtimeLatestSeq: Int64 = 0
-    var realtimeStreamIsLive = false
-    var lastRealtimeDataAt: Date?
-    var realtimeReconnectInProgress = false
-    var activeSessionRouteBaseURL: URL?
-    var connectionState: ConnectivityState = .connecting
-    var errorMessage: String?
-    var isAwaitingRouteSessionProof = false
-    var invalidatedProjectionBuilds = false
-    var refreshedPendingPromptDelivery = false
-    var lastUpdatedAt: Date?
-
-    var connectionControllerSnapshotState: CompanionSnapshotStateStore {
-        snapshotState
-    }
-
-    var connectionControllerRealtimeServerTime: String? {
-        get { realtimeServerTime }
-        set { realtimeServerTime = newValue }
-    }
-
-    var connectionControllerRealtimeLatestSeq: Int64 {
-        get { realtimeLatestSeq }
-        set { realtimeLatestSeq = newValue }
-    }
-
-    var connectionControllerRealtimeStreamIsLive: Bool {
-        get { realtimeStreamIsLive }
-        set { realtimeStreamIsLive = newValue }
-    }
-
-    var connectionControllerLastRealtimeDataAt: Date? {
-        get { lastRealtimeDataAt }
-        set { lastRealtimeDataAt = newValue }
-    }
-
-    var connectionControllerRealtimeReconnectInProgress: Bool {
-        get { realtimeReconnectInProgress }
-        set { realtimeReconnectInProgress = newValue }
-    }
-
-    var connectionControllerActiveSessionRouteBaseURL: URL? {
-        get { activeSessionRouteBaseURL }
-        set { activeSessionRouteBaseURL = newValue }
-    }
-
-    var connectionControllerConnectionState: ConnectivityState {
-        get { connectionState }
-        set { connectionState = newValue }
-    }
-
-    var connectionControllerErrorMessage: String? {
-        get { errorMessage }
-        set { errorMessage = newValue }
-    }
-
-    var connectionControllerIsAwaitingRouteSessionProof: Bool {
-        isAwaitingRouteSessionProof
-    }
-
-    func connectionControllerSetAwaitingRouteSessionProof(_ isAwaiting: Bool) {
-        isAwaitingRouteSessionProof = isAwaiting
-    }
-
-    func connectionControllerInvalidatePendingSessionMiniProjectionBuilds() {
-        invalidatedProjectionBuilds = true
-    }
-
-    func connectionControllerApplySessionMiniSyncUpdate(
-        _: CompanionSessionMiniSyncUpdate,
-        connectionRevision _: Int
-    ) {}
-
-    func connectionControllerRefreshPendingPromptDeliveryState() {
-        refreshedPendingPromptDelivery = true
-    }
-
-    func connectionControllerSetLastUpdatedAt(_ date: Date) {
-        lastUpdatedAt = date
     }
 }

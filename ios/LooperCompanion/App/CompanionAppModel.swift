@@ -181,8 +181,13 @@ final class CompanionAppModel {
     @ObservationIgnored private let notificationManager: LocalNotificationManager
     @ObservationIgnored private let spotlightCoordinator: CompanionSpotlightCoordinator
     @ObservationIgnored private let sessionDetailCoordinator = CompanionSessionDetailCoordinator()
-    @ObservationIgnored private let sessionMiniController: CompanionSessionMiniController
-    @ObservationIgnored private var connectionController: CompanionConnectionController?
+    @ObservationIgnored let connection: CompanionConnectionRuntime
+
+    /// Legacy Int view of the stream generation for the snapshot-load
+    /// coordinator's revision guards; deleted with them in A7.
+    private var connectionRevision: Int {
+        Int(truncatingIfNeeded: connection.currentStreamGeneration)
+    }
     @ObservationIgnored private var commandDispatcher: CompanionCommandDispatcher?
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var pushCoordinator: CompanionPushCoordinator?
@@ -207,7 +212,7 @@ final class CompanionAppModel {
         let sessionRuntime = environment.sessionRuntime
             ?? providedSessionRuntime
             ?? CompanionSessionRuntime.liveDefault()
-        self.sessionMiniController = CompanionSessionMiniController(sessionRuntime: sessionRuntime)
+        self.connection = CompanionConnectionRuntime(sessionRuntime: sessionRuntime)
 
         let didActivateBundledConnection = reloadsServiceFromStoredConnection &&
             CompanionConfiguration.activateBundledConnectionIfNeeded()
@@ -217,16 +222,12 @@ final class CompanionAppModel {
             )
             : environment
         service = activeEnvironment.service
-        connectionController = CompanionConnectionController(
-            sessionMiniController: sessionMiniController,
-            delegate: self
-        )
         commandDispatcher = CompanionCommandDispatcher(delegate: self)
         connectionCoordinator = CompanionConnectionCoordinator(delegate: self)
         pushCoordinator = CompanionPushCoordinator(
             notificationManager: notificationManager,
             remotePushRegistrar: remotePushRegistrar,
-            sessionMiniController: sessionMiniController,
+            connection: connection,
             delegate: self
         )
         snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
@@ -236,12 +237,31 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("model:bundled-connection-activated")
         }
 
+        connection.configure(callbacks: CompanionConnectionRuntimeCallbacks(
+            applySnapshotUpdate: { [weak self] update, streamGeneration in
+                self?.applySessionMiniSyncUpdate(update, streamGeneration: streamGeneration)
+            },
+            applyLiveness: { [weak self] liveness in
+                self?.applySessionMiniLivenessUpdate(liveness)
+            },
+            refreshPendingPromptDeliveryState: { [weak self] in
+                self?.refreshPendingPromptDeliveryState()
+            },
+            recoverySnapshotArrived: { [weak self] recovered in
+                _ = self?.applyCachedSessionMiniSnapshot(
+                    recovered.snapshot,
+                    reason: "refresh-recovery",
+                    latestSeq: recovered.latestSeq
+                )
+            }
+        ))
+
         _ = restoreCachedSessionMiniSnapshotIfAvailable(
             reason: CachedSnapshotRestoreReason.appLaunch
         )
 
         configureStopQuickActions()
-        SessionQuickActionCenter.shared.configureSessionRuntime(sessionMiniController.sessionRuntime)
+        SessionQuickActionCenter.shared.configureSessionRuntime(connection.sessionRuntime)
         registerSessionQuickActionHandler()
         CompanionDiagnostics.lifecycle.info(
             "Model initialized baseURL=\(self.configuredBaseURL, privacy: .public)"
@@ -296,13 +316,6 @@ final class CompanionAppModel {
         return connectionCoordinator
     }
 
-    private var connectionRuntime: CompanionConnectionController {
-        guard let connectionController else {
-            preconditionFailure("Connection controller used before initialization")
-        }
-        return connectionController
-    }
-
     private var commands: CompanionCommandDispatcher {
         guard let commandDispatcher else {
             preconditionFailure("Command dispatcher used before initialization")
@@ -355,30 +368,36 @@ final class CompanionAppModel {
     }
 
     func stopSessionRuntimeSync() {
-        connectionRuntime.stopSessionRuntimeSync()
+        connection.stopSync()
+        invalidatePendingSessionMiniProjectionBuilds()
+        markSessionStreamStopped(reconnectInProgress: false)
     }
 
     private func startNetworkPathMonitoringIfNeeded() {
-        connectionRuntime.startNetworkPathMonitoringIfNeeded()
+        connection.startNetworkPathMonitoringIfNeeded()
     }
 
     private func stopSessionRuntimeSyncForRestart() {
-        connectionRuntime.stopSessionRuntimeSyncForRestart()
+        connection.stopSync(reconnectInProgress: true)
+        invalidatePendingSessionMiniProjectionBuilds()
+        markSessionStreamStopped(reconnectInProgress: true)
     }
 
     func startSessionRuntimeSyncIfNeeded() {
-        connectionRuntime.startSessionRuntimeSyncIfNeeded()
+        if !realtimeStreamIsLive {
+            realtimeReconnectInProgress = true
+        }
+        connection.startSyncIfNeeded()
     }
 
     func applySessionMiniSyncUpdate(
         _ update: CompanionSessionMiniSyncUpdate,
-        connectionRevision: Int
+        streamGeneration: UInt64
     ) {
-        guard connectionRevision == connectionRuntime.connectionRevision else {
+        guard streamGeneration == connection.currentStreamGeneration else {
             CompanionDiagnostics.record("session-mini:sync-stale-skip")
             return
         }
-        refreshPendingPromptDeliveryState()
 
         guard let generation = reserveSessionMiniProjectionBuild(latestSeq: update.latestSeq) else {
             CompanionDiagnostics.record(
@@ -389,7 +408,7 @@ final class CompanionAppModel {
 
         let surface = snapshotState.selectedAssistantSurface
         sessionMiniProjectionTask?.cancel()
-        sessionMiniProjectionTask = Task.detached(priority: .userInitiated) { [weak self, update, connectionRevision, generation, surface] in
+        sessionMiniProjectionTask = Task.detached(priority: .userInitiated) { [weak self, update, streamGeneration, generation, surface] in
             let buildStartedAt = Date()
             let preparedProjection = CompanionPreparedSnapshotProjection.build(
                 snapshot: update.snapshot,
@@ -408,7 +427,7 @@ final class CompanionAppModel {
                     reason: update.reason,
                     latestSeq: update.latestSeq,
                     endpointURL: update.endpointURL,
-                    connectionRevision: connectionRevision,
+                    streamGeneration: streamGeneration,
                     generation: generation,
                     builtSurface: surface
                 )
@@ -416,6 +435,25 @@ final class CompanionAppModel {
         }
     }
 
+    private func applySessionMiniLivenessUpdate(_ update: CompanionSessionMiniLivenessUpdate) {
+        let didChange = applyRealtimeStreamLiveness(
+            serverTime: update.serverTime,
+            latestSeq: update.latestSeq,
+            isLive: update.isLive,
+            endpointURL: update.endpointURL
+        )
+        guard didChange else {
+            return
+        }
+        lastUpdatedAt = Date()
+        CompanionDiagnostics.record(
+            "session-mini:liveness-applied reason=\(update.reason) seq=\(update.latestSeq)"
+        )
+    }
+
+    /// Single writer for the realtime presentation fields. Moved verbatim from
+    /// CompanionConnectionController when the runtime absorbed it; A8 replaces
+    /// these fields with projections of `connection.machine`.
     @discardableResult
     func applyRealtimeStreamLiveness(
         serverTime: String,
@@ -424,17 +462,140 @@ final class CompanionAppModel {
         endpointURL: URL?,
         recordedAt: Date = Date()
     ) -> Bool {
-        connectionRuntime.applyRealtimeStreamLiveness(
-            serverTime: serverTime,
+        guard latestSeq >= realtimeLatestSeq || Self.isStreamRestartLiveness(
             latestSeq: latestSeq,
+            isLive: isLive
+        ) else {
+            CompanionDiagnostics.record(
+                "session-mini:liveness-stale-skip latestSeq=\(latestSeq) realtimeSeq=\(realtimeLatestSeq)"
+            )
+            return false
+        }
+
+        var didChange = false
+        if isLive {
+            lastRealtimeDataAt = recordedAt
+        }
+        if !serverTime.isEmpty {
+            if realtimeServerTime != serverTime {
+                realtimeServerTime = serverTime
+                didChange = true
+            }
+            didChange = snapshotState.applyHostSyncTime(serverTime) || didChange
+        }
+        let nextLatestSeq = max(realtimeLatestSeq, latestSeq)
+        if realtimeLatestSeq != nextLatestSeq {
+            realtimeLatestSeq = nextLatestSeq
+            didChange = true
+        }
+        if realtimeStreamIsLive != isLive {
+            realtimeStreamIsLive = isLive
+            didChange = true
+        }
+        let nextReconnectInProgress = isLive ? false : connection.isSyncing
+        if realtimeReconnectInProgress != nextReconnectInProgress {
+            realtimeReconnectInProgress = nextReconnectInProgress
+            didChange = true
+        }
+        let nextRouteBaseURL = isLive ? endpointURL : nil
+        if activeSessionRouteBaseURL != nextRouteBaseURL {
+            activeSessionRouteBaseURL = nextRouteBaseURL
+            didChange = true
+        }
+        if isLive, isAwaitingRouteSessionProof {
+            isAwaitingRouteSessionProof = false
+            didChange = true
+        }
+        let nextConnectionState = Self.connectionStateForSessionLiveness(
             isLive: isLive,
-            endpointURL: endpointURL,
-            recordedAt: recordedAt
+            currentState: connectionState
         )
+        if connectionState != nextConnectionState {
+            connectionState = nextConnectionState
+            didChange = true
+        }
+        if isLive, errorMessage != nil {
+            errorMessage = nil
+            didChange = true
+        }
+        return didChange
+    }
+
+    func sessionAuthoritativeConnectionState(
+        _ projectedState: ConnectivityState
+    ) -> ConnectivityState {
+        if isAwaitingRouteSessionProof {
+            switch projectedState {
+            case .unauthorized, .locked, .unpaired, .offline:
+                isAwaitingRouteSessionProof = false
+                return projectedState
+            case .connecting, .connected:
+                return .connecting
+            }
+        }
+
+        if realtimeStreamIsLive {
+            return .connected
+        }
+
+        if projectedState == .connected, !realtimeStreamIsLive {
+            return .connecting
+        }
+
+        return projectedState
+    }
+
+    func sessionAuthoritativeErrorMessage(
+        shouldSuppressProjectionError: Bool,
+        error: Error
+    ) -> String? {
+        if realtimeStreamIsLive || shouldSuppressProjectionError {
+            return nil
+        }
+
+        return error.localizedDescription
+    }
+
+    private func markSessionStreamStopped(reconnectInProgress: Bool) {
+        realtimeStreamIsLive = false
+        activeSessionRouteBaseURL = nil
+        realtimeReconnectInProgress = reconnectInProgress
+        if connectionState == .connected {
+            connectionState = .connecting
+        }
+    }
+
+    private func resetRealtimeState() {
+        activeSessionRouteBaseURL = nil
+        realtimeServerTime = nil
+        realtimeLatestSeq = 0
+        realtimeStreamIsLive = false
+        lastRealtimeDataAt = nil
+        realtimeReconnectInProgress = false
+    }
+
+    private static func connectionStateForSessionLiveness(
+        isLive: Bool,
+        currentState: ConnectivityState
+    ) -> ConnectivityState {
+        if isLive {
+            return .connected
+        }
+
+        switch currentState {
+        case .unauthorized, .locked, .unpaired:
+            return currentState
+        case .connecting, .connected, .offline:
+            return .connecting
+        }
+    }
+
+    private static func isStreamRestartLiveness(latestSeq: Int64, isLive: Bool) -> Bool {
+        !isLive && latestSeq == 0
     }
 
     private func prepareSessionRuntimeInBackground() {
-        let sessionRuntime = sessionMiniController.sessionRuntime
+        let sessionRuntime = connection.sessionRuntime
         Task.detached(priority: .userInitiated) {
             await sessionRuntime?.prepareSessionRuntime()
         }
@@ -475,14 +636,13 @@ final class CompanionAppModel {
     }
 
     private func resetConnectionStateForStoredConnection(clearsSnapshotCache: Bool) async {
-        connectionRuntime.advanceConnectionRevision()
         snapshotLoads.cancelSnapshotLoad()
         stopSessionRuntimeSyncForRestart()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         stopNotificationReplyOutboxDrain()
         serverHealth = nil
         reachedBaseURL = nil
-        connectionRuntime.resetRealtimeState()
+        resetRealtimeState()
         sessionMiniProjectionLatestSeq = 0
         connectionState = .connecting
         pendingOpenSessionID = nil
@@ -503,7 +663,6 @@ final class CompanionAppModel {
     }
 
     private func applyStoredConnectionRoutePreference() async {
-        connectionRuntime.advanceConnectionRevision()
         isAwaitingRouteSessionProof = true
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         applyLiveEnvironmentFromSessionCore()
@@ -518,7 +677,10 @@ final class CompanionAppModel {
     }
 
     private func restartSessionRuntimeSyncForRouteChange() {
-        connectionRuntime.restartSessionRuntimeSyncForRouteChange()
+        if connection.isSyncing {
+            stopSessionRuntimeSyncForRestart()
+        }
+        startSessionRuntimeSyncIfNeeded()
     }
 
     private func resetSnapshotState() {
@@ -563,7 +725,7 @@ final class CompanionAppModel {
             CompanionDiagnostics.record("snapshot:load-start baseURL=\(configuredBaseURL)")
             do {
                 let resolvedHealth = try await service.resolveServerHealth()
-                guard loadRevision == connectionRuntime.connectionRevision else {
+                guard loadRevision == connectionRevision else {
                     CompanionDiagnostics.record("snapshot:load-stale-health-skip")
                     return
                 }
@@ -576,7 +738,7 @@ final class CompanionAppModel {
                     throw error
                 }
 
-                guard loadRevision == connectionRuntime.connectionRevision else {
+                guard loadRevision == connectionRevision else {
                     CompanionDiagnostics.record(
                         "snapshot:load-stale-health-error-skip error=\(error.localizedDescription)"
                     )
@@ -603,13 +765,13 @@ final class CompanionAppModel {
                 )
                 return
             }
-            if sessionMiniController.hasLocalStateMiniEvidence(reason: "network-snapshot-local-session-mini-store") {
+            if connection.hasLocalStateMiniEvidence(reason: "network-snapshot-local-session-mini-store") {
                 markCachedSnapshotReadyIfNeeded(reason: "network-snapshot-local-session-mini-store")
                 CompanionDiagnostics.record("snapshot:load-session-mini-store-skip")
                 return
             }
             let nextSnapshot = try await service.loadSnapshot()
-            guard loadRevision == connectionRuntime.connectionRevision else {
+            guard loadRevision == connectionRevision else {
                 CompanionDiagnostics.record("snapshot:load-stale-skip")
                 return
             }
@@ -630,7 +792,7 @@ final class CompanionAppModel {
                 CompanionDiagnostics.record("snapshot:load-cancelled")
                 return
             }
-            guard loadRevision == connectionRuntime.connectionRevision else {
+            guard loadRevision == connectionRevision else {
                 CompanionDiagnostics.record("snapshot:load-stale-error-skip error=\(error.localizedDescription)")
                 return
             }
@@ -651,7 +813,7 @@ final class CompanionAppModel {
                 hasServerHealth: serverHealth != nil,
                 hasReachedBaseURL: reachedBaseURL != nil
             )
-            let nextConnectionState = connectionRuntime.sessionAuthoritativeConnectionState(
+            let nextConnectionState = sessionAuthoritativeConnectionState(
                 connectionState(rawValue: failureProjection.connectionState)
             )
             if failureProjection.preservedConnectedState {
@@ -661,7 +823,7 @@ final class CompanionAppModel {
             }
             connectionState = nextConnectionState
             clearConnectionRouteStateIfNeeded(for: nextConnectionState)
-            errorMessage = connectionRuntime.sessionAuthoritativeErrorMessage(
+            errorMessage = sessionAuthoritativeErrorMessage(
                 shouldSuppressProjectionError: failureProjection.shouldSuppressError,
                 error: error
             )
@@ -768,7 +930,7 @@ final class CompanionAppModel {
                 return .skipped
             }
         }
-        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+        guard let sessionRuntime = connection.sessionRuntime else {
             let error = HTTPCompanionServiceError.localStoreUnavailable
             applyStateMiniRecoveryFailure(error, reason: reason)
             return .failed(error.localizedDescription)
@@ -899,7 +1061,7 @@ final class CompanionAppModel {
 
     private func liveEnvironmentFromSessionCore() -> CompanionEnvironment {
         CompanionEnvironment.live(
-            sessionRuntime: sessionMiniController.sessionRuntime
+            sessionRuntime: connection.sessionRuntime
         )
     }
 
@@ -1113,7 +1275,7 @@ final class CompanionAppModel {
     }
 
     private func restartSessionRuntimeSyncIfActive() async {
-        guard sessionMiniController.isSyncing else {
+        guard connection.isSyncing else {
             return
         }
 
@@ -1144,7 +1306,7 @@ final class CompanionAppModel {
             return nil
         }
 
-        guard let targetRuntime = sessionMiniController.sessionRuntime else {
+        guard let targetRuntime = connection.sessionRuntime else {
             return detail
         }
 
@@ -1486,7 +1648,7 @@ final class CompanionAppModel {
         reason: String,
         bypassesSeqGating: Bool = false
     ) -> Bool {
-        sessionMiniController.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason, latestSeq in
+        connection.restoreCachedSnapshotIfAvailable(reason: reason) { [weak self] cachedSnapshot, reason, latestSeq in
             self?.applyCachedSessionMiniSnapshot(
                 cachedSnapshot,
                 reason: reason,
@@ -1518,7 +1680,7 @@ final class CompanionAppModel {
         reason: String,
         latestSeq: Int64,
         endpointURL: URL?,
-        connectionRevision: Int,
+        streamGeneration: UInt64,
         generation: UInt64,
         builtSurface: CompanionAssistantSurface
     ) -> Bool {
@@ -1529,7 +1691,7 @@ final class CompanionAppModel {
             }
         }
 
-        guard connectionRevision == connectionRuntime.connectionRevision,
+        guard streamGeneration == connection.currentStreamGeneration,
               isCurrentGeneration,
               latestSeq >= sessionMiniProjectionLatestSeq,
               builtSurface == snapshotState.selectedAssistantSurface,
@@ -1617,7 +1779,7 @@ final class CompanionAppModel {
 
     @discardableResult
     private func refreshPendingPromptDeliveryState(now: Date = Date()) -> Bool {
-        let pendingCommands = sessionMiniController.sessionRuntime?.pendingCommands() ?? []
+        let pendingCommands = connection.sessionRuntime?.pendingCommands() ?? []
         let didChange = snapshotState.applyPendingCommands(pendingCommands, now: now)
         if didChange {
             lastUpdatedAt = now
@@ -1762,7 +1924,7 @@ final class CompanionAppModel {
         if realtimeLatestSeq > 0 {
             return true
         }
-        guard let sessionRuntime = sessionMiniController.sessionRuntime else {
+        guard let sessionRuntime = connection.sessionRuntime else {
             return false
         }
         do {
@@ -1899,8 +2061,8 @@ final class CompanionAppModel {
 }
 
 extension CompanionAppModel: CompanionCommandDispatcherDelegate {
-    var commandDispatcherSessionMiniController: CompanionSessionMiniController {
-        sessionMiniController
+    var commandDispatcherConnection: CompanionConnectionRuntime {
+        connection
     }
 
     var commandDispatcherSnapshotState: CompanionSnapshotStateStore {
@@ -1940,14 +2102,14 @@ extension CompanionAppModel: CompanionCommandDispatcherDelegate {
     func commandDispatcherSessionAuthoritativeConnectionState(
         _ projectedState: ConnectivityState
     ) -> ConnectivityState {
-        connectionRuntime.sessionAuthoritativeConnectionState(projectedState)
+        sessionAuthoritativeConnectionState(projectedState)
     }
 
     func commandDispatcherSessionAuthoritativeErrorMessage(
         shouldSuppressProjectionError: Bool,
         error: Error
     ) -> String? {
-        connectionRuntime.sessionAuthoritativeErrorMessage(
+        sessionAuthoritativeErrorMessage(
             shouldSuppressProjectionError: shouldSuppressProjectionError,
             error: error
         )
@@ -1970,82 +2132,9 @@ extension CompanionAppModel: CompanionCommandDispatcherDelegate {
     }
 }
 
-extension CompanionAppModel: CompanionConnectionControllerDelegate {
-    var connectionControllerSnapshotState: CompanionSnapshotStateStore {
-        snapshotState
-    }
-
-    var connectionControllerRealtimeServerTime: String? {
-        get { realtimeServerTime }
-        set { realtimeServerTime = newValue }
-    }
-
-    var connectionControllerRealtimeLatestSeq: Int64 {
-        get { realtimeLatestSeq }
-        set { realtimeLatestSeq = newValue }
-    }
-
-    var connectionControllerRealtimeStreamIsLive: Bool {
-        get { realtimeStreamIsLive }
-        set { realtimeStreamIsLive = newValue }
-    }
-
-    var connectionControllerLastRealtimeDataAt: Date? {
-        get { lastRealtimeDataAt }
-        set { lastRealtimeDataAt = newValue }
-    }
-
-    var connectionControllerRealtimeReconnectInProgress: Bool {
-        get { realtimeReconnectInProgress }
-        set { realtimeReconnectInProgress = newValue }
-    }
-
-    var connectionControllerActiveSessionRouteBaseURL: URL? {
-        get { activeSessionRouteBaseURL }
-        set { activeSessionRouteBaseURL = newValue }
-    }
-
-    var connectionControllerConnectionState: ConnectivityState {
-        get { connectionState }
-        set { connectionState = newValue }
-    }
-
-    var connectionControllerErrorMessage: String? {
-        get { errorMessage }
-        set { errorMessage = newValue }
-    }
-
-    var connectionControllerIsAwaitingRouteSessionProof: Bool {
-        isAwaitingRouteSessionProof
-    }
-
-    func connectionControllerSetAwaitingRouteSessionProof(_ isAwaiting: Bool) {
-        isAwaitingRouteSessionProof = isAwaiting
-    }
-
-    func connectionControllerInvalidatePendingSessionMiniProjectionBuilds() {
-        invalidatePendingSessionMiniProjectionBuilds()
-    }
-
-    func connectionControllerApplySessionMiniSyncUpdate(
-        _ update: CompanionSessionMiniSyncUpdate,
-        connectionRevision: Int
-    ) {
-        applySessionMiniSyncUpdate(update, connectionRevision: connectionRevision)
-    }
-
-    func connectionControllerRefreshPendingPromptDeliveryState() {
-        refreshPendingPromptDeliveryState()
-    }
-
-    func connectionControllerSetLastUpdatedAt(_ date: Date) {
-        lastUpdatedAt = date
-    }
-}
-
 extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {
     var snapshotLoadConnectionRevision: Int {
-        connectionRuntime.connectionRevision
+        connectionRevision
     }
 
     func snapshotLoadSetLoading(_ isLoading: Bool) {

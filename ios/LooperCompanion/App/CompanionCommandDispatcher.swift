@@ -4,7 +4,7 @@ import LooperCompanionCore
 
 @MainActor
 protocol CompanionCommandDispatcherDelegate: AnyObject {
-    var commandDispatcherSessionMiniController: CompanionSessionMiniController { get }
+    var commandDispatcherConnection: CompanionConnectionRuntime { get }
     var commandDispatcherSnapshotState: CompanionSnapshotStateStore { get }
     var commandDispatcherSnapshot: MobileSnapshot? { get }
     var commandDispatcherServerHealth: CompanionServerHealth? { get }
@@ -47,7 +47,7 @@ final class CompanionCommandDispatcher {
     }
 
     func setSessionArchived(_ archived: Bool, sessionID: String) async {
-        guard let targetRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -74,7 +74,7 @@ final class CompanionCommandDispatcher {
     }
 
     func deleteSession(_ sessionID: String) async {
-        guard let targetRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -143,7 +143,7 @@ final class CompanionCommandDispatcher {
 
     @discardableResult
     func submitPendingNotificationReply() async -> Bool {
-        guard let sessionRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let sessionRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             CompanionDiagnostics.record("notification-reply:pending-drain-missing-session-runtime")
             return false
         }
@@ -169,7 +169,7 @@ final class CompanionCommandDispatcher {
     }
 
     func muteSession(_ sessionID: String) async {
-        guard let targetRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -205,7 +205,7 @@ final class CompanionCommandDispatcher {
         }
 
         let targetSurface = requestedSurface ?? delegate.commandDispatcherAssistantSurface(for: sessionID)
-        guard let targetRuntime = delegate.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -257,7 +257,7 @@ final class CompanionCommandDispatcher {
         }
 
         let targetSurface = requestedSurface ?? delegate.commandDispatcherAssistantSurface(for: sessionID)
-        guard let targetRuntime = delegate.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -290,7 +290,7 @@ final class CompanionCommandDispatcher {
         guard let delegate else {
             return false
         }
-        guard let targetRuntime = delegate.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: true
@@ -382,7 +382,7 @@ final class CompanionCommandDispatcher {
     }
 
     private func applyModeIntent(_ preset: SessionMode?, to sessionID: String) async -> Bool {
-        guard let targetRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: false
@@ -465,7 +465,7 @@ final class CompanionCommandDispatcher {
             return false
         }
 
-        guard let targetRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let targetRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyConnectionFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 suppressErrorWhenSnapshotUsable: false
@@ -500,7 +500,7 @@ final class CompanionCommandDispatcher {
         sessionID: String,
         prompt: String
     ) async -> Bool {
-        guard let sessionRuntime = delegate?.commandDispatcherSessionMiniController.sessionRuntime else {
+        guard let sessionRuntime = delegate?.commandDispatcherConnection.sessionRuntime else {
             applyNotificationReplyFailure(
                 HTTPCompanionServiceError.localStoreUnavailable,
                 sessionID: sessionID,

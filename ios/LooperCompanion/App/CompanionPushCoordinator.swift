@@ -17,16 +17,16 @@ protocol CompanionPushCoordinatorDelegate: AnyObject {
 @MainActor
 final class CompanionPushCoordinator {
     private var notificationCoordinator: CompanionNotificationCoordinator?
-    private let sessionMiniController: CompanionSessionMiniController
+    private let connection: CompanionConnectionRuntime
     private weak var delegate: CompanionPushCoordinatorDelegate?
 
     init(
         notificationManager: LocalNotificationManager,
         remotePushRegistrar: RemotePushRegistrar,
-        sessionMiniController: CompanionSessionMiniController,
+        connection: CompanionConnectionRuntime,
         delegate: CompanionPushCoordinatorDelegate
     ) {
-        self.sessionMiniController = sessionMiniController
+        self.connection = connection
         self.delegate = delegate
         notificationCoordinator = CompanionNotificationCoordinator(
             notificationManager: notificationManager,
@@ -68,7 +68,7 @@ final class CompanionPushCoordinator {
 
     @discardableResult
     func drainPendingNotificationReplies(
-        submit: @escaping CompanionSessionMiniController.NotificationReplySubmitter
+        submit: @escaping CompanionNotificationReplySubmitter
     ) async -> Bool {
         let drainTask = startNotificationReplyOutboxDrainIfNeeded(submit: submit)
         return await drainTask?.value ?? false
@@ -76,13 +76,13 @@ final class CompanionPushCoordinator {
 
     @discardableResult
     func startNotificationReplyOutboxDrainIfNeeded(
-        submit: @escaping CompanionSessionMiniController.NotificationReplySubmitter
+        submit: @escaping CompanionNotificationReplySubmitter
     ) -> Task<Bool, Never>? {
-        sessionMiniController.startNotificationReplyOutboxDrainIfNeeded(submit: submit)
+        connection.startNotificationReplyOutboxDrainIfNeeded(submit: submit)
     }
 
     func stopNotificationReplyOutboxDrain() {
-        sessionMiniController.stopNotificationReplyOutboxDrain()
+        connection.stopNotificationReplyOutboxDrain()
     }
 }
 
