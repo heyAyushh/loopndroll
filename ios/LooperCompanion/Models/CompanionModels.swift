@@ -3437,6 +3437,25 @@ enum SessionDisplayPolicy {
     static let collapsedSectionLimit = 40
 }
 
+/// Recency windows applied when sorting non-archived sessions into the "Active"/"Needs
+/// Attention"/"Recent" list sections. Session `status` on its own is stale/unreliable — a
+/// session can sit reported as `.active` or `.waiting` for days after the underlying agent
+/// process died or the user moved on — so these windows gate status-based bucketing on
+/// actual observed activity, applied uniformly regardless of which projection path produced
+/// the raw sections (see `SessionSections.recencyClassifiedSections`).
+enum SessionSectionRecencyPolicy {
+    /// A session reported `.active` (or carrying a running goal) with no activity in this
+    /// long is presumed stuck rather than genuinely working; surfacing it under "Active"
+    /// would mislead the user into thinking something is in flight. Sized to comfortably
+    /// span a normal agent turn without sessions flapping in and out of the section.
+    static let workingFreshnessWindow: TimeInterval = 15 * 60
+
+    /// A `.waiting` session only earns a spot in "Needs Attention" while the ask is still
+    /// live. Sessions that have sat waiting for days are no longer something the user is
+    /// likely to act on — they demote to "Recent" instead of piling up as noise.
+    static let waitingAttentionWindow: TimeInterval = 48 * 60 * 60
+}
+
 struct SessionSections: Sendable {
     static let empty = SessionSections(localProjectionSessions: [])
 
@@ -3447,23 +3466,19 @@ struct SessionSections: Sendable {
     let needsAttention: [SessionSummary]
     let archived: [SessionSummary]
 
-    init(sessions: [SessionSummary]) {
+    init(sessions: [SessionSummary], now: Date = Date()) {
         guard let projection = SessionSectionsProjectionCodec.projectSessionSections(sessions),
               Self.projectionIncludesGoalAttention(projection, sessions: sessions)
         else {
-            self.init(localProjectionSessions: sessions)
+            self.init(localProjectionSessions: sessions, now: now)
             return
         }
-        self.init(projection: projection, sessions: sessions)
+        self.init(projection: projection, sessions: sessions, now: now)
     }
 
-    init(localProjectionSessions sessions: [SessionSummary]) {
+    init(localProjectionSessions sessions: [SessionSummary], now: Date = Date()) {
         let sessions = sessions.sortedByLocalFreshness()
         var active: [SessionSummary] = []
-        var running: [SessionSummary] = []
-        var waiting: [SessionSummary] = []
-        var stopped: [SessionSummary] = []
-        var needsAttention: [SessionSummary] = []
         var archived: [SessionSummary] = []
 
         active.reserveCapacity(sessions.count)
@@ -3472,35 +3487,16 @@ struct SessionSections: Sendable {
                 archived.append(session)
                 continue
             }
-
             active.append(session)
-            if session.needsGoalAttention {
-                needsAttention.append(session)
-                continue
-            }
-
-            switch session.status {
-            case .active:
-                running.append(session)
-            case .waiting:
-                waiting.append(session)
-                needsAttention.append(session)
-            case .stopped:
-                if session.hasRunningGoal {
-                    running.append(session)
-                } else {
-                    stopped.append(session)
-                }
-            case .archived:
-                archived.append(session)
-            }
         }
 
+        let classified = Self.recencyClassifiedSections(nonArchivedSessions: active, now: now)
+
         self.active = active
-        self.running = running
-        self.waiting = waiting
-        self.stopped = stopped
-        self.needsAttention = needsAttention
+        self.running = classified.running
+        self.waiting = classified.waiting
+        self.stopped = classified.stopped
+        self.needsAttention = classified.needsAttention
         self.archived = archived
     }
 
@@ -3517,12 +3513,19 @@ struct SessionSections: Sendable {
         return true
     }
 
-    init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary]) {
-        active = Self.sessions(at: projection.activeIndexes, in: sessions)
-        running = Self.sessions(at: projection.runningIndexes, in: sessions)
-        waiting = Self.sessions(at: projection.waitingIndexes, in: sessions)
-        stopped = Self.sessions(at: projection.stoppedIndexes, in: sessions)
-        needsAttention = Self.sessions(at: projection.needsAttentionIndexes, in: sessions)
+    init(projection: ClientSessionSectionsProjection, sessions: [SessionSummary], now: Date = Date()) {
+        // Only the archived/non-archived split is taken from the core projection: that split
+        // is a plain status check and already matches the local path exactly. Every other
+        // sub-bucket is recomputed from `active` below so both construction paths apply the
+        // identical recency policy and can never disagree about what counts as "fresh".
+        let nonArchived = Self.sessions(at: projection.activeIndexes, in: sessions)
+        let classified = Self.recencyClassifiedSections(nonArchivedSessions: nonArchived, now: now)
+
+        active = nonArchived
+        running = classified.running
+        waiting = classified.waiting
+        stopped = classified.stopped
+        needsAttention = classified.needsAttention
         archived = Self.sessions(at: projection.archivedIndexes, in: sessions)
     }
 
@@ -3543,6 +3546,62 @@ struct SessionSections: Sendable {
         }
     }
 
+    /// Single source of truth for turning a list of non-archived sessions into the
+    /// running/waiting/stopped/needsAttention sub-buckets, applying
+    /// `SessionSectionRecencyPolicy` so both `init(localProjectionSessions:)` and
+    /// `init(projection:sessions:)` produce identical results for the same input.
+    private static func recencyClassifiedSections(
+        nonArchivedSessions: [SessionSummary],
+        now: Date
+    ) -> (
+        running: [SessionSummary],
+        waiting: [SessionSummary],
+        stopped: [SessionSummary],
+        needsAttention: [SessionSummary]
+    ) {
+        var running: [SessionSummary] = []
+        var waiting: [SessionSummary] = []
+        var stopped: [SessionSummary] = []
+        var needsAttention: [SessionSummary] = []
+
+        for session in nonArchivedSessions {
+            // A blocked goal is a real, standing ask regardless of how old it is — age
+            // never demotes it, and it never also counts toward running/waiting/stopped.
+            if session.needsGoalAttention {
+                needsAttention.append(session)
+                continue
+            }
+
+            let isFreshActiveStatus = session.status == .active
+                && session.isRecentSessionActivity(
+                    within: SessionSectionRecencyPolicy.workingFreshnessWindow,
+                    relativeTo: now
+                )
+            let isFreshRunningGoal = session.hasRecentlyRunningGoal(
+                within: SessionSectionRecencyPolicy.workingFreshnessWindow,
+                relativeTo: now
+            )
+            if isFreshActiveStatus || isFreshRunningGoal {
+                running.append(session)
+                continue
+            }
+
+            if session.status == .waiting,
+               session.isRecentSessionActivity(
+                   within: SessionSectionRecencyPolicy.waitingAttentionWindow,
+                   relativeTo: now
+               )
+            {
+                waiting.append(session)
+                needsAttention.append(session)
+                continue
+            }
+
+            stopped.append(session)
+        }
+
+        return (running, waiting, stopped, needsAttention)
+    }
 }
 
 private extension Sequence where Element == SessionSummary {
@@ -3580,6 +3639,43 @@ private extension SessionSummary {
             return date.timeIntervalSince1970 * 1_000
         }
         return 0
+    }
+
+    /// Whether this session's own last-activity signal (the same value used to sort every
+    /// session list by freshness) falls within `window` of `now`. Reused by
+    /// `SessionSections` recency bucketing so "fresh" means the same thing there as it does
+    /// everywhere else sessions are ordered.
+    func isRecentSessionActivity(within window: TimeInterval, relativeTo now: Date) -> Bool {
+        Self.isTimestamp(millisecondsSinceEpoch: localFreshnessTimeInterval, within: window, of: now)
+    }
+
+    /// A running goal can still be genuinely progressing even after the parent session's own
+    /// last-activity marker has gone stale (e.g. a long unattended tool run), so its own
+    /// `updatedAtMs` is checked independently rather than falling back to session-level
+    /// freshness.
+    func hasRecentlyRunningGoal(within window: TimeInterval, relativeTo now: Date) -> Bool {
+        guard hasRunningGoal, let goalUpdatedAtMs = goal?.updatedAtMs else {
+            return false
+        }
+        return Self.isTimestamp(
+            millisecondsSinceEpoch: TimeInterval(goalUpdatedAtMs),
+            within: window,
+            of: now
+        )
+    }
+
+    private static func isTimestamp(
+        millisecondsSinceEpoch: TimeInterval,
+        within window: TimeInterval,
+        of now: Date
+    ) -> Bool {
+        guard millisecondsSinceEpoch > 0 else {
+            return false
+        }
+        let millisecondsPerSecond: TimeInterval = 1_000
+        let timestampSeconds = millisecondsSinceEpoch / millisecondsPerSecond
+        let age = now.timeIntervalSince1970 - timestampSeconds
+        return age <= window
     }
 }
 

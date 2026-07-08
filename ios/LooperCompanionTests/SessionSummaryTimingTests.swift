@@ -12,9 +12,15 @@ struct SessionSummaryTimingTests {
     private enum Constants {
         static let millisecondsPerSecond: TimeInterval = 1_000
         static let dateToleranceSeconds: TimeInterval = 0.000_001
-        static let activityMilliseconds: Int64 = 1_781_596_920_321
-        static let olderActivityMilliseconds: Int64 = 1_781_596_920_123
-        static let messageMilliseconds: Int64 = 1_781_596_860_123
+        /// `SessionSections` now gates status-based bucketing on recency (see
+        /// `SessionSectionRecencyPolicy`), measured against a real `Date()` for every test
+        /// in this file that doesn't thread its own frozen `now`. Anchoring these fixture
+        /// timestamps to the wall clock (instead of a fixed historical instant) keeps them
+        /// inside the freshness windows the production code checks, while preserving the
+        /// original relative deltas the ordering assertions in this file rely on.
+        static let activityMilliseconds: Int64 = Int64(Date().timeIntervalSince1970 * millisecondsPerSecond)
+        static let olderActivityMilliseconds: Int64 = activityMilliseconds - 198
+        static let messageMilliseconds: Int64 = activityMilliseconds - 60_198
         static let largeSurfaceSessionCount = 1_500
         static let hostSyncTime = "2026-06-16T08:02:00Z"
         static let refreshedHostSyncTime = "2026-06-16T08:03:00Z"
@@ -1320,6 +1326,226 @@ struct SessionSummaryTimingTests {
 
         let expectedTimeInterval = TimeInterval(milliseconds) / Constants.millisecondsPerSecond
         return abs(date.timeIntervalSince1970 - expectedTimeInterval) < Constants.dateToleranceSeconds
+    }
+
+    // MARK: - Session section recency policy
+
+    @Test(
+        "Session sections apply the recency policy identically on both construction paths",
+        arguments: SessionSummaryTimingTests.recencySections
+    )
+    private func sessionSectionsApplyRecencyPolicyOnBothPaths(
+        _ scenario: SessionSectionsRecencyScenario
+    ) throws {
+        let now = RecencyFixture.referenceNow
+        let sessionID = "recency-\(scenario.name)"
+        let activityMilliseconds = RecencyFixture.milliseconds(secondsBefore: scenario.secondsSinceActivity, now: now)
+        let goal = scenario.goal(now: now)
+        let session = try sessionSummary(
+            id: sessionID,
+            ref: "R-\(scenario.name)",
+            status: scenario.status,
+            activityMilliseconds: activityMilliseconds,
+            messageMilliseconds: activityMilliseconds,
+            isArchived: scenario.isArchived,
+            goal: goal
+        )
+
+        // Path 1: the local (non-FFI) fallback bucketing used when the core projection is
+        // unavailable or disagrees with local goal-attention state.
+        let localSections = SessionSections(localProjectionSessions: [session], now: now)
+        expectRecency(localSections, sessionID: sessionID, scenario: scenario, path: "local")
+
+        // Path 2: the core-projection path. active/archived indexes are taken verbatim from
+        // the (here hand-built) FFI projection, exactly as `reduce_session_sections` would
+        // report them for a single non-goal-attention-conflicting session; every other
+        // sub-bucket must be entirely recomputed by the Swift-side recency pass, so the
+        // remaining index arrays are deliberately left empty/wrong to prove they're ignored.
+        let projection = ClientSessionSectionsProjection(
+            activeIndexes: scenario.isArchived ? [] : [0],
+            runningIndexes: [],
+            waitingIndexes: [],
+            stoppedIndexes: [],
+            needsAttentionIndexes: [],
+            archivedIndexes: scenario.isArchived ? [0] : []
+        )
+        let projectionSections = SessionSections(projection: projection, sessions: [session], now: now)
+        expectRecency(projectionSections, sessionID: sessionID, scenario: scenario, path: "projection")
+    }
+
+    private func expectRecency(
+        _ sections: SessionSections,
+        sessionID: String,
+        scenario: SessionSectionsRecencyScenario,
+        path: String
+    ) {
+        #expect(
+            sections.running.map(\.id).contains(sessionID) == scenario.expectRunning,
+            "\(path) path: running membership mismatch for \(scenario.name)"
+        )
+        #expect(
+            sections.waiting.map(\.id).contains(sessionID) == scenario.expectWaiting,
+            "\(path) path: waiting membership mismatch for \(scenario.name)"
+        )
+        #expect(
+            sections.stopped.map(\.id).contains(sessionID) == scenario.expectStopped,
+            "\(path) path: stopped membership mismatch for \(scenario.name)"
+        )
+        #expect(
+            sections.needsAttention.map(\.id).contains(sessionID) == scenario.expectNeedsAttention,
+            "\(path) path: needsAttention membership mismatch for \(scenario.name)"
+        )
+        #expect(
+            sections.archived.map(\.id).contains(sessionID) == scenario.expectArchived,
+            "\(path) path: archived membership mismatch for \(scenario.name)"
+        )
+    }
+
+    private static let recencySections: [SessionSectionsRecencyScenario] = [
+        SessionSectionsRecencyScenario(
+            name: "fresh-active",
+            status: "active",
+            secondsSinceActivity: 60,
+            isArchived: false,
+            goalRunning: false,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: nil,
+            expectRunning: true,
+            expectWaiting: false,
+            expectStopped: false,
+            expectNeedsAttention: false,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "stale-active-no-running-goal",
+            status: "active",
+            secondsSinceActivity: SessionSectionRecencyPolicy.workingFreshnessWindow + 60,
+            isArchived: false,
+            goalRunning: false,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: nil,
+            expectRunning: false,
+            expectWaiting: false,
+            expectStopped: true,
+            expectNeedsAttention: false,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "stale-active-fresh-running-goal",
+            status: "active",
+            secondsSinceActivity: SessionSectionRecencyPolicy.workingFreshnessWindow + 60,
+            isArchived: false,
+            goalRunning: true,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: 60,
+            expectRunning: true,
+            expectWaiting: false,
+            expectStopped: false,
+            expectNeedsAttention: false,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "fresh-waiting",
+            status: "waiting",
+            secondsSinceActivity: 60,
+            isArchived: false,
+            goalRunning: false,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: nil,
+            expectRunning: false,
+            expectWaiting: true,
+            expectStopped: false,
+            expectNeedsAttention: true,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "three-day-old-waiting",
+            status: "waiting",
+            secondsSinceActivity: 3 * 24 * 60 * 60,
+            isArchived: false,
+            goalRunning: false,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: nil,
+            expectRunning: false,
+            expectWaiting: false,
+            expectStopped: true,
+            expectNeedsAttention: false,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "needs-goal-attention-ten-days-old",
+            status: "stopped",
+            secondsSinceActivity: 10 * 24 * 60 * 60,
+            isArchived: false,
+            goalRunning: false,
+            goalNeedsAttention: true,
+            goalSecondsSinceUpdate: 10 * 24 * 60 * 60,
+            expectRunning: false,
+            expectWaiting: false,
+            expectStopped: false,
+            expectNeedsAttention: true,
+            expectArchived: false
+        ),
+        SessionSectionsRecencyScenario(
+            name: "archived-unaffected-by-age",
+            status: "archived",
+            secondsSinceActivity: 30 * 24 * 60 * 60,
+            isArchived: true,
+            goalRunning: false,
+            goalNeedsAttention: false,
+            goalSecondsSinceUpdate: nil,
+            expectRunning: false,
+            expectWaiting: false,
+            expectStopped: false,
+            expectNeedsAttention: false,
+            expectArchived: true
+        ),
+    ]
+}
+
+private struct SessionSectionsRecencyScenario: Sendable {
+    let name: String
+    let status: String
+    let secondsSinceActivity: TimeInterval
+    let isArchived: Bool
+    let goalRunning: Bool
+    let goalNeedsAttention: Bool
+    let goalSecondsSinceUpdate: TimeInterval?
+    let expectRunning: Bool
+    let expectWaiting: Bool
+    let expectStopped: Bool
+    let expectNeedsAttention: Bool
+    let expectArchived: Bool
+
+    /// Builds the JSON `goal` object for this scenario, or `nil` when the scenario doesn't
+    /// need one. `goalSecondsSinceUpdate` is relative to `now` so goal freshness can be
+    /// driven independently of the session's own `secondsSinceActivity`.
+    func goal(now: Date) -> [String: Any]? {
+        guard goalRunning || goalNeedsAttention else {
+            return nil
+        }
+        let goalStatus = goalNeedsAttention ? "blocked" : "pursuing"
+        return [
+            "id": "goal-\(name)",
+            "title": "Recency scenario goal",
+            "status": goalStatus,
+            "lifecycle": goalStatus,
+            "running": goalRunning,
+            "updatedAtMs": RecencyFixture.milliseconds(
+                secondsBefore: goalSecondsSinceUpdate ?? 0,
+                now: now
+            ),
+        ]
+    }
+}
+
+private enum RecencyFixture {
+    /// Fixed instant used as "now" for every `SessionSectionsRecencyScenario`, so the
+    /// recency-policy tests are fully deterministic and independent of wall-clock time.
+    static let referenceNow = Date(timeIntervalSince1970: 1_800_000_000)
+
+    static func milliseconds(secondsBefore offset: TimeInterval, now: Date) -> Int64 {
+        Int64((now.timeIntervalSince1970 - offset) * 1_000)
     }
 }
 
