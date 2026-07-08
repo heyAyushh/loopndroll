@@ -430,7 +430,15 @@ struct CompanionAppViewState {
             return nil
         }
 
-        let elapsed = max(0, now.timeIntervalSince(lastRealtimeDataAt))
+        // Time spent suspended in the background can't count against
+        // freshness — the phone couldn't have received data while asleep.
+        // Clamping the reference to the last foreground activation restarts
+        // the degradation timeline at wake instead of flashing a false
+        // "Reconnecting"/"Offline" pill for a stream that hasn't even had a
+        // chance to re-establish yet. A genuinely dead stream still degrades
+        // normally once elapsed-from-activation itself crosses the windows.
+        let referenceDate = max(lastRealtimeDataAt, model.connection.lastBecameActiveAt ?? .distantPast)
+        let elapsed = max(0, now.timeIntervalSince(referenceDate))
         if elapsed <= CompanionConnectionFreshnessPolicy.liveGraceWindow {
             return .live
         }

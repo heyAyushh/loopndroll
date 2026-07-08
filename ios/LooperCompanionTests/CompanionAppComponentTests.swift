@@ -70,6 +70,67 @@ struct CompanionAppComponentTests {
 
     @MainActor
     @Test
+    func foregroundReactivationClampsStaleFreshnessToLive() throws {
+        let model = try Self.makeModel()
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+
+        // Data last arrived long before the background/offline windows —
+        // naively this would read as a dead stream — but the app just came
+        // back to the foreground, so the clock should restart at wake.
+        model.lastRealtimeDataAt = now.addingTimeInterval(-200)
+        model.connection.setLastBecameActiveAtForTesting(now.addingTimeInterval(-2))
+
+        let status = model.viewState.connectionStatusPresentation(now: now).status
+        #expect(status == .live)
+    }
+
+    @MainActor
+    @Test
+    func staleActivationStillDegradesToOffline() throws {
+        let model = try Self.makeModel()
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+
+        // No recent activation recorded (matches a session that never left
+        // the foreground) — behavior must match the pre-clamp legacy path.
+        model.lastRealtimeDataAt = now.addingTimeInterval(-200)
+
+        let status = model.viewState.connectionStatusPresentation(now: now).status
+        #expect(status == .offline)
+    }
+
+    @MainActor
+    @Test
+    func longForegroundOutageIsNotMaskedByActivation() throws {
+        let model = try Self.makeModel()
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+
+        // The app has been continuously active (no background gap) for
+        // longer than the offline window, and no data has ever arrived
+        // since. Activation must not grant an unbounded grace period.
+        model.lastRealtimeDataAt = now.addingTimeInterval(-300)
+        model.connection.setLastBecameActiveAtForTesting(now.addingTimeInterval(-50))
+
+        let status = model.viewState.connectionStatusPresentation(now: now).status
+        #expect(status == .offline)
+    }
+
+    @MainActor
+    private static func makeModel() throws -> CompanionAppModel {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looper-component-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        let runtime = try CompanionSessionRuntime(
+            fileURL: storeDirectory.appendingPathComponent(CompanionSessionRuntime.defaultFileName)
+        )
+        return CompanionAppModel(
+            environment: CompanionEnvironment(service: MockCompanionService()),
+            sessionRuntime: runtime
+        )
+    }
+
+    @MainActor
+    @Test
     func commandDispatcherMapsConnectionErrors() {
         let cases: [(Error, ConnectivityState)] = [
             (CompanionConfigurationError.invalidConnectionCode, .unpaired),

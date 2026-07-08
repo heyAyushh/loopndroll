@@ -43,6 +43,11 @@ final class CompanionConnectionRuntime {
 
     private(set) var machine = CompanionConnectionMachineState.initial
 
+    /// When the app last transitioned from inactive to active. The view
+    /// layer clamps its freshness clock to this so time spent suspended in
+    /// the background never counts against the reconnect grace window.
+    private(set) var lastBecameActiveAt: Date?
+
     let sessionRuntime: CompanionSessionRuntime?
 
     @ObservationIgnored private var callbacks: CompanionConnectionRuntimeCallbacks?
@@ -282,6 +287,13 @@ final class CompanionConnectionRuntime {
         await refreshRecoveryTask?.value
     }
 
+    /// Sets the activation timestamp directly, bypassing the watchdog task
+    /// lifecycle, so tests can exercise the freshness-clamp deterministically
+    /// without spinning up the real activity loop.
+    func setLastBecameActiveAtForTesting(_ date: Date?) {
+        lastBecameActiveAt = date
+    }
+
     // MARK: - Foreground watchdog
 
     /// Periodic freshness check while the app is active. Replaces the
@@ -296,6 +308,9 @@ final class CompanionConnectionRuntime {
         guard watchdogTask == nil else {
             return
         }
+        // Only stamp the activation edge (inactive -> active), not every
+        // repeated `true` call while already active.
+        lastBecameActiveAt = Date()
         watchdogTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: CompanionMetrics.autoRefreshInterval)
