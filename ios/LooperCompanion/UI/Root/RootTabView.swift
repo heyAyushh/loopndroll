@@ -13,6 +13,13 @@ private enum RootLaunchArgument {
     /// after launch so the blocking chain can be reproduced headlessly and
     /// its diagnostics spans pulled from the simulator's Caches directory.
     static let cycleRouteOnLaunch = "--cycle-route-on-launch"
+    /// DEBUG-only headless pairing seam: adopts the given connection code
+    /// through the real pairing flow (`saveConnectionCode`), exactly as the
+    /// Settings field would, so a simulator can be paired from the command
+    /// line (`simctl launch ... '--adopt-connection-code=<code>'`) and serve
+    /// as a live testbed. The UI-test env vars can't do this — stored
+    /// connections take precedence over the env seam by design.
+    static let adoptConnectionCodePrefix = "--adopt-connection-code="
 }
 
 #if DEBUG
@@ -167,6 +174,7 @@ struct RootTabView: View {
             applyLaunchSearchQueryIfNeeded()
 
             #if DEBUG
+            adoptLaunchConnectionCodeIfRequested()
             startRouteCycleOnLaunchIfRequested()
             #endif
         }
@@ -275,6 +283,35 @@ struct RootTabView: View {
     }
 
     #if DEBUG
+    /// Headless pairing: adopt a connection code passed on the command line
+    /// through the exact same flow the Settings field uses, so the sim gets
+    /// a REAL stored connection (bearer + mobile session) that persists
+    /// across launches.
+    private func adoptLaunchConnectionCodeIfRequested() {
+        guard
+            let argument = ProcessInfo.processInfo.arguments.first(where: { argument in
+                argument.hasPrefix(RootLaunchArgument.adoptConnectionCodePrefix)
+            })
+        else {
+            return
+        }
+
+        let code = String(argument.dropFirst(RootLaunchArgument.adoptConnectionCodePrefix.count))
+        guard !code.isEmpty else {
+            return
+        }
+        Task {
+            do {
+                try await model.saveConnectionCode(code)
+                CompanionDiagnostics.record("pairing:launch-arg-adopted")
+            } catch {
+                CompanionDiagnostics.record(
+                    "pairing:launch-arg-failed error=\(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
     /// Headless repro seam for the route-switch main-thread-hang
     /// investigation: a few seconds after launch, cycles the connection
     /// route preference the same way the Settings picker does
