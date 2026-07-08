@@ -1924,6 +1924,11 @@ async fn mobile_snapshot_exposes_rust_owned_routes_and_checks() {
 async fn session_mini_projection_includes_card_blocked_goal_and_notification_state() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
+    // This test asserts on the "waiting" card/goal/notification fields, not on the stale-live-
+    // status decay covered elsewhere — keep `thread-main`'s activity fresh (its fixture
+    // timestamps are otherwise a tiny fixed epoch, arbitrarily stale against wall-clock `now`)
+    // so decay does not demote it to "stopped" out from under this assertion.
+    fixture.set_thread_updated_at_ms("thread-main", current_wall_clock_millis());
     fixture.write_thread_goal(
         "thread-main",
         "goal-blocked-main",
@@ -2003,6 +2008,10 @@ async fn session_mini_projection_includes_card_blocked_goal_and_notification_sta
 async fn session_mini_projection_advances_seq_on_mode_mutation() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
+    // This test asserts on the "waiting" status after a mode mutation, not on the stale-live-
+    // status decay covered elsewhere — keep `thread-main`'s activity fresh so decay does not
+    // demote it to "stopped" out from under the mode-mutation assertions.
+    fixture.set_thread_updated_at_ms("thread-main", current_wall_clock_millis());
     let control_plane = fixture.control_plane();
     prime_state_mini_cache(&control_plane);
     let router = build_router(control_plane.clone());
@@ -2099,6 +2108,84 @@ async fn session_mini_projection_advances_seq_on_mode_mutation() {
     );
     assert_eq!(updated_session["effectiveMode"], "await-reply");
     assert_eq!(updated_session["status"], "waiting");
+}
+
+#[tokio::test]
+async fn session_mini_projection_decays_stale_active_status_and_bumps_revision() {
+    // One minute of silence is well inside the decay window; thirty-one minutes is past it
+    // (STALE_LIVE_STATUS_DECAY in mobile/api/session_mini.rs is 30 minutes).
+    const FRESH_ACTIVITY_OFFSET_MS: i64 = 60 * 1_000;
+    const STALE_ACTIVITY_OFFSET_MS: i64 = 31 * 60 * 1_000;
+
+    let fixture = IsolatedCodexFixture::new();
+    fixture.write_state_db();
+    let now_ms = current_wall_clock_millis();
+    fixture.set_thread_updated_at_ms("thread-main", now_ms - FRESH_ACTIVITY_OFFSET_MS);
+    let control_plane = fixture.control_plane();
+
+    // Simulate a codex thread whose agent started but whose process was killed before the
+    // terminating Stop hook could fire: the lifecycle table is left saying "active" forever,
+    // and codex threads have no live-process signal to fall back on (unlike claude/devin/grok).
+    control_plane
+        .mobile_session_service()
+        .record_hook_lifecycle(
+            &MobileHookPayload {
+                hook_event_name: "SessionStart".to_owned(),
+                session_id: Some("thread-main".to_owned()),
+                turn_id: None,
+                cwd: None,
+                last_assistant_message: None,
+            },
+            false,
+        )
+        .expect("record start lifecycle without a matching stop");
+
+    prime_state_mini_cache(&control_plane);
+    let router = build_router(control_plane.clone());
+    let authorization = issue_mobile_authorization_header(&router).await;
+    let auth_headers = [(axum::http::header::AUTHORIZATION, authorization.as_str())];
+
+    let fresh_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let fresh_session = session_mini_snapshot_session(&fresh_snapshot, "thread-main");
+    assert_eq!(fresh_session["status"], "active");
+    let fresh_revision = fresh_snapshot["revision"]
+        .as_str()
+        .expect("fresh revision")
+        .to_owned();
+
+    // No further activity for over the decay window: the process died silently.
+    fixture.set_thread_updated_at_ms("thread-main", now_ms - STALE_ACTIVITY_OFFSET_MS);
+    let changed = control_plane
+        .reconcile_mobile_session_mini_projection()
+        .expect("reconcile after simulated staleness");
+    assert!(
+        changed,
+        "decaying a live-presenting status must produce a new mini revision so clients see the demotion"
+    );
+
+    let decayed_snapshot = request_json_with_options(
+        &router,
+        Method::GET,
+        "/api/mobile/session-minis/snapshot",
+        &auth_headers,
+        None,
+    )
+    .await;
+    let decayed_session = session_mini_snapshot_session(&decayed_snapshot, "thread-main");
+    assert_eq!(decayed_session["status"], "stopped");
+    assert_ne!(
+        decayed_snapshot["revision"]
+            .as_str()
+            .expect("decayed revision"),
+        fresh_revision
+    );
 }
 
 #[tokio::test]
@@ -5108,6 +5195,18 @@ fn prime_state_mini_cache(control_plane: &ControlPlane) {
         .expect("reconcile state minis");
 }
 
+/// Real wall-clock milliseconds, for fixtures that need to land a thread's activity a
+/// controlled distance from "now" (e.g. to exercise the session-mini stale-live-status decay,
+/// which measures elapsed wall-clock time rather than a fixture-relative clock).
+fn current_wall_clock_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
 async fn request_json_with_options(
     router: &axum::Router,
     method: Method,
@@ -6086,6 +6185,22 @@ insert into threads (
                 rusqlite::params![source, thread_id],
             )
             .expect("set thread source");
+    }
+
+    /// The session-mini projection derives a thread's `lastActivityAtMs` from
+    /// `updated_at_ms`/`created_at_ms` (see `latest_thread_activity_millis`), which is what the
+    /// projection's stale-live-status decay measures against wall-clock time. Fixture threads
+    /// otherwise use tiny fixed epoch timestamps purely for relative ordering, which reads as
+    /// arbitrarily stale against real wall-clock `now` — this lets a test opt a thread out of
+    /// that decay (or deliberately trigger it) by pointing its activity at real elapsed time.
+    fn set_thread_updated_at_ms(&self, thread_id: &str, updated_at_ms: i64) {
+        let connection = Connection::open(self.codex_home.join("state_1.sqlite")).expect("state");
+        connection
+            .execute(
+                "update threads set updated_at_ms = ?1 where thread_id = ?2",
+                rusqlite::params![updated_at_ms, thread_id],
+            )
+            .expect("set thread updated_at_ms");
     }
 
     fn write_live_shape_state_db(&self) {

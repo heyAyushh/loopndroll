@@ -1,6 +1,8 @@
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::control_plane::session_fsm::{ACTIVE_STATUS, STOPPED_STATUS};
 use crate::control_plane::{DesktopSnapshot, DesktopThread};
 use crate::events::{MobileSessionMiniProjectionInput, MobileSessionMiniRecord};
 use crate::mobile::session::{
@@ -11,6 +13,20 @@ use super::overrides::{is_mobile_home_visible_thread, session_override};
 use super::summary::session_summary;
 
 const BLOCKED_GOAL_STATUSES: &[&str] = &["blocked", "usage-limited", "budget-limited", "unmet"];
+/// `looper_session_core` exports `ACTIVE_STATUS`/`STOPPED_STATUS` but keeps its "waiting" label
+/// private (`SessionState::display_status` / `inactive_projected_status`), so we mirror the
+/// literal here rather than reach into a private item of another crate.
+const WAITING_LIVE_STATUS: &str = "waiting";
+/// A session can only present as "active" or "waiting" on the mobile mini projection while
+/// there is evidence it is actually alive. Some surfaces have no live-process signal at all —
+/// codex threads (`codex_thread_to_desktop_thread`) always set `runtime_status: None` and rely
+/// entirely on hook-driven FSM lifecycle rows, so a missed terminating hook (crash, killed
+/// process, ...) leaves the projected status "active"/"waiting" forever with nothing left to
+/// correct it. Once a session has gone this long without fresh activity and without live
+/// runtime evidence backing up "active"/"waiting", the mini projection presents it as stopped
+/// instead. This is purely a presentation decay for the projection: the underlying
+/// state/lifecycle rows a surface owns are never rewritten.
+const STALE_LIVE_STATUS_DECAY_MS: i64 = 30 * 60 * 1000;
 const EMBEDDED_CONTROL_FIELDS: &[&str] = &["revision", "globalSettings"];
 const DETAIL_METADATA_FIELDS: &[&str] = &["spawn", "sources", "tags"];
 const COMPACT_SESSION_MINI_FIELDS: &[&str] = &[
@@ -388,12 +404,25 @@ fn session_mini_value(
     seq: i64,
     _revision: &str,
 ) -> Value {
-    let summary = session_summary(thread, index, session_state);
-    let Some(summary) = summary.as_object() else {
+    let mut summary = session_summary(thread, index, session_state);
+    let Some(summary) = summary.as_object_mut() else {
         return json!({});
     };
+    // Decay before anything below reads "status" off the summary, so the mini's `status` field
+    // (copied from `summary` further down) and the `lifecycle` fallback both see the demoted
+    // value consistently.
+    let last_activity_at_ms = summary.get("lastActivityAtMs").and_then(Value::as_i64);
+    let decayed_status = decay_stale_live_status(
+        summary.get("status").cloned().unwrap_or(Value::Null),
+        thread,
+        last_activity_at_ms,
+        current_time_millis(),
+    );
+    summary.insert("status".to_owned(), decayed_status.clone());
+    let summary: &Map<String, Value> = summary;
+
     let override_state = session_override(thread, session_state);
-    let status = summary.get("status").cloned().unwrap_or(Value::Null);
+    let status = decayed_status;
     let notification_target_ids = notification_target_ids(thread, session_state);
     let lifecycle = session_state
         .lifecycle
@@ -475,6 +504,50 @@ fn session_mini_value(
         }),
     );
     Value::Object(mini)
+}
+
+/// Demotes a mini's "active"/"waiting" status to "stopped" once a session has been silent
+/// past `STALE_LIVE_STATUS_DECAY_MS` and has no live-runtime evidence backing the status.
+///
+/// "Live-runtime evidence" is whatever liveness check a surface already performs when building
+/// its `DesktopThread` (claude's process match, an ACP host connection, a provider API's
+/// running/is-active check — see `claude_session_to_desktop_thread`, `acp_runtime_session_to_desktop_thread`,
+/// `devin::sessions`, `grok_build::sessions`). Those surfaces stamp `thread.runtime_status` with
+/// `ACTIVE_STATUS` only when that fresh check says the session is actually running, so trust it
+/// outright and skip decay. Codex threads have no such signal at all
+/// (`codex_thread_to_desktop_thread` always sets `runtime_status: None`) and rely purely on
+/// hook-driven FSM lifecycle rows that never self-correct if the terminating hook is missed; for
+/// those, activity age alone decides.
+fn decay_stale_live_status(
+    status: Value,
+    thread: &DesktopThread,
+    last_activity_at_ms: Option<i64>,
+    now_ms: i64,
+) -> Value {
+    let Some(status_str) = status.as_str() else {
+        return status;
+    };
+    if status_str != ACTIVE_STATUS && status_str != WAITING_LIVE_STATUS {
+        return status;
+    }
+    if thread.runtime_status.as_deref() == Some(ACTIVE_STATUS) {
+        return status;
+    }
+    let is_stale = last_activity_at_ms
+        .is_some_and(|activity_ms| now_ms.saturating_sub(activity_ms) > STALE_LIVE_STATUS_DECAY_MS);
+    if is_stale {
+        json!(STOPPED_STATUS)
+    } else {
+        status
+    }
+}
+
+fn current_time_millis() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
 fn compact_session_mini_payload(mut payload: Value) -> Option<Value> {
@@ -647,7 +720,116 @@ mod tests {
     use super::*;
     use crate::assistant::AssistantKind;
     use crate::goals::{GoalStatus, ThreadGoalSummary};
-    use crate::mobile::api::test_support::test_thread;
+    use crate::mobile::api::test_support::{session_state_with_lifecycle, test_thread};
+
+    const FRESH_ACTIVITY_OFFSET_MS: i64 = 60 * 1_000;
+    const STALE_ACTIVITY_OFFSET_MS: i64 = STALE_LIVE_STATUS_DECAY_MS + 60 * 1_000;
+
+    fn thread_with_activity(
+        thread_id: &str,
+        runtime_status: Option<&str>,
+        last_activity_at_ms: i64,
+    ) -> DesktopThread {
+        DesktopThread {
+            created_at_ms: Some(last_activity_at_ms),
+            updated_at_ms: Some(last_activity_at_ms),
+            latest_message_at_ms: Some(last_activity_at_ms),
+            ..test_thread(thread_id, AssistantKind::Codex, runtime_status)
+        }
+    }
+
+    #[test]
+    fn session_mini_keeps_fresh_active_status() {
+        let now_ms = current_time_millis();
+        let thread = thread_with_activity(
+            "thread-fresh-active",
+            None,
+            now_ms - FRESH_ACTIVITY_OFFSET_MS,
+        );
+        let session_state = session_state_with_lifecycle("thread-fresh-active", "active");
+
+        let mini = session_mini_value(
+            &thread,
+            0,
+            &session_state,
+            &BTreeMap::new(),
+            1,
+            "revision-1",
+        );
+
+        assert_eq!(mini["status"], ACTIVE_STATUS);
+    }
+
+    #[test]
+    fn session_mini_decays_stale_active_status_without_runtime_evidence() {
+        let now_ms = current_time_millis();
+        let thread = thread_with_activity(
+            "thread-stale-active",
+            None,
+            now_ms - STALE_ACTIVITY_OFFSET_MS,
+        );
+        let session_state = session_state_with_lifecycle("thread-stale-active", "active");
+
+        let mini = session_mini_value(
+            &thread,
+            0,
+            &session_state,
+            &BTreeMap::new(),
+            1,
+            "revision-1",
+        );
+
+        assert_eq!(mini["status"], STOPPED_STATUS);
+    }
+
+    #[test]
+    fn session_mini_decays_stale_waiting_status_without_runtime_evidence() {
+        let now_ms = current_time_millis();
+        let thread = thread_with_activity(
+            "thread-stale-waiting",
+            None,
+            now_ms - STALE_ACTIVITY_OFFSET_MS,
+        );
+        let mut session_state = session_state_with_lifecycle("thread-stale-waiting", "stopped");
+        session_state.global_preset = Some("await-reply".to_owned());
+
+        let mini = session_mini_value(
+            &thread,
+            0,
+            &session_state,
+            &BTreeMap::new(),
+            1,
+            "revision-1",
+        );
+
+        assert_eq!(mini["status"], STOPPED_STATUS);
+    }
+
+    #[test]
+    fn session_mini_keeps_stale_active_status_with_live_runtime_evidence() {
+        // Claude (and devin/grok/ACP-host) threads carry a `runtime_status` that is
+        // re-verified on every read (process match, connection state, provider API check).
+        // That live evidence should be trusted even when the thread's own timestamps are
+        // stale, unlike codex threads which have no such signal.
+        let now_ms = current_time_millis();
+        let thread = thread_with_activity(
+            "thread-stale-but-running",
+            Some(ACTIVE_STATUS),
+            now_ms - STALE_ACTIVITY_OFFSET_MS,
+        );
+        let session_state = MobileSessionState::default();
+
+        let mini = session_mini_value(
+            &thread,
+            0,
+            &session_state,
+            &BTreeMap::new(),
+            1,
+            "revision-1",
+        );
+
+        assert_eq!(mini["status"], ACTIVE_STATUS);
+    }
 
     #[test]
     fn compact_session_mini_payload_preserves_oversized_allowed_text() {

@@ -3497,6 +3497,7 @@ mod tests {
             len: 10,
             transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
+            claude_transcript_signature: String::new(),
         };
         let changed_signature = SessionMiniProjectionSourceSignature {
             len: 11,
@@ -3530,6 +3531,7 @@ mod tests {
             len: 10,
             transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
+            claude_transcript_signature: String::new(),
         };
 
         let permit = reconciler
