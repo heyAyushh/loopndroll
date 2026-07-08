@@ -44,6 +44,9 @@ enum CompanionMetrics {
     static let sectionSpacing: CGFloat = 28
     static let autoRefreshInterval: Duration = .seconds(20)
     static let eventStreamReconnectDelay: Duration = .seconds(3)
+    /// Bound on pairing/bootstrap waiting for the realtime stream to prove
+    /// liveness before falling back to the connection-failure copy.
+    static let bootstrapConnectTimeout: Duration = .seconds(6)
 }
 
 enum CompanionDiagnostics {

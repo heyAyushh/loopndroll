@@ -7,7 +7,6 @@ import UserNotifications
 
 private enum CachedSnapshotRestoreReason {
     static let appLaunch = "app-launch"
-    static let loadFailure = "load-failure"
 }
 
 private enum SiriDonationEvent {
@@ -74,7 +73,6 @@ final class CompanionAppModel {
     var snapshotState = CompanionSnapshotStateStore()
     var connectionState: ConnectivityState = .connecting
     var errorMessage: String?
-    var isLoading = false
     var lastUpdatedAt: Date?
     var realtimeServerTime: String?
     var realtimeLatestSeq: Int64 = 0
@@ -98,15 +96,10 @@ final class CompanionAppModel {
     @ObservationIgnored private let sessionDetailCoordinator = CompanionSessionDetailCoordinator()
     @ObservationIgnored let connection: CompanionConnectionRuntime
 
-    /// Legacy Int view of the stream generation for the snapshot-load
-    /// coordinator's revision guards; deleted with them in A7.
-    private var connectionRevision: Int {
-        Int(truncatingIfNeeded: connection.currentStreamGeneration)
-    }
     @ObservationIgnored private var commandDispatcher: CompanionCommandDispatcher?
     @ObservationIgnored private var connectionCoordinator: CompanionConnectionCoordinator?
     @ObservationIgnored private var pushCoordinator: CompanionPushCoordinator?
-    @ObservationIgnored private var snapshotLoadCoordinator: CompanionSnapshotLoadCoordinator?
+    @ObservationIgnored private var bootstrapLoader: CompanionBootstrapLoader?
     @ObservationIgnored private var activeServiceConnectionFingerprint = ""
     @ObservationIgnored private var donatedOpenedSiriSessionIDs: Set<String> = []
     @ObservationIgnored private var sessionMiniProjectionTask: Task<Void, Never>?
@@ -144,7 +137,7 @@ final class CompanionAppModel {
             connection: connection,
             delegate: self
         )
-        snapshotLoadCoordinator = CompanionSnapshotLoadCoordinator(delegate: self)
+        bootstrapLoader = CompanionBootstrapLoader(delegate: self)
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
         if didActivateBundledConnection {
@@ -226,6 +219,13 @@ final class CompanionAppModel {
         snapshotState.sessionIndex
     }
 
+    /// Deleted the HTTP snapshot hot path's own load-state tracking in A7:
+    /// there is nothing left to load but the local truth, so "loading" is
+    /// just "no snapshot yet and the runtime hasn't proven liveness".
+    var isLoading: Bool {
+        !snapshotState.hasSnapshot && connection.machine.phase == .connecting
+    }
+
     private var connectionActions: CompanionConnectionCoordinator {
         guard let connectionCoordinator else {
             preconditionFailure("Connection coordinator used before initialization")
@@ -247,11 +247,11 @@ final class CompanionAppModel {
         return pushCoordinator
     }
 
-    private var snapshotLoads: CompanionSnapshotLoadCoordinator {
-        guard let snapshotLoadCoordinator else {
-            preconditionFailure("Snapshot load coordinator used before initialization")
+    private var bootstrap: CompanionBootstrapLoader {
+        guard let bootstrapLoader else {
+            preconditionFailure("Bootstrap loader used before initialization")
         }
-        return snapshotLoadCoordinator
+        return bootstrapLoader
     }
 
     func prepareForActiveState() async {
@@ -518,14 +518,6 @@ final class CompanionAppModel {
         }
     }
 
-    private func startSnapshotLoadInBackground(allowsConcurrentConnectionReload: Bool) {
-        Task { @MainActor [weak self] in
-            await self?.loadSnapshot(
-                allowsConcurrentConnectionReload: allowsConcurrentConnectionReload
-            )
-        }
-    }
-
     func saveConnectionBaseURL(_ value: String) async {
         await connectionActions.saveBaseURL(value)
     }
@@ -549,11 +541,53 @@ final class CompanionAppModel {
     private func reloadConnection() async {
         await resetConnectionStateForStoredConnection(clearsSnapshotCache: true)
         startSessionRuntimeSyncIfNeeded()
-        await loadSnapshot(allowsConcurrentConnectionReload: true)
+        await bootstrapConnection()
+    }
+
+    /// Bounded pairing/bootstrap: resolve server health once to adopt any
+    /// advertised base URLs (the only remaining `service.resolveServerHealth()`
+    /// call site outside the endpoint plan cache), then wait for the realtime
+    /// stream to prove liveness instead of blocking on a full HTTP snapshot
+    /// fetch. A stream that never confirms in time maps through the same
+    /// connection-failure reducer the deleted HTTP hot path used, so
+    /// locked/unauthorized/offline handling and Face ID lock overlay are
+    /// unaffected.
+    private func bootstrapConnection() async {
+        let healthError = await resolveBootstrapServerHealth()
+
+        switch await bootstrap.awaitPhase(timeout: CompanionMetrics.bootstrapConnectTimeout) {
+        case .connected:
+            return
+        case let .blocked(state):
+            CompanionDiagnostics.record("bootstrap:blocked state=\(state.rawValue)")
+        case .timedOut:
+            guard let healthError else {
+                CompanionDiagnostics.record("bootstrap:connect-timeout-no-health-error")
+                return
+            }
+            applyConnectionFailure(healthError, suppressErrorWhenSnapshotUsable: true)
+        }
+    }
+
+    @discardableResult
+    private func resolveBootstrapServerHealth() async -> Error? {
+        do {
+            let resolvedHealth = try await service.resolveServerHealth()
+            serverHealth = resolvedHealth.health
+            reachedBaseURL = resolvedHealth.reachedBaseURL
+            await adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
+            return nil
+        } catch {
+            serverHealth = nil
+            reachedBaseURL = nil
+            CompanionDiagnostics.record(
+                "bootstrap:health-load-failed-clear-route error=\(error.localizedDescription)"
+            )
+            return error
+        }
     }
 
     private func resetConnectionStateForStoredConnection(clearsSnapshotCache: Bool) async {
-        snapshotLoads.cancelSnapshotLoad()
         stopSessionRuntimeSyncForRestart()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
         stopNotificationReplyOutboxDrain()
@@ -625,130 +659,6 @@ final class CompanionAppModel {
 
     func sendLaunchVerificationAlertIfRequested() async {
         await push.sendLaunchVerificationAlertIfRequested()
-    }
-
-    func loadSnapshot(allowsConcurrentConnectionReload: Bool = false) async {
-        await snapshotLoads.loadSnapshot(allowsConcurrentConnectionReload: allowsConcurrentConnectionReload)
-    }
-
-    private func performSnapshotLoad(loadRevision: Int) async {
-        do {
-            try Task.checkCancellation()
-            CompanionDiagnostics.lifecycle.info(
-                "Snapshot load starting baseURL=\(self.configuredBaseURL, privacy: .public)"
-            )
-            CompanionDiagnostics.record("snapshot:load-start baseURL=\(configuredBaseURL)")
-            do {
-                let resolvedHealth = try await service.resolveServerHealth()
-                guard loadRevision == connectionRevision else {
-                    CompanionDiagnostics.record("snapshot:load-stale-health-skip")
-                    return
-                }
-                let health = resolvedHealth.health
-                serverHealth = health
-                reachedBaseURL = resolvedHealth.reachedBaseURL
-                await adoptServerHealthBaseURLsIfNeeded(resolvedHealth)
-            } catch {
-                guard !isCancellationError(error) else {
-                    throw error
-                }
-
-                guard loadRevision == connectionRevision else {
-                    CompanionDiagnostics.record(
-                        "snapshot:load-stale-health-error-skip error=\(error.localizedDescription)"
-                    )
-                    return
-                }
-
-                serverHealth = nil
-                reachedBaseURL = nil
-                CompanionDiagnostics.record(
-                    "snapshot:health-load-failed-clear-route error=\(error.localizedDescription)"
-                )
-            }
-
-            try Task.checkCancellation()
-            if hasKnownSessionMiniCursor() {
-                if !snapshotState.hasSnapshot {
-                    _ = restoreCachedSessionMiniSnapshotIfAvailable(
-                        reason: "network-snapshot-local-session-mini-cursor"
-                    )
-                }
-                markCachedSnapshotReadyIfNeeded(reason: "network-snapshot-local-session-mini-cursor")
-                CompanionDiagnostics.record(
-                    "snapshot:load-session-mini-cursor-skip realtimeSeq=\(realtimeLatestSeq)"
-                )
-                return
-            }
-            if connection.hasLocalStateMiniEvidence(reason: "network-snapshot-local-session-mini-store") {
-                markCachedSnapshotReadyIfNeeded(reason: "network-snapshot-local-session-mini-store")
-                CompanionDiagnostics.record("snapshot:load-session-mini-store-skip")
-                return
-            }
-            let nextSnapshot = try await service.loadSnapshot()
-            guard loadRevision == connectionRevision else {
-                CompanionDiagnostics.record("snapshot:load-stale-skip")
-                return
-            }
-            guard shouldApplyNetworkSnapshot(nextSnapshot) else {
-                CompanionDiagnostics.record(
-                    "snapshot:load-live-session-wins realtimeSeq=\(realtimeLatestSeq)"
-                )
-                return
-            }
-            CompanionDiagnostics.lifecycle.info(
-                "Snapshot load succeeded sessions=\(nextSnapshot.sessions.count, privacy: .public)"
-            )
-            CompanionDiagnostics.record("snapshot:load-success sessions=\(nextSnapshot.sessions.count)")
-            await applySnapshot(nextSnapshot)
-        } catch {
-            guard !isCancellationError(error) else {
-                CompanionDiagnostics.lifecycle.info("Snapshot load cancelled")
-                CompanionDiagnostics.record("snapshot:load-cancelled")
-                return
-            }
-            guard loadRevision == connectionRevision else {
-                CompanionDiagnostics.record("snapshot:load-stale-error-skip error=\(error.localizedDescription)")
-                return
-            }
-
-            let didRestoreSessionMiniSnapshot: Bool
-            if snapshot == nil {
-                didRestoreSessionMiniSnapshot = restoreCachedSessionMiniSnapshotIfAvailable(
-                    reason: CachedSnapshotRestoreReason.loadFailure
-                )
-            } else {
-                didRestoreSessionMiniSnapshot = false
-            }
-            let hasUsableSnapshot = snapshot != nil
-            let failureProjection = reduceSnapshotLoadFailureOrCrash(
-                mappedErrorState: connectionState(for: error),
-                currentState: connectionState,
-                hasUsableSnapshot: hasUsableSnapshot,
-                hasServerHealth: serverHealth != nil,
-                hasReachedBaseURL: reachedBaseURL != nil
-            )
-            let nextConnectionState = sessionAuthoritativeConnectionState(
-                connectionState(rawValue: failureProjection.connectionState)
-            )
-            if failureProjection.preservedConnectedState {
-                CompanionDiagnostics.record(
-                    "snapshot:load-failed-local-state-preserved nextState=\(nextConnectionState.rawValue) error=\(error.localizedDescription)"
-                )
-            }
-            connectionState = nextConnectionState
-            clearConnectionRouteStateIfNeeded(for: nextConnectionState)
-            errorMessage = sessionAuthoritativeErrorMessage(
-                shouldSuppressProjectionError: failureProjection.shouldSuppressError,
-                error: error
-            )
-            CompanionDiagnostics.lifecycle.error(
-                "Snapshot load failed state=\(nextConnectionState.rawValue, privacy: .public) restoredCache=\(didRestoreSessionMiniSnapshot, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
-            )
-            CompanionDiagnostics.record(
-                "snapshot:load-failed state=\(nextConnectionState.rawValue) restoredCache=\(didRestoreSessionMiniSnapshot) error=\(error.localizedDescription)"
-            )
-        }
     }
 
     func refresh() async {
@@ -1347,10 +1257,6 @@ final class CompanionAppModel {
         return true
     }
 
-    private func connectionState(for error: Error) -> ConnectivityState {
-        CompanionCommandDispatcher.connectionState(for: error)
-    }
-
     private func applyConnectionFailure(
         _ error: Error,
         suppressErrorWhenSnapshotUsable: Bool
@@ -1359,51 +1265,6 @@ final class CompanionAppModel {
             error,
             suppressErrorWhenSnapshotUsable: suppressErrorWhenSnapshotUsable
         )
-    }
-
-    private func reduceSnapshotLoadFailureOrCrash(
-        mappedErrorState: ConnectivityState,
-        currentState: ConnectivityState,
-        hasUsableSnapshot: Bool,
-        hasServerHealth: Bool,
-        hasReachedBaseURL: Bool
-    ) -> ClientSnapshotLoadFailureProjection {
-        do {
-            return try reduceSnapshotLoadFailure(
-                mappedErrorState: mappedErrorState.rawValue,
-                currentConnectionState: currentState.rawValue,
-                hasUsableSnapshot: hasUsableSnapshot,
-                hasServerHealth: hasServerHealth,
-                hasReachedBaseUrl: hasReachedBaseURL
-            )
-        } catch {
-            CompanionDiagnostics.record(
-                "connection:snapshot-load-projection-failed error=\(error.localizedDescription)"
-            )
-            return ClientSnapshotLoadFailureProjection(
-                connectionState: mappedErrorState.rawValue,
-                preservedConnectedState: false,
-                shouldClearRouteState: mappedErrorState != .connected,
-                shouldSuppressError: hasUsableSnapshot
-            )
-        }
-    }
-
-    private func connectionState(rawValue: String) -> ConnectivityState {
-        guard let state = ConnectivityState(rawValue: rawValue) else {
-            CompanionDiagnostics.record("connection:projection-unknown-state state=\(rawValue)")
-            return .offline
-        }
-        return state
-    }
-
-    private func isCancellationError(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-
-        let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     @discardableResult
@@ -1659,54 +1520,6 @@ final class CompanionAppModel {
         return true
     }
 
-    private func applySnapshot(_ nextSnapshot: MobileSnapshot) async {
-        let previousSnapshot = snapshot
-        let visibleSnapshot = snapshotState.applySnapshot(nextSnapshot)
-        if realtimeStreamIsLive {
-            connectionState = .connected
-        } else {
-            serverHealth = nil
-            reachedBaseURL = nil
-        }
-        lastUpdatedAt = Date()
-        spotlightCoordinator.sync(with: snapshotState.allSessions)
-        scheduleLocalFallbackNotificationsIfNeeded(
-            previousSnapshot: previousSnapshot,
-            currentSnapshot: visibleSnapshot
-        )
-    }
-
-    private func shouldApplyNetworkSnapshot(_: MobileSnapshot) -> Bool {
-        if hasKnownSessionMiniCursor() {
-            return false
-        }
-        return snapshot == nil || !snapshotState.hasSnapshot
-    }
-
-    private func hasKnownSessionMiniCursor() -> Bool {
-        if realtimeLatestSeq > 0 {
-            return true
-        }
-        guard let sessionRuntime = connection.sessionRuntime else {
-            return false
-        }
-        do {
-            let localSnapshot = try sessionRuntime.currentStateMiniSnapshot()
-            guard localSnapshot.latestSeq > 0 else {
-                return false
-            }
-            if localSnapshot.sessions.isEmpty {
-                return true
-            }
-            return try sessionRuntime.cachedSnapshot() != nil
-        } catch {
-            CompanionDiagnostics.record(
-                "session-mini:cursor-read-failed error=\(error.localizedDescription)"
-            )
-            return false
-        }
-    }
-
     private func shouldApplyStateMiniSnapshot(latestSeq: Int64) -> Bool {
         if realtimeLatestSeq > 0, latestSeq < realtimeLatestSeq {
             return false
@@ -1733,23 +1546,6 @@ final class CompanionAppModel {
 
         errorMessage = nil
         CompanionDiagnostics.record("connection:local-cache-ready reason=\(reason)")
-    }
-
-    private func scheduleLocalFallbackNotificationsIfNeeded(
-        previousSnapshot: MobileSnapshot?,
-        currentSnapshot: MobileSnapshot
-    ) {
-        guard viewState.shouldUseLocalFallbackNotifications, let previousSnapshot else {
-            return
-        }
-
-        let notificationManager = notificationManager
-        Task { @MainActor in
-            await notificationManager.deliverStopNotifications(
-                previousSnapshot: previousSnapshot,
-                currentSnapshot: currentSnapshot
-            )
-        }
     }
 
     private func applyVisibleAssistantSurface(_ surface: CompanionAssistantSurface) {
@@ -1895,21 +1691,9 @@ extension CompanionAppModel: CompanionCommandDispatcherDelegate {
     }
 }
 
-extension CompanionAppModel: CompanionSnapshotLoadCoordinatorDelegate {
-    var snapshotLoadConnectionRevision: Int {
-        connectionRevision
-    }
-
-    func snapshotLoadSetLoading(_ isLoading: Bool) {
-        self.isLoading = isLoading
-    }
-
-    func snapshotLoadClearError() {
-        errorMessage = nil
-    }
-
-    func snapshotLoadPerform(loadRevision: Int) async {
-        await performSnapshotLoad(loadRevision: loadRevision)
+extension CompanionAppModel: CompanionBootstrapLoaderDelegate {
+    var bootstrapLoaderConnectionState: ConnectivityState {
+        connectionState
     }
 }
 

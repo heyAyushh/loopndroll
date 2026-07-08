@@ -146,12 +146,11 @@ enum G006LocalFirstSelfTest {
         )
         try require(model.snapshot == nil, "malformed SessionMini cache should be ignored")
 
-        await model.loadSnapshot()
-        try require(
-            model.snapshot?.session(withID: Constants.fallbackThreadID)?.title == "Network Fallback",
-            "fallback snapshot did not hydrate after malformed mini cache"
-        )
-
+        // A7 deleted the HTTP snapshot hot path this case used to fall back
+        // to; a malformed local cache now simply leaves the snapshot empty
+        // until the realtime stream repopulates it. The remaining coverage
+        // is that optimistic commands still queue against the local outbox
+        // with no visible snapshot at all.
         let didSend = await model.sendSessionPrompt("continue", to: Constants.fallbackThreadID)
         try require(didSend, "failed prompt was not locally accepted")
 
