@@ -102,7 +102,7 @@ struct SessionsScreen: View {
                 }
             }
             .refreshable {
-                await model.reconcileLocalSessionState(reason: .sessionsPullRefresh)
+                model.connection.requestRefresh(.pullGesture)
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: AssistantSurfaceSwipeMetrics.minimumDragDistance)

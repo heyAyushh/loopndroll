@@ -140,7 +140,7 @@ struct SettingsScreen: View {
             openSettingsTarget(initialSearchTarget)
         }
         .refreshable {
-            await model.reconcileLocalSessionState(reason: .manualRefresh)
+            model.connection.requestRefresh(.manual)
         }
     }
 
