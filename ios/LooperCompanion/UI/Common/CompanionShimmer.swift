@@ -200,11 +200,9 @@ extension View {
 
 private enum CompanionThinkingBubbleMetrics {
     static let dotCount = 3
-    static let dotSize: CGFloat = 6
-    static let dotSpacing: CGFloat = 4
-    static let contentSpacing: CGFloat = 8
-    static let horizontalPadding: CGFloat = 12
-    static let verticalPadding: CGFloat = 7
+    static let dotSize: CGFloat = 4
+    static let dotSpacing: CGFloat = 3
+    static let contentSpacing: CGFloat = 6
     static let dotPulsePeriod: TimeInterval = 0.9
     /// Stagger between neighboring dots so they wave instead of blinking
     /// in unison.
@@ -212,11 +210,11 @@ private enum CompanionThinkingBubbleMetrics {
     static let dotMinOpacity: Double = 0.25
 }
 
-/// Messaging-style typing indicator for the reply tail: three softly pulsing
-/// dots and a shimmering label inside a capsule, shown while an agent is
-/// working but no fresh text chunk has landed. Under Reduce Motion the dots
-/// hold steady and only the label's gentle pulse remains (via
-/// `companionTextShimmer`'s own fallback).
+/// Quiet typing indicator for the reply tail: three small pulsing dots and a
+/// shimmering caption, no background — sized to read as a footnote, not a
+/// message bubble. Shown while an agent is working but no fresh text chunk
+/// has landed. Under Reduce Motion the dots hold steady and only the label's
+/// gentle pulse remains (via `companionTextShimmer`'s own fallback).
 struct CompanionThinkingBubble: View {
     var label: LocalizedStringKey = "Thinking…"
 
@@ -226,12 +224,9 @@ struct CompanionThinkingBubble: View {
         HStack(spacing: CompanionThinkingBubbleMetrics.contentSpacing) {
             dots
             Text(label)
-                .font(.subheadline)
+                .font(.caption)
                 .companionTextShimmer(active: true)
         }
-        .padding(.horizontal, CompanionThinkingBubbleMetrics.horizontalPadding)
-        .padding(.vertical, CompanionThinkingBubbleMetrics.verticalPadding)
-        .background(.quaternary.opacity(0.5), in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Looper is thinking")
     }
