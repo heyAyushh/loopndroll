@@ -334,12 +334,11 @@ struct SessionDetailScreen: View {
                 by: SessionDetailThinkingIndicatorMetrics.livenessPollInterval
             )) { _ in
                 if !buffer.isStreaming {
-                    CompanionShimmerLine(
-                        width: SessionDetailThinkingIndicatorMetrics.lineWidth,
-                        height: SessionDetailThinkingIndicatorMetrics.lineHeight
-                    )
-                    .padding(.vertical, 4)
-                    .accessibilityLabel("Looper is thinking")
+                    Text("Thinking…")
+                        .font(.subheadline)
+                        .companionTextShimmer(active: true)
+                        .padding(.vertical, 4)
+                        .accessibilityLabel("Looper is thinking")
                 }
             }
         }
@@ -852,8 +851,6 @@ private enum SessionDetailStreamingIndicatorMetrics {
 }
 
 private enum SessionDetailThinkingIndicatorMetrics {
-    static let lineWidth: CGFloat = 90
-    static let lineHeight: CGFloat = 12
     /// How often the "still thinking" check re-evaluates
     /// `StreamingReplyBuffer.isStreaming`, whose 2s liveness window is a
     /// pure function of wall-clock time and would otherwise never re-render

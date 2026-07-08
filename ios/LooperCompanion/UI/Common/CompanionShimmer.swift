@@ -96,6 +96,108 @@ extension View {
     }
 }
 
+/// Tuning for the Apple-Intelligence-style text shimmer, modeled on
+/// assistant-ui's `tw-shimmer`: a diagonal highlight band that sweeps across
+/// live glyphs, rests for a beat, then sweeps again — distinct from
+/// `CompanionShimmerTuning`'s continuous skeleton sweep.
+private enum CompanionTextShimmerTuning {
+    /// Highlight band width, independent of text length so short and long
+    /// previews read as the same "size" of sweep.
+    static let bandWidth: CGFloat = 120
+    /// Sweep speed in points per second; a sweep's duration is derived from
+    /// content width (`(width + bandWidth) / speed`) so short and long text
+    /// feel like the same speed rather than the same duration.
+    static let speed: CGFloat = 200
+    /// Rest between sweep cycles — this is a breathing highlight, not a
+    /// continuous loop.
+    static let pauseDuration: TimeInterval = 1.0
+    /// Tilt off horizontal, approximating assistant-ui's
+    /// `linear-gradient(105deg, ...)` (105° is 15° past pure horizontal).
+    static let angleDegrees: Double = 15
+    static let highlightOpacity: Double = 0.9
+    /// Extra band height so the rotated band still fully covers multi-line
+    /// text instead of clipping at its corners.
+    static let bandHeightMultiplier: CGFloat = 3
+}
+
+/// Sweeps a brighter `.primary` highlight band across `content`'s own
+/// glyphs over a dimmed `.secondary` base — text shimmering in place, not a
+/// skeleton bar. A `TimelineView(.animation)` derives the band's offset
+/// from elapsed wall-clock time: the offset holds at "fully off the right
+/// edge" for `pauseDuration` after each sweep completes, which gives the
+/// sweep/pause/sweep cadence from plain arithmetic instead of chained
+/// `repeatForever` animation state.
+private struct CompanionTextShimmerSweep: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(.secondary)
+            .overlay {
+                TimelineView(.animation) { timeline in
+                    GeometryReader { proxy in
+                        highlightBand(
+                            in: proxy.size,
+                            elapsed: timeline.date.timeIntervalSinceReferenceDate
+                        )
+                    }
+                }
+                .mask(content)
+            }
+    }
+
+    private func highlightBand(in size: CGSize, elapsed: TimeInterval) -> some View {
+        let bandWidth = CompanionTextShimmerTuning.bandWidth
+        // Travels from fully off the left edge to fully off the right edge,
+        // same reasoning as CompanionShimmerSweep's skeleton band.
+        let travel = size.width + bandWidth
+        let sweepDuration = TimeInterval(travel / CompanionTextShimmerTuning.speed)
+        let cycleDuration = sweepDuration + CompanionTextShimmerTuning.pauseDuration
+        let cyclePhase = cycleDuration > 0 ? elapsed.truncatingRemainder(dividingBy: cycleDuration) : 0
+        // Clamped to 1 once a sweep finishes, so the band parks off-screen
+        // (at `-bandWidth + travel`, i.e. fully past the right edge) for the
+        // remainder of the cycle instead of sweeping continuously.
+        let sweepProgress = sweepDuration > 0 ? min(cyclePhase / sweepDuration, 1) : 1
+        let xOffset = -bandWidth + CGFloat(sweepProgress) * travel
+
+        return LinearGradient(
+            colors: [.clear, Color.primary.opacity(CompanionTextShimmerTuning.highlightOpacity), .clear],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(width: bandWidth, height: size.height * CompanionTextShimmerTuning.bandHeightMultiplier)
+        .rotationEffect(.degrees(CompanionTextShimmerTuning.angleDegrees))
+        .offset(x: xOffset)
+    }
+}
+
+private struct CompanionTextShimmerModifier: ViewModifier {
+    let isActive: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if !isActive {
+            content
+        } else if reduceMotion {
+            content.modifier(CompanionShimmerPulse())
+        } else {
+            content.modifier(CompanionTextShimmerSweep())
+        }
+    }
+}
+
+extension View {
+    /// Apple-Intelligence-style text shimmer for glyphs that are actively
+    /// "alive" right now (e.g. a live session's streaming preview): a
+    /// diagonal highlight sweeps across the dimmed text, rests briefly, then
+    /// sweeps again. Falls back to the existing opacity pulse under Reduce
+    /// Motion. Renders as plain `content` while `active` is false — the
+    /// `TimelineView` driving the sweep is never constructed for inactive
+    /// content, so rows that aren't alive don't pay for it.
+    func companionTextShimmer(active: Bool) -> some View {
+        modifier(CompanionTextShimmerModifier(isActive: active))
+    }
+}
+
 /// A single shimmering skeleton bar. The reusable building block behind
 /// `CompanionSkeletonSessionRow` and any other "this text isn't in yet"
 /// placeholder (e.g. the session-detail thinking indicator).
