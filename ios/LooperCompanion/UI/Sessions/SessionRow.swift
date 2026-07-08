@@ -122,7 +122,7 @@ struct SessionRow: View {
                     .lineLimit(2)
                     .contentTransition(.opacity)
                     .animation(.easeInOut(duration: 0.2), value: assistantPreview)
-                    .companionTextShimmer(active: session.status == .active)
+                    .companionTextShimmer(active: session.isWorkingNow())
             }
 
             HStack(spacing: 12) {

@@ -328,17 +328,22 @@ struct SessionDetailScreen: View {
         _ presentation: SessionDetailPresentation,
         buffer: StreamingReplyBuffer
     ) -> some View {
-        if presentation.status == .active {
+        // Outer gate keeps inactive sessions from paying for a TimelineView;
+        // isWorkingNow re-evaluates inside it so the indicator retires when
+        // the working window lapses. `isWorkingNow` (not raw status) so
+        // goal-driven work — codex's common shape — shows the same thinking
+        // affordance as status-active sessions.
+        if presentation.status == .active || presentation.summary?.hasRunningGoal == true {
             TimelineView(.periodic(
                 from: .now,
                 by: SessionDetailThinkingIndicatorMetrics.livenessPollInterval
-            )) { _ in
-                if !buffer.isStreaming {
-                    Text("Thinking…")
-                        .font(.subheadline)
-                        .companionTextShimmer(active: true)
+            )) { context in
+                if !buffer.isStreaming,
+                   presentation.summary?.isWorkingNow(relativeTo: context.date)
+                       ?? (presentation.status == .active) {
+                    CompanionThinkingBubble()
                         .padding(.vertical, 4)
-                        .accessibilityLabel("Looper is thinking")
+                        .transition(.opacity)
                 }
             }
         }

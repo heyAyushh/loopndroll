@@ -3572,16 +3572,7 @@ struct SessionSections: Sendable {
                 continue
             }
 
-            let isFreshActiveStatus = session.status == .active
-                && session.isRecentSessionActivity(
-                    within: SessionSectionRecencyPolicy.workingFreshnessWindow,
-                    relativeTo: now
-                )
-            let isFreshRunningGoal = session.hasRecentlyRunningGoal(
-                within: SessionSectionRecencyPolicy.workingFreshnessWindow,
-                relativeTo: now
-            )
-            if isFreshActiveStatus || isFreshRunningGoal {
+            if session.isWorkingNow(relativeTo: now) {
                 running.append(session)
                 continue
             }
@@ -3618,6 +3609,27 @@ private extension Sequence where Element == SessionSummary {
             }
             return lhs.id < rhs.id
         }
+    }
+}
+
+extension SessionSummary {
+    /// THE definition of "this session is genuinely working right now":
+    /// a reported-active status or a running goal, either backed by activity
+    /// within the working freshness window. The sections list, the row's
+    /// live-preview shimmer, and the detail screen's thinking indicator all
+    /// share this — a session must never sit in the Active section without
+    /// its working affordances, or vice versa (codex sessions often work via
+    /// a running goal while their raw status reads stopped).
+    func isWorkingNow(relativeTo now: Date = Date()) -> Bool {
+        let isFreshActiveStatus = status == .active
+            && isRecentSessionActivity(
+                within: SessionSectionRecencyPolicy.workingFreshnessWindow,
+                relativeTo: now
+            )
+        return isFreshActiveStatus || hasRecentlyRunningGoal(
+            within: SessionSectionRecencyPolicy.workingFreshnessWindow,
+            relativeTo: now
+        )
     }
 }
 

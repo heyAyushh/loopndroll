@@ -198,6 +198,83 @@ extension View {
     }
 }
 
+private enum CompanionThinkingBubbleMetrics {
+    static let dotCount = 3
+    static let dotSize: CGFloat = 6
+    static let dotSpacing: CGFloat = 4
+    static let contentSpacing: CGFloat = 8
+    static let horizontalPadding: CGFloat = 12
+    static let verticalPadding: CGFloat = 7
+    static let dotPulsePeriod: TimeInterval = 0.9
+    /// Stagger between neighboring dots so they wave instead of blinking
+    /// in unison.
+    static let dotPhaseOffset: TimeInterval = 0.18
+    static let dotMinOpacity: Double = 0.25
+}
+
+/// Messaging-style typing indicator for the reply tail: three softly pulsing
+/// dots and a shimmering label inside a capsule, shown while an agent is
+/// working but no fresh text chunk has landed. Under Reduce Motion the dots
+/// hold steady and only the label's gentle pulse remains (via
+/// `companionTextShimmer`'s own fallback).
+struct CompanionThinkingBubble: View {
+    var label: LocalizedStringKey = "Thinking…"
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: CompanionThinkingBubbleMetrics.contentSpacing) {
+            dots
+            Text(label)
+                .font(.subheadline)
+                .companionTextShimmer(active: true)
+        }
+        .padding(.horizontal, CompanionThinkingBubbleMetrics.horizontalPadding)
+        .padding(.vertical, CompanionThinkingBubbleMetrics.verticalPadding)
+        .background(.quaternary.opacity(0.5), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Looper is thinking")
+    }
+
+    @ViewBuilder
+    private var dots: some View {
+        if reduceMotion {
+            dotRow { _ in CompanionThinkingBubbleMetrics.dotMinOpacity }
+        } else {
+            TimelineView(.animation) { timeline in
+                let now = timeline.date.timeIntervalSinceReferenceDate
+                dotRow { index in
+                    dotOpacity(at: now, index: index)
+                }
+            }
+        }
+    }
+
+    private func dotRow(opacity: @escaping (Int) -> Double) -> some View {
+        HStack(spacing: CompanionThinkingBubbleMetrics.dotSpacing) {
+            ForEach(0..<CompanionThinkingBubbleMetrics.dotCount, id: \.self) { index in
+                Circle()
+                    .fill(Color.secondary)
+                    .frame(
+                        width: CompanionThinkingBubbleMetrics.dotSize,
+                        height: CompanionThinkingBubbleMetrics.dotSize
+                    )
+                    .opacity(opacity(index))
+            }
+        }
+    }
+
+    private func dotOpacity(at time: TimeInterval, index: Int) -> Double {
+        let period = CompanionThinkingBubbleMetrics.dotPulsePeriod
+        let phase = (time - Double(index) * CompanionThinkingBubbleMetrics.dotPhaseOffset)
+            .truncatingRemainder(dividingBy: period) / period
+        // Sine wave between min and full opacity, one crest per period.
+        let wave = (sin(phase * 2 * .pi) + 1) / 2
+        let range = 1 - CompanionThinkingBubbleMetrics.dotMinOpacity
+        return CompanionThinkingBubbleMetrics.dotMinOpacity + wave * range
+    }
+}
+
 /// A single shimmering skeleton bar. The reusable building block behind
 /// `CompanionSkeletonSessionRow` and any other "this text isn't in yet"
 /// placeholder (e.g. the session-detail thinking indicator).
