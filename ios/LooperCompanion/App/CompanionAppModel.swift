@@ -617,15 +617,40 @@ final class CompanionAppModel {
 
     private func applyStoredConnectionRoutePreference() async {
         isAwaitingRouteSessionProof = true
+
+        let resolveBaseURLStartedAt = Date()
         configuredBaseURL = CompanionConfiguration.resolvedBaseURLString()
+        CompanionDiagnostics.record(
+            "route-switch:resolve-base-url ms=\(CompanionDiagnostics.elapsedMilliseconds(since: resolveBaseURLStartedAt))"
+        )
+
+        let applyLiveEnvironmentStartedAt = Date()
         applyLiveEnvironmentFromSessionCore()
+        CompanionDiagnostics.record(
+            "route-switch:apply-live-environment ms=\(CompanionDiagnostics.elapsedMilliseconds(since: applyLiveEnvironmentStartedAt))"
+        )
+
+        let resolveFingerprintStartedAt = Date()
         activeServiceConnectionFingerprint = CompanionConfiguration.resolvedConnectionFingerprint()
+        CompanionDiagnostics.record(
+            "route-switch:resolve-fingerprint ms=\(CompanionDiagnostics.elapsedMilliseconds(since: resolveFingerprintStartedAt))"
+        )
+
         errorMessage = nil
         serverHealth = nil
         reachedBaseURL = nil
-        stopSessionRuntimeSyncForRestart()
 
+        let stopSyncStartedAt = Date()
+        stopSessionRuntimeSyncForRestart()
+        CompanionDiagnostics.record(
+            "route-switch:stop-sync ms=\(CompanionDiagnostics.elapsedMilliseconds(since: stopSyncStartedAt))"
+        )
+
+        let restartSyncStartedAt = Date()
         restartSessionRuntimeSyncForRouteChange()
+        CompanionDiagnostics.record(
+            "route-switch:restart-sync ms=\(CompanionDiagnostics.elapsedMilliseconds(since: restartSyncStartedAt))"
+        )
     }
 
     private func restartSessionRuntimeSyncForRouteChange() {

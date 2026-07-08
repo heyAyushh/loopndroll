@@ -53,6 +53,7 @@ enum CompanionDiagnostics {
     private static let fallbackSubsystem = "dev.looper.app.ios"
     private static let diagnosticsFilename = "looper-diagnostics.log"
     private static let subsystem = Bundle.main.bundleIdentifier ?? fallbackSubsystem
+    private static let millisecondsPerSecond: TimeInterval = 1_000
 
     static let cache = Logger(subsystem: subsystem, category: "SnapshotCache")
     static let configuration = Logger(subsystem: subsystem, category: "Configuration")
@@ -66,6 +67,13 @@ enum CompanionDiagnostics {
             await DiagnosticsLogWriter.shared.record(message)
         }
         #endif
+    }
+
+    /// Wall-clock span in whole milliseconds since `startedAt`. Used to
+    /// instrument suspected main-thread blockers (e.g. the route-switch
+    /// chain) with cheap, DEBUG-only spans consumed via `record(_:)`.
+    static func elapsedMilliseconds(since startedAt: Date) -> Int {
+        Int((Date().timeIntervalSince(startedAt) * millisecondsPerSecond).rounded())
     }
 
     private static func diagnosticsURL() -> URL {

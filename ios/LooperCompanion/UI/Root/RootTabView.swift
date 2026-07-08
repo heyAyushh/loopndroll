@@ -1,11 +1,27 @@
 import SwiftUI
+#if DEBUG
+import LooperCompanionCore
+#endif
 
 private enum RootLaunchArgument {
     static let openOrbScannerOnLaunch = "--open-orb-scanner-on-launch"
     static let openSearchTabOnLaunch = "--open-search-tab"
     static let openSearchOnLaunch = "--open-search"
     static let searchQueryPrefix = "--search-query="
+    /// DEBUG-only repro seam for the route-switch main-thread-hang
+    /// investigation: cycles the connection route preference a few seconds
+    /// after launch so the blocking chain can be reproduced headlessly and
+    /// its diagnostics spans pulled from the simulator's Caches directory.
+    static let cycleRouteOnLaunch = "--cycle-route-on-launch"
 }
+
+#if DEBUG
+private enum RouteCycleDebugTiming {
+    static let initialDelay: Duration = .seconds(3)
+    static let stepDelay: Duration = .seconds(3)
+    static let sequence: [CompanionConnectionRoutePreference] = [.tailscale, .lan, .remote]
+}
+#endif
 
 enum LooperKeyboardShortcut {
     static let searchKey: KeyEquivalent = "l"
@@ -47,6 +63,9 @@ struct RootTabView: View {
     @AppStorage(PinballSettingsKeys.isDebugOverlayEnabled) private var isPinballDebugOverlayEnabled = false
     @State private var hasCheckedLaunchOrbScanner = false
     @State private var isLaunchOrbScannerPresented = false
+    #if DEBUG
+    @State private var hasStartedRouteCycleOnLaunch = false
+    #endif
     @State private var selectedTab: RootTab = .sessions
     @State private var pinballSurfaces: [PinballSurface] = []
     @State private var searchText = ""
@@ -146,6 +165,10 @@ struct RootTabView: View {
             }
 
             applyLaunchSearchQueryIfNeeded()
+
+            #if DEBUG
+            startRouteCycleOnLaunchIfRequested()
+            #endif
         }
         .fullScreenCover(isPresented: $isLaunchOrbScannerPresented) {
             OrbScannerScreen()
@@ -250,6 +273,35 @@ struct RootTabView: View {
 
         searchText = String(argument.dropFirst(RootLaunchArgument.searchQueryPrefix.count))
     }
+
+    #if DEBUG
+    /// Headless repro seam for the route-switch main-thread-hang
+    /// investigation: a few seconds after launch, cycles the connection
+    /// route preference the same way the Settings picker does
+    /// (`model.setConnectionRoutePreference`), so `sample`/diagnostics can
+    /// be captured without touching the picker by hand.
+    private func startRouteCycleOnLaunchIfRequested() {
+        guard !hasStartedRouteCycleOnLaunch else {
+            return
+        }
+        guard ProcessInfo.processInfo.arguments.contains(RootLaunchArgument.cycleRouteOnLaunch) else {
+            return
+        }
+
+        hasStartedRouteCycleOnLaunch = true
+        Task {
+            try? await Task.sleep(for: RouteCycleDebugTiming.initialDelay)
+            for preference in RouteCycleDebugTiming.sequence {
+                CompanionDiagnostics.record(
+                    "route-switch:debug-cycle-begin preference=\(preference.rawValue)"
+                )
+                await model.setConnectionRoutePreference(preference)
+                try? await Task.sleep(for: RouteCycleDebugTiming.stepDelay)
+            }
+            CompanionDiagnostics.record("route-switch:debug-cycle-complete")
+        }
+    }
+    #endif
 
     private var refreshTaskID: String {
         "\(authenticator.isUnlocked)-\(scenePhase == .active)"

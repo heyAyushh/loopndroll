@@ -47,16 +47,29 @@ final class CompanionConnectionCoordinator {
     }
 
     func setRoutePreference(_ preference: CompanionConnectionRoutePreference) async {
+        let routeSwitchStartedAt = Date()
+
+        let configWriteStartedAt = Date()
         let currentConnection = CompanionConfiguration.resolvedConnection()
         CompanionConfiguration.storeConnectionRoutePreference(preference)
         CompanionConfiguration.storeConnection(
             currentConnection,
             mobileSessionPolicy: .preserveIfBearerTokenUnchanged
         )
+        CompanionDiagnostics.record(
+            "route-switch:config-store ms=\(CompanionDiagnostics.elapsedMilliseconds(since: configWriteStartedAt))"
+        )
+
+        let applyPreferenceStartedAt = Date()
         await delegate?.connectionCoordinatorApplyRoutePreference()
+        CompanionDiagnostics.record(
+            "route-switch:apply-preference ms=\(CompanionDiagnostics.elapsedMilliseconds(since: applyPreferenceStartedAt))"
+        )
+
         let primaryBaseURL = delegate?.connectionCoordinatorConfiguredBaseURL ?? ""
         CompanionDiagnostics.record(
-            "connection:route-preference preference=\(preference.rawValue) primary=\(primaryBaseURL)"
+            "connection:route-preference preference=\(preference.rawValue) primary=\(primaryBaseURL) " +
+                "totalMs=\(CompanionDiagnostics.elapsedMilliseconds(since: routeSwitchStartedAt))"
         )
     }
 

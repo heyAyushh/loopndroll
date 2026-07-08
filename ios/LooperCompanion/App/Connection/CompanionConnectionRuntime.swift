@@ -58,6 +58,14 @@ final class CompanionConnectionRuntime {
     @ObservationIgnored private var watchdogTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathMonitor: NWPathMonitor?
     @ObservationIgnored private var lastNetworkPathIdentity: String?
+    /// Chains `sessionRuntime.stopStateMiniStream()` FFI calls (which flush
+    /// the local store to disk synchronously inside the Rust core) onto a
+    /// background executor instead of the main actor. `startSyncIfNeeded()`
+    /// awaits this before priming a new stream, so "stop fully finishes
+    /// before start reuses the stream identity" still holds even though
+    /// neither `stopSync` nor its callers need to become `async` — only the
+    /// blocking I/O moves off the main actor, per the fix constraint.
+    @ObservationIgnored private var pendingSessionRuntimeStopTask: Task<Void, Never>?
 
     var isSyncing: Bool {
         supervisorTask != nil
@@ -98,6 +106,15 @@ final class CompanionConnectionRuntime {
         }
 
         supervisorTask = Task { [weak self] in
+            // If a route/network-path restart just cancelled the previous
+            // stream, its `stopStateMiniStream()` FFI call (disk flush) may
+            // still be draining on a background task. Wait for it here —
+            // off the main actor — so this stream doesn't reuse the
+            // underlying Rust stream identity before the old one is torn
+            // down, without blocking the caller that triggered the restart.
+            let priorStopTask = await self?.pendingSessionRuntimeStopTask
+            await priorStopTask?.value
+
             var attempt = 0
             while let self, !Task.isCancelled {
                 let generation = self.beginStreamGeneration()
@@ -133,7 +150,7 @@ final class CompanionConnectionRuntime {
         let task = supervisorTask
         supervisorTask = nil
         task?.cancel()
-        sessionRuntime?.stopStateMiniStream()
+
         streamGeneration += 1
         apply(.streamExited(
             streamGeneration: streamGeneration,
@@ -141,6 +158,30 @@ final class CompanionConnectionRuntime {
         ))
         if reconnectInProgress {
             machine = CompanionConnectionReducer.startingStream(machine, generation: streamGeneration)
+        }
+
+        guard let sessionRuntime else {
+            return
+        }
+
+        // `sessionRuntime.stopStateMiniStream()` calls into the Rust core's
+        // `stop()`, which synchronously flushes the local store to disk
+        // (crates/looper-client-core/src/session_runtime.rs) before
+        // returning. Calling it inline here — as this function used to —
+        // blocked the main actor for however long that flush took every
+        // time the Settings route picker was toggled. The state-machine
+        // writes above still happen synchronously and instantly; only this
+        // blocking FFI call moves to a background task, chained after any
+        // still-draining prior stop so ordering against a subsequent
+        // `startSyncIfNeeded()` is preserved (see the await there).
+        let priorStopTask = pendingSessionRuntimeStopTask
+        let stopFFIStartedAt = Date()
+        pendingSessionRuntimeStopTask = Task.detached(priority: .userInitiated) {
+            _ = await priorStopTask?.value
+            sessionRuntime.stopStateMiniStream()
+            CompanionDiagnostics.record(
+                "route-switch:stop-ffi-detached ms=\(CompanionDiagnostics.elapsedMilliseconds(since: stopFFIStartedAt))"
+            )
         }
     }
 
