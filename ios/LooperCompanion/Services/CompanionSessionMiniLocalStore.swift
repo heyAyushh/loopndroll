@@ -811,11 +811,15 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         return URL(string: endpointURLString)
     }
 
+    /// Logs the candidates as Swift hands them to the core, BEFORE the core's
+    /// `endpoints_with_last_good` reorder consults its persisted last-good
+    /// endpoint — so `lastGood` here is always false and says nothing about
+    /// persistence (that lives in the core's local store).
     private static func recordEndpointCandidates(_ endpoints: [ClientEndpoint], reason: String) {
         let summary = endpoints.enumerated().map { index, endpoint in
             "index=\(index) transport=\(transportName(endpoint.transport)) url=\(endpoint.url) recoveryBaseURL=\(endpoint.recoveryBaseUrl) h3CertSha256=\(nonEmpty(endpoint.h3CertificateSha256) ?? "none") h3SpkiSha256=\(nonEmpty(endpoint.h3CertificateSpkiSha256) ?? "none") lastGood=\(endpoint.lastGood)"
         }.joined(separator: " | ")
-        CompanionDiagnostics.record("session-runtime:endpoint-candidates reason=\(reason) \(summary)")
+        CompanionDiagnostics.record("session-runtime:endpoint-candidates-pre-core reason=\(reason) \(summary)")
     }
 
     private static func recordRuntimeDiagnostics(_ snapshot: ClientStateSnapshot?, reason: String) {
