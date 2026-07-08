@@ -41,12 +41,15 @@ struct CompanionEnvironment {
                 CompanionSessionRuntimeStartConfiguration(
                     bearerToken: connection.bearerToken,
                     endpointResolver: {
-                        let health = try? await service.resolveServerHealth().health
-                        return CompanionRealtimeEndpointResolver.endpoints(
+                        // Warm cache answers without a network round-trip so
+                        // gesture-triggered recovery never blocks on health.
+                        await CompanionEndpointPlanCache.shared.endpoints(
                             configuredBaseURLs: CompanionConfiguration.uniqueAttemptableBaseURLs(
                                 baseURLs.map(CompanionBaseURLRouting.canonicalHTTPAPIBaseURL)
                             ),
-                            health: health
+                            healthProvider: {
+                                try? await service.resolveServerHealth().health
+                            }
                         )
                     }
                 )
