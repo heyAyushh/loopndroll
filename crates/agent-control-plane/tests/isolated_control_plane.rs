@@ -25,7 +25,9 @@ use agent_control_plane::http::build_router;
 use agent_control_plane::mobile::api::{
     latest_session_mini_revision, session_mini_projection_inputs,
 };
-use agent_control_plane::mobile::events::{MobileEventKind, snapshot_revision_changed_event};
+use agent_control_plane::mobile::events::{
+    MobileEventBroadcast, MobileEventKind, snapshot_revision_changed_event,
+};
 use agent_control_plane::mobile::session::MobileHookPayload;
 use agent_control_plane::scheduler::AutomationRunner;
 use axum::body::Body;
@@ -2122,6 +2124,7 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
     );
     fixture.attach_transcript_path("thread-main", &transcript_path);
     let control_plane = fixture.control_plane();
+    let mut mobile_events = control_plane.mobile_event_hub().subscribe();
 
     let initial_snapshot = control_plane
         .desktop_mobile_snapshot()
@@ -2204,11 +2207,47 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
             .expect("reconcile projection"),
         "fresh transcript activity should publish a replacement mini event"
     );
+
+    let text_chunk_broadcast = mobile_events
+        .try_recv()
+        .expect("codex transcript growth should publish a mobile TextChunk broadcast");
+    let MobileEventBroadcast::TextChunk(text_chunk) = text_chunk_broadcast else {
+        panic!("expected a TextChunk broadcast first, got {text_chunk_broadcast:?}");
+    };
+    assert_eq!(text_chunk.thread_id, "thread-main");
+    assert!(
+        text_chunk.message_id.starts_with("thread-main:msg-"),
+        "message id should be derived from the codex thread id, got {}",
+        text_chunk.message_id
+    );
+    assert_eq!(
+        text_chunk.content,
+        "Fresh assistant reply for Session stream."
+    );
+    assert!(
+        text_chunk.is_final,
+        "a stopped codex session's growth chunk should be published final"
+    );
+    let session_changed_broadcast = mobile_events.try_recv().expect(
+        "fresh transcript activity should also publish its usual session-changed mini event",
+    );
+    assert!(
+        matches!(
+            session_changed_broadcast,
+            MobileEventBroadcast::Persisted(_)
+        ),
+        "expected the session-changed mini event right after the text chunk, got {session_changed_broadcast:?}"
+    );
+
     assert!(
         !control_plane
             .reconcile_mobile_session_mini_projection()
             .expect("second reconcile projection"),
         "stored projection revision should make repeated reconcile a no-op"
+    );
+    assert!(
+        mobile_events.try_recv().is_err(),
+        "an unchanged codex transcript must not publish a duplicate text chunk"
     );
 
     let latest_seq = control_plane

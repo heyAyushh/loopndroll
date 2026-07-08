@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -117,6 +118,11 @@ const CODEX_HOOKS_CONNECTION_LABEL: &str = "Codex hooks";
 const CODEX_CONNECTION_KIND: &str = "codex";
 const CODEX_STATE_SOURCE: &str = "vscode";
 const CODEX_ACP_SOURCE: &str = "codex-acp";
+/// `assistantSurface` values whose sessions are polled from disk (codex rollouts, Claude Code
+/// transcripts) rather than pushed by a live ACP host. Devin/Zed publish their own text chunks
+/// from `observe_acp_client_host_session_response`, so they are deliberately excluded here to
+/// avoid double-publishing.
+const TEXT_CHUNK_POLLED_ASSISTANT_SURFACES: &[&str] = &["codex", "claude-code"];
 const DEVIN_CONNECTION_KIND: &str = "devin";
 const DEVIN_HOOKS_CONNECTION_ID: &str = "devin-hooks";
 const DEVIN_HOOKS_CONNECTION_LABEL: &str = "Devin hooks";
@@ -304,6 +310,18 @@ pub struct ControlPlane {
     response_cache: Arc<ControlPlaneResponseCache>,
     prompt_delivery_cache: Arc<PromptDeliveryActionCache>,
     session_mini_reconciler: Arc<SessionMiniProjectionReconciler>,
+    text_chunk_cursors: Arc<Mutex<BTreeMap<String, TextChunkCursor>>>,
+    text_chunk_message_seq: Arc<AtomicU64>,
+}
+
+/// Tracks, per thread, the last mobile `TextChunk` published from a polled (codex/claude-code)
+/// session so `publish_mobile_text_chunks_for_minis` can tell message growth (same message,
+/// bigger `content`) apart from a brand-new assistant message starting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TextChunkCursor {
+    message_id: String,
+    content: String,
+    is_final: bool,
 }
 
 struct ControlPlaneResponseCache {
@@ -684,6 +702,8 @@ impl ControlPlane {
             response_cache: Arc::new(ControlPlaneResponseCache::new()),
             prompt_delivery_cache: Arc::new(PromptDeliveryActionCache::default()),
             session_mini_reconciler: Arc::new(SessionMiniProjectionReconciler::new()),
+            text_chunk_cursors: Arc::new(Mutex::new(BTreeMap::new())),
+            text_chunk_message_seq: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -807,6 +827,97 @@ impl ControlPlane {
         });
     }
 
+    /// Publishes mobile `TextChunk` frames for polled (codex/claude-code) sessions by diffing
+    /// each mini's `assistantPreview` against the last chunk we sent for that thread.
+    ///
+    /// ACP-hosted sessions (Devin, Zed) already publish chunks the moment their host observes
+    /// a turn (see `observe_acp_client_host_session_response`), so they carry no `assistantSurface`
+    /// listed in `TEXT_CHUNK_POLLED_ASSISTANT_SURFACES` and are skipped here to avoid double
+    /// publishing. Codex and Claude Code have no equivalent push hook: their latest-assistant-text
+    /// is only ever recomputed by re-reading the rollout/transcript file on this reconcile pass
+    /// (see `reconcile_mobile_session_mini_projection_with_options`), so this diff is the only
+    /// place their live-typing chunks originate.
+    fn publish_mobile_text_chunks_for_minis(&self, minis: &[MobileSessionMiniProjectionInput]) {
+        let mut cursors = self
+            .text_chunk_cursors
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut live_session_ids = BTreeSet::new();
+        for mini in minis {
+            if !TEXT_CHUNK_POLLED_ASSISTANT_SURFACES.contains(&mini.assistant_surface.as_str()) {
+                continue;
+            }
+            let Some(content) = mini
+                .body_json
+                .get("assistantPreview")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            live_session_ids.insert(mini.session_id.clone());
+            let is_final = mini
+                .body_json
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status != session_fsm::ACTIVE_STATUS);
+            self.publish_mobile_text_chunk_growth(
+                &mut cursors,
+                &mini.session_id,
+                content,
+                is_final,
+            );
+        }
+        cursors.retain(|session_id, _| live_session_ids.contains(session_id));
+    }
+
+    /// Publishes one chunk for `session_id` if `content`/`is_final` moved on from the cached
+    /// cursor, minting a fresh `message_id` when the previous message had already been sealed
+    /// (`is_final`) and new content shows up — i.e. a new assistant turn started.
+    fn publish_mobile_text_chunk_growth(
+        &self,
+        cursors: &mut BTreeMap<String, TextChunkCursor>,
+        session_id: &str,
+        content: &str,
+        is_final: bool,
+    ) {
+        let existing = cursors.get(session_id).cloned();
+        let message_id = match &existing {
+            Some(cursor) if cursor.is_final && cursor.content != content => {
+                self.next_text_chunk_message_id(session_id)
+            }
+            Some(cursor) => cursor.message_id.clone(),
+            None => self.next_text_chunk_message_id(session_id),
+        };
+        let already_published = existing.as_ref().is_some_and(|cursor| {
+            cursor.message_id == message_id
+                && cursor.content == content
+                && cursor.is_final == is_final
+        });
+        if already_published {
+            return;
+        }
+        self.publish_mobile_text_chunk(MobileTextChunkInput {
+            thread_id: session_id.to_owned(),
+            message_id: Some(message_id.clone()),
+            content: content.to_owned(),
+            is_final,
+        });
+        cursors.insert(
+            session_id.to_owned(),
+            TextChunkCursor {
+                message_id,
+                content: content.to_owned(),
+                is_final,
+            },
+        );
+    }
+
+    fn next_text_chunk_message_id(&self, session_id: &str) -> String {
+        let sequence = self.text_chunk_message_seq.fetch_add(1, Ordering::Relaxed);
+        format!("{session_id}:msg-{sequence}")
+    }
+
     pub fn emit_mobile_session_event_with_cached_minis(
         &self,
         input: MobileEventInput,
@@ -874,6 +985,12 @@ impl ControlPlane {
             latest_seq,
             &revision,
         );
+        // Diffs assistant-preview growth against our own per-thread cursor and publishes chunks
+        // as needed. This must run before the "stored projection unchanged" early return below:
+        // that check is about the mini-projection *event*, not about whether we've already sent
+        // a TextChunk for this exact content, and the two can disagree (e.g. a chunk already
+        // covers this content from an earlier reconcile pass in the same second).
+        self.publish_mobile_text_chunks_for_minis(&minis);
         let stored_revision = self
             .store
             .latest_mobile_session_mini_revision()
