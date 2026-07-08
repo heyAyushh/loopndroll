@@ -131,6 +131,51 @@ struct CompanionAppComponentTests {
 
     @MainActor
     @Test
+    func provenTransportMigrationSkipsPathChangeRestart() async throws {
+        let model = try Self.makeModel()
+        let connection = model.connection
+        connection.rebindTransportForTesting = { true }
+        connection.migrationGraceWindowForTesting = .milliseconds(50)
+        connection.startSyncIfNeeded()
+
+        connection.simulateNetworkPathChangeForTesting()
+        connection.setLastLiveActivityAtForTesting(Date())
+        await connection.waitForMigrationGraceForTesting()
+
+        #expect(connection.routeRestartCountForTesting == 0)
+    }
+
+    @MainActor
+    @Test
+    func unprovenTransportMigrationFallsBackToRestart() async throws {
+        let model = try Self.makeModel()
+        let connection = model.connection
+        connection.rebindTransportForTesting = { true }
+        connection.migrationGraceWindowForTesting = .milliseconds(50)
+        connection.startSyncIfNeeded()
+
+        connection.simulateNetworkPathChangeForTesting()
+        connection.setLastLiveActivityAtForTesting(nil)
+        await connection.waitForMigrationGraceForTesting()
+
+        #expect(connection.routeRestartCountForTesting == 1)
+    }
+
+    @MainActor
+    @Test
+    func failedRebindRestartsImmediately() throws {
+        let model = try Self.makeModel()
+        let connection = model.connection
+        connection.rebindTransportForTesting = { false }
+        connection.startSyncIfNeeded()
+
+        connection.simulateNetworkPathChangeForTesting()
+
+        #expect(connection.routeRestartCountForTesting == 1)
+    }
+
+    @MainActor
+    @Test
     func commandDispatcherMapsConnectionErrors() {
         let cases: [(Error, ConnectivityState)] = [
             (CompanionConfigurationError.invalidConnectionCode, .unpaired),

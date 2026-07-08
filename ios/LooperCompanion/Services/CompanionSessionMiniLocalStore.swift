@@ -309,6 +309,23 @@ final class CompanionSessionRuntime: @unchecked Sendable {
         try sessionManager.stop()
     }
 
+    /// Migrates the h3 transport onto a fresh UDP socket after a network
+    /// path change; QUIC keeps live connections across the rebind. Cheap
+    /// (socket swap, no round-trip). `false` = nothing to migrate (no h3
+    /// endpoint yet) or the rebind failed — caller should restart instead.
+    func rebindRealtimeTransport() -> Bool {
+        do {
+            let rebound = try sessionManager.rebindTransport()
+            CompanionDiagnostics.record("session-runtime:transport-rebind rebound=\(rebound)")
+            return rebound
+        } catch {
+            CompanionDiagnostics.record(
+                "session-runtime:transport-rebind-failed error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
     func cachedSnapshot() throws -> MobileSnapshot? {
         try localStore.cachedSnapshot()
     }

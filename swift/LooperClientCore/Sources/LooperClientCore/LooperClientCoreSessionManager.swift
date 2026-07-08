@@ -63,6 +63,13 @@ public final class LooperClientCoreSessionManager: @unchecked Sendable {
         try runtime.stop()
     }
 
+    /// Migrates the h3 transport's UDP socket after a device network-path
+    /// change; QUIC connections survive the rebind. `false` = no h3 endpoint
+    /// to migrate.
+    public func rebindTransport() throws -> Bool {
+        try runtime.rebindTransport()
+    }
+
     public func observe() async throws -> ClientStateMiniStreamUpdate {
         try await runtime.observe()
     }

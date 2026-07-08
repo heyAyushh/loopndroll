@@ -96,6 +96,16 @@ impl LooperClientCoreSessionRuntime {
         self.client_core.stop()
     }
 
+    /// Migrates the h3 transport's UDP socket after a device network-path
+    /// change (Wi-Fi <-> LTE). QUIC connections survive the rebind, so a
+    /// still-reachable stream keeps flowing seamlessly instead of paying a
+    /// teardown + redial + `after_seq` catch-up. Returns `false` when there
+    /// is no h3 endpoint to migrate. Cheap and non-blocking: a socket swap,
+    /// no network round-trip.
+    pub fn rebind_transport(&self) -> Result<bool, ClientCoreError> {
+        crate::session_transport::rebind_h3_transport()
+    }
+
     pub async fn observe(&self) -> Result<ClientStateMiniStreamUpdate, ClientCoreError> {
         let update = self.client_core.observe().await?;
         self.persist_last_good_endpoint(&update.snapshot)?;

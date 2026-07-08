@@ -594,7 +594,11 @@ pub(crate) async fn run_state_mini_stream(
 ) {
     let mut next_after_seq = after_seq;
     let mut reconnect_backoff = ReconnectBackoff::new();
-    let h3_endpoint_cache = H3ClientEndpointCache::new();
+    // Process-wide cache (not per-task): keeps the quinn endpoint's UDP
+    // socket and TLS session cache alive across stream restarts, so 0-RTT
+    // resumption works between tasks and `rebind_h3_transport` can migrate
+    // live connections when the device's network path changes.
+    let h3_endpoint_cache = shared_h3_endpoint_cache().clone();
     loop {
         if events.is_closed() {
             return;
@@ -1621,6 +1625,41 @@ struct H3ClientEndpointCache {
     endpoint: Arc<Mutex<Option<H3QuinnEndpoint>>>,
 }
 
+fn shared_h3_endpoint_cache() -> &'static H3ClientEndpointCache {
+    static CACHE: std::sync::OnceLock<H3ClientEndpointCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(H3ClientEndpointCache::new)
+}
+
+/// Migrates the live h3 transport onto a fresh wildcard UDP socket. On iOS a
+/// network-path change (Wi-Fi <-> LTE) can strand the endpoint's existing
+/// socket on a dead interface; QUIC connections survive a `rebind` (quinn
+/// path-migrates them), so the stream keeps flowing without a handshake or
+/// an `after_seq` catch-up. Returns `false` when no h3 endpoint exists yet —
+/// nothing to migrate, caller falls back to its normal restart path.
+pub(crate) fn rebind_h3_transport() -> Result<bool, ClientCoreError> {
+    rebind_h3_transport_in(shared_h3_endpoint_cache())
+}
+
+fn rebind_h3_transport_in(cache: &H3ClientEndpointCache) -> Result<bool, ClientCoreError> {
+    let endpoint = cache
+        .endpoint
+        .lock()
+        .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
+    let Some(endpoint) = endpoint.as_ref() else {
+        return Ok(false);
+    };
+    let socket = std::net::UdpSocket::bind(
+        "0.0.0.0:0"
+            .parse::<SocketAddr>()
+            .map_err(|_| ClientCoreError::InvalidEndpoint)?,
+    )
+    .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
+    endpoint
+        .rebind(socket)
+        .map_err(|_| ClientCoreError::StateMiniStreamTransportFailed)?;
+    Ok(true)
+}
+
 impl H3ClientEndpointCache {
     fn new() -> Self {
         Self::default()
@@ -2290,6 +2329,30 @@ mod tests {
         );
         assert_eq!(snapshot.sessions[1].session_id, "thread-2");
         assert!(snapshot.sessions[1].assistant_surface.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rebind_h3_transport_migrates_cached_endpoint_socket() {
+        let cache = H3ClientEndpointCache::new();
+        assert!(
+            !rebind_h3_transport_in(&cache).expect("rebind with empty cache"),
+            "no endpoint yet means nothing to migrate"
+        );
+
+        let endpoint = new_h3_client_endpoint().expect("h3 endpoint");
+        let address_before = endpoint.local_addr().expect("local addr");
+        *cache.endpoint.lock().expect("cache lock") = Some(endpoint.clone());
+
+        assert!(
+            rebind_h3_transport_in(&cache).expect("rebind with endpoint"),
+            "cached endpoint must migrate"
+        );
+        let address_after = endpoint.local_addr().expect("local addr after rebind");
+        assert_ne!(
+            address_before.port(),
+            address_after.port(),
+            "rebind must move the endpoint onto a fresh socket"
+        );
     }
 
     #[test]

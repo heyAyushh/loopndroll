@@ -58,6 +58,24 @@ final class CompanionConnectionRuntime {
     @ObservationIgnored private var watchdogTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathMonitor: NWPathMonitor?
     @ObservationIgnored private var lastNetworkPathIdentity: String?
+    /// Last time the stream delivered liveness-proving activity; compared
+    /// against the path-change instant to decide whether a QUIC socket
+    /// rebind actually saved the connection.
+    @ObservationIgnored private var lastLiveActivityAt: Date?
+    @ObservationIgnored private var migrationGraceTask: Task<Void, Never>?
+    /// How long a rebound connection gets to prove itself with live activity
+    /// before the old teardown+redial fallback kicks in. Working sessions
+    /// produce deltas every ~1s, so a healthy migration proves out fast;
+    /// heartbeats alone (15s cadence) won't beat this window, which just
+    /// means quiet streams restart like they always did.
+    private static let migrationGraceWindow: Duration = .milliseconds(3_500)
+    /// Testing seams: no real h3 endpoint (or 3.5s wait) exists in tests.
+    /// The restart counter exists because `currentStreamGeneration` is
+    /// bumped asynchronously by the supervisor loop itself, so it can't
+    /// distinguish "migration restarted the stream" from ordinary churn.
+    @ObservationIgnored var rebindTransportForTesting: (() -> Bool)?
+    @ObservationIgnored var migrationGraceWindowForTesting: Duration?
+    @ObservationIgnored private(set) var routeRestartCountForTesting = 0
     /// Chains `sessionRuntime.stopStateMiniStream()` FFI calls (which flush
     /// the local store to disk synchronously inside the Rust core) onto a
     /// background executor instead of the main actor. `startSyncIfNeeded()`
@@ -186,6 +204,7 @@ final class CompanionConnectionRuntime {
     }
 
     func restartForRouteChange() {
+        routeRestartCountForTesting += 1
         if isSyncing {
             stopSync(reconnectInProgress: true)
         }
@@ -232,6 +251,12 @@ final class CompanionConnectionRuntime {
         let signal: CompanionConnectionStreamSignal = liveness.isLive
             ? .liveActivity(latestSeq: liveness.latestSeq)
             : .none
+        if liveness.isLive {
+            // Feeds the QUIC-migration grace check: activity after a network
+            // path change proves the rebound connection survived, so the
+            // fallback restart can stand down.
+            lastLiveActivityAt = Date()
+        }
         apply(.streamUpdate(signal, streamGeneration: generation))
         callbacks?.applyLiveness(liveness)
     }
@@ -335,6 +360,21 @@ final class CompanionConnectionRuntime {
         lastBecameActiveAt = date
     }
 
+    /// Drives the QUIC-migration grace check deterministically: simulates
+    /// stream activity at `date` and a path change, then awaits the grace
+    /// task so tests can assert whether the fallback restart fired.
+    func setLastLiveActivityAtForTesting(_ date: Date?) {
+        lastLiveActivityAt = date
+    }
+
+    func simulateNetworkPathChangeForTesting() {
+        migrateOrRestartForPathChange()
+    }
+
+    func waitForMigrationGraceForTesting() async {
+        await migrationGraceTask?.value
+    }
+
     // MARK: - Foreground watchdog
 
     /// Periodic freshness check while the app is active. Replaces the
@@ -392,7 +432,43 @@ final class CompanionConnectionRuntime {
 
         lastNetworkPathIdentity = identity
         CompanionDiagnostics.record("network:path-changed identity=\(identity)")
-        restartForRouteChange()
+        migrateOrRestartForPathChange()
+    }
+
+    /// QUIC-first path-change handling: rebind the h3 transport's UDP socket
+    /// (quinn migrates live connections across it — no handshake, no
+    /// `after_seq` catch-up) and only fall back to the old teardown+redial if
+    /// no live stream activity proves the migration within the grace window.
+    /// Strictly no worse than the previous unconditional restart: the dead
+    /// cases restart `migrationGraceWindow` later; the healthy cases become
+    /// seamless.
+    private func migrateOrRestartForPathChange() {
+        let rebound = rebindTransportForTesting?()
+            ?? (sessionRuntime?.rebindRealtimeTransport() == true)
+        guard isSyncing, rebound else {
+            // Not streaming, no h3 endpoint to migrate, or the rebind itself
+            // failed — nothing a grace period could save.
+            restartForRouteChange()
+            return
+        }
+
+        CompanionDiagnostics.record("network:transport-rebound awaiting-proof")
+        let pathChangedAt = Date()
+        let graceWindow = migrationGraceWindowForTesting ?? Self.migrationGraceWindow
+        migrationGraceTask?.cancel()
+        migrationGraceTask = Task { [weak self] in
+            try? await Task.sleep(for: graceWindow)
+            guard let self, !Task.isCancelled, self.isSyncing else {
+                return
+            }
+            if let lastLiveActivityAt = self.lastLiveActivityAt,
+               lastLiveActivityAt >= pathChangedAt {
+                CompanionDiagnostics.record("network:migration-proven")
+                return
+            }
+            CompanionDiagnostics.record("network:migration-unproven restarting")
+            self.restartForRouteChange()
+        }
     }
 
     private nonisolated static func networkPathIdentity(_ path: NWPath) -> String {

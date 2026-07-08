@@ -577,6 +577,16 @@ public protocol LooperClientCoreSessionRuntimeProtocol: AnyObject, Sendable {
 
     func persistNotificationReplyWithGeneratedMutation(notificationId: String, threadId: String, prompt: String, assistantSurface: String) throws  -> ClientNotificationReplyPersistResult
 
+    /**
+     * Migrates the h3 transport's UDP socket after a device network-path
+     * change (Wi-Fi <-> LTE). QUIC connections survive the rebind, so a
+     * still-reachable stream keeps flowing seamlessly instead of paying a
+     * teardown + redial + `after_seq` catch-up. Returns `false` when there
+     * is no h3 endpoint to migrate. Cheap and non-blocking: a socket swap,
+     * no network round-trip.
+     */
+    func rebindTransport() throws  -> Bool
+
     func recoverStateMiniSnapshot(endpoints: [ClientEndpoint], bearerToken: String, mobileSessionHeader: String) async throws  -> ClientLocalStateSnapshot
 
     func saveDefaultPrompt(prompt: String) async throws  -> ClientSessionCommandIntentResult
@@ -823,6 +833,22 @@ open func persistNotificationReplyWithGeneratedMutation(notificationId: String, 
         FfiConverterString.lower(threadId),
         FfiConverterString.lower(prompt),
         FfiConverterString.lower(assistantSurface),$0
+    )
+})
+}
+
+    /**
+     * Migrates the h3 transport's UDP socket after a device network-path
+     * change (Wi-Fi <-> LTE). QUIC connections survive the rebind, so a
+     * still-reachable stream keeps flowing seamlessly instead of paying a
+     * teardown + redial + `after_seq` catch-up. Returns `false` when there
+     * is no h3 endpoint to migrate. Cheap and non-blocking: a socket swap,
+     * no network round-trip.
+     */
+open func rebindTransport()throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeClientCoreError_lift) {
+    uniffi_looper_client_core_fn_method_looperclientcoresessionruntime_rebind_transport(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -7140,6 +7166,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_persist_notification_reply_with_generated_mutation() != 47870) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_rebind_transport() != 9519) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_looper_client_core_checksum_method_looperclientcoresessionruntime_recover_state_mini_snapshot() != 5143) {
