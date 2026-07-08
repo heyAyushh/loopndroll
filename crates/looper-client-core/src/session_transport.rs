@@ -40,7 +40,16 @@ pub(crate) mod proto {
     tonic::include_proto!("looper.v1");
 }
 
-const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+// Response-headers deadline for the recovery snapshot. This must cover the
+// server BUILDING the full mini projection (thousands of sessions, ~12MB of
+// JSON on a mature install) before the first byte, not just network RTT — at
+// the previous 2s every recovery on a real device timed out, which turned any
+// seq-gap resume (phone asleep past the event-log retention window, or a
+// fresh install) into a permanent recovery loop with no live stream.
+const STATE_MINI_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(15);
+// Separate budget for streaming the snapshot body once headers arrive; sized
+// for the ~12MB payload over a slow cellular hop.
+const STATE_MINI_SNAPSHOT_BODY_TIMEOUT: Duration = Duration::from_secs(45);
 // Generous enough for a QUIC/TLS handshake over a Tailscale DERP relay (RTT can
 // exceed 250ms right after a network switch); the 25ms candidate stagger keeps the
 // fastest endpoint winning regardless.
@@ -561,11 +570,14 @@ async fn fetch_state_mini_snapshot_from_endpoint(
     if response.status() != StatusCode::OK {
         return Err(ClientCoreError::StateMiniSnapshotTransportFailed);
     }
-    let body = Limited::new(response.into_body(), MAX_STATE_MINI_SNAPSHOT_BYTES)
-        .collect()
-        .await
-        .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?
-        .to_bytes();
+    let body = tokio::time::timeout(
+        STATE_MINI_SNAPSHOT_BODY_TIMEOUT,
+        Limited::new(response.into_body(), MAX_STATE_MINI_SNAPSHOT_BYTES).collect(),
+    )
+    .await
+    .map_err(|_| ClientCoreError::StateMiniSnapshotTimedOut)?
+    .map_err(|_| ClientCoreError::StateMiniSnapshotTransportFailed)?
+    .to_bytes();
     let body =
         serde_json::from_slice::<Value>(&body).map_err(|_| ClientCoreError::InvalidSnapshotJson)?;
     state_mini_snapshot_from_json(body)
