@@ -1328,6 +1328,51 @@ struct SessionSummaryTimingTests {
         return abs(date.timeIntervalSince1970 - expectedTimeInterval) < Constants.dateToleranceSeconds
     }
 
+    // MARK: - Session history buckets
+
+    @Test("History buckets split stopped sessions by calendar day")
+    func historyBucketsSplitByCalendarDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        // Fixed noon so day boundaries sit 12h away on both sides.
+        let now = Date(timeIntervalSince1970: 1_782_648_000)
+        let millisecondsAgo = { (seconds: TimeInterval) -> Int64 in
+            Int64((now.timeIntervalSince1970 - seconds) * 1_000)
+        }
+
+        let thisMorning = try sessionSummary(
+            id: "bucket-today", ref: "B1", status: "stopped",
+            activityMilliseconds: millisecondsAgo(3 * 3_600),
+            messageMilliseconds: millisecondsAgo(3 * 3_600)
+        )
+        let lastNight = try sessionSummary(
+            id: "bucket-yesterday", ref: "B2", status: "stopped",
+            activityMilliseconds: millisecondsAgo(14 * 3_600),
+            messageMilliseconds: millisecondsAgo(14 * 3_600)
+        )
+        let threeDaysAgo = try sessionSummary(
+            id: "bucket-week", ref: "B3", status: "stopped",
+            activityMilliseconds: millisecondsAgo(3 * 24 * 3_600),
+            messageMilliseconds: millisecondsAgo(3 * 24 * 3_600)
+        )
+        let tenDaysAgo = try sessionSummary(
+            id: "bucket-earlier", ref: "B4", status: "stopped",
+            activityMilliseconds: millisecondsAgo(10 * 24 * 3_600),
+            messageMilliseconds: millisecondsAgo(10 * 24 * 3_600)
+        )
+
+        let buckets = SessionHistoryBuckets(
+            stoppedSessions: [thisMorning, lastNight, threeDaysAgo, tenDaysAgo],
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(buckets.today.map(\.id) == ["bucket-today"])
+        #expect(buckets.yesterday.map(\.id) == ["bucket-yesterday"])
+        #expect(buckets.previousWeek.map(\.id) == ["bucket-week"])
+        #expect(buckets.earlier.map(\.id) == ["bucket-earlier"])
+    }
+
     // MARK: - Session section recency policy
 
     @Test(

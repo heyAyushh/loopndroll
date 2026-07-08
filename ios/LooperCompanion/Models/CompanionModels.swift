@@ -3612,6 +3612,59 @@ private extension Sequence where Element == SessionSummary {
     }
 }
 
+/// Calendar buckets for the stopped-session history on the home screen,
+/// Photos/Notes style: Today / Yesterday / Previous 7 Days / Earlier. Once
+/// status decay emptied the Active and Needs Attention sections of phantoms,
+/// one giant "Recent" list made the home feel structureless — day buckets
+/// give the history a spine without inventing any new session state.
+struct SessionHistoryBuckets {
+    let today: [SessionSummary]
+    let yesterday: [SessionSummary]
+    let previousWeek: [SessionSummary]
+    let earlier: [SessionSummary]
+
+    init(
+        stoppedSessions: [SessionSummary],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        let todayStart = calendar.startOfDay(for: now)
+        let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart)
+            ?? todayStart
+        let weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart)
+            ?? todayStart
+        let millisecondsPerSecond: TimeInterval = 1_000
+        let todayFloorMs = todayStart.timeIntervalSince1970 * millisecondsPerSecond
+        let yesterdayFloorMs = yesterdayStart.timeIntervalSince1970 * millisecondsPerSecond
+        let weekFloorMs = weekStart.timeIntervalSince1970 * millisecondsPerSecond
+
+        var today: [SessionSummary] = []
+        var yesterday: [SessionSummary] = []
+        var previousWeek: [SessionSummary] = []
+        var earlier: [SessionSummary] = []
+        // Single arithmetic pass against the same freshness signal that sorts
+        // the list — no per-session Calendar work, the stopped list can hold
+        // thousands of sessions and this runs on view refresh.
+        for session in stoppedSessions {
+            let freshnessMs = session.localFreshnessTimeInterval
+            if freshnessMs >= todayFloorMs {
+                today.append(session)
+            } else if freshnessMs >= yesterdayFloorMs {
+                yesterday.append(session)
+            } else if freshnessMs >= weekFloorMs {
+                previousWeek.append(session)
+            } else {
+                earlier.append(session)
+            }
+        }
+
+        self.today = today
+        self.yesterday = yesterday
+        self.previousWeek = previousWeek
+        self.earlier = earlier
+    }
+}
+
 extension SessionSummary {
     /// THE definition of "this session is genuinely working right now":
     /// a reported-active status or a running goal, either backed by activity

@@ -41,6 +41,9 @@ struct SessionsScreen: View {
     @State private var navigationPath = NavigationPath()
     @State private var showsAllNeedsAttentionSessions = false
     @State private var showsAllRunningSessions = false
+    @State private var showsAllTodaySessions = false
+    @State private var showsAllYesterdaySessions = false
+    @State private var showsAllPreviousWeekSessions = false
     @State private var showsAllArchivedSessions = false
 
     private var hasVisibleSessions: Bool {
@@ -71,14 +74,38 @@ struct SessionsScreen: View {
                     )
                 }
 
-                if !model.viewState.stoppedSessions.isEmpty {
+                let history = SessionHistoryBuckets(
+                    stoppedSessions: model.viewState.stoppedSessions
+                )
+                if !history.today.isEmpty {
                     sessionSection(
-                        title: "Recent",
-                        sessions: model.viewState.stoppedSessions,
+                        title: "Today",
+                        sessions: history.today,
+                        isExpanded: $showsAllTodaySessions
+                    )
+                }
+                if !history.yesterday.isEmpty {
+                    sessionSection(
+                        title: "Yesterday",
+                        sessions: history.yesterday,
+                        isExpanded: $showsAllYesterdaySessions
+                    )
+                }
+                if !history.previousWeek.isEmpty {
+                    sessionSection(
+                        title: "Previous 7 Days",
+                        sessions: history.previousWeek,
+                        isExpanded: $showsAllPreviousWeekSessions
+                    )
+                }
+                if !history.earlier.isEmpty {
+                    sessionSection(
+                        title: "Earlier",
+                        sessions: history.earlier,
                         isExpanded: .constant(false),
                         showsCount: false,
                         allowsExpansion: false,
-                        footerText: recentSectionFooter
+                        footerText: earlierSectionFooter(count: history.earlier.count)
                     )
                 }
 
@@ -311,12 +338,12 @@ struct SessionsScreen: View {
         }
     }
 
-    private var recentSectionFooter: String {
-        guard model.viewState.stoppedSessions.count > SessionDisplayPolicy.collapsedSectionLimit else {
-            return "Stopped sessions stay here until archived."
+    private func earlierSectionFooter(count: Int) -> String {
+        guard count > SessionDisplayPolicy.collapsedSectionLimit else {
+            return "Older sessions stay here until archived."
         }
 
-        return "Showing the latest \(SessionDisplayPolicy.collapsedSectionLimit.formatted()) stopped sessions. Use Search for older sessions."
+        return "Showing the latest \(SessionDisplayPolicy.collapsedSectionLimit.formatted()) older sessions. Use Search for the rest."
     }
 
     private func sectionTitle(_ title: String, count: Int, showsCount: Bool) -> String {

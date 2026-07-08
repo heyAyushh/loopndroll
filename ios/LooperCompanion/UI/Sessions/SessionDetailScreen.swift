@@ -294,17 +294,32 @@ struct SessionDetailScreen: View {
     private func assistantReplySection(_ presentation: SessionDetailPresentation) -> some View {
         let buffer = streamingReplyBuffer
         return Section {
-            if buffer.isStreaming {
-                StreamingText(buffer: buffer)
-                    .padding(.vertical, 4)
-                    .id(SessionDetailScrollAnchor.latestReply)
-            } else if let latestAssistantReply = presentation.latestAssistantReply {
-                MarkdownMessageView(markdown: latestAssistantReply)
-                    .padding(.vertical, 4)
-                    .contentTransition(.opacity)
-                    .animation(.default, value: latestAssistantReply)
-                    .id(SessionDetailScrollAnchor.latestReply)
+            // One container with crossfading branches: the streaming view and
+            // the settled markdown view swap whenever the chunk stream wakes
+            // or goes quiet, and an unanimated structural swap reads as a
+            // flash of brand-new text. The Group carries the animation so the
+            // branch flip itself fades.
+            Group {
+                if buffer.isStreaming {
+                    StreamingText(buffer: buffer)
+                        .transition(.opacity)
+                } else if let latestAssistantReply = presentation.latestAssistantReply {
+                    MarkdownMessageView(markdown: latestAssistantReply)
+                        .contentTransition(.opacity)
+                        .animation(.default, value: latestAssistantReply)
+                        .transition(.opacity)
+                }
             }
+            .padding(.vertical, 4)
+            .id(SessionDetailScrollAnchor.latestReply)
+            .animation(
+                .easeInOut(duration: SessionDetailReplySwapMetrics.crossfadeDuration),
+                value: buffer.isStreaming
+            )
+            .animation(
+                .easeInOut(duration: SessionDetailReplySwapMetrics.crossfadeDuration),
+                value: presentation.latestAssistantReply == nil
+            )
             replyStatusLine(presentation, buffer: buffer)
         } header: {
             assistantReplyHeader(presentation)
@@ -884,6 +899,12 @@ private enum SessionDetailThinkingIndicatorMetrics {
     /// this screen once chunks stop arriving.
     static let livenessPollInterval: TimeInterval = 0.5
     static let statusLineSpacing: CGFloat = 6
+}
+
+private enum SessionDetailReplySwapMetrics {
+    /// Crossfade for the streaming-view <-> settled-markdown swap; long
+    /// enough to read as a fade, short enough not to lag fresh chunks.
+    static let crossfadeDuration: TimeInterval = 0.35
 }
 
 private enum SessionPromptSuggestionLayout {
