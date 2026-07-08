@@ -1,4 +1,5 @@
 import Foundation
+import LooperClientCore
 import LooperCompanionCore
 import Network
 
@@ -11,6 +12,10 @@ typealias CompanionNotificationReplySubmitter = @MainActor @Sendable () async ->
 struct CompanionConnectionRuntimeCallbacks {
     let applySnapshotUpdate: (CompanionSessionMiniSyncUpdate, _ streamGeneration: UInt64) -> Void
     let applyLiveness: (CompanionSessionMiniLivenessUpdate) -> Void
+    /// Fast path for live-reply streaming: called directly off the raw
+    /// `TextChunk` frame, ahead of `applySnapshotUpdate`, so the visible text
+    /// never waits on the full snapshot projection.
+    let applyTextChunk: (ClientTextChunk) -> Void
     let refreshPendingPromptDeliveryState: () -> Void
     let recoverySnapshotArrived: (CompanionRecoveredSessionMiniSnapshot) -> Void
     /// Replays the local store into the visible snapshot (seq-gated by the
@@ -100,6 +105,9 @@ final class CompanionConnectionRuntime {
                     onLiveness: { [weak self] liveness in
                         self?.handleLivenessUpdate(liveness, generation: generation)
                     },
+                    onTextChunk: { [weak self] chunk in
+                        self?.handleTextChunk(chunk, generation: generation)
+                    },
                     onDebugMessage: { message in
                         CompanionDiagnostics.record(message)
                     }
@@ -154,6 +162,17 @@ final class CompanionConnectionRuntime {
         }
         callbacks?.refreshPendingPromptDeliveryState()
         callbacks?.applySnapshotUpdate(result, generation)
+    }
+
+    private func handleTextChunk(
+        _ chunk: ClientTextChunk,
+        generation: UInt64
+    ) {
+        guard generation == streamGeneration else {
+            CompanionDiagnostics.record("session-mini:text-chunk-stale-skip")
+            return
+        }
+        callbacks?.applyTextChunk(chunk)
     }
 
     private func handleLivenessUpdate(

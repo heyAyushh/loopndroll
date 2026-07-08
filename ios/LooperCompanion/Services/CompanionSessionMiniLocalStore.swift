@@ -21,6 +21,11 @@ struct CompanionSessionMiniPendingCommand: Equatable, Sendable {
 struct CompanionClientCoreMobileSnapshotStreamResult: Sendable {
     let update: CompanionSessionMiniSyncUpdate?
     let liveness: CompanionSessionMiniLivenessUpdate?
+    /// Raw text chunk carried by this stream frame, independent of `update`:
+    /// populated even when the full mobile snapshot can't be (or doesn't need
+    /// to be) rebuilt, so the fast streaming-text path never waits on the
+    /// snapshot projection pipeline.
+    let textChunk: ClientTextChunk?
     let shouldStop: Bool
     let debugMessage: String
 }
@@ -47,6 +52,13 @@ struct CompanionRecoveredSessionMiniSnapshot: Sendable {
 
 typealias CompanionSessionMiniSyncUpdateHandler = @MainActor @Sendable (
     CompanionSessionMiniSyncUpdate
+) -> Void
+
+/// Fires for every raw text chunk on the stream, ahead of (and independent
+/// of) `CompanionSessionMiniSyncUpdateHandler`: the fast path for feeding a
+/// `StreamingReplyBuffer` without waiting on snapshot projection.
+typealias CompanionSessionMiniTextChunkHandler = @MainActor @Sendable (
+    ClientTextChunk
 ) -> Void
 
 typealias CompanionSessionMiniLivenessUpdateHandler = @MainActor @Sendable (
@@ -389,6 +401,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             from: streamUpdate,
             endpointURL: endpointURL
         )
+        let textChunk = streamUpdate.hasTextChunk ? streamUpdate.textChunk : nil
         guard streamUpdate.hasSnapshot else {
             if streamUpdate.hasTextChunk,
                streamUpdate.syncReason == CompanionSessionMiniSyncReason.textChunk,
@@ -402,6 +415,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
                         snapshot: snapshot
                     ),
                     liveness: livenessUpdate,
+                    textChunk: textChunk,
                     shouldStop: streamUpdate.shouldStop,
                     debugMessage: streamUpdate.debugMessage
                 )
@@ -409,6 +423,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             return CompanionClientCoreMobileSnapshotStreamResult(
                 update: nil,
                 liveness: livenessUpdate,
+                textChunk: textChunk,
                 shouldStop: streamUpdate.shouldStop,
                 debugMessage: streamUpdate.debugMessage
             )
@@ -423,6 +438,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
                 snapshot: snapshot
             ),
             liveness: livenessUpdate,
+            textChunk: textChunk,
             shouldStop: streamUpdate.shouldStop,
             debugMessage: streamUpdate.debugMessage
         )
@@ -431,6 +447,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     func runStateMiniSync(
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
         onLiveness: @escaping CompanionSessionMiniLivenessUpdateHandler,
+        onTextChunk: @escaping CompanionSessionMiniTextChunkHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async {
         defer {
@@ -441,6 +458,7 @@ final class CompanionSessionRuntime: @unchecked Sendable {
             try await drainStateMiniSync(
                 onUpdate: onUpdate,
                 onLiveness: onLiveness,
+                onTextChunk: onTextChunk,
                 onDebugMessage: onDebugMessage
             )
         } catch {
@@ -692,10 +710,16 @@ final class CompanionSessionRuntime: @unchecked Sendable {
     private func drainStateMiniSync(
         onUpdate: @escaping CompanionSessionMiniSyncUpdateHandler,
         onLiveness: @escaping CompanionSessionMiniLivenessUpdateHandler,
+        onTextChunk: @escaping CompanionSessionMiniTextChunkHandler,
         onDebugMessage: @escaping CompanionSessionMiniSyncDebugHandler
     ) async throws {
         while !Task.isCancelled {
             let result = try await nextMobileSnapshotStreamResult()
+            // Fires first and independent of the snapshot/update path below —
+            // the streaming-text fast path must never wait on projection.
+            if let textChunk = result.textChunk {
+                await onTextChunk(textChunk)
+            }
             if let liveness = result.liveness {
                 await onLiveness(liveness)
             }

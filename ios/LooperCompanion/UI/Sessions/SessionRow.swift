@@ -120,6 +120,8 @@ struct SessionRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: assistantPreview)
             }
 
             HStack(spacing: 12) {

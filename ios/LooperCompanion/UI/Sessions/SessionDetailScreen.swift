@@ -16,10 +16,15 @@ struct SessionDetailScreen: View {
     @State private var openedLifecycleTask: Task<Void, Never>?
     @State private var cachedPresentation: SessionDetailPresentation?
     @State private var lastReplyStreamActivityAt: Date?
+    @State private var isPinnedToLatestReply = true
     @FocusState private var focusedInput: SessionDetailInput?
 
     private var sessionID: String {
         route.sessionID
+    }
+
+    private var streamingReplyBuffer: StreamingReplyBuffer {
+        model.streamingReplyBuffer(forSessionID: sessionID)
     }
 
     var body: some View {
@@ -30,27 +35,45 @@ struct SessionDetailScreen: View {
             detailRevision: model.sessionDetailRevision,
             snapshotIdentity: presentationRefreshIdentity(snapshotPresentation)
         )
+        let buffer = streamingReplyBuffer
 
-        List {
-            if presentation.hasResolvedSession {
-                summarySection(presentation)
-                if presentation.latestAssistantReply != nil {
-                    assistantReplySection(presentation)
+        ScrollViewReader { scrollProxy in
+            List {
+                if presentation.hasResolvedSession {
+                    summarySection(presentation)
+                    if presentation.latestAssistantReply != nil || buffer.isStreaming {
+                        assistantReplySection(presentation)
+                    }
+                    promptSection(presentation)
+                    modeSection(presentation)
+                    notificationsSection(presentation)
+                    completionCheckSection(presentation)
+                    detailsSection(presentation)
+                    manageSection(presentation)
+                } else {
+                    missingSessionSection
                 }
-                promptSection(presentation)
-                modeSection(presentation)
-                notificationsSection(presentation)
-                completionCheckSection(presentation)
-                detailsSection(presentation)
-                manageSection(presentation)
-            } else {
-                missingSessionSection
+            }
+            .listStyle(.insetGrouped)
+            .contentMargins(.top, 0, for: .scrollContent)
+            .safeAreaPadding(.bottom, CompanionMetrics.rowSpacing)
+            .companionListSurface()
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y >=
+                    geometry.contentSize.height - geometry.containerSize.height -
+                    SessionDetailScrollMetrics.bottomPinTolerance
+            } action: { _, isAtBottom in
+                isPinnedToLatestReply = isAtBottom
+            }
+            .onChange(of: buffer.text) {
+                guard isPinnedToLatestReply, buffer.isStreaming else {
+                    return
+                }
+                withAnimation(.easeOut(duration: SessionDetailScrollMetrics.autoscrollDuration)) {
+                    scrollProxy.scrollTo(SessionDetailScrollAnchor.latestReply, anchor: .bottom)
+                }
             }
         }
-        .listStyle(.insetGrouped)
-        .contentMargins(.top, 0, for: .scrollContent)
-        .safeAreaPadding(.bottom, CompanionMetrics.rowSpacing)
-        .companionListSurface()
         .navigationTitle(presentation.ref)
         .navigationBarTitleDisplayMode(.inline)
         .userActivity(LooperContinuationActivity.activityType, isActive: true) { activity in
@@ -74,6 +97,7 @@ struct SessionDetailScreen: View {
         .onChange(of: route.id) {
             cachedPresentation = snapshotPresentation
             lastReplyStreamActivityAt = nil
+            isPinnedToLatestReply = true
             resetDraftMode(presentation.effectiveMode)
             openedLifecycleSessionID = nil
             openedLifecycleTask?.cancel()
@@ -266,18 +290,24 @@ struct SessionDetailScreen: View {
     }
 
     private func assistantReplySection(_ presentation: SessionDetailPresentation) -> some View {
-        Section {
-            if let latestAssistantReply = presentation.latestAssistantReply {
+        let buffer = streamingReplyBuffer
+        return Section {
+            if buffer.isStreaming {
+                StreamingText(buffer: buffer)
+                    .padding(.vertical, 4)
+                    .id(SessionDetailScrollAnchor.latestReply)
+            } else if let latestAssistantReply = presentation.latestAssistantReply {
                 MarkdownMessageView(markdown: latestAssistantReply)
                     .padding(.vertical, 4)
                     .contentTransition(.opacity)
                     .animation(.default, value: latestAssistantReply)
-                if let currentLastMessageAt = presentation.lastMessageAt {
-                    Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("session-detail.latest-reply-timestamp")
-                }
+                    .id(SessionDetailScrollAnchor.latestReply)
+            }
+            if let currentLastMessageAt = presentation.lastMessageAt {
+                Text("Last message \(ModelFormatting.relativeTimestamp(currentLastMessageAt))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("session-detail.latest-reply-timestamp")
             }
         } header: {
             assistantReplyHeader(presentation)
@@ -597,7 +627,8 @@ struct SessionDetailScreen: View {
     }
 
     private func isStreamingAssistantReply(_ presentation: SessionDetailPresentation) -> Bool {
-        model.realtimeStreamIsLive && lastReplyStreamActivityAt != nil
+        streamingReplyBuffer.isStreaming ||
+            (model.realtimeStreamIsLive && lastReplyStreamActivityAt != nil)
     }
 
     private func refreshPromptSuggestions(_ presentation: SessionDetailPresentation) async {
@@ -768,6 +799,17 @@ private struct SessionGoalStatusDetail: View {
 
 private enum SessionGoalStatusDetailMetrics {
     static let iconSize: CGFloat = 24
+}
+
+private enum SessionDetailScrollAnchor {
+    static let latestReply = "session-detail.latest-reply-bottom"
+}
+
+private enum SessionDetailScrollMetrics {
+    /// How close to the bottom the list must be for a new chunk to keep
+    /// autoscrolling; scrolling up past this disengages the pin.
+    static let bottomPinTolerance: CGFloat = 40
+    static let autoscrollDuration: TimeInterval = 0.2
 }
 
 private enum SessionDetailStreamingIndicatorMetrics {

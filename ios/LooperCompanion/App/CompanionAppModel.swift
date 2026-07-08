@@ -105,6 +105,11 @@ final class CompanionAppModel {
     @ObservationIgnored private var sessionMiniProjectionTask: Task<Void, Never>?
     @ObservationIgnored private var sessionMiniProjectionGeneration: UInt64 = 0
     @ObservationIgnored private var sessionMiniProjectionLatestSeq: Int64 = 0
+    /// Per-session live-reply buffers, keyed by thread/session id. Kept off
+    /// the model's own `@Observable` tracking so a chunk landing for one
+    /// session only invalidates views reading that session's buffer, not
+    /// every view reading `CompanionAppModel`.
+    @ObservationIgnored private var streamingReplyBuffers: [String: StreamingReplyBuffer] = [:]
 
     init(
         environment: CompanionEnvironment,
@@ -150,6 +155,9 @@ final class CompanionAppModel {
             },
             applyLiveness: { [weak self] liveness in
                 self?.applySessionMiniLivenessUpdate(liveness)
+            },
+            applyTextChunk: { [weak self] chunk in
+                self?.applyStreamingTextChunk(chunk)
             },
             refreshPendingPromptDeliveryState: { [weak self] in
                 self?.refreshPendingPromptDeliveryState()
@@ -350,6 +358,26 @@ final class CompanionAppModel {
                 )
             }
         }
+    }
+
+    /// Returns the live-reply buffer for a session, creating it on first
+    /// access. Callers (SessionDetailScreen, SessionRow) hold the returned
+    /// instance and read its `@Observable` properties directly, so a chunk
+    /// only invalidates the views actually showing that session's reply.
+    func streamingReplyBuffer(forSessionID sessionID: String) -> StreamingReplyBuffer {
+        if let existing = streamingReplyBuffers[sessionID] {
+            return existing
+        }
+        let buffer = StreamingReplyBuffer()
+        streamingReplyBuffers[sessionID] = buffer
+        return buffer
+    }
+
+    /// Fast path: feeds the chunk straight into its session's buffer, ahead
+    /// of (and independent from) `applySessionMiniSyncUpdate`'s full snapshot
+    /// projection, so the visible text updates the instant the chunk lands.
+    private func applyStreamingTextChunk(_ chunk: ClientTextChunk) {
+        streamingReplyBuffer(forSessionID: chunk.threadId).append(chunk)
     }
 
     private func applySessionMiniLivenessUpdate(_ update: CompanionSessionMiniLivenessUpdate) {
@@ -600,6 +628,7 @@ final class CompanionAppModel {
         errorMessage = nil
 
         if clearsSnapshotCache {
+            streamingReplyBuffers.removeAll()
             CompanionSnapshotCache.clear()
         }
 
