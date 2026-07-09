@@ -19,6 +19,7 @@ pub mod grpc;
 pub mod hook_integration;
 pub mod hook_notifications;
 pub mod hook_registration;
+pub mod hooks;
 pub mod http;
 pub mod mobile;
 pub mod privacy;

@@ -6,12 +6,9 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio::net::TcpListener;
 
-use crate::claude_code::{is_claude_hook_invocation, parse_claude_hook_payload};
 use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
-use crate::devin::{is_devin_hook_invocation, parse_devin_hook_payload};
-use crate::grok_build::{
-    GrokContinueRequest, is_grok_hook_invocation, parse_hook_payload, spawn_session_continue,
-};
+use crate::grok_build::{GrokContinueRequest, spawn_session_continue};
+use crate::hooks::adapter::{HookAdapterKind, StopDelivery, empty_hook_payload, parse_input_json};
 use crate::http::build_router;
 use crate::mobile::network::{
     BonjourAdvertisement, DEFAULT_AGENT_CONTROL_PLANE_PORT, default_grpc_listen_address,
@@ -123,36 +120,26 @@ pub async fn run_hook_mode() -> Result<()> {
 }
 
 struct HookInvocationContext {
-    devin_hook: bool,
-    claude_hook: bool,
-    grok_hook: bool,
+    adapter: HookAdapterKind,
 }
 
 impl HookInvocationContext {
     fn from_environment() -> Self {
         Self {
-            devin_hook: is_devin_hook_invocation(),
-            claude_hook: is_claude_hook_invocation(),
-            grok_hook: is_grok_hook_invocation(),
+            adapter: HookAdapterKind::from_environment(),
         }
     }
 }
 
 fn parse_hook_mode_payload(input: &str, context: &HookInvocationContext) -> MobileHookPayload {
-    if context.devin_hook {
-        parse_devin_hook_payload(input)
-    } else if context.claude_hook {
-        parse_claude_hook_payload(input)
-    } else {
-        parse_hook_payload(input)
-    }
-    .unwrap_or(MobileHookPayload {
-        hook_event_name: String::new(),
-        session_id: None,
-        turn_id: None,
-        cwd: None,
-        last_assistant_message: None,
-    })
+    let Ok(stdin_json) = parse_input_json(input, "parse hook payload JSON from stdin") else {
+        return empty_hook_payload();
+    };
+    context
+        .adapter
+        .adapter()
+        .parse_payload(&stdin_json)
+        .unwrap_or_else(empty_hook_payload)
 }
 
 async fn run_hook_mode_with_input(
@@ -205,20 +192,23 @@ async fn run_hook_mode_with_input(
         eprintln!("stop notification delivery failed: {error}");
     }
     if let Some(decision) = outcome.decision {
-        if context.grok_hook && decision.decision == "block" {
-            if let Some(session_id) = payload.session_id.as_deref()
-                && let Err(error) = spawn_session_continue(&GrokContinueRequest {
-                    session_id: session_id.to_owned(),
-                    prompt: decision.reason.clone(),
-                    cwd: payload.cwd.clone(),
-                    grok_executable: None,
-                    grok_home: Some(control_plane.grok_home().clone()),
-                })
-            {
-                eprintln!("grok session continue failed: {error}");
+        match context.adapter.adapter().deliver_stop_decision(&decision) {
+            StopDelivery::Stdout(decision) => {
+                println!("{}", serde_json::to_string(&decision)?);
             }
-        } else {
-            println!("{}", serde_json::to_string(&decision)?);
+            StopDelivery::SpawnContinue { prompt } => {
+                if let Some(session_id) = payload.session_id.as_deref()
+                    && let Err(error) = spawn_session_continue(&GrokContinueRequest {
+                        session_id: session_id.to_owned(),
+                        prompt,
+                        cwd: payload.cwd.clone(),
+                        grok_executable: None,
+                        grok_home: Some(control_plane.grok_home().clone()),
+                    })
+                {
+                    eprintln!("grok session continue failed: {error}");
+                }
+            }
         }
     }
     Ok(())
@@ -405,9 +395,7 @@ mod tests {
             host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),
         });
         let context = HookInvocationContext {
-            devin_hook: false,
-            claude_hook: false,
-            grok_hook: false,
+            adapter: HookAdapterKind::Codex,
         };
 
         run_hook_mode_with_input(TEST_STOP_HOOK_INPUT, context, control_plane)

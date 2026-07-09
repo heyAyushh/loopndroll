@@ -49,6 +49,7 @@ tokio = { version = "1.48.0", features = ["macros", "net", "process", "rt-multi-
 tokio-stream = { version = "0.1.17", features = ["net"] }
 tokio-tungstenite = "0.24.0"
 toml = "0.9.8"
+toml_edit = "0.22.27"
 tonic = "0.14.6"
 tonic-h3 = { version = "0.0.5", default-features = false, features = ["quinn"] }
 tonic-prost = "0.14.6"
