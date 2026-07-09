@@ -416,6 +416,7 @@ async fn grpc_session_stream_replays_before_liveness_cursor() {
                     "assistantSurface": "codex",
                     "title": "Replay me",
                 }),
+                latest_assistant_message_full: None,
             }],
         )
         .expect("record replacement projection");
@@ -799,6 +800,7 @@ async fn grpc_session_commands_use_session_mini_visibility_before_snapshot() {
                     "sessionId": "other-thread",
                     "assistantSurface": "codex",
                 }),
+                latest_assistant_message_full: None,
             }],
             42,
             "mini-revision-42",
@@ -871,6 +873,7 @@ async fn grpc_prompt_in_mode_queues_from_session_mini_without_desktop_snapshot()
                     "replyable": true,
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             }],
             44,
             "mini-revision-44",
@@ -1084,6 +1087,7 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
                     "status": "stopped",
                     "title": "Stale replacement",
                 }),
+                latest_assistant_message_full: None,
             }],
         )
         .expect("record superseded replacement projection");
@@ -1125,6 +1129,7 @@ async fn grpc_session_stream_replays_large_projection_replacement_under_frame_ca
                         "usesDefault": true,
                     },
                 }),
+                latest_assistant_message_full: None,
             }
         })
         .collect::<Vec<_>>();
@@ -1285,6 +1290,7 @@ async fn grpc_session_hot_loop_drains_compact_frames_while_snapshot_projection_r
                             "usesDefault": true,
                         },
                     }),
+                    latest_assistant_message_full: None,
                 },
             )
             .expect("record compact session mini event");
@@ -1362,6 +1368,7 @@ async fn grpc_session_frame_payload_instructs_recovery_for_oversized_replacement
                 session_id: "thread-oversized".to_owned(),
                 assistant_surface: "codex".to_owned(),
                 body_json: oversized_replacement_mini_body(),
+                latest_assistant_message_full: None,
             }],
         )
         .expect("record oversized replacement projection");
@@ -1437,6 +1444,7 @@ async fn grpc_session_stream_recovers_single_oversized_session_mini_delta() {
                     "status": "waiting",
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             },
         )
         .expect("record oversized session mini state delta");
@@ -2667,6 +2675,7 @@ fn seed_replyable_session_mini(control_plane: &ControlPlane, revision: &str, seq
                     "replyable": true,
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             }],
             seq,
             revision,
@@ -2691,6 +2700,7 @@ fn seed_promptable_session_mini_without_mode(control_plane: &ControlPlane, revis
                     "replyable": true,
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             }],
             seq,
             revision,
@@ -2716,6 +2726,7 @@ fn seed_live_promptable_session_mini_without_mode(control_plane: &ControlPlane, 
                     "replyable": true,
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             }],
             seq,
             revision,

@@ -27,7 +27,7 @@ const LISTEN_ENV: &str = "AGENT_CONTROL_PLANE_LISTEN";
 const STORE_ENV: &str = "AGENT_CONTROL_PLANE_STORE";
 const AUTOMATION_TICK_SECONDS: u64 = 30;
 const TELEGRAM_BRIDGE_TICK_SECONDS: u64 = 5;
-const SESSION_MINI_RECONCILE_TICK_SECONDS: u64 = 1;
+const SESSION_MINI_RECONCILE_TICK: Duration = Duration::from_millis(250);
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SERVER_EXECUTABLE_NAME: &str = "looper-server";
 const DEFAULT_SERVER_SCHEME: &str = "http";
@@ -102,8 +102,7 @@ fn spawn_grpc_h3_server(control_plane: ControlPlane, h2_listen_address: SocketAd
 
 fn spawn_session_mini_projection_reconciler(control_plane: ControlPlane) {
     tokio::spawn(async move {
-        let mut interval =
-            tokio::time::interval(Duration::from_secs(SESSION_MINI_RECONCILE_TICK_SECONDS));
+        let mut interval = tokio::time::interval(SESSION_MINI_RECONCILE_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;

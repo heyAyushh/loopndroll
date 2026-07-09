@@ -1705,6 +1705,7 @@ mod tests {
                         "status": "active",
                         "canSendPrompt": true,
                     }),
+                    latest_assistant_message_full: None,
                 },
                 0,
                 "rev-0",

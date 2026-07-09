@@ -2372,6 +2372,92 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
 }
 
 #[tokio::test]
+async fn session_mini_reconcile_publishes_claude_full_reply_text_chunk() {
+    let fixture = IsolatedCodexFixture::new();
+    let session_id = "claude-full-reply";
+    let thread_id = format!("claude:{session_id}");
+    let first_block = "A".repeat(180);
+    let second_block = "\nsecond line\nthird line";
+    let full_reply = format!("{first_block}{second_block}");
+    let project_dir = fixture
+        .temp_dir
+        .path()
+        .join(".claude")
+        .join("projects")
+        .join("-tmp-claude-project");
+    fs::create_dir_all(&project_dir).expect("claude project dir");
+    fs::write(
+        project_dir.join(format!("{session_id}.jsonl")),
+        [
+            serde_json::json!({
+                "type": "user",
+                "sessionId": session_id,
+                "cwd": "/tmp/claude-project",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {"role": "user", "content": "Stream the full reply"},
+            })
+            .to_string(),
+            serde_json::json!({
+                "type": "assistant",
+                "sessionId": session_id,
+                "cwd": "/tmp/claude-project",
+                "timestamp": "2026-07-09T10:00:01.000Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": first_block},
+                        {"type": "text", "text": second_block},
+                    ],
+                },
+            })
+            .to_string(),
+        ]
+        .join("\n"),
+    )
+    .expect("write claude transcript");
+    let control_plane = fixture.control_plane();
+    let mut mobile_events = control_plane.mobile_event_hub().subscribe();
+
+    assert!(
+        control_plane
+            .reconcile_mobile_session_mini_projection()
+            .expect("reconcile projection"),
+        "claude transcript should publish a replacement mini event"
+    );
+
+    let text_chunk_broadcast = mobile_events
+        .try_recv()
+        .expect("claude transcript should publish a mobile TextChunk broadcast");
+    let MobileEventBroadcast::TextChunk(text_chunk) = text_chunk_broadcast else {
+        panic!("expected a TextChunk broadcast first, got {text_chunk_broadcast:?}");
+    };
+    assert_eq!(text_chunk.thread_id, thread_id);
+    assert_eq!(text_chunk.content, full_reply);
+    assert!(text_chunk.content.len() > 160);
+    assert!(text_chunk.content.contains('\n'));
+
+    let latest_seq = control_plane
+        .store()
+        .latest_mobile_state_event_seq()
+        .expect("latest mobile seq");
+    let records = control_plane
+        .store()
+        .mobile_session_minis_at_seq(latest_seq)
+        .expect("latest projection records");
+    let claude = records
+        .iter()
+        .find(|record| record.session_id == thread_id)
+        .expect("claude mini");
+    let payload: serde_json::Value =
+        serde_json::from_str(&claude.body_json).expect("mini payload json");
+    assert_eq!(
+        payload["assistantPreview"],
+        format!("{}...", "A".repeat(160))
+    );
+    assert!(payload.get("latestAssistantMessageFull").is_none());
+}
+
+#[tokio::test]
 async fn session_mini_reconcile_replaces_stale_cache_shape_for_same_revision() {
     let fixture = IsolatedCodexFixture::new();
     fixture.write_state_db();
@@ -2395,6 +2481,7 @@ async fn session_mini_reconcile_replaces_stale_cache_shape_for_same_revision() {
             session_id: record.session_id.clone(),
             assistant_surface: record.assistant_surface.clone(),
             body_json: serde_json::from_str(&record.body_json).expect("mini body json"),
+            latest_assistant_message_full: None,
         })
         .collect::<Vec<_>>();
     let mut stale_extra_body = stale_minis
@@ -2410,6 +2497,7 @@ async fn session_mini_reconcile_replaces_stale_cache_shape_for_same_revision() {
         session_id: "thread-stale-extra".to_owned(),
         assistant_surface: "codex".to_owned(),
         body_json: stale_extra_body,
+        latest_assistant_message_full: None,
     });
     let stale_seq = control_plane
         .store()
@@ -5429,6 +5517,7 @@ fn seed_replyable_session_mini_for_thread(
                     "replyable": true,
                     "canSendPrompt": true,
                 }),
+                latest_assistant_message_full: None,
             }],
             seq,
             revision,

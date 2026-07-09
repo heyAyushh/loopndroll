@@ -127,6 +127,7 @@ pub struct MobileSessionMiniProjectionInput {
     pub session_id: String,
     pub assistant_surface: String,
     pub body_json: Value,
+    pub latest_assistant_message_full: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -1322,6 +1322,7 @@ fn session_mini_projection_input_with_status(
             replyable,
             can_send_prompt,
         ),
+        latest_assistant_message_full: None,
     }
 }
 

@@ -2243,6 +2243,27 @@ mod tests {
     }
 
     #[test]
+    fn local_store_text_chunk_preserves_growing_reply_past_preview_cap() {
+        let path = temp_store_path("text-chunk-full-reply-past-preview-cap");
+        let store =
+            LooperClientCoreLocalStore::new(path.to_string_lossy().into_owned()).expect("store");
+        let first = "A".repeat(120);
+        let full = format!("{}{}", "A".repeat(180), "\nsecond line\nthird line");
+
+        store
+            .apply_text_chunk(text_chunk(7, "thread-main", "message-1", &first, false))
+            .expect("first growing chunk");
+        let detail = store
+            .apply_text_chunk(text_chunk(8, "thread-main", "message-1", &full, true))
+            .expect("full growing chunk");
+
+        assert_eq!(detail.latest_reply.text, full);
+        assert!(detail.latest_reply.text.len() > 160);
+        assert!(detail.latest_reply.text.contains('\n'));
+        assert!(!detail.latest_reply.is_truncated);
+    }
+
+    #[test]
     fn local_store_dedupes_outbox_attempts_and_persists_minis() {
         let path = temp_store_path("dedupe");
         let store =

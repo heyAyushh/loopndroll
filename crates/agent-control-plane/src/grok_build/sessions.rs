@@ -147,6 +147,7 @@ pub fn grok_session_to_desktop_thread(session: &GrokSessionRecord) -> DesktopThr
         updated_at_ms: parse_timestamp_ms(&session.updated_at),
         latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        latest_assistant_message_full: session.assistant_preview.clone(),
         first_user_prompt: session.first_user_prompt.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,

@@ -109,7 +109,7 @@ const DESKTOP_MENU_COMPACTION_FILE_SCAN_LIMIT: usize = 50;
 const DESKTOP_MENU_THREAD_LIMIT: usize = 12;
 const DESKTOP_MENU_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DESKTOP_MENU_INSPECTION_CACHE_TTL: Duration = Duration::from_secs(300);
-const SESSION_MINI_PROJECTION_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const SESSION_MINI_PROJECTION_RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 const HOST_PROCESS_COMMAND: &str = "/bin/ps";
 const HOST_PROCESS_COMMAND_ARGS: &[&str] = &["-axo", "command="];
 const BOUNDED_SNAPSHOT_STALE_HEALTH: &str = "stale";
@@ -346,9 +346,7 @@ struct SessionMiniProjectionReconcileState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SessionMiniProjectionSourceSignature {
-    state_db_path: PathBuf,
-    modified_at_ms: i64,
-    len: u64,
+    state_db: Option<SessionMiniProjectionStateDbSignature>,
     transcript_signature: String,
     // In-process ACP runtimes (zed/devin) never touch the codex state DB; their
     // session activity is folded in here so the source-change reconciler wakes for
@@ -359,6 +357,13 @@ struct SessionMiniProjectionSourceSignature {
     // without this component a claude session's mid-turn growth (and therefore its
     // live text chunks) would sit invisible until Stop.
     claude_transcript_signature: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionMiniProjectionStateDbSignature {
+    path: PathBuf,
+    modified_at_ms: i64,
+    len: u64,
 }
 
 struct SessionMiniProjectionReconcilePermit {
@@ -689,6 +694,7 @@ pub struct DesktopThread {
     pub updated_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub latest_assistant_message_full: Option<String>,
     pub first_user_prompt: Option<String>,
     pub runtime_status: Option<String>,
     pub archived: bool,
@@ -834,7 +840,7 @@ impl ControlPlane {
     }
 
     /// Publishes mobile `TextChunk` frames for polled (codex/claude-code) sessions by diffing
-    /// each mini's `assistantPreview` against the last chunk we sent for that thread.
+    /// each mini's latest assistant message text against the last chunk we sent for that thread.
     ///
     /// ACP-hosted sessions (Devin, Zed) already publish chunks the moment their host observes
     /// a turn (see `observe_acp_client_host_session_response`), so they carry no `assistantSurface`
@@ -854,9 +860,13 @@ impl ControlPlane {
                 continue;
             }
             let Some(content) = mini
-                .body_json
-                .get("assistantPreview")
-                .and_then(Value::as_str)
+                .latest_assistant_message_full
+                .as_deref()
+                .or_else(|| {
+                    mini.body_json
+                        .get("assistantPreview")
+                        .and_then(Value::as_str)
+                })
                 .filter(|text| !text.is_empty())
             else {
                 continue;
@@ -1122,24 +1132,41 @@ impl ControlPlane {
     fn mobile_session_mini_projection_source_signature(
         &self,
     ) -> Option<SessionMiniProjectionSourceSignature> {
-        let state_db_path = discover_sources(&self.config.codex_home).state_db?;
-        let metadata = fs::metadata(&state_db_path).ok()?;
+        let state_db = self.session_mini_state_db_source_signature();
+        let transcript_signature = self.session_mini_transcript_source_signature();
+        let acp_runtime_signature = self.acp_runtime_source_signature();
+        let claude_transcript_signature =
+            claude_transcript_source_signature(&self.claude_home(), DESKTOP_SNAPSHOT_THREAD_LIMIT);
+        if state_db.is_none()
+            && transcript_signature.is_empty()
+            && acp_runtime_signature.is_empty()
+            && claude_transcript_signature.is_empty()
+        {
+            return None;
+        }
+        Some(SessionMiniProjectionSourceSignature {
+            state_db,
+            transcript_signature,
+            acp_runtime_signature,
+            claude_transcript_signature,
+        })
+    }
+
+    fn session_mini_state_db_source_signature(
+        &self,
+    ) -> Option<SessionMiniProjectionStateDbSignature> {
+        let path = discover_sources(&self.config.codex_home).state_db?;
+        let metadata = fs::metadata(&path).ok()?;
         let modified_at_ms = metadata
             .modified()
             .ok()
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
             .unwrap_or_default();
-        Some(SessionMiniProjectionSourceSignature {
-            state_db_path,
+        Some(SessionMiniProjectionStateDbSignature {
+            path,
             modified_at_ms,
             len: metadata.len(),
-            transcript_signature: self.session_mini_transcript_source_signature(),
-            acp_runtime_signature: self.acp_runtime_source_signature(),
-            claude_transcript_signature: claude_transcript_source_signature(
-                &self.claude_home(),
-                DESKTOP_SNAPSHOT_THREAD_LIMIT,
-            ),
         })
     }
 
@@ -2677,6 +2704,7 @@ fn codex_thread_to_desktop_thread(
         created_at_ms: thread.created_at_ms,
         updated_at_ms,
         latest_message_at_ms,
+        latest_assistant_message_full: assistant_preview.clone(),
         assistant_preview,
         first_user_prompt,
         runtime_status: None,
@@ -2703,6 +2731,9 @@ fn merge_desktop_thread(mut preferred: DesktopThread, fallback: DesktopThread) -
     ]);
     if preferred.assistant_preview.is_none() {
         preferred.assistant_preview = fallback.assistant_preview;
+    }
+    if preferred.latest_assistant_message_full.is_none() {
+        preferred.latest_assistant_message_full = fallback.latest_assistant_message_full;
     }
     if preferred.first_user_prompt.is_none() {
         preferred.first_user_prompt = fallback.first_user_prompt;
@@ -3499,15 +3530,21 @@ mod tests {
     fn session_mini_reconciler_waits_for_source_change_after_success() {
         let reconciler = Arc::new(SessionMiniProjectionReconciler::new());
         let signature = SessionMiniProjectionSourceSignature {
-            state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
-            modified_at_ms: 1,
-            len: 10,
+            state_db: Some(SessionMiniProjectionStateDbSignature {
+                path: PathBuf::from("/tmp/state_1.sqlite"),
+                modified_at_ms: 1,
+                len: 10,
+            }),
             transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
             claude_transcript_signature: String::new(),
         };
         let changed_signature = SessionMiniProjectionSourceSignature {
-            len: 11,
+            state_db: Some(SessionMiniProjectionStateDbSignature {
+                path: PathBuf::from("/tmp/state_1.sqlite"),
+                modified_at_ms: 1,
+                len: 11,
+            }),
             ..signature.clone()
         };
 
@@ -3530,12 +3567,57 @@ mod tests {
     }
 
     #[test]
+    fn session_mini_source_signature_includes_claude_when_codex_state_db_missing() {
+        let fixture_dir = tempfile::tempdir().expect("tempdir");
+        let claude_project_dir = fixture_dir
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-tmp-project");
+        fs::create_dir_all(&claude_project_dir).expect("claude project dir");
+        fs::write(
+            claude_project_dir.join("claude-no-codex.jsonl"),
+            serde_json::json!({
+                "type": "assistant",
+                "sessionId": "claude-no-codex",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Visible without Codex DB"}],
+                },
+            })
+            .to_string(),
+        )
+        .expect("write claude transcript");
+        let control_plane = ControlPlane::new(ControlPlaneConfig {
+            codex_home: fixture_dir.path().join(".codex-missing"),
+            codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
+            store_path: fixture_dir.path().join("store.sqlite"),
+            hook_command: None,
+            host_environment: HostEnvironment::hermetic(fixture_dir.path().to_path_buf()),
+        });
+
+        let signature = control_plane
+            .mobile_session_mini_projection_source_signature()
+            .expect("source signature");
+
+        assert!(signature.state_db.is_none());
+        assert!(
+            signature
+                .claude_transcript_signature
+                .contains("claude-no-codex")
+        );
+    }
+
+    #[test]
     fn session_mini_reconciler_retries_source_until_marked_successful() {
         let reconciler = Arc::new(SessionMiniProjectionReconciler::new());
         let signature = SessionMiniProjectionSourceSignature {
-            state_db_path: PathBuf::from("/tmp/state_1.sqlite"),
-            modified_at_ms: 1,
-            len: 10,
+            state_db: Some(SessionMiniProjectionStateDbSignature {
+                path: PathBuf::from("/tmp/state_1.sqlite"),
+                modified_at_ms: 1,
+                len: 10,
+            }),
             transcript_signature: String::new(),
             acp_runtime_signature: String::new(),
             claude_transcript_signature: String::new(),

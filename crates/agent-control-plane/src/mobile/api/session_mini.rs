@@ -79,9 +79,23 @@ pub fn session_mini_projection_inputs(
     seq: i64,
     revision: &str,
 ) -> Vec<MobileSessionMiniProjectionInput> {
-    mobile_session_minis(snapshot, session_state, queued_prompt_counts, seq, revision)
-        .into_iter()
-        .filter_map(|mini| {
+    snapshot
+        .threads
+        .iter()
+        .filter(|thread| is_mobile_home_visible_thread(thread, session_state))
+        .enumerate()
+        .filter_map(|(index, thread)| {
+            let mini = session_mini_value(
+                thread,
+                index,
+                session_state,
+                queued_prompt_counts,
+                seq,
+                revision,
+            );
+            if !session_mini_is_unarchived(&mini) {
+                return None;
+            }
             let session_id = mini
                 .get("sessionId")
                 .and_then(Value::as_str)
@@ -95,6 +109,7 @@ pub fn session_mini_projection_inputs(
                 session_id,
                 assistant_surface,
                 body_json: mini,
+                latest_assistant_message_full: thread.latest_assistant_message_full.clone(),
             })
         })
         .collect()
@@ -111,6 +126,7 @@ pub fn session_mini_projection_inputs_from_records(
                 session_id: record.session_id.clone(),
                 assistant_surface: record.assistant_surface.clone(),
                 body_json,
+                latest_assistant_message_full: None,
             })
         })
         .collect()
@@ -236,6 +252,7 @@ pub fn session_mini_projection_inputs_with_mode(
                 session_id: record.session_id.clone(),
                 assistant_surface: record.assistant_surface.clone(),
                 body_json: body,
+                latest_assistant_message_full: None,
             })
         })
         .collect()
@@ -264,6 +281,7 @@ pub fn session_mini_projection_inputs_with_mobile_state(
                 session_id: record.session_id.clone(),
                 assistant_surface: record.assistant_surface.clone(),
                 body_json: body,
+                latest_assistant_message_full: None,
             })
         })
         .collect()

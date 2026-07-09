@@ -13,6 +13,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities};
 use crate::control_plane::DesktopThread;
+use crate::grpc::frame_limits::SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES;
 use crate::mobile::session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
 mod hooks;
@@ -50,6 +51,7 @@ pub struct ClaudeSessionRecord {
     pub updated_at_ms: Option<i64>,
     pub latest_message_at_ms: Option<i64>,
     pub assistant_preview: Option<String>,
+    pub latest_assistant_message_full: Option<String>,
     pub first_user_prompt: Option<String>,
     pub running: bool,
 }
@@ -63,6 +65,7 @@ struct ClaudeSessionDraft {
     title: Option<String>,
     first_user_message: Option<String>,
     latest_assistant_message: Option<String>,
+    latest_assistant_message_full: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -273,6 +276,7 @@ pub fn claude_session_to_desktop_thread(session: &ClaudeSessionRecord) -> Deskto
         updated_at_ms: session.updated_at_ms,
         latest_message_at_ms: session.latest_message_at_ms,
         assistant_preview: session.assistant_preview.clone(),
+        latest_assistant_message_full: session.latest_assistant_message_full.clone(),
         first_user_prompt: session.first_user_prompt.clone(),
         runtime_status: Some(runtime_status.to_owned()),
         archived: false,
@@ -336,6 +340,7 @@ fn read_claude_session_file(
         updated_at_ms,
         latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
+        latest_assistant_message_full: draft.latest_assistant_message_full,
         first_user_prompt: draft.first_user_message.map(compact_summary),
         running,
     }))
@@ -365,6 +370,7 @@ fn read_claude_session_file_fast(
         updated_at_ms,
         latest_message_at_ms: updated_at_ms,
         assistant_preview: draft.latest_assistant_message.map(compact_summary),
+        latest_assistant_message_full: draft.latest_assistant_message_full,
         first_user_prompt: draft.first_user_message.map(compact_summary),
         running,
     }))
@@ -420,8 +426,12 @@ fn read_claude_session_tail(path: &Path, draft: &mut ClaudeSessionDraft) -> Resu
             && value.get("type").and_then(Value::as_str) == Some(ASSISTANT_MESSAGE_TYPE)
         {
             draft.latest_assistant_message = message_text(&value);
+            draft.latest_assistant_message_full = message_full_text(&value);
         }
-        if draft.latest_assistant_message.is_some() && draft.session_id.is_some() {
+        if draft.latest_assistant_message.is_some()
+            && draft.latest_assistant_message_full.is_some()
+            && draft.session_id.is_some()
+        {
             break;
         }
     }
@@ -440,6 +450,9 @@ fn update_claude_session_draft(draft: &mut ClaudeSessionDraft, value: &Value) {
         Some(ASSISTANT_MESSAGE_TYPE) => {
             if let Some(text) = message_text(value) {
                 draft.latest_assistant_message = Some(text);
+            }
+            if let Some(text) = message_full_text(value) {
+                draft.latest_assistant_message_full = Some(text);
             }
         }
         _ => {}
@@ -485,6 +498,54 @@ fn message_text(value: &Value) -> Option<String> {
             .and_then(Value::as_str)
             .and_then(clean_text)
     })
+}
+
+fn message_full_text(value: &Value) -> Option<String> {
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"))?;
+    if let Some(text) = content.as_str() {
+        return capped_raw_text(text);
+    }
+    let mut combined = String::new();
+    for item in content.as_array()? {
+        if item.get("type").and_then(Value::as_str) != Some(TEXT_CONTENT_TYPE) {
+            continue;
+        }
+        let Some(text) = item.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        push_capped_raw_text(&mut combined, text);
+        if combined.len() >= SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES {
+            break;
+        }
+    }
+    capped_raw_text(&combined)
+}
+
+fn push_capped_raw_text(output: &mut String, value: &str) {
+    let remaining = SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES.saturating_sub(output.len());
+    if remaining == 0 {
+        return;
+    }
+    if value.len() <= remaining {
+        output.push_str(value);
+        return;
+    }
+    let mut end = remaining;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    output.push_str(&value[..end]);
+}
+
+fn capped_raw_text(value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    let mut text = String::new();
+    push_capped_raw_text(&mut text, value);
+    Some(text)
 }
 
 fn clean_text(value: &str) -> Option<String> {
@@ -598,7 +659,7 @@ fn current_process_commands() -> Vec<String> {
 mod tests {
     use super::*;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     const TEST_MTIME_GAP: Duration = Duration::from_millis(20);
@@ -724,6 +785,69 @@ mod tests {
 
         let third = claude_transcript_source_signature(&claude_home, 10);
         assert_eq!(second, third, "signature must be stable without new writes");
+    }
+
+    #[test]
+    fn claude_transcript_source_signature_stats_30_candidates_under_2ms() {
+        let temp_dir = tempdir().expect("tempdir");
+        let claude_home = temp_dir.path().join(".claude");
+        let project_dir = claude_home.join("projects").join("-tmp-project");
+        fs::create_dir_all(&project_dir).expect("project dir");
+        for index in 0..30 {
+            write_claude_transcript(
+                &project_dir,
+                &format!("session-{index:02}"),
+                None,
+                "Streaming request",
+                "Streaming reply",
+            );
+        }
+
+        let warm = claude_transcript_source_signature(&claude_home, 30);
+        assert!(
+            warm.contains("session-29"),
+            "signature should include newest transcript, got {warm}"
+        );
+        let start = Instant::now();
+        let signature = claude_transcript_source_signature(&claude_home, 30);
+        let elapsed = start.elapsed();
+
+        assert_eq!(signature, warm);
+        assert!(
+            elapsed < Duration::from_millis(2),
+            "30-candidate claude signature took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn claude_latest_assistant_full_text_preserves_blocks_and_caps_bytes() {
+        let first_block = "a".repeat(MAX_SUMMARY_CHARACTERS + 20);
+        let second_block = "\nsecond line\nthird line";
+        let value = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": first_block},
+                    {"type": "text", "text": second_block},
+                    {"type": "tool_use", "text": "ignored"},
+                ],
+            },
+        });
+        let full_text = message_full_text(&value).expect("full text");
+        let preview_text = message_text(&value).expect("preview text");
+
+        assert_eq!(full_text, format!("{first_block}{second_block}"));
+        assert!(full_text.len() > MAX_SUMMARY_CHARACTERS);
+        assert_eq!(preview_text, first_block);
+
+        let oversized = "x".repeat(SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES + 1_024);
+        let oversized_value = serde_json::json!({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": oversized},
+        });
+        let capped = message_full_text(&oversized_value).expect("capped text");
+        assert_eq!(capped.len(), SESSION_TEXT_CHUNK_CONTENT_MAX_BYTES);
     }
 
     #[test]

@@ -105,6 +105,7 @@ fn acp_runtime_session_to_desktop_thread(
         updated_at_ms: Some(session.updated_at_ms),
         latest_message_at_ms: Some(session.updated_at_ms),
         assistant_preview: session.latest_assistant_message.clone(),
+        latest_assistant_message_full: session.latest_assistant_message.clone(),
         first_user_prompt: None,
         runtime_status: Some(if session.cancelled {
             "stopped".to_owned()

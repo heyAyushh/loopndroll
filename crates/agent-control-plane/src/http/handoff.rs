@@ -198,6 +198,7 @@ mod tests {
             updated_at_ms: None,
             latest_message_at_ms: None,
             assistant_preview: Some("Use \"quote\" & less <html>".to_owned()),
+            latest_assistant_message_full: Some("Use \"quote\" & less <html>".to_owned()),
             first_user_prompt: None,
             runtime_status: None,
             goal: None,

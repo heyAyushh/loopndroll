@@ -39,6 +39,7 @@ pub(super) fn test_thread(
         updated_at_ms: Some(2),
         latest_message_at_ms: Some(3),
         assistant_preview: None,
+        latest_assistant_message_full: None,
         first_user_prompt: None,
         runtime_status: runtime_status.map(str::to_owned),
         archived: false,
