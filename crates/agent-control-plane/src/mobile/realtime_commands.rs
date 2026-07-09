@@ -1766,6 +1766,7 @@ mod tests {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: None,
             host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),

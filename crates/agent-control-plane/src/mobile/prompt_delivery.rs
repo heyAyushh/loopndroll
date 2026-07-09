@@ -4,6 +4,7 @@ use std::thread;
 
 use serde::Serialize;
 
+use crate::claude_resume::{ClaudeResumeRequest, spawn_session_resume};
 use crate::codex_resume::{CodexResumeRequest, spawn_thread_resume};
 use crate::control_plane::{ControlPlane, DesktopSnapshot};
 use crate::mobile::api::{
@@ -451,6 +452,17 @@ fn dispatch_session_prompt_with_action(
                 .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
             Ok(PromptDispatch::Resumed)
         }
+        PromptDeliveryAction::ResumeClaude(target) => {
+            let request = ClaudeResumeRequest {
+                session_id: target.thread_id,
+                prompt: prompt.to_owned(),
+                cwd: target.cwd,
+                claude_executable: control_plane.claude_executable().map(str::to_owned),
+            };
+            spawn_session_resume(&request)
+                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+            Ok(PromptDispatch::Resumed)
+        }
     }
 }
 
@@ -695,6 +707,7 @@ mod tests {
         ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: None,
             host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),

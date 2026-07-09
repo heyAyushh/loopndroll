@@ -163,12 +163,20 @@ fn session_id_from_transcript_path(value: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn public_thread_id_for_claude_session(session_id: &str) -> String {
+pub fn public_thread_id_for_claude_session(session_id: &str) -> String {
     let session_id = session_id.trim();
     if session_id.starts_with(CLAUDE_THREAD_PREFIX) {
         return session_id.to_owned();
     }
     format!("{CLAUDE_THREAD_PREFIX}{}", session_id.replace('/', ":"))
+}
+
+pub fn claude_session_id_from_public_thread_id(thread_id: &str) -> String {
+    let thread_id = thread_id.trim();
+    thread_id
+        .strip_prefix(CLAUDE_THREAD_PREFIX)
+        .unwrap_or(thread_id)
+        .replace(':', "/")
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -533,6 +541,14 @@ mod tests {
             Some("claude:claude-session-1")
         );
         assert_eq!(payload.cwd.as_deref(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn strips_claude_public_thread_prefix_for_resume() {
+        assert_eq!(
+            claude_session_id_from_public_thread_id("claude:session-1"),
+            "session-1"
+        );
     }
 
     #[test]

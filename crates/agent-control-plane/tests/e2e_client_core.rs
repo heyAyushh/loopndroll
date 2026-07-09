@@ -666,6 +666,7 @@ impl E2eHarness {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home,
             codex_executable: Some(codex_executable),
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),

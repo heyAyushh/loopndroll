@@ -235,25 +235,23 @@ fn prompt_delivery_target_uses_claude_hook_transport_when_active() {
 }
 
 #[test]
-fn prompt_delivery_target_rejects_stopped_claude_hook_transport() {
-    let thread = test_thread(
+fn prompt_delivery_target_resumes_stopped_claude_sessions() {
+    let mut thread = test_thread(
         "claude:session-1",
         AssistantKind::ClaudeCode,
         Some(MOBILE_SESSION_STATUS_STOPPED),
     );
+    thread.cwd = Some("/tmp/project".to_owned());
     let session_state = MobileSessionState::default();
 
-    let error = prompt_delivery_action_for_thread(&thread, &session_state)
-        .expect_err("stopped Claude Code sessions cannot be woken by hooks");
+    let action = prompt_delivery_action_for_thread(&thread, &session_state)
+        .expect("stopped Claude Code sessions should resume through claude -p");
     assert!(matches!(
-        error,
-        MobileSessionError::PromptDeliveryUnavailableReason(reason)
-            if reason == INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
+        action,
+        PromptDeliveryAction::ResumeClaude(PromptResumeTarget { thread_id, cwd })
+            if thread_id == "session-1" && cwd.as_deref() == Some("/tmp/project")
     ));
     let summary = session_summary(&thread, 0, &session_state);
-    assert_eq!(summary["canSendPrompt"], serde_json::json!(false));
-    assert_eq!(
-        summary["promptDeliveryUnavailableReason"],
-        INACTIVE_PROMPT_DELIVERY_UNAVAILABLE_REASON
-    );
+    assert_eq!(summary["canSendPrompt"], serde_json::json!(true));
+    assert!(summary["promptDeliveryUnavailableReason"].is_null());
 }

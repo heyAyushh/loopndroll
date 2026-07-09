@@ -295,6 +295,7 @@ impl HostEnvironment {
 pub struct ControlPlaneConfig {
     pub codex_home: PathBuf,
     pub codex_executable: Option<String>,
+    pub claude_executable: Option<String>,
     pub store_path: PathBuf,
     pub hook_command: Option<String>,
     pub host_environment: HostEnvironment,
@@ -1433,6 +1434,10 @@ impl ControlPlane {
 
     pub fn codex_executable(&self) -> Option<&str> {
         self.config.codex_executable.as_deref()
+    }
+
+    pub fn claude_executable(&self) -> Option<&str> {
+        self.config.claude_executable.as_deref()
     }
 
     pub fn session_content_slice(
@@ -3285,6 +3290,7 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
             host_environment: HostEnvironment::hermetic(fixture_dir.path().to_path_buf()),
@@ -3439,6 +3445,7 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: fixture_dir.path().join(".codex"),
             codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: fixture_dir.path().join("store.sqlite"),
             hook_command: None,
             host_environment: HostEnvironment::hermetic(fixture_dir.path().to_path_buf()),

@@ -18,9 +18,9 @@ use crate::mobile::session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS
 mod hooks;
 
 pub use hooks::{
-    ClaudeHookOwner, ClaudeHookRegistrationChange, ClaudeHookStatus, inspect_claude_hooks,
-    is_claude_hook_invocation, parse_claude_hook_payload, register_owned_claude_hooks,
-    unregister_owned_claude_hooks,
+    ClaudeHookOwner, ClaudeHookRegistrationChange, ClaudeHookStatus,
+    claude_session_id_from_public_thread_id, inspect_claude_hooks, is_claude_hook_invocation,
+    parse_claude_hook_payload, register_owned_claude_hooks, unregister_owned_claude_hooks,
 };
 
 const CLAUDE_PROJECTS_DIR: &str = "projects";

@@ -1,4 +1,5 @@
 use crate::assistant::AssistantKind;
+use crate::claude_code::claude_session_id_from_public_thread_id;
 use crate::control_plane::{DesktopSnapshot, DesktopThread};
 use crate::devin::{
     DevinPromptTransport, DevinThreadIdentity, devin_prompt_transport_for_provider,
@@ -34,6 +35,7 @@ pub enum PromptDeliveryAction {
         session_id: String,
     },
     ResumeCodex(PromptResumeTarget),
+    ResumeClaude(PromptResumeTarget),
 }
 
 pub fn validate_mobile_prompt_delivery_target(
@@ -121,6 +123,15 @@ pub(super) fn prompt_delivery_action_for_thread(
             ));
         }
         return zed_prompt_delivery_action(thread);
+    }
+    if thread.capabilities.assistant_kind == AssistantKind::ClaudeCode {
+        if status == ACTIVE_SESSION_STATUS {
+            return Ok(PromptDeliveryAction::QueueForHook);
+        }
+        return Ok(PromptDeliveryAction::ResumeClaude(PromptResumeTarget {
+            thread_id: claude_session_id_from_public_thread_id(&thread.thread_id),
+            cwd: thread.cwd.clone(),
+        }));
     }
 
     match status {

@@ -87,7 +87,7 @@ pub(super) fn prompt_delivery_availability(
 
     let requires_active_session = !matches!(
         thread.capabilities.assistant_kind,
-        AssistantKind::Codex | AssistantKind::DevinDesktop
+        AssistantKind::Codex | AssistantKind::DevinDesktop | AssistantKind::ClaudeCode
     );
     if requires_active_session && status != ACTIVE_SESSION_STATUS {
         return PromptDeliveryAvailability {

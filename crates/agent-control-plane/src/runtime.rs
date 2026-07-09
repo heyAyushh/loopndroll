@@ -231,6 +231,7 @@ pub fn default_control_plane() -> Result<ControlPlane> {
     Ok(ControlPlane::new(ControlPlaneConfig {
         codex_home: default_codex_home(),
         codex_executable: None,
+        claude_executable: None,
         store_path: default_store_path(),
         hook_command: Some(default_hook_command()?),
         host_environment: HostEnvironment::real_with_grok_home(home_path, grok_home),
@@ -399,6 +400,7 @@ mod tests {
         let control_plane = ControlPlane::new(ControlPlaneConfig {
             codex_home: temp_dir.path().join(".codex"),
             codex_executable: None,
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some(TEST_HOOK_COMMAND.to_owned()),
             host_environment: HostEnvironment::hermetic(temp_dir.path().to_path_buf()),

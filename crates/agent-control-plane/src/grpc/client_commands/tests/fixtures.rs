@@ -393,6 +393,7 @@ insert into threads values
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some("/usr/bin/false".to_owned()),
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             host_environment: HostEnvironment::hermetic(self.temp_dir.path().to_path_buf()),

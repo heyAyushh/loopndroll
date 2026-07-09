@@ -4287,10 +4287,8 @@ async fn desktop_and_mobile_snapshots_include_claude_code_sessions() {
         claude_session["metadata"]["sourceDisplayName"],
         "Claude Code"
     );
-    assert_eq!(
-        claude_session["promptDeliveryUnavailableReason"],
-        "This session must be running before Looper can queue prompts."
-    );
+    assert_eq!(claude_session["canSendPrompt"], serde_json::json!(true));
+    assert!(claude_session["promptDeliveryUnavailableReason"].is_null());
 }
 
 #[tokio::test]
@@ -5545,6 +5543,7 @@ done
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(codex_executable.display().to_string()),
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             host_environment: self.host_environment(Vec::new(), BTreeMap::new()),
@@ -5581,6 +5580,7 @@ done
         ControlPlane::new(ControlPlaneConfig {
             codex_home: self.codex_home.clone(),
             codex_executable: Some(self.codex_resume_stub().display().to_string()),
+            claude_executable: Some("/usr/bin/false".to_owned()),
             store_path: self.temp_dir.path().join("control-plane.sqlite"),
             hook_command: Some("agent-control-plane --hook --managed-by looper".to_owned()),
             host_environment: self.host_environment(process_commands, cli_paths),
