@@ -6,11 +6,13 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+pub use crate::entity_id::{
+    claude_session_id_from_public_thread_id, public_thread_id_for_claude_session,
+};
 use crate::hook_registration::LOOPER_HOOK_MARKER;
 use crate::mobile::session::MobileHookPayload;
 
 const CLAUDE_SETTINGS_FILE: &str = "settings.json";
-const CLAUDE_THREAD_PREFIX: &str = "claude:";
 const LOOPER_CLAUDE_HOOK_ENV: &str = "LOOPER_CLAUDE_HOOK";
 const LOOPER_CLAUDE_HOOK_VALUE: &str = "1";
 const SESSION_HOOK_TIMEOUT_SECONDS: u64 = 30;
@@ -161,22 +163,6 @@ fn session_id_from_transcript_path(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|session_id| !session_id.is_empty())
         .map(str::to_owned)
-}
-
-pub fn public_thread_id_for_claude_session(session_id: &str) -> String {
-    let session_id = session_id.trim();
-    if session_id.starts_with(CLAUDE_THREAD_PREFIX) {
-        return session_id.to_owned();
-    }
-    format!("{CLAUDE_THREAD_PREFIX}{}", session_id.replace('/', ":"))
-}
-
-pub fn claude_session_id_from_public_thread_id(thread_id: &str) -> String {
-    let thread_id = thread_id.trim();
-    thread_id
-        .strip_prefix(CLAUDE_THREAD_PREFIX)
-        .unwrap_or(thread_id)
-        .replace(':', "/")
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {

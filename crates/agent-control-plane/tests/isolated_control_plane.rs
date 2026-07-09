@@ -2375,7 +2375,7 @@ async fn session_mini_reconcile_publishes_fresh_transcript_activity() {
 async fn session_mini_reconcile_publishes_claude_full_reply_text_chunk() {
     let fixture = IsolatedCodexFixture::new();
     let session_id = "claude-full-reply";
-    let thread_id = format!("claude:{session_id}");
+    let thread_id = agent_control_plane::entity_id::public_thread_id_for_claude_session(session_id);
     let first_block = "A".repeat(180);
     let second_block = "\nsecond line\nthird line";
     let full_reply = format!("{first_block}{second_block}");

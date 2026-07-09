@@ -6,12 +6,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::entity_id::public_thread_id_for_devin_session;
 use crate::hook_registration::LOOPER_HOOK_MARKER;
 use crate::mobile::session::MobileHookPayload;
 
 const DEVIN_CONFIG_RELATIVE_PATH: &str = ".config/devin/config.json";
-const DEVIN_LOCAL_PROVIDER_ID: &str = "devin-cli";
-const DEVIN_ACP_SESSION_PREFIX: &str = "acp/";
 const LOOPER_DEVIN_HOOK_ENV: &str = "LOOPER_DEVIN_HOOK";
 const LOOPER_DEVIN_HOOK_VALUE: &str = "1";
 const SESSION_HOOK_TIMEOUT_SECONDS: u64 = 30;
@@ -152,25 +151,6 @@ fn devin_payload_from_value(value: &Value) -> MobileHookPayload {
             &["last_assistant_message", "lastAssistantMessage"],
         ),
     }
-}
-
-fn public_thread_id_for_devin_session(session_id: &str) -> String {
-    let session_id = session_id.trim();
-    if session_id.starts_with("devin:") {
-        return session_id.to_owned();
-    }
-    if let Some(local_session_id) = session_id.strip_prefix(DEVIN_ACP_SESSION_PREFIX)
-        && let Some((provider_id, provider_session_id)) = local_session_id.split_once('/')
-    {
-        return format!(
-            "devin:{provider_id}:{}",
-            provider_session_id.replace('/', ":")
-        );
-    }
-    format!(
-        "devin:{DEVIN_LOCAL_PROVIDER_ID}:{}",
-        session_id.replace('/', ":")
-    )
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {

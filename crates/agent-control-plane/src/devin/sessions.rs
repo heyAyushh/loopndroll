@@ -18,6 +18,8 @@ use super::{
 use crate::assistant::AssistantKind;
 use crate::codex::{DiffSummary, LaunchKind, SpawnGraph, ThreadCapabilities, ThreadRecord};
 use crate::control_plane::DesktopThread;
+use crate::entity_id::public_thread_id_for_devin_metadata_session;
+pub use crate::entity_id::{DevinThreadIdentity, devin_thread_identity_from_public_thread_id};
 use crate::mobile::session::{MOBILE_SESSION_STATUS_ACTIVE, MOBILE_SESSION_STATUS_STOPPED};
 
 const DEVIN_NEXT_ORIGINATOR: &str = "Devin - Next";
@@ -25,8 +27,6 @@ const DEVIN_STABLE_ORIGINATOR: &str = "Devin";
 const DEVIN_DESKTOP_SOURCE: &str = "devin-desktop";
 const CODEX_ACP_SOURCE: &str = "codex-acp";
 const CODEX_ACP_AGENT_NICKNAME: &str = "Codex ACP";
-const DEVIN_THREAD_ID_PREFIX: &str = "devin";
-const DEVIN_ACP_SESSION_PREFIX: &str = "acp/";
 const DEVIN_IDLE_STATUS: &str = "idle";
 const DEVIN_END_TURN_STATUS: &str = "end_turn";
 const USER_RELATIVE_PATH: &str = "User";
@@ -96,12 +96,6 @@ pub struct DevinSessionDiscoveryError {
     pub code: String,
     /// Sanitized detail safe for desktop and mobile clients.
     pub detail: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DevinThreadIdentity {
-    pub provider_id: String,
-    pub session_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -476,7 +470,10 @@ fn session_record_from_metadata(
         .flatten();
 
     DevinSessionRecord {
-        thread_id: public_thread_id_for_metadata_session(&session.session_id, &session.provider_id),
+        thread_id: public_thread_id_for_devin_metadata_session(
+            &session.session_id,
+            &session.provider_id,
+        ),
         session_id: session.session_id,
         provider_id: session.provider_id,
         title: non_empty_string(session.title),
@@ -651,51 +648,8 @@ fn keep_newer_session(
     }
 }
 
-fn public_thread_id_for_metadata_session(session_id: &str, provider_id: &str) -> String {
-    if is_codex_acp_provider(provider_id) {
-        return codex_thread_id_for_devin_acp_session(session_id, provider_id);
-    }
-
-    public_thread_id_for_session_id(session_id)
-}
-
-fn codex_thread_id_for_devin_acp_session(session_id: &str, provider_id: &str) -> String {
-    let without_acp_prefix = session_id
-        .strip_prefix(DEVIN_ACP_SESSION_PREFIX)
-        .unwrap_or(session_id);
-    let without_provider_prefix = without_acp_prefix
-        .strip_prefix(provider_id)
-        .and_then(|value| value.strip_prefix('/'))
-        .unwrap_or(without_acp_prefix);
-    without_provider_prefix.replace('/', ":")
-}
-
-fn public_thread_id_for_session_id(session_id: &str) -> String {
-    let normalized_session_id = session_id
-        .strip_prefix(DEVIN_ACP_SESSION_PREFIX)
-        .unwrap_or(session_id)
-        .replace('/', ":");
-    format!("{DEVIN_THREAD_ID_PREFIX}:{normalized_session_id}")
-}
-
 fn is_codex_acp_provider(provider_id: &str) -> bool {
     matches!(provider_id.trim(), "codex" | "codex-acp")
-}
-
-pub fn devin_thread_identity_from_public_thread_id(thread_id: &str) -> Option<DevinThreadIdentity> {
-    let remainder = thread_id.strip_prefix("devin:")?;
-    let (provider_id, session_id) = remainder.split_once(':')?;
-    let provider_id = non_empty_identity_segment(provider_id)?;
-    let session_id = non_empty_identity_segment(&session_id.replace(':', "/"))?;
-    Some(DevinThreadIdentity {
-        provider_id,
-        session_id,
-    })
-}
-
-fn non_empty_identity_segment(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
 }
 
 pub fn devin_prompt_transport_for_provider(provider_id: &str) -> Option<DevinPromptTransport> {

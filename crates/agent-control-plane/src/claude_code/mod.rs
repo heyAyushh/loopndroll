@@ -21,11 +21,11 @@ mod hooks;
 pub use hooks::{
     ClaudeHookOwner, ClaudeHookRegistrationChange, ClaudeHookStatus,
     claude_session_id_from_public_thread_id, inspect_claude_hooks, is_claude_hook_invocation,
-    parse_claude_hook_payload, register_owned_claude_hooks, unregister_owned_claude_hooks,
+    parse_claude_hook_payload, public_thread_id_for_claude_session, register_owned_claude_hooks,
+    unregister_owned_claude_hooks,
 };
 
 const CLAUDE_PROJECTS_DIR: &str = "projects";
-const CLAUDE_THREAD_PREFIX: &str = "claude:";
 const CLAUDE_SOURCE: &str = "claude-code";
 const CLAUDE_ORIGINATOR: &str = "Claude Code";
 const JSONL_EXTENSION: &str = "jsonl";
@@ -328,7 +328,7 @@ fn read_claude_session_file(
         return Ok(None);
     };
     let updated_at_ms = draft.updated_at_ms.or_else(|| file_modified_at_ms(path));
-    let thread_id = format!("{CLAUDE_THREAD_PREFIX}{session_id}");
+    let thread_id = public_thread_id_for_claude_session(&session_id);
     let running = claude_session_is_running(&session_id, path, process_commands);
     Ok(Some(ClaudeSessionRecord {
         session_id,
@@ -358,7 +358,7 @@ fn read_claude_session_file_fast(
         return Ok(None);
     };
     let updated_at_ms = draft.updated_at_ms.or_else(|| file_modified_at_ms(path));
-    let thread_id = format!("{CLAUDE_THREAD_PREFIX}{session_id}");
+    let thread_id = public_thread_id_for_claude_session(&session_id);
     let running = claude_session_is_running(&session_id, path, process_commands);
     Ok(Some(ClaudeSessionRecord {
         session_id,

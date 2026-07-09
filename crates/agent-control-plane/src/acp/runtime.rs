@@ -53,11 +53,6 @@ pub(super) const TEXT_CONTENT_TYPE: &str = "text";
 pub(super) const TEXT_UPDATE_DETAIL: &str =
     "Looper received this prompt through the local ACP bridge.";
 pub(super) const USER_MESSAGE_CHUNK_UPDATE: &str = "user_message_chunk";
-pub(super) const ZED_CLIENT_ID_FOR_PUBLIC_AGENT_ALIAS: &str = "zed";
-pub(super) const ZED_CODEX_ACP_AGENT_ID: &str = "codex-acp";
-pub(super) const ZED_CODEX_DIRECT_AGENT_ID: &str = "codex";
-pub(super) const ZED_CODEX_DIRECT_PUBLIC_AGENT_ID: &str = "codex-direct";
-pub(super) const ZED_CODEX_PUBLIC_AGENT_ID: &str = "codex";
 
 pub(super) type OutboundMessageSender = mpsc::UnboundedSender<String>;
 

@@ -11,6 +11,7 @@ pub mod compaction;
 pub mod content_slices;
 pub mod control_plane;
 pub mod devin;
+pub mod entity_id;
 pub mod events;
 pub mod goals;
 pub mod grok_build;

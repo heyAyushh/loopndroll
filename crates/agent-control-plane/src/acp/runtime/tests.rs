@@ -143,7 +143,7 @@ fn controls_local_runtime_sessions_without_transport_connection() {
 fn rejects_proxy_session_prompt_without_live_transport() {
     let runtime = LooperAcpRuntime::new("zed");
     let observed = runtime.observe_session(LooperAcpObservedSession {
-        agent_id: ZED_CODEX_ACP_AGENT_ID.to_owned(),
+        agent_id: "codex-acp".to_owned(),
         session_id: "codex-session-1".to_owned(),
         connection_id: Some("stale-zed-connection".to_owned()),
         cwd: Some("/tmp/zed-project".to_owned()),
