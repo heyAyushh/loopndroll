@@ -1,3 +1,4 @@
+use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::assistant::AssistantKind;
 use crate::claude_code::claude_session_id_from_public_thread_id;
 use crate::control_plane::{DesktopSnapshot, DesktopThread};
@@ -27,11 +28,8 @@ pub struct PromptResumeTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptDeliveryAction {
     QueueForHook,
-    SendLooperAcp {
+    SendAcp {
         client_id: String,
-        session_id: String,
-    },
-    SendDevinAcp {
         session_id: String,
     },
     ResumeCodex(PromptResumeTarget),
@@ -163,7 +161,8 @@ fn devin_prompt_delivery_action(
                 cwd: thread.cwd.clone(),
             }))
         }
-        DevinPromptTransport::DevinAcpBridge => Ok(PromptDeliveryAction::SendDevinAcp {
+        DevinPromptTransport::DevinAcpBridge => Ok(PromptDeliveryAction::SendAcp {
+            client_id: DEVIN_ACP_CLIENT_HOST_ID.to_owned(),
             session_id: format!("acp/{provider_id}/{session_id}"),
         }),
         DevinPromptTransport::DevinHook if status == ACTIVE_SESSION_STATUS => {
@@ -182,7 +181,7 @@ fn zed_prompt_delivery_action(
 ) -> Result<PromptDeliveryAction, MobileSessionError> {
     let session_id =
         zed_acp_session_id(thread).ok_or(MobileSessionError::PromptDeliveryUnavailable)?;
-    Ok(PromptDeliveryAction::SendLooperAcp {
+    Ok(PromptDeliveryAction::SendAcp {
         client_id: ZED_CLIENT_ID.to_owned(),
         session_id,
     })

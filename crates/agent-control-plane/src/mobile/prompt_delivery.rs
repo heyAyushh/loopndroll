@@ -271,10 +271,7 @@ fn accept_non_acp_session_prompt(
 }
 
 fn ensure_non_acp_delivery_action(action: &PromptDeliveryAction) -> Result<(), MobileSessionError> {
-    if matches!(
-        action,
-        PromptDeliveryAction::SendDevinAcp { .. } | PromptDeliveryAction::SendLooperAcp { .. }
-    ) {
+    if matches!(action, PromptDeliveryAction::SendAcp { .. }) {
         return Err(MobileSessionError::PromptResumeUnavailable(
             "automation prompt direct ACP delivery is unsupported".to_owned(),
         ));
@@ -405,64 +402,92 @@ fn dispatch_session_prompt_with_action(
     prompt: &str,
     action: PromptDeliveryAction,
 ) -> Result<PromptDispatch, MobileSessionError> {
+    let executor = PromptDeliveryExecutor::new(control_plane, thread_id, prompt);
     match action {
-        PromptDeliveryAction::QueueForHook => {
-            let prompt = control_plane
-                .mobile_session_service()
-                .queue_prompt(thread_id, prompt)?;
-            Ok(PromptDispatch::Queued {
-                prompt_id: prompt.id,
-            })
-        }
-        PromptDeliveryAction::SendLooperAcp {
+        PromptDeliveryAction::QueueForHook => executor.queue_for_hook(),
+        PromptDeliveryAction::SendAcp {
             client_id,
             session_id,
-        } => {
-            let runtime = control_plane
-                .acp_runtime_for_client(&client_id)
-                .ok_or_else(|| {
-                    MobileSessionError::PromptResumeUnavailable(format!(
-                        "ACP client host is unavailable: {client_id}"
-                    ))
-                })?;
-            let delivered = runtime
-                .deliver_mobile_prompt(&session_id, prompt)
-                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
-            Ok(PromptDispatch::Delivered {
-                prompt_id: delivered.prompt_id,
-            })
+        } => executor.send_acp(&client_id, &session_id),
+        PromptDeliveryAction::ResumeCodex(target) => executor.resume_codex(target),
+        PromptDeliveryAction::ResumeClaude(target) => executor.resume_claude(target),
+    }
+}
+
+struct PromptDeliveryExecutor<'a> {
+    control_plane: &'a ControlPlane,
+    thread_id: &'a str,
+    prompt: &'a str,
+}
+
+impl<'a> PromptDeliveryExecutor<'a> {
+    fn new(control_plane: &'a ControlPlane, thread_id: &'a str, prompt: &'a str) -> Self {
+        Self {
+            control_plane,
+            thread_id,
+            prompt,
         }
-        PromptDeliveryAction::SendDevinAcp { session_id } => {
-            let delivered = control_plane
-                .devin_acp_runtime()
-                .deliver_mobile_prompt(&session_id, prompt)
-                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
-            Ok(PromptDispatch::Delivered {
-                prompt_id: delivered.prompt_id,
-            })
-        }
-        PromptDeliveryAction::ResumeCodex(target) => {
-            let request = CodexResumeRequest {
-                thread_id: target.thread_id,
-                prompt: prompt.to_owned(),
-                cwd: target.cwd,
-                codex_executable: control_plane.codex_executable().map(str::to_owned),
-            };
-            spawn_thread_resume(&request)
-                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
-            Ok(PromptDispatch::Resumed)
-        }
-        PromptDeliveryAction::ResumeClaude(target) => {
-            let request = ClaudeResumeRequest {
-                session_id: target.thread_id,
-                prompt: prompt.to_owned(),
-                cwd: target.cwd,
-                claude_executable: control_plane.claude_executable().map(str::to_owned),
-            };
-            spawn_session_resume(&request)
-                .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
-            Ok(PromptDispatch::Resumed)
-        }
+    }
+
+    fn queue_for_hook(&self) -> Result<PromptDispatch, MobileSessionError> {
+        let prompt = self
+            .control_plane
+            .mobile_session_service()
+            .queue_prompt(self.thread_id, self.prompt)?;
+        Ok(PromptDispatch::Queued {
+            prompt_id: prompt.id,
+        })
+    }
+
+    fn send_acp(
+        &self,
+        client_id: &str,
+        session_id: &str,
+    ) -> Result<PromptDispatch, MobileSessionError> {
+        let runtime = self
+            .control_plane
+            .acp_runtime_for_client(client_id)
+            .ok_or_else(|| {
+                MobileSessionError::PromptResumeUnavailable(format!(
+                    "ACP client host is unavailable: {client_id}"
+                ))
+            })?;
+        let delivered = runtime
+            .deliver_mobile_prompt(session_id, self.prompt)
+            .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+        Ok(PromptDispatch::Delivered {
+            prompt_id: delivered.prompt_id,
+        })
+    }
+
+    fn resume_codex(
+        &self,
+        target: crate::mobile::api::PromptResumeTarget,
+    ) -> Result<PromptDispatch, MobileSessionError> {
+        let request = CodexResumeRequest {
+            thread_id: target.thread_id,
+            prompt: self.prompt.to_owned(),
+            cwd: target.cwd,
+            codex_executable: self.control_plane.codex_executable().map(str::to_owned),
+        };
+        spawn_thread_resume(&request)
+            .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+        Ok(PromptDispatch::Resumed)
+    }
+
+    fn resume_claude(
+        &self,
+        target: crate::mobile::api::PromptResumeTarget,
+    ) -> Result<PromptDispatch, MobileSessionError> {
+        let request = ClaudeResumeRequest {
+            session_id: target.thread_id,
+            prompt: self.prompt.to_owned(),
+            cwd: target.cwd,
+            claude_executable: self.control_plane.claude_executable().map(str::to_owned),
+        };
+        spawn_session_resume(&request)
+            .map_err(|error| MobileSessionError::PromptResumeUnavailable(error.to_string()))?;
+        Ok(PromptDispatch::Resumed)
     }
 }
 
@@ -577,10 +602,12 @@ fn emit_prompt_delivery_failed(
 #[cfg(test)]
 mod tests {
     use super::{
-        delivery_action_cache_key, invalidate_delivery_action_cache, locked_delivery_action_cache,
+        delivery_action_cache_key, ensure_non_acp_delivery_action,
+        invalidate_delivery_action_cache, locked_delivery_action_cache,
         send_non_acp_session_prompt, unique_thread_ids,
     };
     use crate::control_plane::{ControlPlane, ControlPlaneConfig, HostEnvironment};
+    use crate::mobile::api::PromptDeliveryAction;
     use crate::mobile::session::MobileSessionError;
     use tempfile::TempDir;
 
@@ -680,6 +707,21 @@ mod tests {
                 .keys()
                 .all(|key| key.thread_id != thread_id)
         );
+    }
+
+    #[test]
+    fn non_acp_delivery_rejects_direct_acp_action() {
+        let error = ensure_non_acp_delivery_action(&PromptDeliveryAction::SendAcp {
+            client_id: "zed".to_owned(),
+            session_id: "acp/looper/session-1".to_owned(),
+        })
+        .expect_err("automation prompts should reject direct ACP delivery");
+
+        assert!(matches!(
+            error,
+            MobileSessionError::PromptResumeUnavailable(reason)
+                if reason == "automation prompt direct ACP delivery is unsupported"
+        ));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::acp::client_host::DEVIN_ACP_CLIENT_HOST_ID;
 use crate::assistant::AssistantKind;
 use crate::mobile::api::availability::{
     DEVIN_HOOK_PROMPT_DELIVERY_REQUIRES_ACTIVE_SESSION_REASON,
@@ -104,7 +105,8 @@ fn prompt_delivery_target_uses_looper_acp_direct_transport() {
         .expect("Looper-owned Devin ACP sessions should send directly");
     assert!(matches!(
         action,
-        PromptDeliveryAction::SendDevinAcp { session_id } if session_id == "acp/looper/session-1"
+        PromptDeliveryAction::SendAcp { client_id, session_id }
+            if client_id == DEVIN_ACP_CLIENT_HOST_ID && session_id == "acp/looper/session-1"
     ));
     let summary = session_summary(&thread, 0, &session_state);
     assert_eq!(summary["canSendPrompt"], serde_json::json!(true));
@@ -125,7 +127,7 @@ fn prompt_delivery_target_uses_zed_codex_looper_acp_direct_transport() {
         .expect("Looper-owned Zed ACP sessions should send directly");
     assert!(matches!(
         action,
-        PromptDeliveryAction::SendLooperAcp { client_id, session_id }
+        PromptDeliveryAction::SendAcp { client_id, session_id }
             if client_id == "zed" && session_id == "acp/looper/session-1"
     ));
     let summary = session_summary(&thread, 0, &session_state);
@@ -147,7 +149,7 @@ fn prompt_delivery_preserves_legacy_zed_looper_acp_thread_ids() {
         .expect("Legacy Looper-owned Zed ACP sessions should remain promptable");
     assert!(matches!(
         action,
-        PromptDeliveryAction::SendLooperAcp { client_id, session_id }
+        PromptDeliveryAction::SendAcp { client_id, session_id }
             if client_id == "zed" && session_id == "acp/looper/session-1"
     ));
 }
