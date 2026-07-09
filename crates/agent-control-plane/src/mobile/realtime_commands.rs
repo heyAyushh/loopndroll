@@ -1168,7 +1168,14 @@ fn session_mini_visibility(
             .has_mobile_session_minis()
             .map_err(|error| RealtimeCommandError::Internal(error.to_string()))?;
         if has_projection {
-            return Ok(Some(false));
+            // The mini projection filters out archived sessions, so an
+            // archived thread is absent here even though it still exists and
+            // must stay addressable — otherwise unarchive/delete are rejected
+            // with "session not found" forever once the reconciler runs.
+            return Ok(Some(session_hidden_by_archive_override(
+                control_plane,
+                thread_id,
+            )?));
         }
     }
     Ok(session_mini_records_contain_session(
@@ -1176,6 +1183,23 @@ fn session_mini_visibility(
         thread_id,
         assistant_surface,
     ))
+}
+
+fn session_hidden_by_archive_override(
+    control_plane: &ControlPlane,
+    thread_id: &str,
+) -> Result<bool, RealtimeCommandError> {
+    let state = control_plane
+        .mobile_session_service()
+        .state()
+        .map_err(RealtimeCommandError::MobileSession)?;
+    Ok(state
+        .sessions
+        .get(thread_id)
+        .map(|session_override| {
+            session_override.archived.unwrap_or(false) && !session_override.deleted
+        })
+        .unwrap_or(false))
 }
 
 fn ensure_session_fsm_allows(
@@ -1688,6 +1712,39 @@ mod tests {
             },
         )
         .expect("delivery failure should allow a retry");
+    }
+
+    #[test]
+    fn archived_session_hidden_from_minis_stays_addressable_for_unarchive() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let control_plane = test_control_plane(&temp_dir);
+        let archived_thread_id = "thread-archived-hidden";
+        // Projection exists but omits the archived thread — exactly the state
+        // the reconciler produces after archiving, since archived sessions
+        // are filtered out of the minis.
+        seed_active_session_mini(&control_plane, "thread-other");
+        control_plane
+            .mobile_session_service()
+            .set_session_archived(archived_thread_id, true)
+            .expect("archive override");
+
+        let ack = set_session_archived_command(
+            &control_plane,
+            archived_thread_id.to_owned(),
+            false,
+            "cmid-unarchive-hidden",
+        )
+        .expect("unarchive of a projection-hidden archived session must be accepted");
+        assert!(ack.accepted);
+
+        let missing = set_session_archived_command(
+            &control_plane,
+            "thread-never-existed".to_owned(),
+            false,
+            "cmid-unarchive-missing",
+        )
+        .expect_err("unknown sessions must still be rejected");
+        assert!(matches!(missing, RealtimeCommandError::NotFound(_)));
     }
 
     fn seed_active_session_mini(control_plane: &ControlPlane, thread_id: &str) {
