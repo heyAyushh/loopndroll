@@ -3938,7 +3938,11 @@ async fn mobile_session_controls_are_owned_by_rust() {
         }),
     )
     .await;
-    assert!(unarchived_ack.accepted);
+    assert!(
+        unarchived_ack.accepted,
+        "unarchive rejected: error_code={} reject_reason={} current_state={}",
+        unarchived_ack.error_code, unarchived_ack.reject_reason, unarchived_ack.current_state
+    );
     prime_state_mini_cache(&control_plane);
 
     let deleted_ack = submit_grpc_session_command(

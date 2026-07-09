@@ -1024,6 +1024,15 @@ impl ControlPlane {
         {
             return Ok(false);
         }
+        // A rebuild that found zero threads must not wipe an existing
+        // projection: an empty desktop snapshot is indistinguishable from
+        // transiently unavailable sources (locked codex DB, missing homes —
+        // or a test fixture that seeded minis directly), and a stale phone
+        // list is strictly better than a vanished one. Individual removals
+        // still propagate via override tombstones, not via an empty rebuild.
+        if minis.is_empty() && self.store.has_mobile_session_minis()? {
+            return Ok(false);
+        }
         let event = match detail {
             Some(detail) => MobileEvent {
                 event_type: MobileEventKind::SessionChanged,
