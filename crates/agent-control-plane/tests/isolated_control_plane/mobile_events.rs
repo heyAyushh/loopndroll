@@ -15,7 +15,10 @@ const COMMAND_KIND_SEND_SESSION_PROMPT: &str = "SendSessionPrompt";
 const CLIENT_MUTATION_ID: &str = "mutation-send-session-prompt-1";
 const REQUEST_HASH: &str = "sha256:send-session-prompt-a";
 const CONFLICTING_REQUEST_HASH: &str = "sha256:send-session-prompt-b";
-const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 5_000;
+// Generous because the isolated suite runs 11 test binaries in parallel and a
+// core-starved stream ack can take multiples of its uncontended latency; a
+// genuinely hung stream still fails, without the recurring load-flake noise.
+const SESSION_FRAME_TIMEOUT_MILLIS: u64 = 30_000;
 const SESSION_FRAME_SCAN_LIMIT: usize = 32;
 const SESSION_REQUEST_BUFFER: usize = 8;
 const REPLAY_BATCH_BOUNDARY_COUNT: usize = 129;
