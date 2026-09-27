@@ -1,0 +1,1647 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Looper — Insert Coin</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/timing.js"></script>
+    <style>
+      @font-face {
+        font-family: "PS2P";
+        src: url("assets/PressStart2P.ttf") format("truetype");
+      }
+      @font-face {
+        font-family: "VT";
+        src: url("assets/VT323.ttf") format("truetype");
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #000;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: "PS2P", monospace;
+        color: #fff;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      .stage-inner {
+        position: absolute;
+        inset: 0;
+      }
+      canvas.full {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+      }
+      .banner {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 70px;
+        text-align: center;
+        z-index: 20;
+      }
+      .banner .b-stage {
+        font-size: 28px;
+        color: #7fe3ff;
+        text-shadow: 4px 4px 0 #0a1a4a;
+        letter-spacing: 4px;
+      }
+      .banner .b-title {
+        margin-top: 22px;
+        font-size: 64px;
+        color: #ffd23f;
+        text-shadow: 6px 6px 0 #b3261e, 10px 10px 0 #000;
+      }
+      .popup-text {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        z-index: 25;
+      }
+
+      /* ---------- pinball ---------- */
+      #pinball .pin-bg {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 30% 40%, #13206a 0%, #060a26 55%, #010108 100%);
+      }
+      #pin-table-wrap {
+        position: absolute;
+        left: 150px;
+        top: -70px;
+        width: 690px;
+        height: 1150px;
+        transform: perspective(2000px) rotateX(20deg);
+        transform-origin: 50% 100%;
+        border: 10px solid #8f98ad;
+        outline: 6px solid #2b3148;
+        box-shadow: 0 0 60px rgba(90, 140, 255, 0.35);
+      }
+      #pin-canvas {
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+        display: block;
+      }
+      #pin-panel {
+        position: absolute;
+        left: 1010px;
+        top: 70px;
+        width: 820px;
+        height: 940px;
+        background: #04050f;
+        border: 8px solid #b9c0cf;
+        outline: 6px solid #3a4058;
+        padding: 36px 44px;
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+      .pp-logo {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+      }
+      .pp-orb {
+        width: 128px;
+        height: 128px;
+        image-rendering: pixelated;
+        flex: none;
+      }
+      .pp-3d {
+        display: block;
+        font-size: 22px;
+        color: #7fe3ff;
+      }
+      .pp-name {
+        display: block;
+        margin-top: 14px;
+        font-size: 40px;
+        color: #ffd23f;
+        text-shadow: 4px 4px 0 #b3261e;
+      }
+      .pp-lcd {
+        background: #0b1a0b;
+        border: 4px solid #2c4a2c;
+        padding: 18px 24px;
+        font-family: "VT", monospace;
+        color: #7dff6a;
+      }
+      .pp-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 40px;
+        line-height: 1.1;
+      }
+      #pp-score {
+        font-size: 96px;
+        line-height: 1;
+        text-align: right;
+        color: #b8ff9e;
+        letter-spacing: 4px;
+      }
+      #pp-msg {
+        font-size: 24px;
+        line-height: 1.5;
+        min-height: 44px;
+        color: #ffd23f;
+      }
+      #pp-tasks {
+        list-style: none;
+        font-family: "VT", monospace;
+        font-size: 38px;
+        line-height: 1.12;
+        color: #c8ccda;
+        columns: 2;
+        column-gap: 30px;
+      }
+      #pp-tasks li {
+        white-space: nowrap;
+      }
+      #pp-tasks li .box {
+        color: #6b7390;
+      }
+      #pp-tasks li.done {
+        color: #7dff6a;
+        text-decoration: line-through;
+      }
+      #pp-tasks li.done .box {
+        color: #7dff6a;
+      }
+      #pin-jackpot {
+        position: absolute;
+        left: 150px;
+        width: 690px;
+        top: 360px;
+        text-align: center;
+        font-size: 92px;
+        z-index: 25;
+        text-shadow: 8px 8px 0 #000;
+      }
+
+      /* ---------- palace ---------- */
+      #pal-stopped,
+      #pal-continue {
+        position: absolute;
+        width: 520px;
+        text-align: center;
+        z-index: 22;
+        font-size: 28px;
+        padding: 18px 10px;
+        border: 6px solid #fff;
+        background: #000;
+      }
+      #pal-stopped {
+        left: 560px;
+        top: 530px;
+        color: #ff4a3d;
+        border-color: #ff4a3d;
+      }
+      #pal-continue {
+        left: 640px;
+        top: 390px;
+        color: #7fe3ff;
+        border-color: #7fe3ff;
+      }
+      #pal-clear {
+        top: 360px;
+        font-size: 96px;
+        color: #ffd23f;
+        text-shadow: 8px 8px 0 #b3261e, 12px 12px 0 #000;
+      }
+
+      /* ---------- race ---------- */
+      .hud {
+        position: absolute;
+        z-index: 22;
+        font-size: 30px;
+        color: #fff;
+        text-shadow: 4px 4px 0 #000;
+      }
+      #race-lap {
+        left: 60px;
+        top: 50px;
+        line-height: 1.6;
+      }
+      #race-pos {
+        right: 60px;
+        top: 50px;
+        text-align: right;
+      }
+      #race-pos .big {
+        font-size: 72px;
+        color: #ffd23f;
+      }
+      #race-speed {
+        right: 60px;
+        bottom: 60px;
+        text-align: right;
+      }
+      #race-mph {
+        font-family: "VT", monospace;
+        font-size: 150px;
+        line-height: 0.9;
+        color: #ffd23f;
+      }
+      #race-nitro {
+        left: 60px;
+        bottom: 70px;
+        width: 560px;
+      }
+      #race-nitro .label {
+        font-size: 22px;
+        color: #7fe3ff;
+      }
+      #race-nitro .track {
+        margin-top: 14px;
+        height: 36px;
+        border: 5px solid #fff;
+        background: #111;
+        box-shadow: 4px 4px 0 #000;
+      }
+      #race-nitro-fill {
+        height: 100%;
+        width: 0%;
+        background: repeating-linear-gradient(90deg, #36d7ff 0 20px, #1b8fd6 20px 26px);
+      }
+      #race-count {
+        top: 380px;
+        font-size: 180px;
+        color: #ffd23f;
+        text-shadow: 10px 10px 0 #b3261e, 16px 16px 0 #000;
+      }
+      #race-nitro-slam {
+        top: 420px;
+        font-size: 64px;
+        color: #7fe3ff;
+        text-shadow: 6px 6px 0 #0a1a4a, 10px 10px 0 #000;
+      }
+      #race-finish {
+        top: 380px;
+        font-size: 84px;
+        color: #fff;
+        text-shadow: 8px 8px 0 #b3261e, 12px 12px 0 #000;
+      }
+
+      /* ---------- finale ---------- */
+      #scores {
+        position: absolute;
+        inset: 0;
+        padding-top: 120px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        z-index: 5;
+      }
+      #scores h2 {
+        font-size: 72px;
+        font-weight: 400;
+        color: #ffd23f;
+        text-shadow: 6px 6px 0 #b3261e;
+        margin-bottom: 70px;
+      }
+      .score-row {
+        display: flex;
+        width: 1500px;
+        font-size: 36px;
+        line-height: 2.1;
+        color: #c8ccda;
+      }
+      .score-row .rank {
+        width: 170px;
+      }
+      .score-row .who {
+        flex: 1;
+      }
+      .score-row .pts {
+        width: 360px;
+        text-align: right;
+      }
+      #row-top {
+        font-size: 44px;
+      }
+      #new-high {
+        margin-top: 60px;
+        font-size: 40px;
+        color: #7dff6a;
+      }
+      #logo-view {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 70px;
+        z-index: 6;
+      }
+      #orb-stack {
+        position: relative;
+        width: 300px;
+        height: 300px;
+      }
+      #orb-stack canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+      }
+      #wordmark {
+        margin-top: 40px;
+        font-size: 150px;
+        color: #fff;
+        text-shadow: 8px 8px 0 #245edb, 16px 16px 0 #000;
+        letter-spacing: 8px;
+      }
+      #wordmark span {
+        display: inline-block;
+      }
+      #tagline {
+        margin-top: 56px;
+        font-size: 44px;
+        color: #ffd23f;
+        text-align: center;
+        line-height: 1.6;
+        text-shadow: 5px 5px 0 #b3261e;
+      }
+      #subline {
+        margin-top: 30px;
+        width: 1500px;
+        font-family: "VT", monospace;
+        font-size: 50px;
+        color: #c8ccda;
+        text-align: center;
+        line-height: 1.15;
+      }
+      #press {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 60px;
+        text-align: center;
+        font-size: 36px;
+        color: #fff;
+        z-index: 7;
+      }
+      #press small {
+        display: block;
+        margin-top: 22px;
+        font-size: 20px;
+        color: #7fe3ff;
+      }
+
+      /* ---------- global overlays ---------- */
+      #wipe {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        grid-template-columns: repeat(32, 1fr);
+        grid-template-rows: repeat(18, 1fr);
+        z-index: 800;
+        pointer-events: none;
+      }
+      #wipe .cell {
+        background: #000;
+      }
+      #root::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 900;
+        pointer-events: none;
+        background:
+          repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0 2px, rgba(0, 0, 0, 0) 2px 4px),
+          radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 62%, rgba(0, 0, 0, 0.6) 100%);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="48"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- 1. BOOT: XP-flavored pixel desktop -->
+      <section id="boot" class="clip scene" data-start="0" data-duration="6" data-track-index="1">
+        <div id="boot-inner" class="stage-inner">
+          <canvas id="boot-canvas" class="full" width="480" height="270" data-layout-allow-overflow></canvas>
+        </div>
+      </section>
+
+      <!-- 2. PINBALL: Looper Cadet -->
+      <section id="pinball" class="clip scene" data-start="6" data-duration="14" data-track-index="1">
+        <div id="pin-inner" class="stage-inner">
+          <div class="pin-bg"></div>
+          <div id="pin-table-wrap"><canvas id="pin-canvas" width="240" height="400"></canvas></div>
+          <aside id="pin-panel">
+            <div class="pp-logo">
+              <canvas id="pp-orb" class="pp-orb" width="32" height="32"></canvas>
+              <div>
+                <span class="pp-3d">3D PINBALL</span>
+                <span class="pp-name">LOOPER CADET</span>
+              </div>
+            </div>
+            <div class="pp-lcd">
+              <div class="pp-row"><span>BALL</span><span id="pp-ball">1</span></div>
+              <div class="pp-row"><span>PLAYER</span><span>1</span></div>
+              <div id="pp-score">0</div>
+            </div>
+            <div id="pp-msg">PULL THE PLUNGER</div>
+            <ul id="pp-tasks"></ul>
+          </aside>
+          <div id="pin-jackpot">JACKPOT!</div>
+          <div class="banner" id="pin-banner" style="left: 150px; right: auto; width: 690px; top: 90px">
+            <div class="b-stage">STAGE 1</div>
+            <div class="b-title" style="font-size: 52px">LOOPER CADET</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. PALACE: Prince of Prompts -->
+      <section id="palace" class="clip scene" data-start="20" data-duration="10" data-track-index="1">
+        <div id="pal-inner" class="stage-inner">
+          <canvas id="pal-canvas" class="full" width="480" height="270" data-layout-allow-overflow></canvas>
+          <div id="pal-stopped">AGENT STOPPED.</div>
+          <div id="pal-continue">LOOPER: CONTINUE &#9654;</div>
+          <div id="pal-clear" class="popup-text">LEVEL CLEAR</div>
+          <div class="banner" id="pal-banner">
+            <div class="b-stage">STAGE 2</div>
+            <div class="b-title">PRINCE OF PROMPTS</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. RACE: Need for Ship -->
+      <section id="race" class="clip scene" data-start="30" data-duration="10" data-track-index="1">
+        <div id="race-inner" class="stage-inner">
+          <div id="race-shake" class="stage-inner">
+            <canvas id="race-canvas" class="full" width="480" height="270" data-layout-allow-overflow></canvas>
+          </div>
+          <div id="race-lap" class="hud">LAP 3/3<br />TIME <span id="race-time">0:00.00</span></div>
+          <div id="race-pos" class="hud">POS<div class="big" id="race-posn">8/8</div></div>
+          <div id="race-speed" class="hud"><div id="race-mph">0</div>MPH</div>
+          <div id="race-nitro" class="hud">
+            <div class="label">LOOPER NITRO</div>
+            <div class="track"><div id="race-nitro-fill"></div></div>
+          </div>
+          <div id="race-count" class="popup-text"></div>
+          <div id="race-nitro-slam" class="popup-text">NITRO: AUTO-CONTINUE!</div>
+          <div id="race-finish" class="popup-text">FINISH! 1ST PLACE</div>
+          <div class="banner" id="race-banner" style="top: 200px">
+            <div class="b-stage">STAGE 3</div>
+            <div class="b-title">NEED FOR SHIP</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. FINALE: high scores + logo -->
+      <section id="finale" class="clip scene" data-start="40" data-duration="8" data-track-index="1">
+        <div id="fin-inner" class="stage-inner">
+          <canvas id="fin-canvas" class="full" width="480" height="270" data-layout-allow-overflow></canvas>
+          <div id="scores">
+            <h2>HIGH SCORES</h2>
+            <div class="score-row" id="row-top"><span class="rank">1ST</span><span class="who" id="row-top-who">- - - - - -</span><span class="pts" id="row-top-pts">-------</span></div>
+            <div class="score-row"><span class="rank">2ND</span><span class="who">YOU, NO LOOPER</span><span class="pts">120,400</span></div>
+            <div class="score-row"><span class="rank">3RD</span><span class="who">TYPING "CONTINUE" x40</span><span class="pts">45,000</span></div>
+            <div class="score-row"><span class="rank">4TH</span><span class="who">BABYSITTING TABS</span><span class="pts">12,000</span></div>
+            <div class="score-row"><span class="rank">5TH</span><span class="who">2AM FOLLOW-UPS</span><span class="pts">3,100</span></div>
+            <div class="score-row"><span class="rank">6TH</span><span class="who">AGENT GAVE UP</span><span class="pts">0</span></div>
+            <div id="new-high">NEW HIGH SCORE!</div>
+          </div>
+          <div id="logo-view">
+            <div id="orb-stack">
+              <canvas id="orb-pixel" width="64" height="64"></canvas>
+              <canvas id="orb-hi" width="600" height="600"></canvas>
+            </div>
+            <div id="wordmark"><span>L</span><span>O</span><span>O</span><span>P</span><span>E</span><span>R</span></div>
+            <div id="tagline"><div>YOUR AGENTS STOP.</div><div>THE GAME DOESN'T.</div></div>
+            <div id="subline">Looper keeps Codex, Claude Code, Zed and friends moving after they stop, so work feels like play again.</div>
+          </div>
+          <div id="press">PRESS START &#9654;<small>macOS &middot; iPhone &middot; 1 CREDIT</small></div>
+        </div>
+      </section>
+
+      <div id="wipe" data-layout-allow-occlusion></div>
+
+      <audio id="soundtrack" src="assets/soundtrack.wav" data-start="0" data-duration="48" data-track-index="10" data-volume="1"></audio>
+    </div>
+
+    <script>
+      (function () {
+        const T = window.T;
+        const SCALE_TEXT = 8;
+
+        // ---------- small math + determinism helpers ----------
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+        const lerp = (a, b, u) => a + (b - a) * u;
+        const prog = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+        const easeOut = (u) => 1 - Math.pow(1 - u, 3);
+        const easeInOut = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+        const blinkOn = (t, hz) => Math.floor(t * hz * 2) % 2 === 0;
+        function seeded(seed) {
+          return function () {
+            seed |= 0;
+            seed = (seed + 0x6d2b79f5) | 0;
+            let r = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+            return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+          };
+        }
+        const hash = (n) => seeded(n * 7919 + 13)();
+        // Piecewise-linear path through [t, x, y] waypoints; bounces read as sharp corners.
+        function pathAt(points, t) {
+          if (t <= points[0][0]) return [points[0][1], points[0][2]];
+          for (let i = 1; i < points.length; i++) {
+            if (t <= points[i][0]) {
+              const a = points[i - 1];
+              const b = points[i];
+              const u = (t - a[0]) / (b[0] - a[0]);
+              return [lerp(a[1], b[1], u), lerp(a[2], b[2], u)];
+            }
+          }
+          const last = points[points.length - 1];
+          return [last[1], last[2]];
+        }
+        function scalarAt(points, t) {
+          if (t <= points[0][0]) return points[0][1];
+          for (let i = 1; i < points.length; i++) {
+            if (t <= points[i][0]) {
+              const a = points[i - 1];
+              const b = points[i];
+              return lerp(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
+            }
+          }
+          return points[points.length - 1][1];
+        }
+
+        // ---------- canvas helpers ----------
+        function context(id) {
+          const ctx = document.getElementById(id).getContext("2d");
+          ctx.imageSmoothingEnabled = false;
+          return ctx;
+        }
+        function rect(ctx, color, x, y, w, h) {
+          ctx.fillStyle = color;
+          ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+        }
+        function text(ctx, str, x, y, color, align = "left", shadow = null, size = SCALE_TEXT, italic = false) {
+          ctx.font = `${italic ? "italic " : ""}${size}px PS2P`;
+          ctx.textAlign = align;
+          ctx.textBaseline = "top";
+          if (shadow) {
+            ctx.fillStyle = shadow;
+            ctx.fillText(str, Math.round(x) + 1, Math.round(y) + 1);
+          }
+          ctx.fillStyle = color;
+          ctx.fillText(str, Math.round(x), Math.round(y));
+        }
+        function sprite(ctx, rows, palette, x, y, scale = 1) {
+          for (let r = 0; r < rows.length; r++) {
+            for (let c = 0; c < rows[r].length; c++) {
+              const color = palette[rows[r][c]];
+              if (color) rect(ctx, color, x + c * scale, y + r * scale, scale, scale);
+            }
+          }
+        }
+        function mixColor(a, b, u) {
+          const pa = parseInt(a.slice(1), 16);
+          const pb = parseInt(b.slice(1), 16);
+          const ch = (s) => Math.round(lerp((pa >> s) & 255, (pb >> s) & 255, u));
+          return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+        }
+        function bands(ctx, top, bottom, from, to, count, width) {
+          const h = (bottom - top) / count;
+          for (let i = 0; i < count; i++) rect(ctx, mixColor(from, to, i / (count - 1)), 0, top + i * h, width, h + 1);
+        }
+
+        // ---------- sprites ----------
+        const CURSOR = [
+          "k..........", "kk.........", "kwk........", "kwwk.......", "kwwwk......", "kwwwwk.....",
+          "kwwwwwk....", "kwwwwwwk...", "kwwwwwwwk..", "kwwwwwwwwk.", "kwwwwwkkkkk", "kwwkwwk....",
+          "kwk.kwwk...", "kk..kwwk...", "k....kwwk..", ".....kwwk..", "......kk...",
+        ];
+        const TORSO = [
+          "....wwww....", "...wwwwwwg..", "...wwwwww...", "...ssssss...", "...sskssk...", "...ssssss...",
+          "....ssss....", "...wwwwww...", "..wwwwwwww..", "..swwrrwws..", "..s.wwww.s..", "....wwww....",
+          "...bbbbbb...",
+        ];
+        const LEGS = {
+          stand: ["...bb..bb...", "...bb..bb...", "...bb..bb...", "...ss..ss...", "..sss..sss.."],
+          runA: ["..bbb..bbb..", ".bbb....bbb.", ".bb......bb.", "ss.......ss.", "s.........ss"],
+          runB: ["....bbbb....", "....bbbb....", "...bb.bb....", "...bb..ss...", "..sss......."],
+          jump: ["..bbbbbbbb..", ".bbb....bbs.", ".ss.........", "............", "............"],
+        };
+        const HERO_PALETTE = { w: "#f4f1e8", s: "#e0a878", b: "#2c5fb8", r: "#c8302a", k: "#1a1020", g: "#f5c542" };
+
+        // ---------- images ----------
+        const logoImage = new Image();
+        logoImage.src = "assets/looper-logo.png";
+        // The logo PNG is a glass orb on a grey field; crop the orb itself.
+        const ORB_CENTER = [512, 498];
+        const ORB_RADIUS = 312;
+        function orbAt(size) {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = size;
+          const c = canvas.getContext("2d");
+          c.beginPath();
+          c.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+          c.clip();
+          c.drawImage(logoImage, ORB_CENTER[0] - ORB_RADIUS, ORB_CENTER[1] - ORB_RADIUS, ORB_RADIUS * 2, ORB_RADIUS * 2, 0, 0, size, size);
+          return canvas;
+        }
+        let orb10, orb20, orb48, orb14;
+
+        // ======================================================
+        // 1. BOOT
+        // ======================================================
+        const bootCtx = context("boot-canvas");
+        const B = T.boot;
+        const bootRand = seeded(4);
+        const clouds = Array.from({ length: 5 }, () => ({ x: bootRand() * 480, y: 20 + bootRand() * 70, w: 30 + bootRand() * 40 }));
+        const hillTop = (x) => 172 - 58 * Math.exp(-(((x - 300) / 220) ** 2)) - 14 * Math.exp(-(((x - 60) / 110) ** 2));
+        const HILL_GREENS = ["#6cc43a", "#5bb32f", "#4ba226", "#3c8f1f", "#2f7b19", "#256815"];
+        const WINDOW = { x: 90, y: 34, w: 300, h: 196 };
+        const ICON_X = 50;
+        const ICONS = [
+          { y: 18, label: ["My Agents"] },
+          { y: 66, label: ["Recycle Bin"] },
+          { y: 114, label: ["Looper", "Cadet"] },
+        ];
+
+        function drawDesktop(ctx, t) {
+          bands(ctx, 0, 170, "#1f5fd8", "#a7d0f7", 10, 480);
+          for (const cloud of clouds) {
+            const x = ((cloud.x + t * 4) % 560) - 60;
+            rect(ctx, "#ffffff", x, cloud.y, cloud.w, 6);
+            rect(ctx, "#ffffff", x + 6, cloud.y - 4, cloud.w - 14, 4);
+            rect(ctx, "#dfeefc", x + 2, cloud.y + 6, cloud.w - 4, 2);
+          }
+          for (let x = 0; x < 480; x += 2) {
+            const top = hillTop(x);
+            for (let i = 0; i < HILL_GREENS.length; i++) {
+              const y0 = top + i * 14;
+              rect(ctx, HILL_GREENS[i], x, y0, 2, 270 - y0);
+            }
+          }
+          // icons
+          const monitor = (x, y) => {
+            rect(ctx, "#d7dbe6", x - 11, y, 22, 16);
+            rect(ctx, "#2458c8", x - 9, y + 2, 18, 11);
+            rect(ctx, "#9aa1b3", x - 4, y + 16, 8, 3);
+          };
+          const bin = (x, y) => {
+            rect(ctx, "#cfd6e0", x - 8, y + 2, 16, 3);
+            rect(ctx, "#a9b3c3", x - 7, y + 5, 14, 14);
+            rect(ctx, "#7f8a9c", x - 4, y + 7, 2, 10);
+            rect(ctx, "#7f8a9c", x + 2, y + 7, 2, 10);
+          };
+          monitor(ICON_X, ICONS[0].y);
+          bin(ICON_X, ICONS[1].y);
+          ctx.drawImage(orb20, ICON_X - 10, ICONS[2].y);
+          const selected = t >= B.click1;
+          ICONS.forEach((icon, index) => {
+            icon.label.forEach((line, row) => {
+              const y = icon.y + 24 + row * 10;
+              if (selected && index === 2) rect(ctx, "#316ac5", ICON_X - line.length * 4 - 1, y - 1, line.length * 8 + 2, 10);
+              text(ctx, line, ICON_X, y, "#ffffff", "center", "#000000");
+            });
+          });
+          // taskbar
+          rect(ctx, "#245edb", 0, 252, 480, 18);
+          rect(ctx, "#3f8cf3", 0, 252, 480, 2);
+          rect(ctx, "#3c9e3c", 0, 252, 58, 18);
+          rect(ctx, "#5cbf4f", 0, 252, 58, 2);
+          text(ctx, "start", 8, 258, "#ffffff", "left", "#1d5e1d", SCALE_TEXT, true);
+          rect(ctx, "#1591ea", 404, 252, 76, 18);
+          text(ctx, "4:20 PM", 410, 258, "#ffffff");
+          if (t >= WINDOW_OPEN_DONE) {
+            rect(ctx, "#1e4fb8", 64, 254, 120, 14);
+            text(ctx, "Looper Cadet", 70, 257, "#ffffff");
+          }
+        }
+        const WINDOW_OPEN_DONE = B.window + 0.25;
+
+        function drawWindow(ctx, t) {
+          const { x, y, w, h } = WINDOW;
+          rect(ctx, "#0831d9", x, y, w, h);
+          for (let i = 0; i < 18; i++) rect(ctx, mixColor("#3a8af5", "#0846d8", i / 17), x, y + i, w, 1);
+          text(ctx, "Looper Cadet", x + 8, y + 5, "#ffffff", "left", "#0a246a");
+          rect(ctx, "#e0463a", x + w - 18, y + 3, 14, 12);
+          text(ctx, "x", x + w - 15, y + 5, "#ffffff");
+          rect(ctx, "#2f6fe8", x + w - 34, y + 3, 14, 12);
+          rect(ctx, "#2f6fe8", x + w - 50, y + 3, 14, 12);
+          const cx = x + 3;
+          const cy = y + 18;
+          const cw = w - 6;
+          const ch = h - 21;
+          rect(ctx, "#05081c", cx, cy, cw, ch);
+          const starRand = seeded(9);
+          for (let i = 0; i < 50; i++) {
+            const sx = cx + starRand() * cw;
+            const sy = cy + starRand() * ch;
+            rect(ctx, blinkOn(t + i * 0.13, 1.5) ? "#ffffff" : "#6b77a8", sx, sy, 1, 1);
+          }
+          const bob = Math.round(Math.sin(t * 3) * 3);
+          ctx.drawImage(orb48, 240 - 24, cy + 16 + bob);
+          text(ctx, "3D PINBALL", 240, cy + 72, "#7fe3ff", "center");
+          text(ctx, "LOOPER CADET", 240, cy + 84, "#ffd23f", "center", "#b3261e", 16);
+          const loading = prog(t, B.window + 0.2, B.loadEnd);
+          if (t < B.loadEnd) {
+            rect(ctx, "#8a93a8", 140, cy + 116, 200, 12);
+            rect(ctx, "#ffffff", 142, cy + 118, 196, 8);
+            const blocks = Math.floor(loading * 19);
+            for (let i = 0; i < blocks; i++) rect(ctx, "#2fb62f", 144 + i * 10, cy + 119, 8, 6);
+            text(ctx, "LOADING TASKS...", 240, cy + 138, "#c8ccda", "center");
+          } else {
+            if (blinkOn(t, 3)) text(ctx, "PRESS START", 240, cy + 122, "#ffd23f", "center", "#b3261e");
+            if (t >= B.coin) text(ctx, "CREDIT 1", cx + cw - 6, cy + ch - 14, "#7dff6a", "right");
+          }
+        }
+
+        function drawBoot(t) {
+          const ctx = bootCtx;
+          rect(ctx, "#000000", 0, 0, 480, 270);
+          const lineEnd = B.crtOn + 0.25;
+          const openEnd = B.crtOn + 0.6;
+          if (t < lineEnd) {
+            const u = easeOut(prog(t, B.crtOn, lineEnd));
+            rect(ctx, "#ffffff", 240 - 240 * u, 134, 480 * u, 2);
+            return;
+          }
+          drawDesktop(ctx, t);
+          if (t < openEnd) {
+            const u = easeOut(prog(t, lineEnd, openEnd));
+            const h = 270 * u;
+            rect(ctx, "#000000", 0, 0, 480, 135 - h / 2);
+            rect(ctx, "#000000", 0, 135 + h / 2, 480, 270);
+          }
+          const flash = 1 - prog(t, openEnd, B.desktop);
+          if (flash > 0) {
+            ctx.globalAlpha = flash * 0.8;
+            rect(ctx, "#ffffff", 0, 0, 480, 270);
+            ctx.globalAlpha = 1;
+          }
+          if (t >= B.window) {
+            const u = prog(t, B.window, WINDOW_OPEN_DONE);
+            if (u < 1) {
+              // Win9x-style zoom rectangles from the icon to the window
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = 1;
+              for (let k = 0; k < 3; k++) {
+                const v = easeOut(clamp(u - k * 0.15, 0, 1));
+                const x = lerp(ICON_X - 12, WINDOW.x, v);
+                const y = lerp(ICONS[2].y, WINDOW.y, v);
+                ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(lerp(24, WINDOW.w, v)), Math.round(lerp(24, WINDOW.h, v)));
+              }
+            } else {
+              drawWindow(ctx, t);
+            }
+          }
+          const moveU = easeInOut(prog(t, 1.6, 2.5));
+          const cursorX = lerp(330, ICON_X + 2, moveU);
+          const cursorY = lerp(196, ICONS[2].y + 8, moveU);
+          if (t < B.window + 0.2) sprite(ctx, CURSOR, { k: "#000000", w: "#ffffff" }, cursorX, cursorY);
+        }
+
+        // ======================================================
+        // 2. PINBALL
+        // ======================================================
+        const pinCtx = context("pin-canvas");
+        const P = T.pinball;
+        const BUMPERS = [
+          { x: 70, y: 118, label: "BUG", color: "#e8402f" },
+          { x: 140, y: 96, label: "TEST", color: "#f28c1a" },
+          { x: 104, y: 164, label: "PR", color: "#d63fb8" },
+          { x: 166, y: 196, label: "REF", color: "#3f7ce8" },
+        ];
+        const BUMPER_RADIUS = 18;
+        const TARGET_X = [24, 46, 68, 90, 112];
+        const TARGET_Y = 240;
+        const ARCH = { x: 109, y: 112, r: 92 };
+        const FLIPPER_LENGTH = 34;
+        const FLIPPERS = [
+          { x: 68, y: 350, dir: 1, times: P.flipLeft },
+          { x: 150, y: 350, dir: -1, times: P.flipRight },
+        ];
+        // Target sweep runs right-to-left: first hit knocks the rightmost target.
+        const targetHitTime = (index) => P.targets[TARGET_X.length - 1 - index];
+
+        const [orbitStart, orbitEnd] = P.loopRamp;
+        const orbitPoints = [];
+        for (let i = 0; i <= 16; i++) {
+          const a = -Math.PI + (Math.PI * i) / 16;
+          orbitPoints.push([lerp(orbitStart, orbitEnd, i / 16), ARCH.x + Math.cos(a) * ARCH.r, ARCH.y + Math.sin(a) * ARCH.r]);
+        }
+        const BALL_ONE = [
+          [6.0, 223, 378], [P.launch, 223, 378], [7.18, 223, 140], [7.28, 205, 52], [7.38, 160, 26],
+          [7.5, 86, 102], [7.65, 40, 60], [8.0, 117, 96], [8.15, 60, 20], [8.27, 205, 60], [8.38, 200, 150],
+          [8.5, 127, 166], [8.65, 190, 110], [8.8, 100, 20], [8.9, 20, 60], [9.0, 54, 102], [9.18, 14, 170],
+          [9.45, 16, 290], [9.62, 50, 330], [9.72, 86, 354], [9.95, 180, 300], [10.25, 121, 251],
+          [10.75, 33, 251], [10.95, 14, 180], [11.15, 17, 130],
+          ...orbitPoints,
+          [12.75, 150, 180], [12.9, 112, 125], [13.02, 30, 190], [13.22, 132, 354], [13.5, 60, 200],
+          [13.65, 30, 130], [13.8, 80, 70], [13.95, 140, 140], [14.1, 112, 270], [14.25, 109, 320],
+          [14.5, 109, 360], [14.75, 109, 412], [P.kickback, 109, 412], [15.45, 109, 300], [15.75, 144, 119],
+          [15.9, 200, 60], [16.05, 190, 140], [16.25, 127, 160], [16.45, 20, 150], [16.75, 47, 114],
+          [16.95, 60, 30], [17.1, 200, 110], [17.25, 168, 173], [17.4, 205, 260], [17.55, 110, 250],
+          [17.75, 144, 119], [18.0, 104, 141], [18.25, 109, 90], [P.jackpot, 109, 62], [20, 109, 62],
+        ];
+        const BALL_TWO = [
+          [15.3, 223, 378], [15.45, 223, 140], [15.55, 190, 36], [15.75, 30, 100], [15.9, 40, 260],
+          [16.0, 88, 354], [16.2, 60, 180], [16.35, 20, 80], [16.5, 100, 30], [16.65, 200, 110],
+          [16.9, 40, 300], [17.0, 88, 354], [17.3, 180, 60], [17.6, 30, 200], [18.0, 100, 250],
+          [18.5, 60, 300], [20, 40, 330],
+        ];
+        const BALL_THREE = [
+          [15.5, 223, 378], [15.65, 223, 140], [15.75, 170, 28], [16.0, 205, 200], [16.3, 200, 300],
+          [16.5, 132, 354], [16.75, 60, 200], [17.0, 20, 60], [17.15, 200, 50], [17.35, 205, 260],
+          [17.5, 132, 354], [17.8, 20, 250], [18.1, 30, 40], [18.5, 100, 30], [20, 150, 40],
+        ];
+        const BALLS = [
+          { path: BALL_ONE, from: 6.0, hidden: [14.75, P.kickback] },
+          { path: BALL_TWO, from: 15.3, hidden: null },
+          { path: BALL_THREE, from: 15.5, hidden: null },
+        ];
+
+        const TASKS = [
+          "FIX BUG #412", "WRITE TESTS", "REVIEW PR", "LINT", "TYPECHECK",
+          "BUILD", "E2E SUITE", "UPDATE DOCS", "REFACTOR", "SHIP IT",
+        ];
+        const BUMPER_TASK = [0, 1, 2, 8]; // index into TASKS for each bumper's first smash
+        const bumperHits = [...P.bumperHits, [P.deployHit, 3], ...P.multiHits].sort((a, b) => a[0] - b[0]);
+        // Scored events; the jackpot tops the total up to the finale's high score.
+        const FINAL_SCORE = 9999990;
+        const scoreEvents = [];
+        const smashed = new Set();
+        for (const [t, index] of bumperHits) {
+          const first = !smashed.has(index);
+          smashed.add(index);
+          const task = first ? BUMPER_TASK[index] : null;
+          scoreEvents.push({ t, pts: t > P.kickback ? 7500 : first ? 1000 : 500, task, x: BUMPERS[index].x, y: BUMPERS[index].y - 26 });
+        }
+        P.targets.forEach((t, i) => scoreEvents.push({ t, pts: 2500, task: 3 + i, x: TARGET_X[TARGET_X.length - 1 - i] + 9, y: TARGET_Y - 14 }));
+        scoreEvents.push({ t: orbitEnd, pts: 10000, task: null, x: 180, y: 90, label: "LOOP x2" });
+        scoreEvents.sort((a, b) => a.t - b.t);
+        const beforeJackpot = scoreEvents.reduce((sum, e) => sum + e.pts, 0);
+        scoreEvents.push({ t: P.jackpot, pts: FINAL_SCORE - beforeJackpot, task: 9, x: 109, y: 36, label: "JACKPOT" });
+
+        const MESSAGES = [
+          [6.0, "PULL THE PLUNGER", "#ffd23f"],
+          [P.launch, "AGENT LAUNCHED", "#7fe3ff"],
+          [7.5, "TASK SMASHED!", "#7dff6a"],
+          [P.targets[0], "CHECKS GOING DOWN", "#7dff6a"],
+          [orbitStart, "L-O-O-P-E-R RAMP", "#7fe3ff"],
+          [orbitEnd, "LOOP BONUS x2", "#ffd23f"],
+          [P.deployHit, "REFACTOR SMASHED", "#7dff6a"],
+          [P.drain, "AGENT STOPPED...", "#ff4a3d"],
+          [P.save, "LOOPER SAVE!", "#7dff6a"],
+          [P.kickback, "KEEP GOING: MULTIBALL", "#7fe3ff"],
+          [P.jackpot, "JACKPOT! SHIPPED", "#ffd23f"],
+        ];
+
+        const taskList = document.getElementById("pp-tasks");
+        const taskItems = TASKS.map((name) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<span class="box">[ ]</span> ${name}`;
+          taskList.appendChild(li);
+          return li;
+        });
+        const taskDoneAt = TASKS.map(() => Infinity);
+        for (const e of scoreEvents) if (e.task != null) taskDoneAt[e.task] = Math.min(taskDoneAt[e.task], e.t);
+
+        const scoreEl = document.getElementById("pp-score");
+        const msgEl = document.getElementById("pp-msg");
+        const jackpotEl = document.getElementById("pin-jackpot");
+        const RAINBOW = ["#ffd23f", "#ff4a3d", "#7dff6a", "#7fe3ff", "#d63fb8"];
+        const starRandPin = seeded(21);
+        const pinStars = Array.from({ length: 70 }, () => [starRandPin() * 240, starRandPin() * 400]);
+
+        function flipperAngle(flipper, t) {
+          let up = 0;
+          for (const tf of flipper.times) {
+            const d = t - tf;
+            if (d > -0.04 && d < 0.02) up = Math.max(up, (d + 0.04) / 0.06);
+            else if (d >= 0.02 && d < 0.16) up = 1;
+            else if (d >= 0.16 && d < 0.26) up = Math.max(up, 1 - (d - 0.16) / 0.1);
+          }
+          const rest = (28 * Math.PI) / 180;
+          const lifted = (-24 * Math.PI) / 180;
+          return lerp(rest, lifted, up);
+        }
+        function lastHitBefore(index, t) {
+          let last = -Infinity;
+          for (const [th, i] of bumperHits) if (i === index && th <= t) last = th;
+          return last;
+        }
+        function scoreAt(t) {
+          let score = 0;
+          for (const e of scoreEvents) {
+            if (e.t > t) break;
+            score += e.pts * clamp((t - e.t) / 0.25, 0, 1);
+          }
+          return Math.round(score / 10) * 10;
+        }
+
+        function drawPinball(t) {
+          const ctx = pinCtx;
+          rect(ctx, "#0a1440", 0, 0, 240, 400);
+          for (let gy = 0; gy < 400; gy += 20) rect(ctx, "#101d57", 0, gy, 240, 1);
+          for (let gx = 0; gx < 240; gx += 20) rect(ctx, "#101d57", gx, 0, 1, 400);
+          pinStars.forEach(([x, y], i) => rect(ctx, blinkOn(t + i * 0.21, 1.2) ? "#ffffff" : "#56609a", x, y, 1, 1));
+          // planet
+          for (let i = 0; i < 7; i++) {
+            const r = 26 - i * 3;
+            ctx.fillStyle = i % 2 ? "#8b5cd6" : "#6a3fb5";
+            ctx.beginPath();
+            ctx.arc(46, 64, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          rect(ctx, "#c9b3f2", 20, 62, 52, 2);
+          // arch + walls
+          ctx.lineWidth = 4;
+          ctx.strokeStyle = "#9aa3b5";
+          ctx.beginPath();
+          ctx.arc(ARCH.x + 8, ARCH.y, ARCH.r + 14, Math.PI, 2 * Math.PI);
+          ctx.stroke();
+          rect(ctx, "#9aa3b5", 1, ARCH.y, 5, 300);
+          rect(ctx, "#9aa3b5", 234, ARCH.y, 5, 300);
+          rect(ctx, "#9aa3b5", 212, 140, 3, 260);
+          // LOOPER letters light up as the ball orbits
+          const orbitU = prog(t, orbitStart, orbitEnd);
+          "LOOPER".split("").forEach((letter, k) => {
+            const a = ((-160 + k * 28) * Math.PI) / 180;
+            const lit = t >= orbitStart && -Math.PI + Math.PI * orbitU >= a;
+            const lx = ARCH.x + Math.cos(a) * 72;
+            const ly = ARCH.y + Math.sin(a) * 72;
+            rect(ctx, lit ? "#ffd23f" : "#2a3470", lx - 6, ly - 6, 12, 12);
+            text(ctx, letter, lx - 3, ly - 3, lit ? "#b3261e" : "#56609a", "left", null, 8);
+          });
+          // jackpot saucer
+          const jackpotLit = t >= P.jackpot && blinkOn(t, 4);
+          rect(ctx, jackpotLit ? "#ffd23f" : "#39407a", 99, 54, 20, 14);
+          rect(ctx, "#05081c", 103, 57, 12, 8);
+          // slingshots + inlanes
+          const sling = (pts, color) => {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(...pts[0]);
+            ctx.lineTo(...pts[1]);
+            ctx.lineTo(...pts[2]);
+            ctx.closePath();
+            ctx.fill();
+          };
+          sling([[22, 280], [22, 318], [52, 332]], "#d8352a");
+          sling([[196, 280], [196, 318], [166, 332]], "#d8352a");
+          ctx.strokeStyle = "#9aa3b5";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(6, 300);
+          ctx.lineTo(64, 348);
+          ctx.moveTo(212, 300);
+          ctx.lineTo(154, 348);
+          ctx.stroke();
+          // drop targets
+          TARGET_X.forEach((x, i) => {
+            const down = t >= targetHitTime(i);
+            rect(ctx, down ? "#1a2150" : "#f5c400", x, TARGET_Y, 18, 6);
+            if (!down) rect(ctx, "#fff3a0", x, TARGET_Y, 18, 1);
+          });
+          // bumpers
+          BUMPERS.forEach((bumper, index) => {
+            const since = t - lastHitBefore(index, t);
+            const flash = since >= 0 && since < 0.25 ? 1 - since / 0.25 : 0;
+            const done = smashedBy(index, t);
+            ctx.fillStyle = "#1a1f3a";
+            ctx.beginPath();
+            ctx.arc(bumper.x, bumper.y + 3, BUMPER_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = flash > 0.5 ? "#ffffff" : done ? "#2fb62f" : bumper.color;
+            ctx.beginPath();
+            ctx.arc(bumper.x, bumper.y, BUMPER_RADIUS + flash * 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(bumper.x, bumper.y, BUMPER_RADIUS - 5, 0, Math.PI * 2);
+            ctx.fill();
+            const label = done ? "DONE" : bumper.label;
+            text(ctx, label, bumper.x, bumper.y - 4, done ? "#1c7a1c" : "#1a1f3a", "center");
+          });
+          // save light
+          const saveOn = t >= P.save && t < P.kickback + 0.3 && blinkOn(t, 5);
+          rect(ctx, saveOn ? "#7dff6a" : "#1f3a24", 93, 382, 32, 10);
+          text(ctx, "SAVE", 109, 383, saveOn ? "#0b3b12" : "#3c6b44", "center");
+          // flippers
+          ctx.lineCap = "round";
+          FLIPPERS.forEach((flipper) => {
+            const angle = flipperAngle(flipper, t);
+            const tipX = flipper.x + flipper.dir * Math.cos(angle) * FLIPPER_LENGTH;
+            const tipY = flipper.y + Math.sin(angle) * FLIPPER_LENGTH;
+            ctx.strokeStyle = "#1a1f3a";
+            ctx.lineWidth = 9;
+            ctx.beginPath();
+            ctx.moveTo(flipper.x, flipper.y + 2);
+            ctx.lineTo(tipX, tipY + 2);
+            ctx.stroke();
+            ctx.strokeStyle = "#e8402f";
+            ctx.lineWidth = 7;
+            ctx.beginPath();
+            ctx.moveTo(flipper.x, flipper.y);
+            ctx.lineTo(tipX, tipY);
+            ctx.stroke();
+          });
+          ctx.lineCap = "butt";
+          // plunger
+          const pull = t < P.launch ? 10 * easeInOut(prog(t, P.launch - 0.5, P.launch)) : 0;
+          rect(ctx, "#c0c6d4", 217, 385 + pull, 12, 15);
+          for (let i = 0; i < 3; i++) rect(ctx, "#6b7390", 217, 388 + pull + i * 4, 12, 1);
+          // balls with a short motion trail
+          BALLS.forEach((ball) => {
+            if (t < ball.from) return;
+            if (ball.hidden && t > ball.hidden[0] && t < ball.hidden[1]) return;
+            for (let k = 3; k >= 0; k--) {
+              const [bx, by] = pathAt(ball.path, t - k * 0.018);
+              ctx.globalAlpha = k === 0 ? 1 : 0.18 * (4 - k);
+              ctx.drawImage(orb10, Math.round(bx - 5), Math.round(by - 5));
+            }
+            ctx.globalAlpha = 1;
+          });
+          // score popups
+          for (const e of scoreEvents) {
+            const age = t - e.t;
+            if (age < 0 || age > 0.6) continue;
+            const label = e.label || `+${e.pts.toLocaleString("en-US")}`;
+            text(ctx, e.label === "JACKPOT" ? "+JACKPOT" : label, e.x, e.y - age * 30, age < 0.3 || blinkOn(t, 8) ? "#ffd23f" : "#ffffff", "center", "#000000");
+          }
+          if (t >= P.jackpot && t < P.jackpot + 0.25) {
+            ctx.globalAlpha = 0.6 * (1 - (t - P.jackpot) / 0.25);
+            rect(ctx, "#ffffff", 0, 0, 240, 400);
+            ctx.globalAlpha = 1;
+          }
+          // DOM panel state (a pure function of t)
+          scoreEl.textContent = scoreAt(t).toLocaleString("en-US");
+          let message = MESSAGES[0];
+          for (const m of MESSAGES) if (m[0] <= t) message = m;
+          msgEl.textContent = message[1];
+          msgEl.style.color = message[2];
+          taskItems.forEach((li, i) => {
+            const done = t >= taskDoneAt[i];
+            li.classList.toggle("done", done);
+            li.firstChild.textContent = done ? "[x]" : "[ ]";
+          });
+          document.getElementById("pp-ball").textContent = t >= P.kickback ? "1+2" : "1";
+          jackpotEl.style.color = RAINBOW[Math.floor(t * 12) % RAINBOW.length];
+        }
+        function smashedBy(index, t) {
+          return t >= taskDoneAt[BUMPER_TASK[index]];
+        }
+
+        // ======================================================
+        // 3. PALACE
+        // ======================================================
+        const palCtx = context("pal-canvas");
+        const Q = T.palace;
+        const FLOOR_Y = 200;
+        const WORLD_WIDTH = 880;
+        const PLATFORMS = [[0, 225], [275, 372], [478, WORLD_WIDTH]];
+        const PIT = [225, 275];
+        const CHASM = [372, 478];
+        const CHOMPER_X = 600;
+        const GATE_X = 770;
+        const HERO_X = [
+          [20, 40], [Q.run, 40], [Q.jump1, 200], [Q.land1, 290], [Q.stop, 350], [Q.leap, 350], [Q.land2, 500],
+          [26.2, 560], [27.3, 720], [27.9, 720], [28.4, 792],
+        ];
+        const JUMPS = [
+          { from: Q.jump1, to: Q.land1, height: 30 },
+          { from: Q.leap, to: Q.land2, height: 44 },
+        ];
+        const heroX = (t) => scalarAt(HERO_X, t);
+        const cameraX = (t) => clamp(heroX(t) - 200, 0, WORLD_WIDTH - 480);
+        function heroLift(t) {
+          for (const j of JUMPS) if (t > j.from && t < j.to) return Math.sin(Math.PI * prog(t, j.from, j.to)) * j.height;
+          return 0;
+        }
+        function heroMoving(t) {
+          return heroX(t + 0.01) - heroX(t) > 0.05;
+        }
+        function chomperOpening(t) {
+          let open = 1;
+          for (const tc of Q.chomps) {
+            const d = Math.abs(t - tc);
+            if (d < 0.14) open = Math.min(open, d / 0.14);
+          }
+          return open;
+        }
+        const TORCHES = [110, 330, 540, 700];
+        const HERO_SCALE = 2;
+
+        function drawPalace(t) {
+          const ctx = palCtx;
+          const cam = Math.round(cameraX(t));
+          // back wall bricks (parallax 0.5)
+          rect(ctx, "#10152b", 0, 0, 480, 270);
+          const wallShift = Math.round(cam * 0.5);
+          for (let row = 0; row < 26; row++) {
+            const y = row * 8;
+            const offset = row % 2 ? 8 : 0;
+            for (let x = -16 - ((wallShift + offset) % 16); x < 480; x += 16) {
+              rect(ctx, (row * 5 + Math.floor((x + wallShift) / 16)) % 7 === 0 ? "#222b52" : "#1a2244", x + 1, y + 1, 14, 6);
+            }
+          }
+          // columns + torches in world space
+          for (let wx = 60; wx < WORLD_WIDTH; wx += 220) {
+            const sx = wx - cam;
+            rect(ctx, "#2f3a68", sx, 30, 18, FLOOR_Y - 30);
+            rect(ctx, "#3d4a80", sx - 4, 26, 26, 6);
+            rect(ctx, "#252e57", sx + 14, 30, 4, FLOOR_Y - 30);
+          }
+          TORCHES.forEach((wx, i) => {
+            const sx = wx - cam;
+            const glow = ctx.createRadialGradient(sx + 3, 110, 2, sx + 3, 110, 46);
+            glow.addColorStop(0, "rgba(255,170,60,0.35)");
+            glow.addColorStop(1, "rgba(255,170,60,0)");
+            ctx.fillStyle = glow;
+            ctx.fillRect(sx - 44, 64, 94, 94);
+            rect(ctx, "#6b4a2a", sx, 116, 6, 14);
+            const frame = Math.floor(t * 9 + i) % 2;
+            rect(ctx, "#ff8a1f", sx - 1, 104 - frame, 8, 12 + frame);
+            rect(ctx, "#ffd23f", sx + 1, 108, 4, 7);
+          });
+          // ceiling
+          rect(ctx, "#0a0d1c", 0, 0, 480, 18);
+          rect(ctx, "#2a3360", 0, 18, 480, 3);
+          // floor platforms
+          PLATFORMS.forEach(([a, b]) => {
+            const sx = a - cam;
+            const w = b - a;
+            rect(ctx, "#8c6b3f", sx, FLOOR_Y, w, 270 - FLOOR_Y);
+            for (let x = a; x < b; x += 16) rect(ctx, "#6e5230", x - cam, FLOOR_Y + 6, 1, 64);
+            for (let y = FLOOR_Y + 14; y < 270; y += 10) rect(ctx, "#6e5230", sx, y, w, 1);
+            rect(ctx, "#e2bd7e", sx, FLOOR_Y, w, 5);
+            rect(ctx, "#f3d9a4", sx, FLOOR_Y, w, 1);
+          });
+          // spike pit
+          rect(ctx, "#05060d", PIT[0] - cam, FLOOR_Y, PIT[1] - PIT[0], 70);
+          for (let x = PIT[0] + 2; x < PIT[1] - 4; x += 8) {
+            ctx.fillStyle = "#c8ccda";
+            ctx.beginPath();
+            ctx.moveTo(x - cam, 246);
+            ctx.lineTo(x + 3 - cam, 232);
+            ctx.lineTo(x + 6 - cam, 246);
+            ctx.fill();
+          }
+          text(ctx, "FLAKY TEST", (PIT[0] + PIT[1]) / 2 - cam, FLOOR_Y + 12, "#ff4a3d", "center", "#000000");
+          // chasm
+          rect(ctx, "#000000", CHASM[0] - cam, FLOOR_Y, CHASM[1] - CHASM[0], 70);
+          text(ctx, "CONTEXT", (CHASM[0] + CHASM[1]) / 2 - cam, FLOOR_Y + 30, "#ff8a1f", "center", "#000000");
+          text(ctx, "LIMIT", (CHASM[0] + CHASM[1]) / 2 - cam, FLOOR_Y + 42, "#ff8a1f", "center", "#000000");
+          // chomper
+          const open = chomperOpening(t);
+          const cx = CHOMPER_X - cam;
+          const jawGap = Math.round(open * 22);
+          rect(ctx, "#3d4a80", cx - 14, 120, 28, 8);
+          rect(ctx, "#c8ccda", cx - 2 - jawGap / 2 - 6, 128, 6, FLOOR_Y - 128);
+          rect(ctx, "#c8ccda", cx + 2 + jawGap / 2, 128, 6, FLOOR_Y - 128);
+          rect(ctx, "#8a91a8", cx - 2 - jawGap / 2 - 2, 128, 2, FLOOR_Y - 128);
+          rect(ctx, "#8a91a8", cx + 2 + jawGap / 2 + 4, 128, 2, FLOOR_Y - 128);
+          text(ctx, "RATE LIMIT", cx, 106, "#ff8a1f", "center", "#000000");
+          // exit gate
+          const gx = GATE_X - cam;
+          rect(ctx, "#2f3a68", gx - 8, 110, 56, 90);
+          rect(ctx, "#000000", gx, 122, 40, 78);
+          const lift = 76 * easeInOut(prog(t, Q.gate, Q.gate + 0.7));
+          const exitGlow = prog(t, Q.gate, Q.gate + 0.7);
+          if (exitGlow > 0) {
+            ctx.globalAlpha = exitGlow;
+            rect(ctx, "#ffe7a0", gx, 122, 40, 78);
+            ctx.globalAlpha = 1;
+          }
+          text(ctx, "EXIT", gx + 20, 98, "#7dff6a", "center", "#000000");
+          // hero (drawn before the portcullis so he walks "into" the door)
+          const hx = Math.round(heroX(t) - cam - HERO_SCALE * 6);
+          const hy = Math.round(FLOOR_Y - HERO_SCALE * (TORSO.length + 5) - heroLift(t));
+          const inAir = heroLift(t) > 0.5;
+          const legs = inAir ? LEGS.jump : heroMoving(t) ? (Math.floor(t * 10) % 2 ? LEGS.runA : LEGS.runB) : LEGS.stand;
+          const heroFade = 1 - prog(t, 28.2, 28.45);
+          const powered = t >= Q.cont && t < Q.land2;
+          if (heroFade > 0) {
+            ctx.globalAlpha = heroFade;
+            const palette = powered && blinkOn(t, 8) ? { ...HERO_PALETTE, w: "#7fe3ff" } : HERO_PALETTE;
+            sprite(ctx, TORSO, palette, hx, hy, HERO_SCALE);
+            sprite(ctx, legs, palette, hx, hy + TORSO.length * HERO_SCALE, HERO_SCALE);
+            ctx.globalAlpha = 1;
+          }
+          for (let bar = 0; bar < 5; bar++) rect(ctx, "#8a91a8", gx + 3 + bar * 8, 122 - lift, 3, 78);
+          rect(ctx, "#8a91a8", gx, 150 - lift, 40, 3);
+          rect(ctx, "#8a91a8", gx, 180 - lift, 40, 3);
+          rect(ctx, "#2f3a68", gx - 8, 110, 56, 12);
+          // Looper orb companion
+          if (t >= Q.orb) {
+            const enter = easeOut(prog(t, Q.orb, Q.orb + 0.5));
+            const follow = heroX(Math.max(Q.orb, t - 0.18));
+            const ox = Math.round(follow + 20 - cam);
+            const oy = Math.round(lerp(-20, 132, enter) + Math.sin(t * 5) * 3 - heroLift(t - 0.1) * 0.6);
+            const halo = ctx.createRadialGradient(ox, oy, 2, ox, oy, 28);
+            halo.addColorStop(0, "rgba(127,227,255,0.55)");
+            halo.addColorStop(1, "rgba(127,227,255,0)");
+            ctx.fillStyle = halo;
+            ctx.fillRect(ox - 28, oy - 28, 56, 56);
+            ctx.drawImage(orb14, ox - 7, oy - 7);
+          }
+          // bottom status bar (Prince-of-Persia style)
+          rect(ctx, "#000000", 0, 256, 480, 14);
+          for (let i = 0; i < 3; i++) {
+            ctx.fillStyle = "#e8402f";
+            ctx.beginPath();
+            ctx.moveTo(6 + i * 12, 267);
+            ctx.lineTo(11 + i * 12, 259);
+            ctx.lineTo(16 + i * 12, 267);
+            ctx.fill();
+          }
+          text(ctx, "INFINITE MINUTES LEFT", 474, 259, "#ffffff", "right");
+        }
+
+        // ======================================================
+        // 4. RACE
+        // ======================================================
+        const raceCtx = context("race-canvas");
+        const R = T.race;
+        const HORIZON = 112;
+        const NEAR = 200; // projection depth: p = NEAR / (distance + NEAR)
+        const DRAW_DISTANCE = 3200;
+        const SEGMENT = 60;
+        const RIVAL_SPEED = 150;
+        const STEP = 1 / 240;
+        function speedAt(t) {
+          if (t < R.go) return 0;
+          return scalarAt([[R.go, 0], [R.go + 1, 500], [R.nitro, 650], [R.nitro + 0.5, 1100], [R.finish, 1100], [R.finish + 1, 500]], t);
+        }
+        // Precomputed distance table so position is a pure function of t.
+        const distanceTable = [0];
+        for (let i = 1; i <= Math.ceil(10 / STEP); i++) {
+          const t = T.scenes.race[0] + i * STEP;
+          distanceTable.push(distanceTable[i - 1] + speedAt(t) * STEP);
+        }
+        function distanceAt(t) {
+          const f = clamp((t - T.scenes.race[0]) / STEP, 0, distanceTable.length - 1);
+          const i = Math.floor(f);
+          return lerp(distanceTable[i], distanceTable[Math.min(i + 1, distanceTable.length - 1)], f - i);
+        }
+        const curveAt = (d) => Math.sin(d * 0.0021) * 1.1 + Math.sin(d * 0.00083 + 1) * 0.7;
+        const RIVAL_LABELS = ["BUG #412", "PR #88", "TODO", "FLAKY", "LINT", "TYPES", "DEPLOY"];
+        const RIVAL_COLORS = ["#e8402f", "#3f7ce8", "#f5c400", "#d63fb8", "#2fb62f", "#f28c1a", "#c8ccda"];
+        const rivals = [...R.passes, ...R.fastPasses].map((tp, i) => ({
+          start: distanceAt(tp) - RIVAL_SPEED * (tp - R.go),
+          lane: i % 2 ? 0.5 : -0.5,
+          label: RIVAL_LABELS[i],
+          color: RIVAL_COLORS[i],
+        }));
+        const rivalDistance = (rival, t) => rival.start + RIVAL_SPEED * Math.max(0, t - R.go);
+        const finishLine = distanceAt(R.finish);
+        const raceStars = Array.from({ length: 40 }, (_, i) => [hash(i) * 480, hash(i + 99) * 70]);
+        const skyline = Array.from({ length: 40 }, (_, i) => ({ x: i * 26, w: 16 + hash(i + 7) * 14, h: 14 + hash(i + 31) * 36 }));
+
+        function project(ahead, lateral, t, position) {
+          const p = NEAR / (ahead + NEAR);
+          const y = HORIZON + p * (270 - HORIZON);
+          const halfWidth = 4 + p * 190;
+          const bend = curveAt(position + ahead) * (1 - p) * (1 - p) * 140;
+          return { p, y, x: 240 + bend + lateral * halfWidth, halfWidth };
+        }
+        function drawCar(ctx, cx, bottom, s, body, cabin) {
+          const r = (color, x, y, w, h) => rect(ctx, color, cx + (x - 20) * s, bottom - (20 - y) * s, w * s, h * s);
+          r("rgba(0,0,0,0.45)", -1, 17, 42, 3);
+          r(body, 2, 8, 36, 10);
+          r(cabin, 8, 1, 24, 8);
+          r("#1b2440", 10, 2, 20, 6);
+          r(body, 3, 5, 34, 2);
+          r("#ff3b3b", 3, 10, 7, 3);
+          r("#ff3b3b", 30, 10, 7, 3);
+          r("#f0f0f0", 16, 12, 8, 3);
+          r("#111111", 1, 15, 6, 5);
+          r("#111111", 33, 15, 6, 5);
+        }
+        function drawPalm(ctx, x, bottom, s) {
+          rect(ctx, "#6b4a2a", x - 2 * s, bottom - 40 * s, 4 * s, 40 * s);
+          for (const [dx, dy, w] of [[-14, -44, 14], [0, -46, 14], [-8, -50, 16], [-18, -40, 8], [10, -40, 8]]) {
+            rect(ctx, "#1f8a3a", x + dx * s, bottom + dy * s, w * s, 4 * s);
+          }
+        }
+        function drawBillboard(ctx, x, bottom, s, label) {
+          rect(ctx, "#3a3f55", x - 1 * s, bottom - 30 * s, 2 * s, 30 * s);
+          rect(ctx, "#101433", x - 26 * s, bottom - 52 * s, 52 * s, 22 * s);
+          rect(ctx, "#ffd23f", x - 24 * s, bottom - 50 * s, 48 * s, 18 * s);
+          if (label.length * SCALE_TEXT <= 46 * s) text(ctx, label, x, bottom - 45 * s, "#101433", "center"); // only once the board can hold the words
+        }
+
+        function drawRace(t) {
+          const ctx = raceCtx;
+          const position = distanceAt(t);
+          const turn = curveAt(position);
+          // sky
+          bands(ctx, 0, HORIZON, "#1b0f3a", "#ff9e5a", 9, 480);
+          raceStars.forEach(([x, y]) => rect(ctx, "#ffffff", x, y, 1, 1));
+          const drift = (position * 0.02 + turn * 30) % 480;
+          ctx.fillStyle = "#ffd36a";
+          ctx.beginPath();
+          ctx.arc(300 - turn * 20, 78, 30, 0, Math.PI * 2);
+          ctx.fill();
+          for (let i = 0; i < 5; i++) rect(ctx, mixColor("#ff9e5a", "#e0576b", i / 4), 260 - turn * 20, 84 + i * 5, 80, 1 + i * 0.4);
+          ctx.fillStyle = "#3a1f5c";
+          ctx.beginPath();
+          ctx.moveTo(0, HORIZON);
+          for (let x = 0; x <= 480; x += 12) ctx.lineTo(x, HORIZON - 16 - 12 * Math.abs(Math.sin((x + drift * 0.5) * 0.021)) - 8 * Math.abs(Math.sin((x + drift * 0.5) * 0.057)));
+          ctx.lineTo(480, HORIZON);
+          ctx.fill();
+          skyline.forEach((b) => {
+            const x = ((b.x - drift + 1040) % 1040) - 60;
+            rect(ctx, "#241440", x, HORIZON - b.h, b.w, b.h);
+            for (let wy = HORIZON - b.h + 3; wy < HORIZON - 3; wy += 5) {
+              for (let wx = x + 2; wx < x + b.w - 2; wx += 4) if (hash(Math.round(wx * 3 + wy)) > 0.6) rect(ctx, "#ffd23f", wx, wy, 1, 2);
+            }
+          });
+          // road rows
+          for (let y = HORIZON; y < 270; y++) {
+            const p = (y - HORIZON + 0.5) / (270 - HORIZON);
+            const ahead = NEAR / p - NEAR;
+            const stripe = Math.floor((ahead + position) / SEGMENT) % 2 === 0;
+            const bend = curveAt(position + ahead) * (1 - p) * (1 - p) * 140;
+            const center = 240 + bend;
+            const halfWidth = 4 + p * 190;
+            const rumble = halfWidth * 0.1;
+            rect(ctx, stripe ? "#2f7d32" : "#276b2a", 0, y, 480, 1);
+            rect(ctx, stripe ? "#e8402f" : "#f0f0f0", center - halfWidth - rumble, y, (halfWidth + rumble) * 2, 1);
+            rect(ctx, stripe ? "#5b5b68" : "#55555f", center - halfWidth, y, halfWidth * 2, 1);
+            if (stripe) {
+              rect(ctx, "#f0f0f0", center - halfWidth / 3 - p * 2, y, Math.max(1, p * 4), 1);
+              rect(ctx, "#f0f0f0", center + halfWidth / 3 - p * 2, y, Math.max(1, p * 4), 1);
+            }
+            const finishAhead = finishLine - position;
+            if (Math.abs(ahead - finishAhead) < 18) {
+              const cells = 16;
+              for (let c = 0; c < cells; c++) {
+                const odd = (c + Math.floor((ahead - finishAhead + 18) / 12)) % 2;
+                rect(ctx, odd ? "#ffffff" : "#000000", center - halfWidth + (c * halfWidth * 2) / cells, y, (halfWidth * 2) / cells + 1, 1);
+              }
+            }
+          }
+          // roadside + rival objects, far to near
+          const objects = [];
+          const firstPost = Math.ceil(position / 240) * 240;
+          for (let d = firstPost; d < position + DRAW_DISTANCE; d += 240) {
+            const index = Math.round(d / 240);
+            objects.push({ ahead: d - position, kind: index % 3 === 0 ? "board" : "palm", side: index % 2 ? 1.5 : -1.5, index });
+          }
+          rivals.forEach((rival) => {
+            const ahead = rivalDistance(rival, t) - position;
+            if (ahead > -60 && ahead < DRAW_DISTANCE) objects.push({ ahead: Math.max(ahead, -40), kind: "rival", rival });
+          });
+          const finishAhead = finishLine - position;
+          if (finishAhead > 0 && finishAhead < DRAW_DISTANCE) objects.push({ ahead: finishAhead, kind: "gantry" });
+          objects.sort((a, b) => b.ahead - a.ahead);
+          const BOARD_TEXT = ["LOOPER", "KEEP GOING", "NO IDLE", "LOOPER"];
+          for (const o of objects) {
+            if (o.ahead < -40) continue;
+            const pr = project(Math.max(o.ahead, 1), o.kind === "rival" ? o.rival.lane : o.side || 0, t, position);
+            const s = pr.p * 2.2;
+            if (o.kind === "palm") drawPalm(ctx, pr.x, pr.y, s);
+            else if (o.kind === "board") drawBillboard(ctx, pr.x, pr.y, s, BOARD_TEXT[o.index % BOARD_TEXT.length]);
+            else if (o.kind === "gantry") {
+              rect(ctx, "#c8ccda", pr.x - pr.halfWidth - 4 * s, pr.y - 60 * s, 3 * s, 60 * s);
+              rect(ctx, "#c8ccda", pr.x + pr.halfWidth + 1 * s, pr.y - 60 * s, 3 * s, 60 * s);
+              rect(ctx, "#101433", pr.x - pr.halfWidth - 4 * s, pr.y - 70 * s, pr.halfWidth * 2 + 8 * s, 12 * s);
+              if (s > 0.5) text(ctx, "FINISH", pr.x, pr.y - 68 * s, "#ffd23f", "center");
+            } else {
+              const carScale = pr.p * 1.7;
+              drawCar(ctx, pr.x, pr.y, carScale, o.rival.color, "#2a2f45");
+              if (pr.p > 0.22) text(ctx, o.rival.label, pr.x, pr.y - 30 * carScale - 10, "#ffffff", "center", "#000000");
+            }
+          }
+          // player car
+          const frame = Math.floor(t * 30);
+          const jitter = speedAt(t) > 300 && hash(frame) > 0.5 ? 1 : 0;
+          const lean = clamp(-turn * 8, -10, 10);
+          const nitroOn = t >= R.nitro && t < R.finish;
+          if (nitroOn) {
+            const flame = frame % 2 ? "#ffd23f" : "#36d7ff";
+            rect(ctx, flame, 240 + lean - 30, 258, 8, 6 + (frame % 3) * 2);
+            rect(ctx, flame, 240 + lean + 22, 258, 8, 6 + ((frame + 1) % 3) * 2);
+          }
+          drawCar(ctx, 240 + lean, 262 - jitter, 2.1, "#d8202a", "#a8141c");
+          text(ctx, "LOOPER", 240 + lean, 252 - jitter, "#ffffff", "center", "#000000");
+          // nitro speed lines
+          if (nitroOn) {
+            const lineRand = seeded(frame);
+            ctx.strokeStyle = "rgba(255,255,255,0.7)";
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 18; i++) {
+              const a = lineRand() * Math.PI * 2;
+              const r0 = 120 + lineRand() * 60;
+              ctx.beginPath();
+              ctx.moveTo(240 + Math.cos(a) * r0, 140 + Math.sin(a) * r0 * 0.6);
+              ctx.lineTo(240 + Math.cos(a) * (r0 + 60), 140 + Math.sin(a) * (r0 + 60) * 0.6);
+              ctx.stroke();
+            }
+          }
+          if (t >= R.nitro && t < R.nitro + 0.2) {
+            ctx.globalAlpha = 0.7 * (1 - (t - R.nitro) / 0.2);
+            rect(ctx, "#bff4ff", 0, 0, 480, 270);
+            ctx.globalAlpha = 1;
+          }
+          // HUD
+          const raceTime = Math.max(0, t - R.go);
+          document.getElementById("race-time").textContent = `0:${raceTime.toFixed(2).padStart(5, "0")}`;
+          document.getElementById("race-mph").textContent = String(Math.round(speedAt(t) * 0.2));
+          const passed = [...R.passes, ...R.fastPasses].filter((tp) => t >= tp).length;
+          document.getElementById("race-posn").textContent = `${8 - passed}/8`;
+          const nitroFill = t < R.nitro ? prog(t, R.go, R.nitro) : 1 - prog(t, R.nitro, R.finish);
+          document.getElementById("race-nitro-fill").style.width = `${Math.round(nitroFill * 100)}%`;
+          const countEl = document.getElementById("race-count");
+          const counts = [...R.beeps, R.go];
+          let label = "";
+          counts.forEach((tc, i) => {
+            if (t >= tc) label = i < R.beeps.length ? String(3 - i) : "GO!";
+          });
+          countEl.textContent = t < R.go + 0.7 ? label : "";
+          const shake = document.getElementById("race-shake");
+          const shakeAmount = nitroOn ? 6 * (1 - prog(t, R.nitro, R.nitro + 1.2)) + 2 : 0;
+          shake.style.left = `${Math.round((hash(frame + 3) - 0.5) * shakeAmount * 2)}px`;
+          shake.style.top = `${Math.round((hash(frame + 5) - 0.5) * shakeAmount * 2)}px`;
+        }
+
+        // ======================================================
+        // 5. FINALE
+        // ======================================================
+        const finCtx = context("fin-canvas");
+        const F = T.finale;
+        const orbPixelCtx = context("orb-pixel");
+        const orbHiCtx = document.getElementById("orb-hi").getContext("2d");
+        const topWho = document.getElementById("row-top-who");
+        const topPts = document.getElementById("row-top-pts");
+        const warpStars = Array.from({ length: 120 }, (_, i) => ({ a: hash(i) * Math.PI * 2, speed: 0.3 + hash(i + 500) * 0.7, offset: hash(i + 900) }));
+        const ORB_REVEAL_STEPS = [[F.logo, 4], [F.logo + 0.1, 8], [F.logo + 0.2, 16], [F.logo + 0.32, 32], [F.logo + 0.45, 64]];
+
+        function drawFinale(t) {
+          const ctx = finCtx;
+          rect(ctx, "#02030d", 0, 0, 480, 270);
+          const warp = t >= F.logo ? 2.2 : 0.4;
+          warpStars.forEach((star) => {
+            const u = (star.offset + (t - 40) * star.speed * warp * 0.35) % 1;
+            const r = u * u * 300;
+            const x = 240 + Math.cos(star.a) * r;
+            const y = 135 + Math.sin(star.a) * r * 0.62;
+            rect(ctx, u > 0.5 ? "#ffffff" : "#56609a", x, y, u > 0.7 ? 2 : 1, 1);
+          });
+          const newHigh = t >= F.newHigh;
+          topWho.textContent = newHigh ? "YOU + LOOPER" : "- - - - - -";
+          topPts.textContent = newHigh ? FINAL_SCORE.toLocaleString("en-US") : "-------";
+          document.getElementById("row-top").style.color = newHigh ? RAINBOW[Math.floor(t * 10) % RAINBOW.length] : "#6b7390";
+          document.getElementById("new-high").style.visibility = newHigh && blinkOn(t, 3) ? "visible" : "hidden";
+          // Orb resolves from chunky pixels to the real glass render.
+          let resolution = 0;
+          for (const [ts, res] of ORB_REVEAL_STEPS) if (t >= ts) resolution = res;
+          orbPixelCtx.clearRect(0, 0, 64, 64);
+          if (resolution > 0) {
+            const tiny = orbAt(resolution);
+            orbPixelCtx.drawImage(tiny, 0, 0, 64, 64);
+          }
+          document.getElementById("press").style.visibility = t >= F.press && blinkOn(t, 1.5) ? "visible" : "hidden";
+        }
+
+        // ======================================================
+        // master clock
+        // ======================================================
+        function render(t) {
+          if (t < T.scenes.pinball[0]) drawBoot(t);
+          else if (t < T.scenes.palace[0]) drawPinball(t);
+          else if (t < T.scenes.race[0]) drawPalace(t);
+          else if (t < T.scenes.finale[0]) drawRace(t);
+          else drawFinale(t);
+        }
+
+        function banner(tl, id, tIn, tOut) {
+          tl.fromTo(`#${id} .b-stage`, { opacity: 0, y: -30 }, { opacity: 1, y: 0, duration: 0.2, ease: "steps(4)" }, tIn);
+          tl.fromTo(`#${id} .b-title`, { opacity: 0, scale: 2.2 }, { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(2)" }, tIn + 0.1);
+          tl.to(`#${id}`, { opacity: 0, duration: 0.2, ease: "steps(3)" }, tOut);
+        }
+        function pop(tl, selector, tIn, tOut, fromScale = 2) {
+          tl.fromTo(selector, { opacity: 0, scale: fromScale }, { opacity: 1, scale: 1, duration: 0.22, ease: "back.out(2.5)" }, tIn);
+          if (tOut != null) tl.to(selector, { opacity: 0, duration: 0.15, ease: "steps(3)" }, tOut);
+        }
+
+        function build() {
+          orb10 = orbAt(10);
+          orb14 = orbAt(14);
+          orb20 = orbAt(20);
+          orb48 = orbAt(48);
+          const panelOrb = context("pp-orb");
+          panelOrb.drawImage(orbAt(32), 0, 0);
+          orbHiCtx.drawImage(orbAt(600), 0, 0);
+
+          const wipe = document.getElementById("wipe");
+          const cellCount = 32 * 18;
+          const cellDelay = [];
+          const wipeRand = seeded(77);
+          for (let i = 0; i < cellCount; i++) {
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            wipe.appendChild(cell);
+            cellDelay.push(wipeRand());
+          }
+          const cells = wipe.querySelectorAll(".cell");
+
+          const tl = gsap.timeline({ paused: true });
+          const clock = { t: 0 };
+          tl.fromTo(clock, { t: 0 }, { t: T.total, duration: T.total, ease: "none", onUpdate: () => render(clock.t) }, 0);
+
+          gsap.set(cells, { scale: 0 });
+          const WIPE_COVER = 0.3;
+          const WIPE_REVEAL = 0.4;
+          const wipeAt = (coverStart, revealStart) => {
+            tl.to(cells, { scale: 1.05, duration: 0.12, ease: "steps(2)", stagger: (i) => cellDelay[i] * (WIPE_COVER - 0.12) }, coverStart);
+            tl.to(cells, { scale: 0, duration: 0.12, ease: "steps(2)", stagger: (i) => cellDelay[i] * (WIPE_REVEAL - 0.12) }, revealStart);
+          };
+          wipeAt(B.zoom, T.scenes.pinball[0]);
+          wipeAt(P.wipe + 0.2, T.scenes.palace[0]);
+          wipeAt(Q.wipe + 0.2, T.scenes.race[0]);
+          wipeAt(R.wipe + 0.2, T.scenes.finale[0]);
+
+          // boot: zoom into the game window
+          tl.fromTo("#boot-inner", { scale: 1 }, { scale: 3.2, duration: 0.3, ease: "power2.in" }, B.zoom);
+
+          // pinball
+          tl.fromTo("#pin-inner", { scale: 1.15 }, { scale: 1, duration: 0.5, ease: "power3.out" }, T.scenes.pinball[0]);
+          banner(tl, "pin-banner", T.scenes.pinball[0] + 0.1, P.launch - 0.1);
+          gsap.set("#pin-jackpot", { opacity: 0 });
+          pop(tl, "#pin-jackpot", P.jackpot, P.wipe + 0.15, 3);
+
+          // palace
+          banner(tl, "pal-banner", Q.title, Q.title + 1.2);
+          gsap.set(["#pal-stopped", "#pal-continue", "#pal-clear"], { opacity: 0 });
+          pop(tl, "#pal-stopped", Q.stopped, Q.cont - 0.05, 1.6);
+          pop(tl, "#pal-continue", Q.cont, Q.leap + 0.3, 1.6);
+          pop(tl, "#pal-clear", Q.clear, Q.wipe + 0.15, 2.5);
+
+          // race
+          banner(tl, "race-banner", T.scenes.race[0] + 0.05, R.beeps[0] - 0.1);
+          gsap.set(["#race-nitro-slam", "#race-finish"], { opacity: 0 });
+          R.beeps.concat([R.go]).forEach((tc) => tl.fromTo("#race-count", { scale: 2.4 }, { scale: 1, duration: 0.2, ease: "back.out(2)" }, tc));
+          pop(tl, "#race-nitro-slam", R.nitro, R.nitro + 1.3, 3);
+          pop(tl, "#race-finish", R.finish, R.wipe + 0.15, 2.5);
+          tl.fromTo(["#race-lap", "#race-pos", "#race-speed", "#race-nitro"], { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "steps(3)" }, R.beeps[0]);
+
+          // finale
+          tl.fromTo("#scores h2", { opacity: 0, y: -40 }, { opacity: 1, y: 0, duration: 0.25, ease: "steps(5)" }, T.scenes.finale[0] + 0.05);
+          const rows = document.querySelectorAll(".score-row");
+          const ROW_STEP = F.rows[1] - F.rows[0];
+          rows.forEach((row, i) => {
+            const at = F.rows[0] + (i - 1) * ROW_STEP;
+            tl.fromTo(row, { opacity: 0, x: -60 }, { opacity: 1, x: 0, duration: 0.15, ease: "steps(3)" }, at);
+          });
+          tl.fromTo("#row-top", { scale: 1 }, { scale: 1.08, duration: 0.12, yoyo: true, repeat: 3, ease: "steps(2)" }, F.newHigh);
+          tl.to("#scores", { opacity: 0, duration: 0.2, ease: "steps(4)" }, F.logo - 0.2);
+          gsap.set("#logo-view", { opacity: 0 });
+          tl.set("#logo-view", { opacity: 1 }, F.logo);
+          tl.fromTo("#orb-hi", { opacity: 0 }, { opacity: 1, duration: 0.3 }, F.logo + 0.55);
+          tl.fromTo("#orb-stack", { y: -30 }, { y: 0, duration: 2.5, ease: "sine.inOut" }, F.logo);
+          tl.fromTo("#wordmark span", { opacity: 0, y: -120 }, { opacity: 1, y: 0, duration: 0.35, ease: "bounce.out", stagger: 0.06 }, F.wordmark);
+          tl.fromTo("#tagline div", { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "steps(3)", stagger: 0.4 }, F.tagline);
+          tl.fromTo("#subline", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, F.sub);
+
+          render(0);
+          window.__timelines["main"] = tl;
+        }
+
+        Promise.all([
+          document.fonts.load("8px PS2P"),
+          document.fonts.load("40px VT"),
+          logoImage.decode(),
+        ]).then(build);
+      })();
+    </script>
+  </body>
+</html>
