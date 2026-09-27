@@ -1,0 +1,13 @@
+{
+  "name": "looper-launch-film",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "score": "python3 score.py",
+    "stills": "node render.mjs --stills",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
