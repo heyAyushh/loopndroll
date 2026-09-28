@@ -1,5 +1,5 @@
-// Finale: arcade high-score table, then the orb resolves from chunky pixels
-// into the Looper logo with the tagline and PRESS START.
+// Finale: arcade high-score table (held long enough to read), then the orb
+// resolves from chunky pixels into the Looper logo, then the tagline.
 import { createCanvas } from "@napi-rs/canvas";
 import { T, prog, blinkOn, hash, orb } from "./core.js";
 
@@ -17,9 +17,8 @@ const ROWS = [
 const RAINBOW = ["#ffd23f", "#ff4a3d", "#7dff6a", "#7fe3ff", "#d63fb8"];
 const ORB_STEPS = [[F.logo, 4], [F.logo + 0.1, 8], [F.logo + 0.2, 16], [F.logo + 0.32, 32], [F.logo + 0.45, 0]];
 const LAYOUT = {
-  // End card is the logo alone: orb over the LOOPER wordmark, centred.
-  landscape: { rowSize: 16, rowStep: 30, rowTop: 110, headerY: 50, orbSize: 128, orbY: 72, wordY: 226 },
-  portrait: { rowSize: 8, rowStep: 30, rowTop: 200, headerY: 130, orbSize: 160, orbY: 182, wordY: 378 },
+  landscape: { rowFont: "PS2P", rowSize: 16, nameX: 72, rowStep: 30, rowTop: 110, headerY: 50, orbSize: 112, orbY: 40, wordY: 172, tagY: 246 },
+  portrait: { rowFont: "VT", rowSize: 20, nameX: 48, rowStep: 34, rowTop: 196, headerY: 130, orbSize: 160, orbY: 150, wordY: 340, tagY: 420 },
 };
 
 export function createFinale(format) {
@@ -47,9 +46,8 @@ export function createFinale(format) {
         const newHigh = t >= F.newHigh;
         const left = format === "portrait" ? 16 : 40;
         const right = p.W - left;
-        const rowStep = F.rows[1] - F.rows[0];
         ROWS.forEach(([rank, who, pts], i) => {
-          const at = F.rows[0] + (i - 1) * rowStep;
+          const at = F.rows[i];
           if (t < at) return;
           const slide = Math.round((1 - prog(t, at, at + 0.15)) * 3) * 20;
           const y = L.rowTop + i * L.rowStep;
@@ -61,10 +59,10 @@ export function createFinale(format) {
             score = newHigh ? FINAL_SCORE : "-------";
             color = newHigh ? RAINBOW[Math.floor(t * 10) % RAINBOW.length] : "#6b7390";
           }
-          const size = L.rowSize;
-          p.text(rank, left - slide, y, color, { size });
-          p.text(name, left + size * 4.5 - slide, y, color, { size });
-          p.text(score, right - slide, y, color, { size, align: "right" });
+          const style = { size: L.rowSize, font: L.rowFont };
+          p.text(rank, left - slide, y, color, style);
+          p.text(name, left + L.nameX - slide, y, color, style);
+          p.text(score, right - slide, y, color, { ...style, align: "right" });
         });
         if (newHigh && blinkOn(t, 3)) p.text("NEW HIGH SCORE!", p.W / 2, L.rowTop + ROWS.length * L.rowStep + 16, "#7dff6a", { size: 16, align: "center" });
         return;
@@ -94,6 +92,9 @@ export function createFinale(format) {
         const bounce = u < 1 ? Math.abs(Math.cos(u * Math.PI * 1.5)) * (1 - u) * 60 : 0;
         const x = p.W / 2 - total / 2 + i * (letterSize + 4) + letterSize / 2;
         p.text(letter, x, L.wordY - bounce, "#ffffff", { size: letterSize, align: "center", shadow: "#245edb", shadowOffset: 4 });
+      });
+      ["YOUR AGENTS STOP.", "THE GAME DOESN'T."].forEach((line, i) => {
+        if (t >= F.tagline[i]) p.text(line, p.W / 2, L.tagY + i * 26, i ? "#ffd23f" : "#ffffff", { size: 16, align: "center", shadow: "#b3261e", shadowOffset: 2 });
       });
     },
   };

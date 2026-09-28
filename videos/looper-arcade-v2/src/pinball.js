@@ -820,7 +820,7 @@ export function createPinball(format) {
         p.panel(L.cx - 90, y, 180, 30, "#000000", "#ff4a3d", 2);
         p.text(t >= saveAt ? "LOOPER: CONTINUE >" : "AGENT STOPPED.", L.cx, y + 11, t >= saveAt ? "#7fe3ff" : "#ff4a3d", { align: "center" });
       }
-      stageBanner(p, t, SCENE_START + 0.1, PIN.launch, "STAGE 1", "LOOPER CADET", format === "portrait" ? 190 : 110, 16, L.cx);
+      stageBanner(p, t, SCENE_START + 0.1, PIN.launch + 0.8, "STAGE 1", "LOOPER CADET", format === "portrait" ? 190 : 110, 16, L.cx);
     },
   };
 }

@@ -1,8 +1,8 @@
 {
   "fps": 60,
   "bpm": 120,
-  "total": 54,
-  "scenes": { "boot": [0, 6], "pinball": [6, 24], "palace": [24, 36], "race": [36, 46], "finale": [46, 54] },
+  "total": 61,
+  "scenes": { "boot": [0, 6], "pinball": [6, 24], "palace": [24, 36], "race": [36, 47], "finale": [47, 61] },
   "boot": { "crtOn": 0.1, "desktop": 1.0, "click1": 2.6, "click2": 2.8, "window": 3.0, "loadEnd": 4.9, "coin": 5.4, "zoom": 5.7 },
   "pinball": { "launch": 7.0, "agentStop": 16.5, "jackpot": 22.5, "wipe": 23.5 },
   "palace": {
@@ -32,19 +32,19 @@
     "wipe": 35.5
   },
   "race": {
-    "beeps": [36.5, 36.83, 37.17],
-    "go": 37.5,
-    "passes": [38.25, 39.25, 40.25],
-    "nitro": 41.0,
-    "fastPasses": [42.0, 42.5, 43.0, 43.5],
-    "finish": 44.5,
-    "wipe": 45.5
+    "beeps": [37.5, 37.83, 38.17],
+    "go": 38.5,
+    "passes": [39.25, 40.25, 41.25],
+    "nitro": 42.0,
+    "fastPasses": [43.0, 43.5, 44.0, 44.5],
+    "finish": 45.5,
+    "wipe": 46.5
   },
   "finale": {
-    "rows": [46.25, 46.5, 46.75, 47.0, 47.25],
-    "newHigh": 47.75,
-    "logo": 49.0,
-    "wordmark": 49.5,
-    "swell": 50.5
+    "rows": [47.5, 48.1, 48.7, 49.3, 49.9, 50.5],
+    "newHigh": 51.2,
+    "logo": 54.0,
+    "wordmark": 54.5,
+    "tagline": [55.7, 56.5]
   }
 }

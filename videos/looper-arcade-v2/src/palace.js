@@ -550,7 +550,7 @@ export function createPalace(format) {
       }
       const status = t < Q.run + 1.2 ? "LEVEL 2" : "INFINITE MINUTES LEFT";
       p.text(status, p.W / 2, barY + 3, "#ffffff", { align: "center" });
-      stageBanner(p, t, Q.title, Q.title + 1.2, "STAGE 2", "PRINCE OF PROMPTS", format === "portrait" ? 150 : 40, format === "portrait" ? 16 : 24);
+      stageBanner(p, t, Q.title, Q.title + 1.8, "STAGE 2", "PRINCE OF PROMPTS", format === "portrait" ? 150 : 40, format === "portrait" ? 16 : 24);
     },
   };
 }

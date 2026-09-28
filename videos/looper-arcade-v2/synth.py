@@ -446,14 +446,14 @@ for t in RACE["beeps"]:
 blip(RACE["go"], 93, 0.45, 0.12)
 for i in range(8):
     bass(RACE["go"] + i * SIXTEENTH, 40 + 12 * (i % 2), SIXTEENTH * 0.9)
-bassline(r0 + BAR, [36, 38, 40], [0, 12] * 8)
-groove(r0 + BAR, 3, kick_beats=(0, 1, 2, 3), hat_step=SIXTEENTH, hat_gain=0.035)
-melody(r0 + BAR, [
+bassline(RACE["go"] + BEAT, [36, 38, 40], [0, 12] * 8)
+groove(RACE["go"] + BEAT, 3, kick_beats=(0, 1, 2, 3), hat_step=SIXTEENTH, hat_gain=0.035)
+melody(RACE["go"] + BEAT, [
     [76, None, 79, None, 83, 81, 79, 76],
     [78, None, 81, None, 86, "-", 83, 81],
     [88, None, 86, 83, None, 81, 83, "-"],
 ], EIGHTH, gain=0.09, duty=0.5)
-melody(r0 + BAR, [
+melody(RACE["go"] + BEAT, [
     [64, None, 67, None, 71, 69, 67, 64],
     [66, None, 69, None, 74, "-", 71, 69],
     [76, None, 74, 71, None, 69, 71, "-"],
@@ -464,7 +464,7 @@ sweep(RACE["nitro"], 0.9, 500, 9000, 0.16)
 slide(RACE["nitro"], 0.6, 200, 1600, 0.07, 0.25)
 crash(RACE["nitro"], 0.1)
 for i in range(4):
-    bass(r0 + 4 * BAR + i * SIXTEENTH, 36 + 12 * (i % 2), SIXTEENTH * 0.9)
+    bass(RACE["finish"] - 0.5 + i * SIXTEENTH, 36 + 12 * (i % 2), SIXTEENTH * 0.9)
 bass(RACE["finish"], 40, 1.2)
 crash(RACE["finish"], 0.16)
 arpeggio(RACE["finish"], [76, 80, 83, 88], SIXTEENTH, 0.12)
@@ -476,31 +476,39 @@ sweep(RACE["wipe"], 0.5, 6000, 300, 0.1)
 # 5. finale (C major)
 # ======================================================
 FIN = TIMING["finale"]
-f0 = TIMING["scenes"]["finale"][0]
-bassline(f0, [36], [0, None, 12, None, 7, None, 12, None])
-groove(f0, 1, hat_gain=0.04)
+f0, f1 = TIMING["scenes"]["finale"]
+logo_at = FIN["logo"]
+# leaderboard: easy groove under the rows, a tick per row, a build into the logo
+for n, bar in enumerate(np.arange(f0, logo_at - 1e-6, BAR)):
+    root = [36, 41, 43][min(n, 2)] if bar < FIN["newHigh"] - 0.5 else 43
+    bassline(bar, [root], [0, None, 12, None, 7, None, 12, None], until=logo_at - BEAT)
+    groove(bar, 1, hat_gain=0.035, until=logo_at - BEAT)
+    pad(bar, [[48, 52, 55, 60], [53, 57, 60, 65], [55, 59, 62, 67]][n % 3], min(BAR, logo_at - bar), 0.03)
 for i, t in enumerate(FIN["rows"]):
-    blip(t, 79 + i * 2, 0.06, 0.08)
+    blip(t, 79 + i * 2, 0.08, 0.09)
 arpeggio(FIN["newHigh"], [72, 76, 79, 84, 79, 84, 88, 91], 0.07, 0.09)
-bass(f0 + BAR, 41, BAR * 0.45)
-kick(f0 + BAR)
-crash(FIN["logo"], 0.16)
-kick(FIN["logo"], 0.6)
+for i in range(8):  # snare roll into the logo
+    snare(logo_at - BEAT * 2 + i * SIXTEENTH, 0.08 + i * 0.02)
+# logo hit
+crash(logo_at, 0.16)
+kick(logo_at, 0.6)
 for m in (60, 64, 67, 72):
-    brass(FIN["logo"], m, 1.4, 0.07)
+    brass(logo_at, m, 1.4, 0.07)
 arpeggio(FIN["wordmark"], [84, 88, 91, 96], SIXTEENTH, 0.08)
-bassline(f0 + 2 * BAR, [41, 43], [0, None, 12, None, 7, None, 12, None])
-groove(f0 + 2 * BAR, 1, hat_gain=0.04)
-groove(f0 + 3 * BAR, 1, kick_beats=(0,), snare_beats=(), hat_gain=0.03)
-melody(f0 + 2 * BAR, [
-    [72, "-", 77, "-", 81, "-", 79, 77],
-    [79, "-", "-", 76, 74, "-", 71, "-"],
-], EIGHTH, gain=0.09, duty=0.5)
-pad(FIN["swell"], [53, 57, 60, 65], BAR, 0.035)
-end_start = f0 + 3.5 * BAR
+# tagline: two stabs, then the theme resolves and rings out
+for i, t in enumerate(FIN["tagline"]):
+    for m in ((65, 69, 72), (67, 71, 74))[i]:
+        brass(t, m, 0.6, 0.05)
+    kick(t, 0.4)
+theme_start = FIN["tagline"][1] + BEAT
+bassline(theme_start, [41], [0, None, 12, None, 7, None, 12, None])
+groove(theme_start, 1, hat_gain=0.035)
+melody(theme_start, [[72, "-", 77, "-", 81, "-", 79, 77]], EIGHTH, gain=0.09, duty=0.5)
+end_start = theme_start + BAR
+assert f1 - end_start >= 1.5, "final chord needs room to ring out"
 for m in (48, 60, 64, 67, 72, 76):
-    brass(end_start, m, TOTAL_SECONDS - end_start, 0.05)
-bell(end_start, 96, 1.0, 0.08)
+    brass(end_start, m, f1 - end_start, 0.05)
+bell(end_start, 96, 1.2, 0.08)
 
 # ---------- master ----------
 stereo = np.tanh(np.stack([left, right], axis=1) * 1.2)
