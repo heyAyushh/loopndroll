@@ -1,7 +1,7 @@
 // Finale: arcade high-score table, then the orb resolves from chunky pixels
 // into the Looper logo with the tagline and PRESS START.
 import { createCanvas } from "@napi-rs/canvas";
-import { T, clamp, lerp, prog, easeOut, backOut, blinkOn, hash, orb } from "./core.js";
+import { T, prog, blinkOn, hash, orb } from "./core.js";
 
 const F = T.finale;
 const [SCENE_START] = T.scenes.finale;
@@ -17,8 +17,9 @@ const ROWS = [
 const RAINBOW = ["#ffd23f", "#ff4a3d", "#7dff6a", "#7fe3ff", "#d63fb8"];
 const ORB_STEPS = [[F.logo, 4], [F.logo + 0.1, 8], [F.logo + 0.2, 16], [F.logo + 0.32, 32], [F.logo + 0.45, 0]];
 const LAYOUT = {
-  landscape: { rowSize: 16, rowStep: 30, rowTop: 110, headerY: 50, orbSize: 96, orbY: 24, wordY: 140, tagY: 206, subY: 250, subSize: 24, subWidth: 560, pressY: 316 },
-  portrait: { rowSize: 8, rowStep: 30, rowTop: 200, headerY: 130, orbSize: 128, orbY: 90, wordY: 250, tagY: 330, subY: 390, subSize: 24, subWidth: 320, pressY: 560 },
+  // End card is the logo alone: orb over the LOOPER wordmark, centred.
+  landscape: { rowSize: 16, rowStep: 30, rowTop: 110, headerY: 50, orbSize: 128, orbY: 72, wordY: 226 },
+  portrait: { rowSize: 8, rowStep: 30, rowTop: 200, headerY: 130, orbSize: 160, orbY: 182, wordY: 378 },
 };
 
 export function createFinale(format) {
@@ -94,20 +95,6 @@ export function createFinale(format) {
         const x = p.W / 2 - total / 2 + i * (letterSize + 4) + letterSize / 2;
         p.text(letter, x, L.wordY - bounce, "#ffffff", { size: letterSize, align: "center", shadow: "#245edb", shadowOffset: 4 });
       });
-      ["YOUR AGENTS STOP.", "THE GAME DOESN'T."].forEach((line, i) => {
-        if (t >= F.tagline + i * 0.4) p.text(line, p.W / 2, L.tagY + i * 22, "#ffd23f", { size: 16, align: "center", shadow: "#b3261e", shadowOffset: 2 });
-      });
-      if (t >= F.sub) {
-        const rise = Math.round((1 - easeOut(prog(t, F.sub, F.sub + 0.4))) * 8);
-        p.paragraph(
-          "Looper keeps Codex, Claude Code, Zed and friends moving after they stop, so work feels like play again.",
-          p.W / 2, L.subY + rise, L.subWidth, "#c8ccda", { font: "VT", size: L.subSize, lineHeight: 22, align: "center" },
-        );
-      }
-      if (t >= F.press && blinkOn(t, 1.5)) {
-        p.text("PRESS START >", p.W / 2, L.pressY, "#ffffff", { size: 16, align: "center", shadow: "#000000" });
-        p.text("MACOS / IPHONE / 1 CREDIT", p.W / 2, L.pressY + 24, "#7fe3ff", { align: "center" });
-      }
     },
   };
 }

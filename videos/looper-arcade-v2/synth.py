@@ -205,26 +205,30 @@ def thud(start, gain=0.3):
 # ---------- sequencing helpers ----------
 
 
-def groove(bar_start, bars, kick_beats=(0, 2), snare_beats=(1, 3), hat_step=EIGHTH, hat_gain=0.05, until=None):
+def audible(at, since, until):
+    return (since is None or at >= since - 1e-6) and (until is None or at < until)
+
+
+def groove(bar_start, bars, kick_beats=(0, 2), snare_beats=(1, 3), hat_step=EIGHTH, hat_gain=0.05, until=None, since=None):
     for b in range(bars):
         s = bar_start + b * BAR
         hits = [(beat * BEAT, kick) for beat in kick_beats] + [(beat * BEAT, snare) for beat in snare_beats]
         hits += [(i * hat_step, lambda at: hat(at, hat_gain)) for i in range(int(BAR / hat_step))]
         for offset, fn in hits:
-            if until is None or s + offset < until:
+            if audible(s + offset, since, until):
                 fn(s + offset)
 
 
-def bassline(bar_start, roots, pattern, until=None):
+def bassline(bar_start, roots, pattern, until=None, since=None):
     step = BAR / len(pattern)
     for b, root in enumerate(roots):
         for i, offset in enumerate(pattern):
             at = bar_start + b * BAR + i * step
-            if offset is not None and (until is None or at < until):
+            if offset is not None and audible(at, since, until):
                 bass(at, root + offset, step * 0.9)
 
 
-def melody(bar_start, bars, slot, until=None, **kwargs):
+def melody(bar_start, bars, slot, until=None, since=None, **kwargs):
     for b, notes in enumerate(bars):
         for i, m in enumerate(notes):
             if m is None or m == "-":
@@ -235,7 +239,7 @@ def melody(bar_start, bars, slot, until=None, **kwargs):
                 length += slot
                 j += 1
             at = bar_start + b * BAR + i * slot
-            if until is None or at < until:
+            if audible(at, since, until):
                 lead(at, m, length * 0.95, **kwargs)
 
 
@@ -289,14 +293,14 @@ for n, bar in enumerate(bars_between(p0, stop_at)):
 # the agent stops: everything powers down
 slide(stop_at, 0.9, 440, 55, 0.12, 0.5)
 pad(stop_at, [45, 52], kickback_at - stop_at + 0.3, 0.035, 700)
-# kickback: back in, busier, doubled hats, melody up an octave
-for n, bar in enumerate(bars_between(kickback_at - BAR * 0.5, p1)):
+# kickback: back in exactly on the save (mid-bar if need be), busier, melody
+# up an octave; the melody yields to the jackpot fanfare.
+kick_bar = np.floor(kickback_at / BAR) * BAR
+for n, bar in enumerate(np.arange(kick_bar, p1 - 1e-6, BAR)):
     k = (n + 1) % 4
-    start = max(bar, kickback_at)
-    bassline(bar, [PROGRESSION[k]], [0, 12, 7, 12, 0, 12, 10, 12], until=p1 - 0.5)
-    groove(bar, 1, kick_beats=(0, 1, 2, 3), hat_step=SIXTEENTH, hat_gain=0.035, until=p1 - 0.5)
-    if bar + BAR <= jackpot_at + 0.01 or bar >= jackpot_at:
-        melody(bar, [[m + 12 if isinstance(m, int) else m for m in MELODY[k]]], EIGHTH, until=p1 - 0.5, gain=0.08)
+    bassline(bar, [PROGRESSION[k]], [0, 12, 7, 12, 0, 12, 10, 12], since=kickback_at, until=p1 - 0.5)
+    groove(bar, 1, kick_beats=(0, 1, 2, 3), hat_step=SIXTEENTH, hat_gain=0.035, since=kickback_at, until=p1 - 0.5)
+    melody(bar, [[m + 12 if isinstance(m, int) else m for m in MELODY[k]]], EIGHTH, since=kickback_at, until=jackpot_at, gain=0.08)
 
 SFX_PAN = lambda x: float(np.clip((x - 101) / 110, -0.6, 0.6)) if x is not None else 0.0
 last_rail = -1
@@ -492,9 +496,7 @@ melody(f0 + 2 * BAR, [
     [72, "-", 77, "-", 81, "-", 79, 77],
     [79, "-", "-", 76, 74, "-", 71, "-"],
 ], EIGHTH, gain=0.09, duty=0.5)
-pad(FIN["tagline"], [53, 57, 60, 65], BAR, 0.035)
-blip(FIN["press"], 83, 0.07, 0.12)
-blip(FIN["press"] + 0.07, 88, 0.4, 0.12)
+pad(FIN["swell"], [53, 57, 60, 65], BAR, 0.035)
 end_start = f0 + 3.5 * BAR
 for m in (48, 60, 64, 67, 72, 76):
     brass(end_start, m, TOTAL_SECONDS - end_start, 0.05)

@@ -126,8 +126,11 @@ export function simulatePinball() {
   const pendingLaunches = [];
 
   const emit = (t, type, x, y, extra = {}) => {
-    events.push({ t: +t.toFixed(4), type, x, y, ...extra });
-    if (POINTS[type]) score += POINTS[type] * (multiball ? 2 : 1);
+    // The jackpot tops the score up to FINAL_SCORE; nothing scores after it,
+    // so the pinball total matches the finale's high-score table.
+    const pts = POINTS[type] && !jackpotDone ? POINTS[type] * (multiball ? 2 : 1) : 0;
+    events.push({ t: +t.toFixed(4), type, x, y, pts, ...extra });
+    score += pts;
     if (["bumper", "sling", ...MAJOR_EVENTS].includes(type) && tasksDone < TASKS.length - 1) {
       const deadline = TASK_FIRST_DEADLINE + tasksDone * TASK_DEADLINE_STEP;
       if ((MAJOR_EVENTS.has(type) || t >= deadline) && t - lastTaskAt >= TASK_MIN_GAP && t >= PIN.launch + 0.4) {
@@ -138,10 +141,13 @@ export function simulatePinball() {
       }
     }
   };
-  const say = (t, text, color) => (message = { text, color, t });
+  // After the jackpot the panel keeps "JACKPOT! SHIPPED" up; later hits don't overwrite it.
+  const say = (t, text, color) => {
+    if (!jackpotDone || text.startsWith("JACKPOT")) message = { text, color, t };
+  };
 
   const spawnBall = (t, launchAt, speed) => {
-    const ball = { x: PLUNGER_REST[0], y: PLUNGER_REST[1], vx: 0, vy: 0, held: true, launchAt, speed, active: true, capturedUntil: -1, born: t };
+    const ball = { id: balls.length, x: PLUNGER_REST[0], y: PLUNGER_REST[1], vx: 0, vy: 0, held: true, launchAt, speed, active: true, capturedUntil: -1, born: t };
     balls.push(ball);
     return ball;
   };
@@ -161,7 +167,7 @@ export function simulatePinball() {
     }
     for (let i = pendingLaunches.length - 1; i >= 0; i--) {
       const pending = pendingLaunches[i];
-      if (t >= pending.at) {
+      if (t >= pending.at && !balls.some((b) => b.active && b.held)) {
         spawnBall(t, t + 0.25, pending.speed);
         pendingLaunches.splice(i, 1);
       }
@@ -420,7 +426,7 @@ export function simulatePinball() {
     if (step % SUBSTEPS === 0) {
       frames.push({
         t,
-        balls: balls.filter((b) => b.active).map((b) => ({ x: b.x, y: b.y, held: b.held })),
+        balls: balls.filter((b) => b.active).map((b) => ({ id: b.id, x: b.x, y: b.y, held: b.held })),
         flippers: flippers.map((f) => f.angle),
         targetDown: [...targetDown],
         laneLit: [...laneLit],
@@ -669,11 +675,10 @@ export function createPinball(format) {
             p.rect(s % 3 ? "#ffd23f" : "#ffffff", sx, sy, age < 0.2 ? 2 : 1, age < 0.2 ? 2 : 1);
           }
         }
-        const pts = e.type === "jackpot" ? null : (e.type === "bumper" || e.type === "sling" ? 0 : 1);
-        if (pts !== null && age < 0.6) {
-          const label = { bumper: "+1,000", sling: "+250", target: "+2,500", lane: "+1,000", bank: "BANK!", saucerIn: "+10,000", loop: "LOOP!" }[e.type];
-          if (e.type !== "sling") p.text(label, ex, ey - 14 - age * 26, age < 0.3 || blinkOn(t, 8) ? "#ffd23f" : "#ffffff", { align: "center", shadow: "#000000" });
-        }
+        // Popups show what the hit actually scored (x2 in multiball, nothing after the jackpot).
+        const word = { bank: "BANK!", loop: "LOOP!" }[e.type];
+        const label = word || (e.type !== "sling" && e.type !== "jackpot" && e.pts > 0 ? `+${e.pts.toLocaleString("en-US")}` : null);
+        if (label && age < 0.6) p.text(label, ex, ey - 14 - age * 26, age < 0.3 || blinkOn(t, 8) ? "#ffd23f" : "#ffffff", { align: "center", shadow: "#000000" });
       }
     }
   }
@@ -720,11 +725,15 @@ export function createPinball(format) {
     for (let i = 0; i < TASKS.length; i++) p.rect(i < f.tasksDone ? "#7dff6a" : "#1f2a3a", 120 + i * 23, 115, 20, 9);
   }
 
+  const SCORE_ROLL = 0.35; // seconds for the LCD digits to count up to a new total
   function displayScore(t, f) {
-    // Roll the digits up toward the real score like an LCD counter.
-    const prev = frameAt(t - 0.2).score;
-    const shown = Math.round(lerp(prev, f.score, 0.8) / 10) * 10;
-    return shown.toLocaleString("en-US");
+    let rolling = 0;
+    for (const e of sim.events) {
+      if (e.t > t) break;
+      const age = t - e.t;
+      if (e.pts && age < SCORE_ROLL) rolling += e.pts * (1 - age / SCORE_ROLL);
+    }
+    return (Math.round((f.score - rolling) / 10) * 10).toLocaleString("en-US");
   }
 
   return {
@@ -782,10 +791,9 @@ export function createPinball(format) {
         });
       });
       FLIPPERS.forEach((flipper, i) => objects.push({ y: flipper.y, draw: () => drawFlipper(p, f.flippers[i], flipper, f.flippersOn) }));
-      f.balls.forEach((ball, bi) => {
+      f.balls.forEach((ball) => {
         const trail = [2, 1].map((back) => {
-          const pf = frameAt(t - back / FPS);
-          const pb = pf.balls[bi] || ball;
+          const pb = frameAt(t - back / FPS).balls.find((b) => b.id === ball.id) || ball;
           return [pb.x, pb.y];
         });
         objects.push({ y: ball.y + 0.5, draw: () => drawBall(p, ball.x, ball.y, t, trail) });

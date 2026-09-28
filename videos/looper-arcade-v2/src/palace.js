@@ -214,7 +214,7 @@ function princeAt(t) {
     return hangPose(swing + shake, oneHand, drop);
   }
   if (t < Q.climbEnd) return keyed(CLIMB_FRAMES, t);
-  if (t < DUEL[DUEL.length - 1][0] + 0.2 && t < Q.door - 0.1) return keyed([[Q.climbEnd, CLIMB_FRAMES[CLIMB_FRAMES.length - 1][1]], ...DUEL], t);
+  if (t < Q.door - 0.1) return keyed([[Q.climbEnd, CLIMB_FRAMES[CLIMB_FRAMES.length - 1][1]], ...DUEL], t);
   if (t < Q.stairs) {
     const x = scalarAt(EXIT_RUN, t);
     return runPose(x, (x / STRIDE) * Math.PI);
