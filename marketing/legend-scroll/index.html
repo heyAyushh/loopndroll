@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>The Legend of the Looper · 循環</title>
+  <style>
+    @font-face { font-family: MaShanZheng; src: url(fonts/MaShanZheng-Regular.ttf); }
+    @font-face { font-family: ZhiMangXing; src: url(fonts/ZhiMangXing-Regular.ttf); }
+    @font-face { font-family: Cormorant; src: url(fonts/CormorantGaramond.ttf); font-weight: 300 700; font-style: normal; }
+    @font-face { font-family: Cormorant; src: url(fonts/CormorantGaramond-Italic.ttf); font-weight: 300 700; font-style: italic; }
+    html, body { margin: 0; height: 100%; background: #000; color: #EDE3D0; font: 14px -apple-system, "Helvetica Neue", sans-serif; }
+    #stage { position: fixed; inset: 0 0 56px 0; display: flex; align-items: center; justify-content: center; }
+    #screen { max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; }
+    #controls { position: fixed; left: 0; right: 0; bottom: 0; height: 56px; display: flex; gap: 14px; align-items: center; padding: 0 18px; background: #0B0706; border-top: 1px solid #231815; }
+    #controls button { background: #160D0A; color: #EDE3D0; border: 1px solid #3a2a22; border-radius: 18px; padding: 6px 16px; font: inherit; cursor: pointer; }
+    #scrub { flex: 1; accent-color: #C9281F; }
+    #clock { font-variant-numeric: tabular-nums; width: 64px; }
+    #status { opacity: 0.6; }
+    body.export #controls { display: none; }
+    body.export #stage { inset: 0; }
+  </style>
+</head>
+<body>
+  <div id="stage"><canvas id="screen" width="1920" height="1080"></canvas></div>
+  <div id="controls">
+    <button id="play" type="button">Play</button>
+    <span id="clock">0.00</span>
+    <input id="scrub" type="range" min="0" max="140" step="0.001" value="0">
+    <span id="status">preparing the scroll…</span>
+  </div>
+  <script src="narration.js"></script>
+  <script src="core.js"></script>
+  <script src="ink.js"></script>
+  <script src="puppets.js"></script>
+  <script src="props.js"></script>
+  <script src="story.js"></script>
+  <script src="renderer.js"></script>
+  <script src="music.js"></script>
+  <script src="player.js"></script>
+</body>
+</html>
