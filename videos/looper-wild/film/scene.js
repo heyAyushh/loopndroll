@@ -8,6 +8,8 @@ const LAVENDER = [178, 156, 255];
 const DAWN = [255, 190, 130];
 const MONITOR = { x0: 180, y0: 1000, x1: 540, y1: 1280 };
 const DESK_ORB = [640, 1262];
+// The stage is authored in a 1080x1920 layout, then blown up 1.5x around the desk so it fills the frame.
+const STAGE = { scale: 1.5, anchorX: 520, anchorY: 1330, x: 540, y: 1290 };
 
 const CAPTIONS = [
   [0, 1.0, [["2:47 AM", 230], ["LAUNCH IS AT 9", 70]], 0.27],
@@ -183,6 +185,9 @@ export function createScene(p) {
       // The cage and, after the drop, the loop.
       if (t < at(17.5) || drop) cageAndLoop(t, orbCentre, energy);
 
+      // The stage (room, person, couch) is drawn full-bleed: scaled up so it runs off the frame's edges.
+      p.push();
+      p.translate(STAGE.x, STAGE.y); p.scale(STAGE.scale); p.translate(-STAGE.anchorX, -STAGE.anchorY);
       // The room and the person (until they leave for the couch).
       const onCouch = t >= at(13.5);
       const fatigue = clamp((stopsSoFar(t) - 1) / 8) * (t < at(10) ? 1 : 0.2);
@@ -199,19 +204,23 @@ export function createScene(p) {
       // The orb: dark on the desk, then the one lavender circle in a world of squares.
       const crisisGlow = smooth(at(8.75), at(9.3), t);
       if (!drop) orb(t, DESK_ORB, lerp(22, 30, crisisGlow), 0.25 + crisisGlow * 1.4 + (between(t, 9.5, 10) ? Math.sin(t * 8) * 0.3 : 0));
-      else {
-        const grow = easeOut(smooth(at(10), at(10.25), t));
-        const radius = lerp(30, t < at(11) ? 150 : 90, grow) * (1 - end * 0.1);
-        orb(t, orbCentre, radius, 1.2 + energy * 0.8);
-        ring(t, orbCentre, radius * 2.3, energy);
-      }
       // The work finishing without them.
       if (between(t, 12, 13.5)) [12.5, 12.75, 13.0].forEach((b, k) => check(250 + k * 150, 1150, 90, clamp((t - at(b)) / 0.18)));
       // The phone, from the couch.
       if (between(t, 13.6, 14.55)) {
         p.noStroke(); p.fill(220, 225, 255, 200); p.rect(400, 1380, 70, 120, 14);
-        bubble(90, 1080, "Also run the migration?", WHITE, clamp((t - at(13.7)) / 0.2), false);
-        bubble(990, 1220, "yes, then ship", LAVENDER, clamp((t - at(14.05)) / 0.2), true);
+      }
+      p.pop();
+      // The conversation lives in screen space, big and fully on screen.
+      if (between(t, 13.6, 14.55)) {
+        bubble(60, 900, "Also run the migration?", WHITE, clamp((t - at(13.7)) / 0.2), false);
+        bubble(1020, 1040, "yes, then ship", LAVENDER, clamp((t - at(14.05)) / 0.2), true);
+      }
+      if (drop) {
+        const grow = easeOut(smooth(at(10), at(10.25), t));
+        const radius = lerp(30, t < at(11) ? 150 : 90, grow) * (1 - end * 0.1);
+        orb(t, orbCentre, radius, 1.2 + energy * 0.8);
+        ring(t, orbCentre, radius * 2.3, energy);
       }
       // Dawn: a sun of concentric strokes rising.
       if (dawn > 0) { p.noFill(); for (let k = 0; k < 7; k += 1) { p.stroke(255, 200, 140, 140 * dawn / (k + 1)); p.strokeWeight(6); p.circle(540, lerp(1100, 780, dawn), 140 + k * 60 + Math.sin(t * 2 + k) * 8); } }
@@ -219,10 +228,10 @@ export function createScene(p) {
       // The Stop made visible: a giant cursor and the question.
       if (between(t, 2, 3)) {
         const blink = Math.floor(t / (BEAT / 2)) % 2 === 0;
-        p.noStroke(); p.fill(240, 240, 248, blink ? 235 : 40); p.rect(430, 610, 220, 220);
-        p.fill(240, 240, 248, 230); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(86); p.textAlign(p.CENTER, p.CENTER); p.text("continue? [y/N]", 540, 920);
+        p.noStroke(); p.fill(240, 240, 248, blink ? 235 : 40); p.rect(220, 925, 170, 170); // on the monitor itself
+        p.fill(240, 240, 248, 230); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(86); p.textAlign(p.CENTER, p.CENTER); p.text("continue? [y/N]", 540, 650);
       }
-      if (between(t, 3, 7)) { p.noStroke(); p.fill(200, 200, 210, 180); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(46); p.textAlign(p.CENTER, p.CENTER); p.text("continue? y", 540, 900); }
+      if (between(t, 3, 7)) { p.noStroke(); p.fill(200, 200, 210, 180); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(56); p.textAlign(p.CENTER, p.CENTER); p.text("continue? y", 540, 650); }
 
       swarm.draw(t, { energy });
       p.pop();
