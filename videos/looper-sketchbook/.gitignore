@@ -1,0 +1,5 @@
+node_modules
+renders/
+assets/score.wav
+plates/*.png
+plates/prompts/*.log
