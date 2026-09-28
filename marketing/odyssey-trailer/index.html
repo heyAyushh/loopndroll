@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ΛΟΟΠΕΡ · The Odyssey — Trailer</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; color: #EDE3D0; font: 14px -apple-system, "Helvetica Neue", sans-serif; }
+    #stage { position: fixed; inset: 0 0 56px 0; display: flex; align-items: center; justify-content: center; }
+    #screen { max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; }
+    #controls { position: fixed; left: 0; right: 0; bottom: 0; height: 56px; display: flex; gap: 14px; align-items: center; padding: 0 18px; background: #0B0A0A; border-top: 1px solid #1f1a19; }
+    #controls button { background: #141010; color: #EDE3D0; border: 1px solid #3a302c; border-radius: 18px; padding: 6px 16px; font: inherit; cursor: pointer; }
+    #scrub { flex: 1; accent-color: #D81E2C; }
+    #clock { font-variant-numeric: tabular-nums; width: 56px; }
+    #status { opacity: 0.6; }
+    body.export #controls { display: none; }
+    body.export #stage { inset: 0; }
+  </style>
+</head>
+<body>
+  <div id="stage"><canvas id="screen" width="1920" height="1080"></canvas></div>
+  <div id="controls">
+    <button id="play" type="button">Play</button>
+    <span id="clock">0.00</span>
+    <input id="scrub" type="range" min="0" max="60" step="0.001" value="0">
+    <span id="status">synthesizing score…</span>
+  </div>
+  <script src="trailer.js"></script>
+  <script src="audio.js"></script>
+  <script src="player.js"></script>
+</body>
+</html>
