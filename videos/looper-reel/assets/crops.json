@@ -1,0 +1,92 @@
+{
+ "eye": {
+  "plate": "eye-night",
+  "x": 0.2819010416666667,
+  "w": 0.375
+ },
+ "room": {
+  "plate": "room-night",
+  "x": 0.001953125,
+  "w": 0.375
+ },
+ "monitor": {
+  "plate": "monitor-cu",
+  "x": 0.3125,
+  "w": 0.375
+ },
+ "hands": {
+  "plate": "hands-keyboard",
+  "x": 0.412109375,
+  "w": 0.375
+ },
+ "phone": {
+  "plate": "phone-desk",
+  "x": 0.3919270833333333,
+  "w": 0.375
+ },
+ "rub": {
+  "plate": "rub-eyes",
+  "x": 0.232421875,
+  "w": 0.375
+ },
+ "neighbour": {
+  "plate": "neighbour-window",
+  "x": 0.21223958333333334,
+  "w": 0.375
+ },
+ "ots": {
+  "plate": "ots-monitor",
+  "x": 0.21223958333333334,
+  "w": 0.375
+ },
+ "asleep": {
+  "plate": "asleep-desk",
+  "x": 0.162109375,
+  "w": 0.375
+ },
+ "wake": {
+  "plate": "wake-phone",
+  "x": 0.2623697916666667,
+  "w": 0.375
+ },
+ "look": {
+  "plate": "look-orb",
+  "x": 0.232421875,
+  "w": 0.375
+ },
+ "stand": {
+  "plate": "stand-up",
+  "x": 0.2623697916666667,
+  "w": 0.375
+ },
+ "walk": {
+  "plate": "walk-window",
+  "x": 0.3619791666666667,
+  "w": 0.375
+ },
+ "couch": {
+  "plate": "couch-phone",
+  "x": 0.3619791666666667,
+  "w": 0.375
+ },
+ "sleep": {
+  "plate": "couch-sleep-wide",
+  "x": 0.5924479166666666,
+  "w": 0.375
+ },
+ "dawn": {
+  "plate": "dawn-wide",
+  "x": 0.4322916666666667,
+  "w": 0.375
+ },
+ "stretch": {
+  "plate": "stretch",
+  "x": 0.2819010416666667,
+  "w": 0.375
+ },
+ "window": {
+  "plate": "window-silhouette",
+  "x": 0.3619791666666667,
+  "w": 0.375
+ }
+}
