@@ -1,16 +1,16 @@
-"""Original score for the Looper launch film, derived from the "looper" playlist analysis.
+"""Original score for "Keep the Loop" (90s), derived from the "looper" playlist analysis.
 
 assets/playlist-analysis.json (38 tracks, measured from Apple preview clips):
   tempo cluster 124.5-129.2 BPM (median 127.6)  -> 128 BPM
-  tonal centres D minor / F major, A minor / C  -> D minor, resolving to F major at dawn
+  tonal centres D minor / F major               -> D minor, resolving to F major at dawn
   81% of energy below 100 Hz                    -> kick + rumble + sub carry the track
-  spectral centroid ~1.6 kHz, <0.5% above 5 kHz -> dark master lowpass, sparse hats
-  bar-to-bar similarity 0.90                    -> one 8-bar phrase, varied only by texture
+  spectral centroid ~1.6 kHz, <0.5% above 5 kHz -> dark master; the "air" only arrives at dawn
+  bar-to-bar similarity 0.90                    -> one riff, varied only by texture
 
-Nothing is sampled. Outputs:
-  assets/score.wav      stereo 44.1 kHz
-  assets/envelope.json  per-video-frame kick/sub, mid, and air energy for the picture to follow
+The groove is the agent's momentum: when an agent stops, the music stops (tape-stop). Each "y"
+restarts it weaker, and every stop comes sooner. See DIRECTION.md.
 
+Outputs: assets/score.wav, assets/envelope.json (per-video-frame sub / mid / air energy).
 Run: python3 score.py
 """
 
@@ -25,35 +25,39 @@ VIDEO_FPS = 30
 BEATS_PER_MINUTE = 128
 BEAT_SECONDS = 60 / BEATS_PER_MINUTE
 BAR_SECONDS = BEAT_SECONDS * 4
-TOTAL_BARS = 40
-TOTAL_SECONDS = TOTAL_BARS * BAR_SECONDS  # 75.0
-SEED = 47
+TOTAL_BARS = 48
+TOTAL_SECONDS = TOTAL_BARS * BAR_SECONDS  # 90.0
+SEED = 90
 PEAK_CEILING = 0.72
 
-# Story, in bars. Five loops of 8 bars; film.html reads the same numbers.
-SETUP = (0, 6)            # 02:40, the agent writes
-INCITING = (6, 8)         # 02:47, it stops and asks
-COMPLICATIONS = (8, 16)   # waiting, giving up, lying down
-ESCALATION = (16, 23)     # the stops pile up; pressure returns
-CRISIS = (23, 24)         # 05:10, the phone in the dark: the choice
-CLIMAX = (24, 32)         # one line from bed; the loop resumes
-RESOLUTION = (32, 36)     # dawn
-END_CARD = (36, 40)
+# Groove windows in bars: (start, end, gain, brightness). Mirrors STORY in film/story.js.
+GROOVE_WINDOWS = [
+    (0.0, 8.0, 0.62, 1.0),     # setup: the agent writes
+    (11.0, 12.0, 0.8, 0.8),    # "y" #1
+    (12.5, 13.0, 0.7, 0.65),   # "y" #2, weaker
+    (13.5, 14.0, 0.6, 0.5),    # "y" #3
+    (14.5, 15.0, 0.5, 0.4),    # "y" #4, then they give up
+    (24.0, 31.0, 0.8, 0.0),    # build: they wake to the problem (muffled, filter opens)
+    (32.0, 40.0, 1.0, 1.0),    # the drop: Looper keeps it going
+    (40.0, 42.0, 0.85, 0.6),   # dawn, still running
+]
+TAPE_STOP_BEATS = {8.0: 1.0, 12.0: 0.5, 13.0: 0.5, 14.0: 0.5, 15.0: 0.5, 31.0: 0.75}
+TAPE_START_BEATS = 0.5
+HEARTBEAT = (15.5, 24.0)
+RAIN = (0.0, 19.0)
+DROP = (32.0, 40.0)
 
 rng = np.random.default_rng(SEED)
 sample_count = int(TOTAL_SECONDS * SAMPLE_RATE)
+time_axis = np.arange(sample_count) / SAMPLE_RATE
 
 
 def seconds(bar, beat=0.0):
     return bar * BAR_SECONDS + beat * BEAT_SECONDS
 
 
-def span(act):
-    return slice(int(seconds(act[0]) * SAMPLE_RATE), int(seconds(act[1]) * SAMPLE_RATE))
-
-
-def in_act(bar, *acts):
-    return any(start <= bar < end for start, end in acts)
+def index(at_seconds):
+    return int(round(at_seconds * SAMPLE_RATE))
 
 
 def note_hz(midi):
@@ -80,9 +84,9 @@ def sweep_lowpass(signal, cutoff_at, block=1024):
 
 
 def place(track, sound, at_seconds, gain=1.0):
-    start = int(at_seconds * SAMPLE_RATE)
+    start = index(at_seconds)
     end = min(len(track), start + len(sound))
-    if start < end:
+    if 0 <= start < end:
         track[start:end] += sound[: end - start] * gain
 
 
@@ -115,6 +119,13 @@ def clap():
     return filtered(rng.standard_normal(length), "band", [900, 2800]) * (hits * 0.6 + np.exp(-t * 18) * 0.4)
 
 
+def ride():
+    length = int(0.5 * SAMPLE_RATE)
+    t = np.arange(length) / SAMPLE_RATE
+    metal = sum(np.sin(2 * np.pi * f * t) for f in (3120, 4470, 5210, 6890)) / 4
+    return (metal * 0.5 + filtered(rng.standard_normal(length), "high", 6000) * 0.5) * envelope(length, 0.001, 9)
+
+
 def bass(midi, length_seconds=BEAT_SECONDS / 4 * 0.85):
     length = int(length_seconds * SAMPLE_RATE)
     t = np.arange(length) / SAMPLE_RATE
@@ -143,15 +154,41 @@ def riser(length_seconds):
     return filtered(rise, "high", 200) * (t / length_seconds) ** 2
 
 
-def bell(midi, decay=3.0):
-    length = int(1.8 * SAMPLE_RATE)
+def bell(midi, decay=3.0, length_seconds=1.8):
+    length = int(length_seconds * SAMPLE_RATE)
     t = np.arange(length) / SAMPLE_RATE
     return (np.sin(2 * np.pi * note_hz(midi) * t) + 0.25 * np.sin(2 * np.pi * note_hz(midi + 12) * t)) * envelope(length, 0.002, decay)
 
 
-def thumb_tap():
-    length = int(0.03 * SAMPLE_RATE)
-    return filtered(rng.standard_normal(length), "band", [1800, 5000]) * envelope(length, 0.0005, 160)
+def gate_clack():
+    """The agent hitting the square gate: a dry metal latch."""
+    length = int(0.25 * SAMPLE_RATE)
+    t = np.arange(length) / SAMPLE_RATE
+    ring = sum(np.sin(2 * np.pi * f * t) for f in (310, 740, 1230)) / 3
+    return (ring * envelope(length, 0.0005, 28) + filtered(rng.standard_normal(length), "band", [1500, 6000]) * envelope(length, 0.0005, 120) * 0.6)
+
+
+def key_click(soft=False):
+    length = int(0.035 * SAMPLE_RATE)
+    return filtered(rng.standard_normal(length), "band", [1200, 5000] if soft else [2000, 7000]) * envelope(length, 0.0004, 150)
+
+
+def mouse_click():
+    length = int(0.02 * SAMPLE_RATE)
+    return filtered(rng.standard_normal(length), "band", [2500, 8000]) * envelope(length, 0.0003, 260)
+
+
+def buzz(length_seconds=0.32):
+    length = int(length_seconds * SAMPLE_RATE)
+    t = np.arange(length) / SAMPLE_RATE
+    return np.sin(2 * np.pi * 172 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 31 * t)) * np.clip(np.minimum(t, length_seconds - t) / 0.02, 0, 1)
+
+
+def chirp(start_hz, end_hz, length_seconds=0.09):
+    length = int(length_seconds * SAMPLE_RATE)
+    t = np.arange(length) / SAMPLE_RATE
+    frequency = np.linspace(start_hz, end_hz, length)
+    return np.sin(2 * np.pi * np.cumsum(frequency) / SAMPLE_RATE) * np.sin(np.pi * t / length_seconds) ** 2
 
 
 def sub_drop():
@@ -185,126 +222,162 @@ def room(signal, wet):
     return signal * (1 - wet) + fftconvolve(signal, impulse)[: len(signal)] * wet
 
 
-# ---------- arrangement ----------
+# ---------- the groove bus (generated everywhere, then gated by the story) ----------
 
-D_MINOR_STAB = [50, 53, 57, 60]         # D F A C  (Dm7)
+D_MINOR_STAB = [50, 53, 57, 60]
 D_MINOR_PAD = [38, 45, 50, 53, 57, 64]
-F_MAJOR_STAB = [53, 57, 60, 64]         # F A C E  (Fmaj7)
+F_MAJOR_STAB = [53, 57, 60, 64]
 F_MAJOR_PAD = [41, 48, 53, 57, 60, 67]
-BASS_LINE = [None, 26, 26, 38, None, 26, 29, 26]  # rolling sixteenths around D1
+BASS_LINE = [None, 26, 26, 38, None, 26, 29, 26]
 
-drums = np.zeros(sample_count)
-low = np.zeros(sample_count)
-stabs = np.zeros(sample_count)
-pads = np.zeros(sample_count)
-fx = np.zeros(sample_count)
-KICK, CLOSED, OPEN, CLAP = kick(), hat(), hat(True), clap()
+KICK, CLOSED, OPEN, CLAP, RIDE = kick(), hat(), hat(True), clap(), ride()
+groove = np.zeros(sample_count)
+groove_stabs = np.zeros(sample_count)
 
-GROOVE = (SETUP, (16, 23), CLIMAX, (32, 34))
 for bar in range(TOTAL_BARS):
-    groove = in_act(bar, *GROOVE)
-    full = in_act(bar, CLIMAX)
+    drop = DROP[0] <= bar < DROP[1]
+    dawn = 40 <= bar < 42
     for beat in range(4):
         at = seconds(bar, beat)
-        if groove:
-            place(drums, KICK, at, 0.95)
-        elif in_act(bar, COMPLICATIONS) and beat in (0, 2):
-            place(drums, KICK, at, 0.5)  # heartbeat
-        if (groove and bar >= 2) or (in_act(bar, COMPLICATIONS) and bar >= 12):
-            place(drums, OPEN, at + BEAT_SECONDS / 2, 0.16 if full else 0.08)
-        if full or bar >= 20 and in_act(bar, ESCALATION):
+        place(groove, KICK, at, 0.95)
+        if bar >= 2 or drop:
+            place(groove, OPEN, at + BEAT_SECONDS / 2, 0.16 if drop else 0.09)
+        if drop or bar >= 27:
             for sixteenth in range(4):
-                place(drums, CLOSED, at + sixteenth * BEAT_SECONDS / 4, 0.07 + 0.04 * (sixteenth == 2))
-        if full and beat in (1, 3):
-            place(drums, CLAP, at, 0.3)
-        if (groove and bar >= 3) and not in_act(bar, (32, 34)):
+                place(groove, CLOSED, at + sixteenth * BEAT_SECONDS / 4, 0.07 + 0.04 * (sixteenth == 2))
+        if drop and beat in (1, 3):
+            place(groove, CLAP, at, 0.3)
+        if drop and bar >= 36:
+            place(groove, RIDE, at + BEAT_SECONDS / 2, 0.08)
+        if bar >= 3 and not dawn:
             for step in range(2):
                 midi = BASS_LINE[(beat * 2 + step) % len(BASS_LINE)]
                 if midi is not None:
-                    place(low, bass(midi), at + (step * 2 + 1) * BEAT_SECONDS / 4, 0.6)
-
-    # The loop itself: three offbeat stabs per bar, the same every bar, as the playlist does.
-    if (bar >= 4 and in_act(bar, SETUP)) or full or (bar >= 18 and in_act(bar, ESCALATION)):
+                    place(groove, bass(midi), at + (step * 2 + 1) * BEAT_SECONDS / 4, 0.6)
+    chord = F_MAJOR_STAB if bar >= 40 else D_MINOR_STAB
+    if bar >= 4:
         for offset in (0.5, 1.75, 3.0):
-            place(stabs, stab(D_MINOR_STAB, brightness=1100 if bar < 24 else 2000), seconds(bar, offset), 0.38)
-    elif in_act(bar, COMPLICATIONS) and bar % 2 == 1:
-        place(stabs, stab(D_MINOR_STAB, 0.3, 900), seconds(bar, 0.5), 0.42)
-    elif in_act(bar, RESOLUTION, END_CARD) and bar % 2 == 0:
-        place(stabs, stab(F_MAJOR_STAB, 0.35, 1900), seconds(bar, 0.5), 0.32)
-
-    if bar in (21, 22):
-        subdivision = 2 if bar == 21 else 4
+            place(groove_stabs, stab(chord, brightness=2100 if drop else 1100), seconds(bar, offset), 0.38)
+    if bar in (29, 30):
+        subdivision = 2 if bar == 29 else 4
         for step in range(4 * subdivision):
-            place(drums, CLAP, seconds(bar, step / subdivision), 0.06 + 0.18 * step / (4 * subdivision))
+            place(groove, CLAP, seconds(bar, step / subdivision), 0.06 + 0.2 * step / (4 * subdivision))
 
-place(pads, pad(D_MINOR_PAD, seconds(6), 500), 0, 0.26)
-place(pads, pad(D_MINOR_PAD, seconds(16), 450), seconds(6), 0.34)
-place(pads, pad(D_MINOR_PAD, seconds(8), 1300), seconds(24), 0.2)
-place(pads, pad(F_MAJOR_PAD, seconds(8) + 2.5, 1200), seconds(32), 0.4)
-
-# Story punctuation.
-place(fx, bell(74), seconds(6, 0.1), 0.28)          # 02:47 the agent asks (D5)
-place(fx, bell(74), seconds(10, 0.1), 0.12)         # it keeps asking, quieter
-place(fx, bell(77, 4), seconds(14, 0.1), 0.1)
-place(fx, riser(seconds(3)), seconds(20), 0.2)
-place(fx, bell(81, 2.2), seconds(23, 0.0), 0.26)    # 05:10 the phone lights (A5)
-for index, beat in enumerate((0.9, 1.15, 1.35, 1.6, 1.75, 2.0, 2.2, 2.35, 2.6, 2.8, 3.0)):
-    place(fx, thumb_tap(), seconds(23, beat), 0.35)  # typing one line
-place(fx, cymbal(reverse=True, length_seconds=BEAT_SECONDS * 0.9), seconds(23, 3.1), 0.3)
-place(fx, sub_drop(), seconds(24), 0.9)
-place(fx, cymbal(), seconds(24), 0.25)
-place(drums, KICK, seconds(36), 0.9)
-place(fx, sub_drop(), seconds(36), 0.5)
-place(fx, cymbal(), seconds(36), 0.2)
-
-# Sidechain against the kick while the groove plays.
-kick_active = np.zeros(sample_count, dtype=bool)
-for act in GROOVE:
-    kick_active[span(act)] = True
-beat_phase = (np.arange(sample_count) / SAMPLE_RATE) % BEAT_SECONDS
-sidechain = np.where(kick_active, 1 - 0.6 * np.exp(-beat_phase * 14), 1.0)
-
-rumble = filtered(room(np.where(kick_active, drums, 0), 1.0), "low", 100) * 0.7
-stab_left, stab_right = dub_delay(stabs * sidechain)
-left = drums + low * sidechain + rumble + stab_left + pads * sidechain + fx
-right = drums + low * sidechain + rumble + stab_right + pads * sidechain * 0.95 + fx
+# Gate the groove by the story, with tape-stops into each Stop and tape-starts out of each "y".
+gate = np.zeros(sample_count)
+brightness = np.zeros(sample_count)
+for start, end, gain, bright in GROOVE_WINDOWS:
+    gate[index(seconds(start)):index(seconds(end))] = gain
+    brightness[index(seconds(start)):index(seconds(end))] = bright
+groove_bus = groove + dub_delay(groove_stabs)[0] * 0.5
+groove_right = groove + dub_delay(groove_stabs)[1] * 0.5
+rumble = filtered(room(groove, 1.0), "low", 100) * 0.7
 
 
-def master_cutoff(t):
-    """Dark by default (the playlist lives under ~2 kHz); only the climax opens up."""
-    if t < seconds(6):
-        return 600 + 900 * t / seconds(6)
-    if t < seconds(16):
-        return 900
-    if t < seconds(23):
-        return 900 + 5000 * ((t - seconds(16)) / seconds(7)) ** 2
-    if t < seconds(32):
-        return 9000
-    return 5000
+def warp(bus):
+    out = bus * gate
+    for stop_bar, beats in TAPE_STOP_BEATS.items():
+        stop = index(seconds(stop_bar))
+        length = index(beats * BEAT_SECONDS)
+        speed = np.linspace(1, 0, length) ** 1.5
+        reads = stop - length + np.cumsum(speed)
+        gain = gate[stop - 1]
+        out[stop - length:stop] = np.interp(reads, np.arange(sample_count), bus) * gain * np.linspace(1, 0.15, length)
+    for start, _, gain, _ in GROOVE_WINDOWS[1:5]:
+        begin = index(seconds(start))
+        length = index(TAPE_START_BEATS * BEAT_SECONDS)
+        speed = np.linspace(0, 1, length)
+        # Spin up from standstill and land back on the beat grid exactly at the end of the ramp.
+        reads = begin + length - (speed.sum() - np.cumsum(speed))
+        out[begin:begin + length] = np.interp(reads, np.arange(sample_count), bus) * gain * np.linspace(0.2, 1, length)
+    return out
 
 
-stereo = np.stack([sweep_lowpass(room(channel, 0.18), master_cutoff) for channel in (left, right)], axis=1)
+def groove_cutoff(t):
+    bar = t / BAR_SECONDS
+    if bar < 8:
+        return 600 + 3000 * (bar / 8) ** 1.5
+    if bar < 15:
+        return 700 + 2600 * brightness[min(sample_count - 1, index(t))]
+    if 24 <= bar < 31:
+        return 700 + 8000 * ((bar - 24) / 7) ** 2
+    if 32 <= bar < 40:
+        return 12000
+    return 6000
 
-# 02:47: the agent stops, and so does the music (tape-stop into near silence).
-stop_start, stop_end = int((seconds(6) - BEAT_SECONDS) * SAMPLE_RATE), int(seconds(6) * SAMPLE_RATE)
-speed = np.linspace(1, 0, stop_end - stop_start) ** 1.5
-reads = stop_start + np.cumsum(speed)
-for channel in range(2):
-    stereo[stop_start:stop_end, channel] = np.interp(reads, np.arange(sample_count), stereo[:, channel]) * np.linspace(1, 0.2, stop_end - stop_start)
-stereo[span(INCITING)] = np.stack([room(fx, 0.5)[span(INCITING)] + pads[span(INCITING)]] * 2, axis=1)
 
-# 05:10: the crisis bar holds its breath: the bell, the thumb, nothing else.
-stereo[span(CRISIS)] = np.stack([room(fx, 0.35)[span(CRISIS)]] * 2, axis=1)
+left = sweep_lowpass(warp(groove_bus) + warp(rumble), groove_cutoff)
+right = sweep_lowpass(warp(groove_right) + warp(rumble), groove_cutoff)
 
-for act, gain in ((SETUP, 0.6), (ESCALATION, 0.8), (RESOLUTION, 1.25)):
-    stereo[span(act)] *= gain
-fade = int(3.0 * SAMPLE_RATE)
+# ---------- beds and story sounds (never gated) ----------
+beds = np.zeros(sample_count)
+fx = np.zeros(sample_count)
+
+for bar in np.arange(HEARTBEAT[0], HEARTBEAT[1], 0.5):
+    place(beds, KICK, seconds(bar), 0.45)  # the heartbeat while they sleep
+for bar in range(16, 24, 2):
+    place(beds, stab(D_MINOR_STAB, 0.3, 900), seconds(bar, 0.5), 0.3)
+place(beds, pad(D_MINOR_PAD, seconds(24) - seconds(8), 480), seconds(8), 0.32)
+place(beds, pad(D_MINOR_PAD, seconds(8), 1400), seconds(32), 0.16)
+place(beds, pad(F_MAJOR_PAD, seconds(8) + 2.5, 1300), seconds(40), 0.4)
+
+rain_length = index(seconds(RAIN[1] + 1))
+rain = filtered(rng.standard_normal(rain_length), "band", [600, 5000]) * 0.05
+drops = np.zeros(rain_length)
+drops[rng.integers(0, rain_length, 2600)] = rng.uniform(0.2, 1.0, 2600)
+rain += filtered(drops, "band", [1500, 6000]) * 0.25
+rain *= np.clip((seconds(RAIN[1] + 1) - np.arange(rain_length) / SAMPLE_RATE) / BAR_SECONDS, 0, 1)
+beds[:rain_length] += rain
+
+for step in range(24):  # they type while the agent works
+    place(fx, key_click(), seconds(4) + step * BEAT_SECONDS * 0.63 + (step % 3) * 0.04, 0.12)
+place(fx, gate_clack(), seconds(8), 0.5)
+place(fx, bell(74), seconds(8, 2), 0.24)         # "continue? [y/N]"
+for bar, soft in ((10.6, False), (12.25, False), (13.25, True), (14.25, False)):
+    place(fx, key_click(soft), seconds(bar), 0.4)   # "y"
+    place(fx, key_click(soft), seconds(bar) + 0.16, 0.45)  # enter
+for bar in (12.0, 13.0, 14.0, 15.0):
+    place(fx, gate_clack(), seconds(bar), 0.32)
+    place(fx, bell(74 if bar < 15 else 72, 4), seconds(bar, 0.2), 0.12)
+place(fx, buzz(), seconds(24), 0.35)
+place(fx, buzz(), seconds(24, 0.6), 0.35)
+place(fx, riser(seconds(5)), seconds(26), 0.2)
+for tap in (0.0, 0.3):
+    place(fx, key_click(), seconds(26, 2 + tap), 0.3)  # "y"... and they stop
+place(fx, gate_clack(), seconds(27.25), 0.4)          # the habit buys a quarter bar
+place(fx, mouse_click(), seconds(31, 0.5), 0.5)       # open the Looper menu
+place(fx, cymbal(reverse=True, length_seconds=BEAT_SECONDS * 1.2), seconds(31, 2.8), 0.28)
+place(fx, mouse_click(), seconds(32), 0.6)            # the choice lands on the downbeat
+place(fx, sub_drop(), seconds(32), 0.9)
+place(fx, cymbal(), seconds(32), 0.25)
+place(fx, buzz(0.2), seconds(37, 0.5), 0.2)           # the question on the couch
+for tap in range(10):
+    place(fx, key_click(True), seconds(37, 1.5) + tap * 0.09, 0.18)
+place(fx, cymbal(reverse=True, length_seconds=BAR_SECONDS), seconds(39), 0.25)
+chirps = rng.uniform(0, seconds(4), 14)
+for offset in chirps:
+    start_hz = rng.uniform(3200, 4800)
+    place(fx, chirp(start_hz, start_hz * rng.uniform(1.15, 1.4)), seconds(40) + offset, 0.05)
+place(fx, KICK, seconds(44), 0.9)
+place(fx, sub_drop(), seconds(44), 0.5)
+place(fx, cymbal(), seconds(44), 0.2)
+for step, midi in enumerate((77, 81, 84, 88)):   # the square rounds into the orb: F A C E
+    place(fx, bell(midi, 2.5), seconds(44.5 + step * 0.5), 0.12)
+
+left = left + beds + fx
+right = right + beds * 0.96 + fx
+stereo = np.stack([room(left, 0.16), room(right, 0.16)], axis=1)
+
+# The crisis bar holds its breath: only the clicks and the swell survive.
+crisis = slice(index(seconds(31)), index(seconds(32)))
+stereo[crisis] = np.stack([room(fx, 0.3)[crisis]] * 2, axis=1)
+
+fade = int(3.5 * SAMPLE_RATE)
 stereo[-fade:] *= np.linspace(1, 0, fade)[:, None] ** 2
 stereo = np.tanh(stereo * 1.2)
 stereo /= np.max(np.abs(stereo)) / PEAK_CEILING
 wavfile.write("assets/score.wav", SAMPLE_RATE, (stereo * 32767).astype(np.int16))
 
-# Per-frame energy so the room's light can breathe with the low end.
 mono = stereo.mean(axis=1)
 bands = {"sub": filtered(mono, "low", 120), "mid": filtered(mono, "band", [300, 2500]), "air": filtered(mono, "high", 5000)}
 samples_per_frame = SAMPLE_RATE // VIDEO_FPS

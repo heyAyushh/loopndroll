@@ -8,6 +8,7 @@
     "render": "node render.mjs"
   },
   "dependencies": {
-    "playwright-core": "1.63.0"
+    "playwright-core": "1.63.0",
+    "three": "^0.170.0"
   }
 }
