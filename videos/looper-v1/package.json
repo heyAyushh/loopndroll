@@ -1,0 +1,6 @@
+{
+  "name": "looper-v1",
+  "private": true,
+  "type": "module",
+  "dependencies": { "playwright-core": "1.63.0" }
+}
