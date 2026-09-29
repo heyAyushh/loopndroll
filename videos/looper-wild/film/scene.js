@@ -1,6 +1,7 @@
 // The wild cut, composed. Everything is drawn by code every frame; nothing is ever an image.
 import { BAR, BEAT, H, STUTTERS, STUTTER_TIMES, W, at, between, clamp, easeInOut, easeOut, lerp, prng, smooth, stopsSoFar, workTime, working } from "./story.js";
 import { createSwarm } from "./swarm.js";
+import { LAYOUT } from "./layout.js";
 import { drawFigure, poseAt, tremble } from "./figure.js";
 
 const WHITE = [240, 240, 248];
@@ -9,7 +10,7 @@ const DAWN = [255, 190, 130];
 const MONITOR = { x0: 180, y0: 1000, x1: 540, y1: 1280 };
 const DESK_ORB = [640, 1262];
 // The stage is authored in a 1080x1920 layout, then blown up 1.5x around the desk so it fills the frame.
-const STAGE = { scale: 1.5, anchorX: 520, anchorY: 1330, x: 540, y: 1290 };
+const STAGE = LAYOUT.stage;
 
 const CAPTIONS = [
   [0, 1.0, [["2:47 AM", 230], ["LAUNCH IS AT 9", 70]], 0.27],
@@ -43,7 +44,8 @@ export function createScene(p) {
   const streams = Array.from({ length: 2400 }, () => ({ sx: MONITOR.x0 + random() * (MONITOR.x1 - MONITOR.x0), sy: MONITOR.y0 + random() * (MONITOR.y1 - MONITOR.y0), phase: random(), angle: -Math.PI / 2 + (random() - 0.5) * 1.6, length: 700 + random() * 1400, curl: (random() - 0.5) * 3 }));
   const stars = Array.from({ length: 260 }, () => ({ x: random() * W, y: random() * H * 0.7, twinkle: random() * 6.28, size: 1 + random() * 2.5 }));
   const cage = [];
-  for (let row = 0; row < 18; row += 1) for (let col = 0; col < 10; col += 1) cage.push({ x: 54 + col * 108, y: 54 + row * 108, row, col, seed: random() * 100 });
+  const ROWS = Math.ceil(H / 108), COLS = Math.ceil(W / 108);
+  for (let row = 0; row < ROWS; row += 1) for (let col = 0; col < COLS; col += 1) cage.push({ x: 54 + col * 108, y: 54 + row * 108, row, col, seed: random() * 100 });
 
   // ---------- pieces ----------
   const room = (t, alpha, colour = WHITE, fatigue = 0) => {
@@ -93,7 +95,7 @@ export function createScene(p) {
     const drop = t >= at(10);
     const since = t - at(10);
     for (const cell of cage) {
-      const shown = (17 - cell.row) < stops * 2.2 ? 1 : 0;
+      const shown = (ROWS - 1 - cell.row) < stops * 2.2 * (ROWS / 18) ? 1 : 0;
       if (!shown && !drop) continue;
       const wobble = (p.noise(cell.seed, t * 0.8) - 0.5) * 0.18;
       let x = cell.x + (p.noise(cell.seed + 9, t * 0.5) - 0.5) * 6, y = cell.y;
@@ -181,7 +183,9 @@ export function createScene(p) {
       if (night || dawn > 0) for (const s of stars) { p.noStroke(); p.fill(255, 255, 255, (80 + 80 * Math.sin(t * 2 + s.twinkle)) * (1 - dawn)); p.circle(s.x, s.y, s.size); }
 
       const drop = t >= at(10);
-      const orbCentre = drop ? [540, lerp(900, t < at(17) ? 560 : 700, easeInOut(smooth(at(10.7), at(11.4), t)))] : DESK_ORB;
+      const settle = easeInOut(smooth(at(10.7), at(11.4), t));
+      const rest = t < at(17) ? LAYOUT.orb.after : LAYOUT.orb.end;
+      const orbCentre = drop ? [lerp(LAYOUT.orb.drop[0], rest[0], settle), lerp(LAYOUT.orb.drop[1], rest[1], settle)] : DESK_ORB;
       // The cage and, after the drop, the loop.
       if (t < at(17.5) || drop) cageAndLoop(t, orbCentre, energy);
 
@@ -204,6 +208,8 @@ export function createScene(p) {
       // The orb: dark on the desk, then the one lavender circle in a world of squares.
       const crisisGlow = smooth(at(8.75), at(9.3), t);
       if (!drop) orb(t, DESK_ORB, lerp(22, 30, crisisGlow), 0.25 + crisisGlow * 1.4 + (between(t, 9.5, 10) ? Math.sin(t * 8) * 0.3 : 0));
+      // The Stop: a giant cursor blinking on the monitor itself.
+      if (between(t, 2, 3)) { p.noStroke(); p.fill(240, 240, 248, Math.floor(t / (BEAT / 2)) % 2 === 0 ? 235 : 40); p.rect(290, 1075, 130, 130); }
       // The work finishing without them.
       if (between(t, 12, 13.5)) [12.5, 12.75, 13.0].forEach((b, k) => check(250 + k * 150, 1150, 90, clamp((t - at(b)) / 0.18)));
       // The phone, from the couch.
@@ -213,8 +219,8 @@ export function createScene(p) {
       p.pop();
       // The conversation lives in screen space, big and fully on screen.
       if (between(t, 13.6, 14.55)) {
-        bubble(60, 900, "Also run the migration?", WHITE, clamp((t - at(13.7)) / 0.2), false);
-        bubble(1020, 1040, "yes, then ship", LAVENDER, clamp((t - at(14.05)) / 0.2), true);
+        bubble(LAYOUT.bubbles[0][0], LAYOUT.bubbles[0][1], "Also run the migration?", WHITE, clamp((t - at(13.7)) / 0.2), false);
+        bubble(LAYOUT.bubbles[1][0], LAYOUT.bubbles[1][1], "yes, then ship", LAVENDER, clamp((t - at(14.05)) / 0.2), true);
       }
       if (drop) {
         const grow = easeOut(smooth(at(10), at(10.25), t));
@@ -223,15 +229,13 @@ export function createScene(p) {
         ring(t, orbCentre, radius * 2.3, energy);
       }
       // Dawn: a sun of concentric strokes rising.
-      if (dawn > 0) { p.noFill(); for (let k = 0; k < 7; k += 1) { p.stroke(255, 200, 140, 140 * dawn / (k + 1)); p.strokeWeight(6); p.circle(540, lerp(1100, 780, dawn), 140 + k * 60 + Math.sin(t * 2 + k) * 8); } }
+      if (dawn > 0) { p.noFill(); for (let k = 0; k < 7; k += 1) { p.stroke(255, 200, 140, 140 * dawn / (k + 1)); p.strokeWeight(6); p.circle(LAYOUT.sun[0], lerp(LAYOUT.sun[1], LAYOUT.sun[2], dawn), 140 + k * 60 + Math.sin(t * 2 + k) * 8); } }
 
       // The Stop made visible: a giant cursor and the question.
       if (between(t, 2, 3)) {
-        const blink = Math.floor(t / (BEAT / 2)) % 2 === 0;
-        p.noStroke(); p.fill(240, 240, 248, blink ? 235 : 40); p.rect(220, 925, 170, 170); // on the monitor itself
-        p.fill(240, 240, 248, 230); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(86); p.textAlign(p.CENTER, p.CENTER); p.text("continue? [y/N]", 540, 650);
+        p.noStroke(); p.fill(240, 240, 248, 230); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(86); p.textAlign(p.CENTER, p.CENTER); p.text("continue? [y/N]", LAYOUT.prompt[0], LAYOUT.prompt[1]);
       }
-      if (between(t, 3, 7)) { p.noStroke(); p.fill(200, 200, 210, 180); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(56); p.textAlign(p.CENTER, p.CENTER); p.text("continue? y", 540, 650); }
+      if (between(t, 3, 7)) { p.noStroke(); p.fill(200, 200, 210, 180); p.textFont('"SF Mono", Menlo, monospace'); p.textSize(56); p.textAlign(p.CENTER, p.CENTER); p.text("continue? y", LAYOUT.prompt[0], LAYOUT.prompt[1]); }
 
       swarm.draw(t, { energy });
       p.pop();
@@ -240,8 +244,8 @@ export function createScene(p) {
       if (t > at(17.6)) {
         const k = easeOut(clamp((t - at(17.6)) / 0.5));
         p.noStroke(); p.textFont('-apple-system, "SF Pro Display", sans-serif'); p.textAlign(p.CENTER, p.CENTER);
-        p.fill(240, 240, 248, 255 * k); p.textSize(60); p.textStyle(p.BOLD); p.text("Leave the desk. Keep the loop.", 540, 1390);
-        p.fill(170, 170, 185, 255 * easeOut(clamp((t - at(18)) / 0.5))); p.textSize(40); p.textStyle(p.NORMAL); p.text("looper.fyi", 540, 1470);
+        p.fill(240, 240, 248, 255 * k); p.textSize(60); p.textStyle(p.BOLD); p.text("Leave the desk. Keep the loop.", LAYOUT.tagline[0], LAYOUT.tagline[1]);
+        p.fill(170, 170, 185, 255 * easeOut(clamp((t - at(18)) / 0.5))); p.textSize(40); p.textStyle(p.NORMAL); p.text("looper.fyi", LAYOUT.tagline[0], LAYOUT.tagline[2]);
       }
     },
   };

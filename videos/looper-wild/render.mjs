@@ -16,7 +16,10 @@ const stills = argument("--stills")?.split(",").map(Number);
 
 const server = await serve(HERE);
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist"] });
-const page = await browser.newPage({ viewport: { width: 1080, height: 1920 } });
+const FORMAT = argument("--format") ?? "reel"; // reel = 1080x1920, x = 1920x1080
+const SIZE = FORMAT === "x" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 };
+const page = await browser.newPage({ viewport: SIZE });
+await page.addInitScript((format) => { window.FILM_FORMAT = format; }, FORMAT);
 page.on("pageerror", (error) => console.error("page error:", error.message));
 page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) console.error("console:", message.text()); });
 await page.goto(`${server.url}film/index.html`);
@@ -32,7 +35,7 @@ if (stills) {
   }
   console.log(`wrote ${stills.length} stills`);
 } else {
-  const output = join(HERE, "renders", "looper-wild.mp4");
+  const output = join(HERE, "renders", FORMAT === "x" ? "looper-wild-x.mp4" : "looper-wild.mp4");
   mkdirSync(dirname(output), { recursive: true });
   const ffmpeg = spawn("ffmpeg", ["-y", "-v", "error", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "mjpeg", "-i", "-",
     "-i", join(HERE, "assets", "score.wav"), "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "14M", "-bufsize", "28M",
